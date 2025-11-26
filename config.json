@@ -38,8 +38,8 @@
   "sales": {
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
-    "total_rows": 10000,
-    "chunk_size": 1000000,
+    "total_rows": 50000,
+    "chunk_size": 100000,
     "start_date": "2021-01-01",
     "end_date": "2025-12-31",
     "file_format": "csv",

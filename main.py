@@ -1,24 +1,33 @@
 import json
 import os
+import time
 
 from src.customers import generate_synthetic_customers
 from src.promotions import generate_promotions_catalog
 from src.stores import generate_store_table
 from src.dates import generate_date_table
 from src.sales import generate_sales_fact
-
-
 from src.output_utils import (
     clear_folder,
     create_final_output_folder
 )
-
 from src.generate_bulk_insert_sql import generate_bulk_insert_script
 from src.generate_create_table_scripts import generate_all_create_tables
 
 
-def main():
+def stage_start(label):
+    print(f"\n=== {label}... ===")
+    return time.time()
 
+def stage_end(label, start_time):
+    elapsed = time.time() - start_time
+    print(f"✔ {label} completed in {elapsed:.2f} seconds")
+
+
+def main():
+    
+    total_start = time.time()
+    
     # ------------------------------
     # Load configuration
     # ------------------------------
@@ -39,6 +48,7 @@ def main():
     # ------------------------------
 
     # Customers + Geography
+    t = stage_start("Generating Customers")
     customers, geo = generate_synthetic_customers(
         total_customers=cust_cfg["total_customers"],
         total_geos=cust_cfg["total_geos"],
@@ -54,8 +64,10 @@ def main():
 
     customers.to_parquet(os.path.join(parquet_dims, "customers.parquet"), index=False)
     geo.to_parquet(os.path.join(parquet_dims, "geography.parquet"), index=False)
+    stage_end("Generating Customers adn Geography", t)
 
     # Promotions
+    t = stage_start("Generating Promotions")
     promotions = generate_promotions_catalog(
         years=range(promo_cfg["years"][0], promo_cfg["years"][1] + 1),
         num_seasonal=promo_cfg["num_seasonal"],
@@ -64,8 +76,10 @@ def main():
         seed=promo_cfg["seed"]
     )
     promotions.to_parquet(os.path.join(parquet_dims, "promotions.parquet"), index=False)
-
+    stage_end("Generating Promotions", t)
+    
     # Stores
+    t = stage_start("Generating Stores")
     stores = generate_store_table(
         geography_parquet_path=store_cfg["geography_path"],
         num_stores=store_cfg["num_stores"],
@@ -74,20 +88,23 @@ def main():
         closing_end=store_cfg["closing_end"],
         seed=store_cfg["seed"]
     )
-
     stores.to_parquet(os.path.join(parquet_dims, "stores.parquet"), index=False)
+    stage_end("Generating Stores", t)
 
     # Dates
+    t = stage_start("Generating Dates")
     dates = generate_date_table(
         date_cfg["start_date"],
         date_cfg["end_date"],
         date_cfg["fiscal_month_offset"]
     )
     dates.to_parquet(os.path.join(parquet_dims, "dates.parquet"), index=False)
+    stage_end("Generating Dates", t)
 
     # ------------------------------
     # Prepare FACT folder
     # ------------------------------
+    t = stage_start("Generating Sales")
     clear_folder(fact_out)
 
     # Remove parquet-only settings if CSV mode
@@ -117,29 +134,31 @@ def main():
         heavy_mult=sales_cfg["heavy_mult"],
         seed=sales_cfg["seed"]
     )
+    stage_end("Generating Sales", t)
 
     # ------------------------------
     # Package final dataset folder
     # ------------------------------
+    t = stage_start("Creating Final Output Folder")
     final_folder = create_final_output_folder(
         parquet_dims=parquet_dims,
         fact_folder=fact_out,
         file_format=sales_cfg["file_format"]
     )
+    stage_end("Creating Final Output Folder", t)
 
     # ------------------------------
     # Generate BULK INSERT SQL (only in CSV mode)
     # ------------------------------
+    t = stage_start("Generating BULK INSERT Scripts")
     if sales_cfg.get("file_format") == "csv":
 
         dims_folder = os.path.join(final_folder, "dims")
         facts_folder = os.path.join(final_folder, "facts")
 
-        # --------------------------
-        # Generate BULK INSERT scripts that use XML format files
-        # --------------------------
         generate_bulk_insert_script(
-            csv_folder=facts_folder,
+            csv_folder=facts_folder, 
+            table_name = 'Sales',
             output_sql_file=os.path.join(final_folder, "bulk_insert_sales.sql")
         )
 
@@ -148,18 +167,25 @@ def main():
             table_name=None,
             output_sql_file=os.path.join(final_folder, "bulk_insert_dimensions.sql")
         )
+        stage_end("Generating BULK INSERT Scripts", t)
 
         # Generate CREATE TABLE scripts FROM CSVs
+        t = stage_start("Generating CREATE TABLE Scripts")
         generate_all_create_tables(
             dim_folder=dims_folder,
             fact_folder=facts_folder,
             output_folder=final_folder
         )
-
+        stage_end("Generating CREATE TABLE Scripts", t)
 
     print("\n✔ All tables generated and packaged successfully!\n")
     print(f"📂 Output Folder: {final_folder}")
 
+    # -----------------------
+    # TOTAL TIME
+    # -----------------------
+    total_elapsed = time.time() - total_start
+    print(f"\n=== ALL STEPS COMPLETED IN {total_elapsed:.2f} SECONDS ===\n")
 
 if __name__ == "__main__":
     main()

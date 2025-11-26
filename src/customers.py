@@ -78,7 +78,7 @@ def generate_synthetic_customers(
     # ============================================================
     # GEOGRAPHY GENERATION
     # ============================================================
-    print("\nGenerating synthetic geography...")
+    # print("\nGenerating synthetic geography...")
 
     GEO_City = [fake.city() for _ in range(total_geos)]
     GEO_State = [fake.state() for _ in range(total_geos)]
@@ -101,7 +101,7 @@ def generate_synthetic_customers(
     # ============================================================
     # CUSTOMER GENERATION
     # ============================================================
-    print("\nGenerating synthetic customers...")
+    # print("\nGenerating synthetic customers...")
 
     N = total_customers
     CustomerKey = np.arange(1, N+1)

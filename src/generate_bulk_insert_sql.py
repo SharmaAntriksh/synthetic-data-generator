@@ -33,13 +33,12 @@ def generate_bulk_insert_script(
 
     for csv_file in csv_files:
 
-        # Infer table name from file name if not supplied
-        inferred_table = (
-            table_name if table_name is not None
-            else os.path.splitext(csv_file)[0].capitalize()
-        )
+        # FIX: Force table name when provided (Sales), otherwise infer (Dimensions)
+        if table_name is not None:
+            inferred_table = table_name
+        else:
+            inferred_table = os.path.splitext(csv_file)[0].capitalize()
 
-        # Absolute file path for SQL Server
         csv_full_path = os.path.abspath(os.path.join(csv_folder, csv_file))
 
         stmt = f"""
@@ -54,8 +53,8 @@ WITH (
     TABLOCK
 );
 """
-
         lines.append(stmt.strip())
+
 
     # Write the script
     with open(output_sql_file, "w", encoding="utf-8") as out:

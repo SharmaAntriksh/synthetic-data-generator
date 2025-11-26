@@ -371,7 +371,7 @@ def write_parquet(df, path, row_group_size=1000000, compression="snappy"):
 
 # -------------------- Merge helper --------------------
 def merge_parquet_files(out_folder, merged_file_name, delete_chunks=True):
-    files = sorted(glob.glob(os.path.join(out_folder, "fact_chunk*.parquet")))
+    files = sorted(glob.glob(os.path.join(out_folder, "sales_chunk*.parquet")))
     if not files:
         print("No parquet chunk files to merge.")
         return None
@@ -452,10 +452,10 @@ def main():
         print(f"Generating chunk {idx} ({batch} rows)...")
         df = generate_chunk_df(batch, date_pool, date_prob, product_np, store_keys, promo_records, customers, np.random.randint(1,1<<30), no_discount_key=1)
         if args.file_format == "csv":
-            out = os.path.join(args.out_folder, f"fact_chunk{idx:04d}.csv")
+            out = os.path.join(args.out_folder, f"sales_chunk{idx:04d}.csv")
             df.to_csv(out, index=False)
         else:
-            out = os.path.join(args.out_folder, f"fact_chunk{idx:04d}.parquet")
+            out = os.path.join(args.out_folder, f"sales_chunk{idx:04d}.parquet")
             ok = write_parquet(df, out, row_group_size=args.row_group_size, compression=args.compression)
             if not ok:
                 print("Failed to write parquet for chunk", idx)
@@ -536,11 +536,12 @@ def generate_sales_fact(
 
         # --- NEW: CSV or Parquet output ---
         if file_format == "csv":
-            out = f"{out_folder}/fact_chunk{idx:04d}.csv"
+            out = f"{out_folder}/sales_chunk{idx:04d}.csv"
             df.to_csv(out, index=False, encoding="utf-8", quoting=csv.QUOTE_ALL)
         else:
-            out = f"{out_folder}/fact_chunk{idx:04d}.parquet"
+            out = f"{out_folder}/sales_chunk{idx:04d}.parquet"
             write_parquet(df, out, row_group_size=row_group_size, compression=compression)
+
 
         created.append(out)
         remaining -= batch
