@@ -87,13 +87,13 @@ STATIC_SCHEMAS = {
         ("IsOrderDelayed",       "INT")
     ],
 
-    "ProductCategory": [
+    "Product_category": [
         ("CategoryKey",   "INT"),
         ("Category",      "VARCHAR(10)"),
         ("Category Label","VARCHAR(10)")
     ],
 
-    "ProductSubcategory": [
+    "Product_subcategory": [
         ("ProductSubcategoryKey", "INT"),
         ("Subcategory Label",     "VARCHAR(10)"),
         ("Subcategory",           "VARCHAR(50)"),
