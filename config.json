@@ -43,7 +43,7 @@
     "start_date": "2021-01-01",
     "end_date": "2025-12-31",
 
-    "file_format": "csv",
+    "file_format": "parquet",
 
     "merge_parquet": true,
     "merged_file": "sales.parquet",

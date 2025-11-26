@@ -33,8 +33,8 @@ def validate_config(cfg, section, required_keys):
 
 def normalize_sales_config(cfg):
     """
-    Removes parquet-only config keys when file_format = 'csv'.
-    Ensures clean dictionary before passing to sales generator.
+    Removes parquet-only config keys when generating CSV.
+    Ensures sales generator receives a clean dictionary.
     """
     if cfg.get("file_format") == "csv":
         parquet_only = ("row_group_size", "compression", "merge_parquet", "merged_file")
@@ -103,7 +103,6 @@ def generate_dimensions(cfg, parquet_dims: Path):
 # ---------------------------------------------------------
 
 def main():
-
     total_start = time.time()
 
     # ----------------------------------
@@ -117,7 +116,6 @@ def main():
     parquet_dims = Path(sales_cfg["parquet_folder"])
     fact_out = Path(sales_cfg["out_folder"])
 
-    # Validate minimal required keys
     validate_config(sales_cfg, "sales", ["total_rows", "chunk_size", "file_format"])
 
     # ----------------------------------
@@ -143,7 +141,7 @@ def main():
             chunk_size=sales_cfg["chunk_size"],
             start_date=sales_cfg["start_date"],
             end_date=sales_cfg["end_date"],
-            delete_chunks=sales_cfg["delete_chunks"],   # <-- now always False in CSV mode
+            delete_chunks=sales_cfg["delete_chunks"],
             heavy_pct=sales_cfg["heavy_pct"],
             heavy_mult=sales_cfg["heavy_mult"],
             seed=sales_cfg["seed"],
@@ -153,24 +151,20 @@ def main():
             )}
         )
 
-
     # ----------------------------------
     # Final Output Packaging
     # ----------------------------------
     with stage("Creating Final Output Folder"):
-        final_folder = Path(
-            create_final_output_folder(
-                parquet_dims=parquet_dims,
-                fact_folder=fact_out,
-                file_format=sales_cfg["file_format"]
-            )
+        final_folder = create_final_output_folder(
+            parquet_dims=parquet_dims,
+            fact_folder=fact_out,
+            file_format=sales_cfg["file_format"]
         )
 
     # ----------------------------------
-    # SQL Scripts (CSV mode only)
+    # SQL Scripts (CSV only)
     # ----------------------------------
     if sales_cfg.get("file_format") == "csv":
-
         with stage("Generating BULK INSERT Scripts"):
             dims_folder = final_folder / "dims"
             facts_folder = final_folder / "facts"

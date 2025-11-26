@@ -1,4 +1,10 @@
+# static_schemas.py
+#
+# Defines column names and SQL datatypes for CREATE TABLE generation.
+# Used by: generate_create_table_scripts.py
+
 STATIC_SCHEMAS = {
+
     "Customers": [
         ("CustomerKey",        "INT NOT NULL"),
         ("CustomerName",       "VARCHAR(100)"),
@@ -88,9 +94,9 @@ STATIC_SCHEMAS = {
     ],
 
     "Product_category": [
-        ("CategoryKey",   "INT"),
-        ("Category",      "VARCHAR(10)"),
-        ("Category Label","VARCHAR(10)")
+        ("CategoryKey",    "INT"),
+        ("Category",       "VARCHAR(10)"),
+        ("Category Label", "VARCHAR(10)")
     ],
 
     "Product_subcategory": [
@@ -99,5 +105,4 @@ STATIC_SCHEMAS = {
         ("Subcategory",           "VARCHAR(50)"),
         ("CategoryKey",           "INT")
     ]
-
 }

@@ -16,7 +16,6 @@ def clear_folder(path: str | Path) -> None:
     """
     p = Path(path)
     p.mkdir(parents=True, exist_ok=True)
-
     for child in p.iterdir():
         try:
             if child.is_file() or child.is_symlink():
@@ -32,6 +31,7 @@ def clear_folder(path: str | Path) -> None:
 # ============================================================
 
 def format_number_short(n: int) -> str:
+    """Format large numbers: 1500 -> 1K, 2M, 3B, etc."""
     if n >= 1_000_000_000:
         return f"{n // 1_000_000_000}B"
     if n >= 1_000_000:
@@ -56,8 +56,12 @@ def convert_parquet_dims_to_csv(parquet_dims_folder: str | Path,
 
     for f in src.glob("*.parquet"):
         df = pd.read_parquet(f)
-        out = dst / (f.stem + ".csv")
-        df.to_csv(out, index=False, encoding="utf-8", quoting=csv.QUOTE_ALL)
+        df.to_csv(
+            dst / (f.stem + ".csv"),
+            index=False,
+            encoding="utf-8",
+            quoting=csv.QUOTE_ALL
+        )
 
 
 # ============================================================
@@ -68,23 +72,18 @@ def count_rows_csv(path: Path) -> int:
     """
     Efficient CSV row counter ignoring header.
     """
-    count = 0
     with path.open("r", encoding="utf-8", newline="") as f:
-        next(f, None)
-        for _ in f:
-            count += 1
-    return count
+        next(f, None)  # skip header
+        return sum(1 for _ in f)
 
 
 def count_rows_parquet(path: Path) -> int:
-    """
-    Simply loads the parquet and counts rows.
-    """
+    """Load parquet and return row count."""
     return len(pd.read_parquet(path))
 
 
 # ============================================================
-# Main: Final Output Folder Creation
+# Final Output Folder Creator
 # ============================================================
 
 def create_final_output_folder(parquet_dims: str | Path,
@@ -108,31 +107,27 @@ def create_final_output_folder(parquet_dims: str | Path,
     # --------------------------------------------------------
     # Count Sales Rows
     # --------------------------------------------------------
-    sales_rows = 0
     if file_format == "csv":
         fact_files = list(fact_folder.glob("*.csv"))
-        for f in fact_files:
-            sales_rows += count_rows_csv(f)
+        sales_rows = sum(count_rows_csv(f) for f in fact_files)
     else:
         fact_files = list(fact_folder.glob("*.parquet"))
-        for f in fact_files:
-            sales_rows += count_rows_parquet(f)
+        sales_rows = sum(count_rows_parquet(f) for f in fact_files)
 
+    # --------------------------------------------------------
+    # Naming for final folder
+    # --------------------------------------------------------
     cust_short = format_number_short(customer_rows)
     sales_short = format_number_short(sales_rows)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    # --------------------------------------------------------
-    # Create final folder
-    # --------------------------------------------------------
     base_output_dir = Path("./generated_datasets")
     base_output_dir.mkdir(exist_ok=True)
 
-    folder_name = f"Customer_{cust_short}__Sales_{sales_short}__{timestamp}"
-    final_folder = base_output_dir / folder_name
+    final_folder = base_output_dir / f"Customer_{cust_short}__Sales_{sales_short}__{timestamp}"
     final_folder.mkdir(exist_ok=True)
 
-    # Create dims/ and facts/
+    # Prepare subfolders
     dims_out = final_folder / "dims"
     dims_out.mkdir(exist_ok=True)
 
@@ -140,7 +135,7 @@ def create_final_output_folder(parquet_dims: str | Path,
     facts_out.mkdir(exist_ok=True)
 
     # --------------------------------------------------------
-    # Copy / Convert Dimension Files
+    # Dimension Files
     # --------------------------------------------------------
     if file_format == "csv":
         convert_parquet_dims_to_csv(parquet_dims, dims_out)
@@ -149,10 +144,9 @@ def create_final_output_folder(parquet_dims: str | Path,
             shutil.copy2(f, dims_out / f.name)
 
     # --------------------------------------------------------
-    # Copy Fact Files
+    # Fact Files
     # --------------------------------------------------------
     for f in fact_files:
         shutil.copy2(f, facts_out / f.name)
 
     return final_folder
-
