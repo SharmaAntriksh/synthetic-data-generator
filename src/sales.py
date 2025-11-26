@@ -378,7 +378,7 @@ def merge_parquet_files(out_folder, merged_file_name, delete_chunks=True):
     merged_path = os.path.join(out_folder, merged_file_name)
     try:
         import pyarrow.dataset as ds, pyarrow.parquet as pq
-        dataset = ds.dataset(out_folder, format="parquet")
+        dataset = ds.dataset(files, format="parquet")
         table = dataset.to_table()
         pq.write_table(table, merged_path)
         print(f"Merged {len(files)} files to: {merged_path}")
@@ -398,6 +398,7 @@ def merge_parquet_files(out_folder, merged_file_name, delete_chunks=True):
                 os.remove(f)
             except Exception as e:
                 print(f"Warning: failed to delete {f}: {e}")
+                
     return merged_path
 
 # -------------------- Main --------------------
@@ -536,10 +537,10 @@ def generate_sales_fact(
 
         # --- NEW: CSV or Parquet output ---
         if file_format == "csv":
-            out = f"{out_folder}/sales_chunk{idx:04d}.csv"
+            out = os.path.join(out_folder, f"sales_chunk{idx:04d}.csv")
             df.to_csv(out, index=False, encoding="utf-8", quoting=csv.QUOTE_ALL)
         else:
-            out = f"{out_folder}/sales_chunk{idx:04d}.parquet"
+            out = os.path.join(out_folder, f"sales_chunk{idx:04d}.parquet")
             write_parquet(df, out, row_group_size=row_group_size, compression=compression)
 
 
@@ -550,6 +551,11 @@ def generate_sales_fact(
     # Only merge parquet files
     if file_format == "parquet" and merge_parquet:
         merge_parquet_files(out_folder, merged_file, delete_chunks=delete_chunks)
+
+        # if delete_chunks:
+        #     for f in os.listdir(out_folder):
+        #         if f.startswith("sales_chunk") and f.endswith(".parquet"):
+        #             os.remove(os.path.join(out_folder, f))
 
     return created
 

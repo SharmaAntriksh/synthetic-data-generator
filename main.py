@@ -129,7 +129,8 @@ def main():
         compression=sales_cfg.get("compression"),
         merge_parquet=sales_cfg.get("merge_parquet", False),
         merged_file=sales_cfg.get("merged_file", "sales.parquet"),
-
+        delete_chunks= sales_cfg["delete_chunks"],
+        
         heavy_pct=sales_cfg["heavy_pct"],
         heavy_mult=sales_cfg["heavy_mult"],
         seed=sales_cfg["seed"]
