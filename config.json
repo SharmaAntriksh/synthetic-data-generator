@@ -41,27 +41,31 @@
   },
 
   "sales": {
-    "parquet_folder": "./data/parquet_dims",
-    "out_folder": "./data/fact_out",
+      "parquet_folder": "./data/parquet_dims",
+      "out_folder": "./data/fact_out",
 
-    "total_rows": 2500000,
-    "chunk_size": 500000,
+      "total_rows": 25000000,
+      "chunk_size": 1000000,
 
-    "start_date": "2021-01-01",
-    "end_date": "2025-10-31",
+      "start_date": "2021-01-01",
+      "end_date": "2025-10-31",
 
-    "file_format": "parquet",
+      "file_format": "parquet",
 
-    "merge_parquet": true,
-    "merged_file": "sales.parquet",
-    "delete_chunks": true,
+      "merge_parquet": true,
+      "merged_file": "sales.parquet",
+      "delete_chunks": true,
 
-    "row_group_size": 500000,
-    "compression": "snappy",
+      "row_group_size": 1000000,
+      "compression": "snappy",
 
-    "heavy_pct": 5,
-    "heavy_mult": 5,
-    "seed": 42
+      "heavy_pct": 5,
+      "heavy_mult": 5,
+      "seed": 42,
+
+      "workers": null,
+      "write_pyarrow": true,
+      "tune_chunk": false
   },
 
   "exchange_rates": {

@@ -184,22 +184,33 @@ def main():
         if sales_cfg.get("file_format") == "csv":
             sales_cfg["merge_parquet"] = False
             sales_cfg["delete_chunks"] = False
+            sales_cfg["write_pyarrow"] = False   # CSV uses pandas anyway
 
         generate_sales_fact(
             parquet_folder=sales_cfg["parquet_folder"],
             out_folder=sales_cfg["out_folder"],
+
             total_rows=sales_cfg["total_rows"],
             chunk_size=sales_cfg["chunk_size"],
+
             start_date=sales_cfg["start_date"],
             end_date=sales_cfg["end_date"],
+
             delete_chunks=sales_cfg["delete_chunks"],
             heavy_pct=sales_cfg["heavy_pct"],
             heavy_mult=sales_cfg["heavy_mult"],
             seed=sales_cfg["seed"],
-            **{k: sales_cfg.get(k) for k in (
-                "file_format", "row_group_size", "compression",
-                "merge_parquet", "merged_file"
-            )}
+
+            file_format=sales_cfg["file_format"],
+            row_group_size=sales_cfg.get("row_group_size"),
+            compression=sales_cfg.get("compression"),
+            merge_parquet=sales_cfg.get("merge_parquet"),
+            merged_file=sales_cfg.get("merged_file"),
+
+            # --- Ultra-optimized engine params (NEW) ---
+            workers=sales_cfg.get("workers"),
+            write_pyarrow=sales_cfg.get("write_pyarrow", True),
+            tune_chunk=sales_cfg.get("tune_chunk", False)
         )
 
     # Final output
