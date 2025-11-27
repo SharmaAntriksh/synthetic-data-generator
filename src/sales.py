@@ -195,12 +195,6 @@ def _init_worker(init_args):
     _G_write_delta = write_delta
     _G_skip_order_cols = bool(skip_order_flag)
 
-    # DEBUG: print what we actually received (very small, safe)
-    try:
-        print(f"[_init_worker] received skip_order_flag={skip_order_flag!r} (type={type(skip_order_flag)})", flush=True)
-    except Exception:
-        pass
-
 
 # -------------------------
 # Helper: write a PyArrow table to parquet (fast)
@@ -499,9 +493,6 @@ def _worker_task(args):
     delta_output_folder = _G_delta_output_folder
     write_delta = _G_write_delta
     
-    print(f"WRITING CHUNK: {idx} FORMAT: {file_format} SKIP: {_G_skip_order_cols}", flush=True)
-    print("WRITING CHUNK:", idx, "FORMAT:", file_format, "SKIP:", _G_skip_order_cols)
-    print(f"Generating chunk {idx} ({batch:,} rows)...", flush=True)
     table_or_df = _build_chunk_table(batch, seed, no_discount_key=no_discount_key)
 
     # Ensure we have a pyarrow.Table when possible (for both parquet and delta)
@@ -532,7 +523,6 @@ def _worker_task(args):
             table_for_arrow = pa.Table.from_pandas(table_or_df, preserve_index=False)
 
         # Return the table to the main process for sequential delta write
-        print(f"✓ Finished chunk {idx} (returned to main for delta write)", flush=True)
         return ("delta", idx, table_for_arrow)
 
 
@@ -552,7 +542,7 @@ def _worker_task(args):
                 table_for_arrow = pa.Table.from_pandas(table_or_df, preserve_index=False)
             write_deltalake(delta_output_folder, table_for_arrow, mode="append")
 
-    print(f"✓ Finished chunk {idx} -> {out}", flush=True)
+    print(f"\n✓ Finished chunk {idx} -> {out}", flush=True)
     return out
 
 # -------------------------
@@ -710,10 +700,8 @@ def generate_sales_fact(
     else:
         n_workers = max(1, int(workers))
 
-    print(f"=== Generating Sales... ===\nSpawning {n_workers} worker processes...")
+    print(f"=== Generating Sales... ===\n\nSpawning {n_workers} worker processes...")
 
-    # sanity print in main process (before starting Pool)
-    print(f"[MAIN] skip_order_cols={skip_order_cols!r} (type={type(skip_order_cols)})", flush=True)
     # local helper value required by workers
     no_discount_key = 1
 
@@ -757,7 +745,7 @@ def generate_sales_fact(
                 # Normal CSV or Parquet output path
                 created.append(item)
 
-    print("All chunks completed.")
+    print("\nAll chunks completed.")
 
     if file_format == "parquet" and merge_parquet:
         merge_parquet_files(out_folder, merged_file, delete_chunks=delete_chunks)

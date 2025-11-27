@@ -33,7 +33,7 @@ def stage(label: str):
     print(f"\n=== {label}... ===")
     t = time.time()
     yield
-    print(f"✔ {label} completed in {time.time() - t:.2f} seconds")
+    print(f"\n✔ {label} completed in {time.time() - t:.2f} seconds")
 
 
 def validate_config(cfg, section, required_keys):
@@ -270,7 +270,7 @@ def main():
                     output_sql_file=str(final_folder / "bulk_insert_facts.sql")
                 )
 
-                print("✔ Bulk Insert scripts generated successfully.")
+                print("\n✔ Bulk Insert scripts generated successfully.")
 
         # CREATE TABLE SCRIPTS — ALWAYS
         with stage("Generating CREATE TABLE Scripts"):
@@ -281,10 +281,10 @@ def main():
             )
 
 
-    print(f"✔ DONE in {time.time() - total_start:.2f} seconds")
+    print(f"\n✔ DONE in {time.time() - total_start:.2f} seconds")
 
     # CLEAN UP: Remove intermediate fact_out folder after everything is packaged
-    with stage("Cleaning intermediate fact_out folder"):
+    with stage("Cleaning intermediate fact_out folder!"):
         clear_folder(fact_out)
 
 # ---------------------------------------------------------

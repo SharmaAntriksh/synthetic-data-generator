@@ -44,8 +44,8 @@
       "parquet_folder": "./data/parquet_dims",
       "out_folder": "./data/fact_out",
 
-      "total_rows": 100000,
-      "chunk_size": 1000000,
+      "total_rows": 100000000,
+      "chunk_size": 5000000,
 
       "start_date": "2021-01-01",
       "end_date": "2025-10-31",
@@ -58,7 +58,7 @@
       "merged_file": "sales.parquet",
       "delete_chunks": true,
 
-      "row_group_size": 1000000,
+      "row_group_size": 5000000,
       "compression": "snappy",
 
       "heavy_pct": 5,
