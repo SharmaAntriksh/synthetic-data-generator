@@ -8,7 +8,6 @@ import pandas as pd
 from datetime import datetime
 import csv
 
-
 # ============================================================
 # Basic Helpers
 # ============================================================
@@ -30,7 +29,6 @@ def load_parquet_df(path, cols=None):
 # ============================================================
 
 def build_weighted_customers(keys, pct, mult, seed=42):
-    """Randomly selects pct% heavy buyers, repeats them mult times."""
     rng = np.random.default_rng(seed)
     if len(keys) == 0:
         return keys
@@ -108,7 +106,7 @@ def build_weighted_date_pool(start, end, seed=42):
 
 
 # ============================================================
-# Chunk Generator (patched for CurrencyKey)
+# Chunk Generator (CurrencyKey patched)
 # ============================================================
 
 def generate_chunk_df(
@@ -140,7 +138,7 @@ def generate_chunk_df(
     # ----------------- Stores -----------------
     store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n)]
 
-    # ----------------- CurrencyKey (NEW) -----------------
+    # ----------------- CurrencyKey (patched) -----------------
     geo_arr = np.array([store_to_geo[s] for s in store_key_arr])
     currency_arr = np.array([geo_to_currency[g] for g in geo_arr])
 
@@ -194,10 +192,7 @@ def generate_chunk_df(
     customer_keys = customer_keys[:n]
     order_dates_expanded = order_dates_expanded[:n]
 
-    # ============================================================
-    # Delivery Logic
-    # ============================================================
-
+    # -------- Delivery logic ----------
     hash_vals = np.frompyfunc(hash, 1, 1)(sales_order_num).astype(np.int64)
 
     due_offset = (hash_vals % 5) + 3
@@ -231,10 +226,7 @@ def generate_chunk_df(
         np.where(delivery_date > due_date, "Delayed", "On Time")
     )
 
-    # ============================================================
-    # Promotions
-    # ============================================================
-
+    # -------- Promotions ----------
     promo_keys = np.full(n, no_discount_key, int)
     promo_pct = np.zeros(n, float)
 
@@ -252,10 +244,7 @@ def generate_chunk_df(
         promo_keys[has_active] = promo_keys_all[active_idx[has_active]]
         promo_pct[has_active] = promo_pct_all[active_idx[has_active]]
 
-    # ============================================================
-    # Discount Logic
-    # ============================================================
-
+    # -------- Discount logic ----------
     promo_disc = unit_price * (promo_pct / 100.0)
     rnd_pct = rng.choice(
         [0,5,10,15,20], n,
@@ -270,10 +259,7 @@ def generate_chunk_df(
 
     net_price = unit_price - discount_amt
 
-    # ============================================================
-    # Final DataFrame (CurrencyKey patched)
-    # ============================================================
-
+    # -------- Final DF ----------
     df = pd.DataFrame({
         "SalesOrderNumber": sales_order_num.astype(str),
         "SalesOrderLineNumber": line_num,
@@ -283,7 +269,7 @@ def generate_chunk_df(
         "StoreKey": store_key_arr,
         "ProductKey": product_keys,
         "PromotionKey": promo_keys,
-        "CurrencyKey": currency_arr,            # PATCHED
+        "CurrencyKey": currency_arr,
         "CustomerKey": customer_keys,
         "Quantity": qty,
         "NetPrice": np.round(net_price, 2),
@@ -296,17 +282,12 @@ def generate_chunk_df(
     df["IsOrderDelayed"] = df.groupby("SalesOrderNumber")["DeliveryStatus"] \
                              .transform(lambda x: int((x == "Delayed").any()))
 
-    # ============================================================
-    # Price Reduction (unchanged)
-    # ============================================================
-
-    price_factor = np.random.default_rng(seed).uniform(0.43, 0.61)
-    df["UnitPrice"] = np.round(df["UnitPrice"] * price_factor, 2)
-    df["UnitCost"] = np.round(df["UnitCost"] * price_factor, 2)
-    df["DiscountAmount"] = np.round(df["DiscountAmount"] * price_factor, 2)
-    df["NetPrice"] = np.round(
-        df["UnitPrice"] - df["DiscountAmount"], 2
-    ).clip(0.01)
+    # -------- Price reduction ----------
+    factor = np.random.default_rng(seed).uniform(0.43, 0.61)
+    df["UnitPrice"] = np.round(df["UnitPrice"] * factor, 2)
+    df["UnitCost"] = np.round(df["UnitCost"] * factor, 2)
+    df["DiscountAmount"] = np.round(df["DiscountAmount"] * factor, 2)
+    df["NetPrice"] = np.round(df["UnitPrice"] - df["DiscountAmount"], 2).clip(0.01)
 
     return df
 
@@ -357,14 +338,16 @@ def merge_parquet_files(out_folder, merged_file_name, delete_chunks=True):
 
     if delete_chunks:
         for f in files:
-            try: os.remove(f)
-            except: pass
+            try:
+                os.remove(f)
+            except:
+                pass
 
     return merged_path
 
 
 # ============================================================
-# Main Function (patched: currency mapping added)
+# Main Function
 # ============================================================
 
 def generate_sales_fact(
@@ -409,39 +392,25 @@ def generate_sales_fact(
         "StoreKey"
     )
 
-    # ================================
-    # NEW: Currency + Geography Maps
-    # ================================
+    # Geography + Currency
     geo_df = load_parquet_df(
         f"{parquet_folder}/geography.parquet",
         ["GeographyKey", "Country", "ISOCode"]
     )
-    
-    print("DEBUG - geography loaded columns:", geo_df.columns)
-    print("DEBUG - sample ISO codes:", geo_df["ISOCode"].unique())
 
     currency_df = pd.read_parquet(f"{parquet_folder}/currency.parquet")
     currency_df = currency_df[["CurrencyKey", "ISOCode"]]
-    print("DEBUG - currency_df loaded:", currency_df.head())
 
-    # Expect geography.parquet to contain ISOCode already
     if "ISOCode" not in geo_df.columns:
         raise ValueError("Geography table must include ISOCode column.")
 
-    # Merge geography → currency dimension
     geo_df = geo_df.merge(currency_df, on="ISOCode", how="left")
 
-    # Validate merge
     if geo_df["CurrencyKey"].isna().any():
         missing = geo_df[geo_df["CurrencyKey"].isna()][["GeographyKey","Country","ISOCode"]]
         raise ValueError(f"Missing currency for some geographies:\n{missing}")
 
-# No second merge. Do NOT merge again.
-
-
-    geo_to_currency = dict(
-        zip(geo_df["GeographyKey"], geo_df["CurrencyKey"])
-    )
+    geo_to_currency = dict(zip(geo_df["GeographyKey"], geo_df["CurrencyKey"]))
 
     store_df = load_parquet_df(
         f"{parquet_folder}/stores.parquet",
@@ -453,7 +422,6 @@ def generate_sales_fact(
     promo_df = load_parquet_df(f"{parquet_folder}/promotions.parquet")
     promo_df["StartDate"] = pd.to_datetime(promo_df["StartDate"]).dt.normalize()
     promo_df["EndDate"]   = pd.to_datetime(promo_df["EndDate"]).dt.normalize()
-
 
     promo_keys_all  = promo_df["PromotionKey"].to_numpy(int)
     promo_pct_all   = promo_df["DiscountPct"].to_numpy(float)
@@ -486,8 +454,8 @@ def generate_sales_fact(
             promo_end_all,
             customers,
             np.random.randint(1, 1 << 30),
-            store_to_geo,          # NEW
-            geo_to_currency        # NEW
+            store_to_geo,
+            geo_to_currency
         )
 
         if file_format == "csv":

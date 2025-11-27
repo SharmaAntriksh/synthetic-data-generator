@@ -55,9 +55,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
     date_cfg = cfg["dates"]
     exch_cfg = cfg["exchange_rates"]
 
-    # -----------------------------------------------------
     # Geography
-    # -----------------------------------------------------
     geo_out = parquet_dims / "geography.parquet"
     if should_regenerate("geography", cust_cfg["geography_source"], geo_out):
         with stage("Generating Geography"):
@@ -71,9 +69,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
     else:
         print("✔ Geography up-to-date; skipping regeneration")
 
-    # -----------------------------------------------------
     # Customers
-    # -----------------------------------------------------
     cust_out = parquet_dims / "customers.parquet"
     if should_regenerate("customers", cust_cfg, cust_out):
         with stage("Generating Customers"):
@@ -83,9 +79,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
     else:
         print("✔ Customers up-to-date; skipping regeneration")
 
-    # -----------------------------------------------------
     # Promotions
-    # -----------------------------------------------------
     promo_out = parquet_dims / "promotions.parquet"
     if should_regenerate("promotions", promo_cfg, promo_out):
         with stage("Generating Promotions"):
@@ -101,9 +95,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
     else:
         print("✔ Promotions up-to-date; skipping regeneration")
 
-    # -----------------------------------------------------
     # Stores
-    # -----------------------------------------------------
     store_out = parquet_dims / "stores.parquet"
     if should_regenerate("stores", store_cfg, store_out):
         with stage("Generating Stores"):
@@ -120,9 +112,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
     else:
         print("✔ Stores up-to-date; skipping regeneration")
 
-    # -----------------------------------------------------
     # Dates
-    # -----------------------------------------------------
     dates_out = parquet_dims / "dates.parquet"
     if should_regenerate("dates", date_cfg, dates_out):
         with stage("Generating Dates"):
@@ -136,9 +126,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
     else:
         print("✔ Dates up-to-date; skipping regeneration")
 
-    # -----------------------------------------------------
-    # Currency Dimension
-    # -----------------------------------------------------
+    # Currency
     curr_out = parquet_dims / "currency.parquet"
     if should_regenerate("currency", exch_cfg, curr_out):
         with stage("Generating Currency Dimension"):
@@ -148,9 +136,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
     else:
         print("✔ Currency dimension up-to-date; skipping regeneration")
 
-    # -----------------------------------------------------
     # Exchange Rates
-    # -----------------------------------------------------
     fx_out = parquet_dims / "exchange_rates.parquet"
     if should_regenerate("exchange_rates", exch_cfg, fx_out):
         with stage("Generating Exchange Rates"):
@@ -166,7 +152,6 @@ def generate_dimensions(cfg, parquet_dims: Path):
             save_version("exchange_rates", exch_cfg)
     else:
         print("✔ Exchange Rates up-to-date; skipping regeneration")
-
 
 
 # ---------------------------------------------------------

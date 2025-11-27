@@ -50,7 +50,7 @@
     "start_date": "2021-01-01",
     "end_date": "2025-12-31",
 
-    "file_format": "csv",
+    "file_format": "parquet",
 
     "merge_parquet": true,
     "merged_file": "sales.parquet",
@@ -67,7 +67,7 @@
   "exchange_rates": {
     "currencies": ["USD", "EUR", "INR", "GBP", "AUD", "CAD"],
     "base_currency": "USD",
-    "start_date": "2021-01-01",
+    "start_date": "2020-01-01",
     "end_date": "2025-12-31",
     "volatility": 0.02,
     "seed": 42
