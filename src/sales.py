@@ -332,7 +332,7 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     discount_amt *= rng.choice([0.90,0.95,1.00,1.05,1.10], n)
     discount_amt = np.round(discount_amt * 4) / 4
     discount_amt = np.minimum(discount_amt, unit_price - 0.01)
-    net_price = unit_price - discount_amt
+    # net_price = unit_price - discount_amt
 
     # IsOrderDelayed via bincount
     is_delayed_line = (delivery_status == "Delayed").astype(np.int64)
