@@ -44,13 +44,15 @@
       "parquet_folder": "./data/parquet_dims",
       "out_folder": "./data/fact_out",
 
-      "total_rows": 25000000,
+      "total_rows": 100000,
       "chunk_size": 1000000,
 
       "start_date": "2021-01-01",
       "end_date": "2025-10-31",
 
-      "file_format": "parquet",
+      "file_format": "parquet",             
+      "write_delta": false,                 
+      "delta_output_folder": "./data/fact_out/delta",     
 
       "merge_parquet": true,
       "merged_file": "sales.parquet",
@@ -65,7 +67,9 @@
 
       "workers": null,
       "write_pyarrow": true,
-      "tune_chunk": false
+      "tune_chunk": false,
+
+      "skip_order_cols": true
   },
 
   "exchange_rates": {

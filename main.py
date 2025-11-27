@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+"""
+Patched main.py — adds seamless DELTAPARQUET support without breaking existing CSV/Parquet flows.
+Fully compatible with the patched sales.py.
+"""
 import json
 import time
 from pathlib import Path
@@ -38,6 +43,7 @@ def validate_config(cfg, section, required_keys):
 
 
 def normalize_sales_config(cfg):
+    # Remove parquet-only keys when user requests CSV
     if cfg.get("file_format") == "csv":
         parquet_only = ("row_group_size", "compression", "merge_parquet", "merged_file")
         cfg = {k: v for k, v in cfg.items() if k not in parquet_only}
@@ -155,12 +161,13 @@ def generate_dimensions(cfg, parquet_dims: Path):
 
 
 # ---------------------------------------------------------
-# Main
+# MAIN
 # ---------------------------------------------------------
 
 def main():
     total_start = time.time()
 
+    # Load config
     with open("config.json", "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
@@ -174,18 +181,27 @@ def main():
 
     validate_config(sales_cfg, "sales", ["total_rows", "chunk_size", "file_format"])
 
-    # Dimensions
+    # Generate dimensions
     generate_dimensions(cfg, parquet_dims)
 
-    # Sales Fact
+    # SALES FACT
     with stage("Generating Sales"):
         clear_folder(fact_out)
 
+        # CSV mode never writes parquet nor delta
         if sales_cfg.get("file_format") == "csv":
             sales_cfg["merge_parquet"] = False
             sales_cfg["delete_chunks"] = False
-            sales_cfg["write_pyarrow"] = False   # CSV uses pandas anyway
+            sales_cfg["write_pyarrow"] = False
+            sales_cfg.setdefault("write_delta", False)
 
+        # Default delta folder
+        sales_cfg.setdefault(
+            "delta_output_folder",
+            str(Path(sales_cfg["out_folder"]) / "delta")
+        )
+
+        # Pass-through to generator
         generate_sales_fact(
             parquet_folder=sales_cfg["parquet_folder"],
             out_folder=sales_cfg["out_folder"],
@@ -196,10 +212,10 @@ def main():
             start_date=sales_cfg["start_date"],
             end_date=sales_cfg["end_date"],
 
-            delete_chunks=sales_cfg["delete_chunks"],
-            heavy_pct=sales_cfg["heavy_pct"],
-            heavy_mult=sales_cfg["heavy_mult"],
-            seed=sales_cfg["seed"],
+            delete_chunks=sales_cfg.get("delete_chunks", False),
+            heavy_pct=sales_cfg.get("heavy_pct", 5),
+            heavy_mult=sales_cfg.get("heavy_mult", 5),
+            seed=sales_cfg.get("seed", 42),
 
             file_format=sales_cfg["file_format"],
             row_group_size=sales_cfg.get("row_group_size"),
@@ -207,13 +223,17 @@ def main():
             merge_parquet=sales_cfg.get("merge_parquet"),
             merged_file=sales_cfg.get("merged_file"),
 
-            # --- Ultra-optimized engine params (NEW) ---
             workers=sales_cfg.get("workers"),
             write_pyarrow=sales_cfg.get("write_pyarrow", True),
-            tune_chunk=sales_cfg.get("tune_chunk", False)
+            tune_chunk=sales_cfg.get("tune_chunk", False),
+
+            # DELTA SUPPORT
+            write_delta=sales_cfg.get("write_delta", False),
+            delta_output_folder=sales_cfg.get("delta_output_folder"),
+            skip_order_cols=sales_cfg.get("skip_order_cols", False)
         )
 
-    # Final output
+    # PACKAGE FINAL OUTPUT
     with stage("Creating Final Output Folder"):
         final_folder = create_final_output_folder(
             parquet_dims=parquet_dims,
@@ -221,35 +241,55 @@ def main():
             file_format=sales_cfg["file_format"]
         )
 
-    # SQL Scripts (CSV only)
+        dims_out = final_folder / "dims"
+        facts_out = final_folder / "facts"
+
+    # SQL SCRIPTS — CSV ONLY
     if sales_cfg.get("file_format") == "csv":
         with stage("Generating BULK INSERT Scripts"):
             dims_folder = final_folder / "dims"
             facts_folder = final_folder / "facts"
 
-            generate_bulk_insert_script(
-                csv_folder=facts_folder,
-                table_name="Sales",
-                output_sql_file=final_folder / "bulk_insert_sales.sql"
-            )
+            dims_csv = sorted(p for p in dims_folder.glob("*.csv"))
+            facts_csv = sorted(p for p in facts_folder.glob("*.csv"))
 
-            generate_bulk_insert_script(
-                csv_folder=dims_folder,
-                table_name=None,
-                output_sql_file=final_folder / "bulk_insert_dimensions.sql"
-            )
+            if not dims_csv and not facts_csv:
+                print("⚠ No CSV files found — skipping BULK INSERT scripts.")
+            else:
+                # bulk insert for dimensions (infer table names)
+                generate_bulk_insert_script(
+                    csv_folder=str(dims_folder),
+                    table_name=None,
+                    output_sql_file=str(final_folder / "bulk_insert_dims.sql")
+                )
 
+                # bulk insert for facts (explicit table name)
+                generate_bulk_insert_script(
+                    csv_folder=str(facts_folder),
+                    table_name="Sales",
+                    output_sql_file=str(final_folder / "bulk_insert_facts.sql")
+                )
+
+                print("✔ Bulk Insert scripts generated successfully.")
+
+        # CREATE TABLE SCRIPTS — ALWAYS
         with stage("Generating CREATE TABLE Scripts"):
             generate_all_create_tables(
-                dim_folder=dims_folder,
-                fact_folder=facts_folder,
+                dim_folder=dims_out,
+                fact_folder=facts_out,
                 output_folder=final_folder
             )
 
-    print("\n✔ All tables generated and packaged successfully!\n")
-    print(f"📂 Output Folder: {final_folder}")
-    print(f"\n=== ALL STEPS COMPLETED IN {time.time() - total_start:.2f} SECONDS ===\n")
 
+    print(f"✔ DONE in {time.time() - total_start:.2f} seconds")
 
+    # CLEAN UP: Remove intermediate fact_out folder after everything is packaged
+    with stage("Cleaning intermediate fact_out folder"):
+        clear_folder(fact_out)
+
+# ---------------------------------------------------------
+# ENTRYPOINT
+# ---------------------------------------------------------
 if __name__ == "__main__":
     main()
+

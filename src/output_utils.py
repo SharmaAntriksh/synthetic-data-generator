@@ -3,6 +3,14 @@ import shutil
 import pandas as pd
 from datetime import datetime
 import csv
+import pyarrow.parquet as pq
+
+# Delta Lake availability check
+try:
+    from deltalake import write_deltalake
+    DELTA_AVAILABLE = True
+except Exception:
+    DELTA_AVAILABLE = False
 
 
 # ============================================================
@@ -66,12 +74,18 @@ def create_final_output_folder(parquet_dims: str | Path,
     customer_rows = count_rows_parquet(cust_path)
 
     # --------------------------------------------------------
-    # Count Sales Rows
+    # Count Sales Rows (Delta-aware)
     # --------------------------------------------------------
     if file_format == "csv":
         fact_files = list(fact_folder.glob("*.csv"))
         sales_rows = sum(count_rows_csv(f) for f in fact_files)
-    else:
+
+    elif file_format == "deltaparquet":
+        delta_dir = fact_folder / "delta"
+        part_files = list(delta_dir.glob("*.parquet"))
+        sales_rows = sum(count_rows_parquet(f) for f in part_files)
+
+    else:   # parquet mode
         fact_files = list(fact_folder.glob("*.parquet"))
         sales_rows = sum(count_rows_parquet(f) for f in fact_files)
 
@@ -97,9 +111,16 @@ def create_final_output_folder(parquet_dims: str | Path,
     # --------------------------------------------------------
     # DIMENSIONS
     # --------------------------------------------------------
+    dim_files = list(parquet_dims.glob("*.parquet"))
+    
+    dim_files = [
+        f for f in parquet_dims.glob("*.parquet")
+        if f.stem.lower() not in {"geography_source", "worldcities"}  # skip raw source
+    ]
+
     if file_format == "csv":
-        # CSV mode: convert all parquet dims to CSV
-        for f in parquet_dims.glob("*.parquet"):
+        # Convert dims to CSV
+        for f in dim_files:
             df = pd.read_parquet(f)
             df.to_csv(
                 dims_out / (f.stem + ".csv"),
@@ -108,24 +129,50 @@ def create_final_output_folder(parquet_dims: str | Path,
                 quoting=csv.QUOTE_ALL
             )
     else:
-        # Parquet mode: copy only parquet dims (NO CSV)
-        for f in parquet_dims.glob("*.parquet"):
-            shutil.copy2(f, dims_out / f.name)
+        # Parquet and DeltaParquet
+        for f in dim_files:
+            if file_format == "deltaparquet":
+                if not DELTA_AVAILABLE:
+                    raise RuntimeError("DeltaParquet mode selected but 'deltalake' is not installed.")
+                table = pq.read_table(f)
+                dim_delta_out = dims_out / f.stem
+                write_deltalake(str(dim_delta_out), table, mode="overwrite")
+            else:
+                shutil.copy2(f, dims_out / f.name)
 
     # --------------------------------------------------------
     # FACT FILES
     # --------------------------------------------------------
+
+    if file_format == "deltaparquet":
+        # Delta-only output
+        delta_src = fact_folder / "delta"
+        if not delta_src.exists():
+            raise RuntimeError("Delta folder is missing in fact_folder for deltaparquet mode.")
+
+        delta_dest = facts_out / "sales"
+        shutil.copytree(delta_src, delta_dest, dirs_exist_ok=True)
+
+        return final_folder
+
+    # CSV or Parquet mode
+    fact_files = list(fact_folder.glob("*.parquet")) + list(fact_folder.glob("*.csv"))
+
+    # Copy fact files
     for f in fact_files:
         shutil.copy2(f, facts_out / f.name)
 
-        # If fact is parquet but user requested CSV output → convert
-        if file_format == "csv" and f.suffix.lower() == ".parquet":
-            df = pd.read_parquet(f)
-            df.to_csv(
-                facts_out / (f.stem + ".csv"),
-                index=False,
-                encoding="utf-8",
-                quoting=csv.QUOTE_ALL
-            )
+    # CSV conversion for parquet facts
+    if file_format == "csv":
+        # Copy CSV files produced directly by workers
+        for f in fact_folder.glob("*.csv"):
+            shutil.copy2(f, facts_out / f.name)
+
+
+    # Delta dual-write (parquet + delta)
+    delta_src = fact_folder / "delta"
+    if file_format == "parquet" and delta_src.exists() and any(f.name.startswith("part-") for f in delta_src.glob("*.parquet")):
+        delta_dest = facts_out / "sales"
+        shutil.copytree(delta_src, delta_dest, dirs_exist_ok=True)
 
     return final_folder

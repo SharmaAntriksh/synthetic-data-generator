@@ -1,13 +1,13 @@
 import os
 from datetime import datetime
-
+from pathlib import Path
 
 def generate_bulk_insert_script(
     csv_folder,
     table_name=None,
     output_sql_file="bulk_insert.sql",
     field_terminator=",",
-    row_terminator="\\n",
+    row_terminator="\n",
     codepage="65001",
 ):
     """
@@ -17,6 +17,15 @@ def generate_bulk_insert_script(
     - If table_name is None (dimensions folder), infer table name from file name.
     - Uses SQL Server's CSV mode (no XML format file required).
     """
+
+    csv_folder = Path(csv_folder)
+
+    # ----------------------------------------------------------
+    # Prevent stray "bulk_insert.sql" in project root
+    # If user did NOT pass a custom filename, redirect output inside csv_folder
+    # ----------------------------------------------------------
+    if output_sql_file == "bulk_insert.sql":
+        output_sql_file = str(csv_folder / "_ignored_bulk_insert.sql")
 
     # ----------------------------------------------------------
     # Collect CSV Files
@@ -45,7 +54,7 @@ def generate_bulk_insert_script(
     # ----------------------------------------------------------
     for csv_file in csv_files:
 
-        # If table_name is supplied (fact), use it. Otherwise infer table name from file.
+        # If table_name is supplied (fact), use it. Otherwise infer from filename.
         if table_name:
             inferred_table = table_name
         else:
