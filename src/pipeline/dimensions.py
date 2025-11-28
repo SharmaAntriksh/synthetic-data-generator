@@ -2,15 +2,15 @@ import time
 from pathlib import Path
 from contextlib import contextmanager
 
-from src.customers import generate_synthetic_customers
-from src.promotions import generate_promotions_catalog
-from src.stores import generate_store_table
-from src.dates import generate_date_table
-from src.currency import generate_currency_dimension
-from src.exchange_rates import generate_exchange_rate_table
-from src.geography_builder import build_dim_geography
+from src.dimensions.customers import generate_synthetic_customers
+from src.dimensions.promotions import generate_promotions_catalog
+from src.dimensions.stores import generate_store_table
+from src.dimensions.dates import generate_date_table
+from src.dimensions.currency import generate_currency_dimension
+from src.dimensions.exchange_rates import generate_exchange_rate_table
+from src.dimensions.geography_builder import build_dim_geography
 
-from src.versioning import should_regenerate, save_version
+from src.utils.versioning import should_regenerate, save_version
 
 
 @contextmanager

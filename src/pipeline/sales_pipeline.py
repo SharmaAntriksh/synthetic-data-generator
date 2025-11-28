@@ -2,8 +2,8 @@ import time
 from pathlib import Path
 from contextlib import contextmanager
 
-from src.sales import generate_sales_fact
-from src.output_utils import clear_folder
+from src.facts.sales import generate_sales_fact
+from src.utils.output_utils import clear_folder
 
 
 @contextmanager

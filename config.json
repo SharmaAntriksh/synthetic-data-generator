@@ -50,7 +50,7 @@
       "start_date": "2021-01-01",
       "end_date": "2025-10-31",
 
-      "file_format": "deltaparquet",             
+      "file_format": "csv",             
       "write_delta": false,                 
       "delta_output_folder": "./data/fact_out/delta",     
 

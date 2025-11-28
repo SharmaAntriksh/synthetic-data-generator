@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Patched sales.py — ultra-optimized generator with optional CuPy acceleration and
 DELTAPARQUET (real Delta Lake) support.
@@ -43,6 +42,7 @@ try:
         GPU_AVAILABLE = False
 except Exception:
     GPU_AVAILABLE = False
+
 
 # -------------------------
 # Basic helpers

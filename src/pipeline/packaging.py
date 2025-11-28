@@ -2,9 +2,9 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from src.output_utils import create_final_output_folder, clear_folder
-from src.generate_bulk_insert_sql import generate_bulk_insert_script
-from src.generate_create_table_scripts import generate_all_create_tables
+from src.utils.output_utils import create_final_output_folder, clear_folder
+from src.sql.generate_bulk_insert_sql import generate_bulk_insert_script
+from src.sql.generate_create_table_scripts import generate_all_create_tables
 
 
 @contextmanager

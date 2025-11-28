@@ -1,5 +1,5 @@
 import os
-from src.static_schemas import STATIC_SCHEMAS, get_sales_schema
+from src.utils.static_schemas import STATIC_SCHEMAS, get_sales_schema
 
 
 def create_table_from_static_schema(table_name, cols):
