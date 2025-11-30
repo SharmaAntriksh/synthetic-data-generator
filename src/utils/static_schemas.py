@@ -30,12 +30,18 @@ STATIC_SCHEMAS = {
     ],
 
     "Products": [
-        ("ProductKey",            "INT NOT NULL"),
-        ("ProductName",           "VARCHAR(200)"),
-        ("ProductSubcategoryKey", "INT"),
-        ("UnitCost",              "DECIMAL(10,2)"),
-        ("UnitPrice",             "DECIMAL(10,2)"),
-        ("Status",                "VARCHAR(20)")
+        ("ProductKey",              "INT NOT NULL"),
+        ("ProductCode",             "VARCHAR(200)"),
+        ("ProductName",             "VARCHAR(200)"),
+        ("ProductDescription",      "VARCHAR(200)"),
+        ("ProductSubcategoryKey",   "INT"),
+        ("Brand",                   "VARCHAR(20)"),
+        ("Class",                   "VARCHAR(20)"),
+        ("Color",                   "VARCHAR(20)"),
+        ("StockTypeCode",           "VARCHAR(20)"),
+        ("StockType",               "VARCHAR(20)"),
+        ("UnitCost",                "DECIMAL(10,2)"),
+        ("UnitPrice",               "DECIMAL(10,2)")
     ],
 
     "Product_Category": [
@@ -53,8 +59,12 @@ STATIC_SCHEMAS = {
 
     "Promotions": [
         ("PromotionKey",         "INT NOT NULL"),
-        ("PromotionName",        "VARCHAR(200)"),
+        ("PromotionLabel",        "VARCHAR(20)"),
+        ("PromotionName",        "VARCHAR(50)"),
+        ("PromotionDescription",  "VARCHAR(100)"),
         ("DiscountPct",          "DECIMAL(6,2)"),
+        ("PromotionType",        "VARCHAR(20)"),
+        ("PromotionCategory",     "VARCHAR(20)"),
         ("StartDate",            "DATE"),
         ("EndDate",              "DATE")
     ],
@@ -65,8 +75,8 @@ STATIC_SCHEMAS = {
         ("StoreType",        "VARCHAR(20)"),
         ("Status",           "VARCHAR(10)"),
         ("GeographyKey",     "INT"),
-        ("OpenDate",         "DATE"),
-        ("CloseDate",        "DATE"),
+        ("OpenDate",         "DATETIME"),
+        ("CloseDate",        "DATETIME"),
         ("OpenFlag",         "BIT"),
         ("SquarFootage",     "INT"),
         ("EmployeeCount",    "INT"),

@@ -202,22 +202,27 @@ def generate_date_table(start_date, end_date, first_fy_month):
         [
             "Date","Date Key",
 
-            "Year","Is Year Start","Is Year End","Year Month Number","Year Quarter Number",
+            "Year","Is Year Start","Is Year End",
 
-            "Quarter","Quarter Year","Quarter Start Date","Quarter End Date",
+            "Quarter","Quarter Start Date","Quarter End Date",
             "Is Quarter Start","Is Quarter End",
+            "Quarter Year",
 
-            "Month","Month Name","Month Short","Month Start Date","Month End Date",
-            "Month Year","Month Year Number","Is Month Start","Is Month End",
+            "Month","Month Name","Month Short",
+            "Month Start Date","Month End Date",
+            "Month Year","Month Year Number",
+            "Is Month Start","Is Month End",
 
-            "Week Of Year ISO","ISO Year","Week Of Month","Week Start Date","Week End Date",
+            "Week Of Year ISO","ISO Year","Week Of Month",
+            "Week Start Date","Week End Date",
 
             "Day","Day Name","Day Short","Day Of Year","Day Of Week",
-            "Is Weekend","Is Business Day","Next Business Day","Previous Business Day",
+            "Is Weekend","Is Business Day",
+            "Next Business Day","Previous Business Day",
 
             "Fiscal Year Start Year","Fiscal Month Number","Fiscal Quarter Number",
-            "Fiscal Quarter Name","Fiscal Year Bin","Fiscal Year Month Number",
-            "Fiscal Year Quarter Number",
+            "Fiscal Quarter Name","Fiscal Year Bin",
+            "Fiscal Year Month Number","Fiscal Year Quarter Number",
 
             "Fiscal Year Start Date","Fiscal Year End Date",
             "Fiscal Quarter Start Date","Fiscal Quarter End Date",
@@ -227,8 +232,8 @@ def generate_date_table(start_date, end_date, first_fy_month):
 
             "Fiscal Year","Fiscal Year Label",
 
-            "Is Today","Is Current Year","Is Current Month","Is Current Quarter",
-            "Current Day Offset"
+            "Is Today","Is Current Year","Is Current Month",
+            "Is Current Quarter","Current Day Offset"
         ]
     ]
 

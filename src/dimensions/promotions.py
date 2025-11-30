@@ -4,26 +4,49 @@ from datetime import datetime, timedelta
 
 
 def generate_promotions_catalog(
-    years=range(2021, 2026),
+    years,
+    year_windows,
     num_seasonal=20,
     num_clearance=8,
     num_limited=12,
     seed=42
 ):
     """
-    Generate holiday, seasonal, clearance, limited-time,
-    and a final No-Discount promotion.
-
-    Logic fully identical to original — only cleaned.
+    Generate promotions using precise date windows per year.
+    `years` = list of valid years
+    `year_windows` = { year: (start_dt, end_dt) }
     """
 
-    np.random.seed(seed)
-    years = list(years)
-    start_year, end_year = min(years), max(years)
+    if not years:
+        raise ValueError("Promotions: No years provided.")
 
-    # --------------------------------------------------------
-    # FIXED PROMOTION TEMPLATES
-    # --------------------------------------------------------
+    np.random.seed(seed)
+
+    start_year = min(years)
+    end_year = max(years)
+
+    # ------------------------------------------------------
+    # Helpers using full date windows
+    # ------------------------------------------------------
+    def clamp(dt):
+        y = dt.year
+        if y not in year_windows:
+            return None
+        ws, we = year_windows[y]
+        if dt < ws:
+            return ws
+        if dt > we:
+            return we
+        return dt
+
+    def in_range(s, e):
+        return s is not None and e is not None
+
+    def mmdd_to_date(mmdd, y):
+        m, d = map(int, mmdd.split("-"))
+        return datetime(y, m, d)
+
+    # templates unchanged
     HOLIDAYS = [
         ("Black Friday",   "11-25", "11-30", 3, 10, 0.20, 0.70),
         ("Cyber Monday",   "11-28", "12-02", 2, 6,  0.15, 0.50),
@@ -54,50 +77,32 @@ def generate_promotions_catalog(
         "Mid-Season Discount",
     ]
 
-    # --------------------------------------------------------
-    # DATE HELPERS
-    # --------------------------------------------------------
-    def mmdd_to_date(mmdd, year):
-        m, d = map(int, mmdd.split("-"))
-        return datetime(year, m, d)
-
-    def clamp(dt):
-        if dt.year < start_year:
-            return datetime(start_year, dt.month, dt.day)
-        if dt.year > end_year:
-            return datetime(end_year, dt.month, dt.day)
-        return dt
-
-    def in_range(start, end):
-        return not (end.year < start_year or start.year > end_year)
-
-    # ========================================================
-    # 1. HOLIDAY PROMOTIONS
-    # ========================================================
-    holiday_promos = []
+    # ======================================================
+    # 1. HOLIDAY PROMOS (precision clamped)
+    # ======================================================
+    holiday = []
 
     for y in years:
         for name, s_mmdd, e_mmdd, min_d, max_d, dmin, dmax in HOLIDAYS:
 
             s = mmdd_to_date(s_mmdd, y)
+
             e_month = int(e_mmdd.split("-")[0])
-            e_year = y + 1 if e_month < int(s_mmdd.split("-")[0]) else y
+            s_month = int(s_mmdd.split("-")[0])
+            e_year = y + 1 if e_month < s_month else y
             e = mmdd_to_date(e_mmdd, e_year)
 
             span = (e - s).days
-            if span <= min_d:
-                p_start = s
-            else:
-                p_start = s + timedelta(days=np.random.randint(0, span - min_d + 1))
+            p_start = s if span <= min_d else s + timedelta(days=np.random.randint(0, span - min_d + 1))
+            p_end   = p_start + timedelta(days=np.random.randint(min_d, max_d + 1))
 
-            p_end = p_start + timedelta(days=np.random.randint(min_d, max_d + 1))
-
-            p_start, p_end = clamp(p_start), clamp(p_end)
+            p_start = clamp(p_start)
+            p_end   = clamp(p_end)
 
             if not in_range(p_start, p_end):
                 continue
 
-            holiday_promos.append({
+            holiday.append({
                 "TypeGroup": "Holiday",
                 "SeasonType": name,
                 "Year": y,
@@ -110,86 +115,69 @@ def generate_promotions_catalog(
                 "EndDate": pd.Timestamp(p_end),
             })
 
-    # ========================================================
-    # 2. SEASONAL PROMOTIONS
-    # ========================================================
-    seasonal_promos = []
+    # ======================================================
+    # 2. SEASONAL, CLEARANCE, LIMITED — all clamped
+    # ======================================================
+    def random_window(y, min_days, max_days):
+        start = datetime(y, np.random.randint(1, 13), np.random.randint(1, 29))
+        end   = start + timedelta(days=np.random.randint(min_days, max_days))
+        return clamp(start), clamp(end)
+
+    seasonal, clearance, limited = [], [], []
+
+    # seasonal
     for _ in range(num_seasonal):
         y = np.random.choice(years)
         stype = np.random.choice(SEASONAL_NAMES)
-
-        start = datetime(y, np.random.randint(1, 13), np.random.randint(1, 28))
-        end = start + timedelta(days=np.random.randint(10, 61))
-
-        start, end = clamp(start), clamp(end)
-
-        if in_range(start, end):
-            seasonal_promos.append({
+        s, e = random_window(y, 10, 60)
+        if in_range(s, e):
+            seasonal.append({
                 "TypeGroup": "Seasonal",
                 "SeasonType": stype,
                 "Year": y,
-                "StartDate": pd.Timestamp(start),
-                "EndDate": pd.Timestamp(end),
+                "StartDate": pd.Timestamp(s),
+                "EndDate": pd.Timestamp(e),
                 "DiscountPct": round(np.random.uniform(0.05, 0.30), 2),
                 "PromotionType": PROMO_TYPES["Seasonal"],
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
-    # ========================================================
-    # 3. CLEARANCE PROMOTIONS
-    # ========================================================
-    clearance_promos = []
+    # clearance
     for _ in range(num_clearance):
         y = np.random.choice(years)
-
-        start = datetime(y, np.random.randint(1, 13), np.random.randint(1, 28))
-        end = start + timedelta(days=np.random.randint(3, 25))
-
-        start, end = clamp(start), clamp(end)
-
-        if in_range(start, end):
-            clearance_promos.append({
+        s, e = random_window(y, 3, 25)
+        if in_range(s, e):
+            clearance.append({
                 "TypeGroup": "Clearance",
                 "SeasonType": "Clearance",
                 "Year": y,
-                "StartDate": pd.Timestamp(start),
-                "EndDate": pd.Timestamp(end),
+                "StartDate": pd.Timestamp(s),
+                "EndDate": pd.Timestamp(e),
                 "DiscountPct": round(np.random.uniform(0.30, 0.70), 2),
                 "PromotionType": PROMO_TYPES["Clearance"],
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
-    # ========================================================
-    # 4. LIMITED-TIME PROMOTIONS
-    # ========================================================
-    limited_promos = []
+    # limited
     for _ in range(num_limited):
         y = np.random.choice(years)
-
-        start = datetime(y, np.random.randint(1, 13), np.random.randint(1, 28))
-        end = start + timedelta(days=np.random.randint(1, 15))
-
-        start, end = clamp(start), clamp(end)
-
-        if in_range(start, end):
-            limited_promos.append({
+        s, e = random_window(y, 1, 15)
+        if in_range(s, e):
+            limited.append({
                 "TypeGroup": "Limited",
                 "SeasonType": "Limited Time",
                 "Year": y,
-                "StartDate": pd.Timestamp(start),
-                "EndDate": pd.Timestamp(end),
+                "StartDate": pd.Timestamp(s),
+                "EndDate": pd.Timestamp(e),
                 "DiscountPct": round(np.random.uniform(0.05, 0.35), 2),
                 "PromotionType": PROMO_TYPES["Limited"],
                 "PromotionCategory": np.random.choice(CATEGORIES),
             })
 
-    # ========================================================
-    # 5. Combine All (Holiday kept separate for naming)
-    # ========================================================
-    df = pd.DataFrame(
-        holiday_promos + seasonal_promos + clearance_promos + limited_promos
-    )
+    # combine
+    df = pd.DataFrame(holiday + seasonal + clearance + limited)
 
+    # naming, numbering (unchanged)
     numbered = []
     non_holiday = df[df["TypeGroup"] != "Holiday"]
 
@@ -209,9 +197,7 @@ def generate_promotions_catalog(
 
     final = pd.concat([holiday_df] + numbered, ignore_index=True)
 
-    # ========================================================
-    # 6. Append No-Discount Promotion
-    # ========================================================
+    # add no-discount promo
     final = pd.concat([
         final,
         pd.DataFrame([{
@@ -223,20 +209,16 @@ def generate_promotions_catalog(
             "DiscountPct": 0.00,
             "PromotionType": PROMO_TYPES["NoDiscount"],
             "PromotionCategory": "No Discount",
-            "StartDate": pd.Timestamp(start_year, 1, 1),
-            "EndDate": pd.Timestamp(end_year, 12, 31),
+            "StartDate": pd.Timestamp(year_windows[start_year][0]),
+            "EndDate": pd.Timestamp(year_windows[end_year][1]),
             "LocalIndex": None,
         }])
     ], ignore_index=True)
 
-    # ========================================================
-    # 7. Sort + Assign Keys
-    # ========================================================
     final = final.sort_values("StartDate").reset_index(drop=True)
     final["PromotionKey"] = final.index + 1
     final["PromotionLabel"] = final["PromotionKey"]
 
-    # Final column order
     return final[
         [
             "PromotionKey",
