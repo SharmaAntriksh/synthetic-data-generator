@@ -3,7 +3,7 @@
     "seed": 42,
 
     "dates": {
-      "start": "2020-01-01",
+      "start": "2020-01-02",
       "end": "2025-12-31"
     },
 
@@ -15,8 +15,8 @@
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
 
-    "total_rows": 5000000,
-    "chunk_size": 1000000,
+    "total_rows": 500000000,
+    "chunk_size": 5000000,
 
     "file_format": "parquet",
     "write_delta": false,

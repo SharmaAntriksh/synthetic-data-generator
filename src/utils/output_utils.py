@@ -48,7 +48,9 @@ def count_rows_csv(path: Path) -> int:
 
 
 def count_rows_parquet(path: Path) -> int:
-    return len(pd.read_parquet(path))
+    """Count rows without loading the data (zero memory)."""
+    pf = pq.ParquetFile(path)
+    return pf.metadata.num_rows
 
 
 # ============================================================
@@ -79,8 +81,12 @@ def create_final_output_folder(parquet_dims: str | Path,
         sales_rows = sum(count_rows_parquet(f) for f in part_files)
 
     else:  # parquet
-        fact_files = list(fact_folder.glob("*.parquet"))
-        sales_rows = sum(count_rows_parquet(f) for f in fact_files)
+        merged_path = fact_folder / "sales.parquet"
+        if merged_path.exists():
+            sales_rows = count_rows_parquet(merged_path)
+        else:
+            fact_files = list(fact_folder.glob("*.parquet"))
+            sales_rows = sum(count_rows_parquet(f) for f in fact_files)
 
     # --------------------------------------------------------
     # Name Output Folder
