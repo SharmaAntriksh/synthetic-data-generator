@@ -149,8 +149,8 @@ def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_grou
 # WORKER TASK (runs once per chunk)
 # =========================================================================
 def _worker_task(args):
+    
     idx, batch_size, seed = args
-
     table_or_df = _build_chunk_table(batch_size, seed, no_discount_key=_G_no_discount_key)
 
     if isinstance(table_or_df, pa.Table):

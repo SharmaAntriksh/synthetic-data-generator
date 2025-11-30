@@ -132,11 +132,28 @@ def create_final_output_folder(parquet_dims: str | Path,
 
     # Delta-only mode
     if file_format == "deltaparquet":
-        delta_src = fact_folder / "delta"
+
+        # 1) Try modern sales.py output: fact_folder/sales/delta
+        delta_src = fact_folder / "sales" / "delta"
+
+        # 2) Fallback: fact_folder/delta
+        if not delta_src.exists():
+            delta_src = fact_folder / "delta"
+
+        # 3) Final fallback: any delta subfolder under fact_folder
+        if not delta_src.exists():
+            for child in fact_folder.iterdir():
+                if child.is_dir() and (child / "_delta_log").exists():
+                    delta_src = child
+                    break
+
+        # 4) If still not found → real error
         if not delta_src.exists():
             raise RuntimeError("Delta output folder missing for deltaparquet mode.")
+
         shutil.copytree(delta_src, facts_out / "sales", dirs_exist_ok=True)
         return final_folder
+
 
     # CSV + PARQUET modes
     for f in fact_folder.glob("*.*"):

@@ -2,6 +2,8 @@ from pathlib import Path
 from src.utils.logging_utils import info, skip, stage, done
 from src.utils.versioning import should_regenerate, save_version
 from src.facts.sales.sales import generate_sales_fact
+import os
+
 
 def run_sales_pipeline(sales_cfg, fact_out: Path, parquet_dims: Path, cfg):
     """
@@ -47,16 +49,21 @@ def run_sales_pipeline(sales_cfg, fact_out: Path, parquet_dims: Path, cfg):
         partition_enabled = partition_cfg.get("enabled", False)
         partition_cols    = partition_cfg.get("columns", [])
 
-    # Enforce correct behavior for DeltaParquet mode
-    if sales_cfg["file_format"] == "deltaparquet":
-        sales_cfg["write_delta"] = True
-        sales_cfg["merge_parquet"] = False
+    # ------------------------------------------------------------
+    # Run Sales regardless of format when regeneration is needed
+    # ------------------------------------------------------------
+    if sales_dependencies_changed or should_regenerate("sales", sales_cfg, sales_out):
+        info("Dependency triggered: Sales will regenerate.")
 
+        # Enforce DeltaParquet behavior
+        if sales_cfg["file_format"] == "deltaparquet":
+            sales_cfg["write_delta"] = True
+            sales_cfg["merge_parquet"] = False
 
         with stage("Generating Sales"):
             generate_sales_fact(
                 parquet_folder=sales_cfg["parquet_folder"],
-                out_folder=sales_cfg["out_folder"],
+                out_folder=fact_out,
 
                 total_rows=sales_cfg["total_rows"],
                 chunk_size=sales_cfg["chunk_size"],
@@ -67,7 +74,6 @@ def run_sales_pipeline(sales_cfg, fact_out: Path, parquet_dims: Path, cfg):
                 row_group_size=sales_cfg["row_group_size"],
                 compression=sales_cfg["compression"],
 
-                # Only used for CSV/Parquet; ignored for Delta with partitioning
                 merge_parquet=sales_cfg["merge_parquet"],
                 merged_file=sales_cfg["merged_file"],
                 delete_chunks=sales_cfg["delete_chunks"],
@@ -81,11 +87,9 @@ def run_sales_pipeline(sales_cfg, fact_out: Path, parquet_dims: Path, cfg):
                 tune_chunk=sales_cfg["tune_chunk"],
                 write_pyarrow=sales_cfg.get("write_pyarrow", True),
 
-                # Delta-related
                 write_delta=sales_cfg["write_delta"],
-                delta_output_folder=sales_cfg["delta_output_folder"],
+                delta_output_folder=os.path.join(fact_out, sales_cfg["delta_output_folder"]),
 
-                # NEW — pass partition settings
                 partition_enabled=partition_enabled,
                 partition_cols=partition_cols,
 
@@ -96,5 +100,6 @@ def run_sales_pipeline(sales_cfg, fact_out: Path, parquet_dims: Path, cfg):
 
     else:
         skip("Sales up-to-date; skipping regeneration")
+
 
     done("Sales pipeline complete.")

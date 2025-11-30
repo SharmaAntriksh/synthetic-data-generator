@@ -3,7 +3,7 @@
     "seed": 42,
 
     "dates": {
-      "start": "2020-01-03",
+      "start": "2020-01-01",
       "end": "2025-12-31"
     },
 
@@ -19,7 +19,7 @@
     "chunk_size": 100000,
 
     "file_format": "csv",
-    "write_delta": false,
+    "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 
     "merge_parquet": true,
@@ -51,7 +51,7 @@
   },
 
   "customers": {
-    "total_customers": 2349237,
+    "total_customers": 49237,
 
     "pct_india": 1,
     "pct_us": 60,

@@ -155,9 +155,22 @@ def generate_sales_fact(
 
     ensure_dir(out_folder)
 
-    if delta_output_folder is None:
+    # ============================================================================
+    # FIXED DELTA FOLDER HANDLING — SIMPLE, SAFE, AND ALWAYS CORRECT
+    # ============================================================================
+
+    if file_format == "deltaparquet":
+
+        # ALWAYS write to: <out_folder>/delta
+        # Ignore whatever was passed from config to avoid double-prefix bugs.
         delta_output_folder = os.path.join(out_folder, "delta")
-    ensure_dir(delta_output_folder)
+
+        ensure_dir(delta_output_folder)
+
+    else:
+        delta_output_folder = None
+
+
 
     # ------------------------------------------------------------
     # Load Customers
@@ -313,29 +326,30 @@ def generate_sales_fact(
     no_discount_key = 1
 
     # Init args for worker
-    init_args = (
-        product_np,
-        store_keys,
-        promo_keys_all,
-        promo_pct_all,
-        promo_start_all,
-        promo_end_all,
-        customers,
-        store_to_geo,
-        geo_to_currency,
-        date_pool,
-        date_prob,
-        out_folder,
-        file_format,
-        row_group_size,
-        compression,
-        no_discount_key,
-        delta_output_folder,
-        write_delta,
-        skip_order_cols,
-        partition_enabled,
-        partition_cols,
+    initargs = (
+        product_np,          # 1
+        store_keys,          # 2
+        promo_keys_all,      # 3
+        promo_pct_all,       # 4
+        promo_start_all,     # 5
+        promo_end_all,       # 6
+        customers,           # 7
+        store_to_geo,        # 8
+        geo_to_currency,     # 9
+        date_pool,           # 10
+        date_prob,           # 11
+        out_folder,          # 12
+        file_format,         # 13
+        row_group_size,      # 14
+        compression,         # 15
+        no_discount_key,     # 16
+        delta_output_folder, # 17
+        write_delta,         # 18
+        skip_order_cols,     # 19
+        partition_enabled,   # 20
+        partition_cols,      # 21
     )
+
 
     created_files = []
     # --- DEBUG: diagnostics before multiprocessing ---
@@ -349,37 +363,28 @@ def generate_sales_fact(
     with Pool(
         processes=n_workers,
         initializer=init_sales_worker,
-        initargs=init_args
+        initargs=initargs
     ) as pool:
         for result in pool.imap_unordered(_worker_task, tasks):
+            # Normalize result to file path
+            if isinstance(result, str):
+                # CSV or Parquet returned a path
+                created_files.append(result)
+                continue
+            
+            # deltaparquet -> ("delta", idx, table)
             if isinstance(result, tuple) and len(result) == 3 and result[0] == "delta":
-                _, _, table = result
-                write_deltalake(
-                    delta_output_folder,
-                    table,
-                    mode="append",
-                    partition_by=partition_cols  # IMPORTANT: ENABLE PARTITIONING
-                )
+                _, idx_returned, table = result
+                print(f"MASTER RECEIVED DELTA idx={idx_returned}; writing to {delta_output_folder}")
+                try:
+                    write_deltalake(delta_output_folder, table, mode="append", partition_by=partition_cols)
+                    print(f"MASTER DELTA WRITE OK idx={idx_returned}")
+                except Exception as e:
+                    print(f"MASTER DELTA WRITE FAILED idx={idx_returned} -> {e}")
                 continue
 
-            # Normalize: accept either plain path strings OR dicts with "path"
-            path = None
-            if isinstance(result, str):
-                path = result
-            elif isinstance(result, dict):
-                path = result.get("path")
-            elif isinstance(result, tuple) and len(result) >= 1:
-                # deltaparquet workers return ("delta", idx, table) — ignore here
-                path = None
-            else:
-                path = None
-
-            if path:
-                created_files.append(path)
-            else:
-                # log unexpected return for debugging but do not break the flow
-                info(f"Worker returned non-path result (ignored): {type(result)}")
-
+            # unexpected cases
+            info(f"Worker returned unexpected result type: {result}")
 
 
     done("All chunks completed.")
@@ -389,7 +394,14 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     if file_format == "deltaparquet":
         info("DeltaParquet mode: workers append directly to Delta Lake. No parquet merge required.")
+
+        # Create marker file to prevent pipeline thinking folder is empty
+        marker = os.path.join(out_folder, "_delta_complete.marker")
+        with open(marker, "w") as f:
+            f.write("delta generation complete")
+
         return created_files
+
 
     # ------------------------------------------------------------
     # CSV mode — no merge
