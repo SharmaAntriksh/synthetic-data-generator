@@ -15,10 +15,10 @@
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
 
-    "total_rows": 10000000,
-    "chunk_size": 1000000,
+    "total_rows": 1000000,
+    "chunk_size": 100000,
 
-    "file_format": "parquet",
+    "file_format": "deltaparquet",
     "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 
@@ -51,7 +51,7 @@
   },
 
   "customers": {
-    "total_customers": 1349237,
+    "total_customers": 49237,
 
     "pct_india": 1,
     "pct_us": 60,

@@ -224,7 +224,12 @@ def _worker_task(args):
         work(f"Delta chunk {idx} → {out_path}")
 
         # Return path (never Arrow table)
-        return ("delta", idx, out_path)
+        return {
+            "delta_part": out_path,
+            "chunk": idx,
+            "rows": table.num_rows
+        }
+
 
 
     # CSV MODE (prefer Arrow CSV writer)

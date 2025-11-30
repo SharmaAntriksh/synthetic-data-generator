@@ -373,10 +373,10 @@ def generate_sales_fact(
                 continue
             
             # deltaparquet -> ("delta", idx, table)
-            if isinstance(result, tuple) and result[0] == "delta":
-                _, idx_returned, part_path = result
-                info(f"MASTER DELTA {idx_returned}: {part_path}")
-                delta_part_paths.append(part_path)
+            # DELTAPARQUET: worker returns {"delta_part": ..., "chunk": ..., "rows": ...}
+            if isinstance(result, dict) and "delta_part" in result:
+                delta_part_paths.append(result["delta_part"])
+                total_rows += result.get("rows", 0)
                 continue
 
             # unexpected cases
@@ -401,9 +401,11 @@ def generate_sales_fact(
         for p in delta_part_paths:
             try:
                 tbl = pa.parquet.read_table(p, use_threads=True)
+                tables.append(tbl)   # <<< REQUIRED
             except Exception as e:
                 info(f"MASTER: ERROR reading parquet part {p}: {e}")
                 raise
+
 
         # 2. CONCAT INTO ONE TABLE
         try:
