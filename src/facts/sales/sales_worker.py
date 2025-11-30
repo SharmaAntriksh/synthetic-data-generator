@@ -129,11 +129,13 @@ def _worker_task(args):
     table_or_df = _build_chunk_table(batch, seed, no_discount_key=_G_no_discount_key)
 
     # Normalize to Arrow Table
-    table = (
-        table_or_df
-        if isinstance(table_or_df, pa.Table)
-        else pa.Table.from_pandas(table_or_df, preserve_index=False)
-    )
+    if isinstance(table_or_df, pa.Table):
+        table = table_or_df
+    else:
+        table = pa.Table.from_pandas(table_or_df, preserve_index=False)
+
+    # Row count (safe for Parquet and CSV)
+    nrows = table.num_rows
 
     # -----------------------------
     # Write output
@@ -148,10 +150,11 @@ def _worker_task(args):
         return ("delta", idx, table)
 
     else:
-        # Parquet
+        # Parquet via Arrow (best performance)
         import pyarrow.parquet as pq
 
         out = os.path.join(_G_out_folder, f"sales_chunk{idx:04d}.parquet")
+
         pq.write_table(
             table,
             out,
@@ -159,14 +162,21 @@ def _worker_task(args):
             compression=_G_compression,
         )
 
-        # Optional worker-side delta append
+        # Optional delta append
         if _G_write_delta:
             write_deltalake(_G_delta_output_folder, table, mode="append")
 
     # -----------------------------
-    # Progress indicator
+    # Progress indicator (safe)
     # -----------------------------
     pct = int((idx + 1) / total_chunks * 100)
-    work(f"Chunk {idx+1}/{total_chunks} ({pct}%) -> {out}")
+
+    work(
+        chunk=idx + 1,
+        total=total_chunks,
+        pct=pct,
+        rows=nrows,
+        outfile=out,
+    )
 
     return out

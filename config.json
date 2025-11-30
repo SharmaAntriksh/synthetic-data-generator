@@ -3,7 +3,7 @@
     "seed": 42,
 
     "dates": {
-      "start": "2021-01-01",
+      "start": "2020-01-01",
       "end": "2025-12-31"
     },
 
@@ -15,10 +15,10 @@
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
 
-    "total_rows": 2000000,
-    "chunk_size": 2000000,
+    "total_rows": 5000000,
+    "chunk_size": 1000000,
 
-    "file_format": "deltaparquet",
+    "file_format": "parquet",
     "write_delta": false,
     "delta_output_folder": "./data/fact_out/delta",
 
@@ -26,7 +26,7 @@
     "merged_file": "sales.parquet",
     "delete_chunks": true,
 
-    "row_group_size": 1000000,
+    "row_group_size": 2500000,
     "compression": "snappy",
 
     "heavy_pct": 5,
@@ -47,7 +47,7 @@
   },
 
   "customers": {
-    "total_customers": 49237,
+    "total_customers": 2349237,
 
     "pct_india": 1,
     "pct_us": 60,
@@ -66,8 +66,8 @@
   "geography": {
     "target_rows": 200,
     "country_weights": {
-      "United States": 0.30,
-      "India": 0.25,
+      "United States": 0.35,
+      "India": 0.20,
       "United Kingdom": 0.10,
       "Germany": 0.10,
       "France": 0.10,

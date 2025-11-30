@@ -1,38 +1,49 @@
 import os
-from datetime import datetime
-from contextlib import contextmanager
+import time
+from datetime import datetime, timedelta
 
-# ============================
-# Configuration
-# ============================
-
-ENABLE_COLORS = True          # Set False if logging to parsers or CI
-ENABLE_FILE_LOG = False       # Set True to log to a file
-LOG_FILE = "logs/runtime.log" # File path if ENABLE_FILE_LOG = True
-
-
-# ============================
-# ANSI Colors
-# ============================
+# ============================================================================
+# CONFIG
+# ============================================================================
+ENABLE_COLORS = True          # Colors in console
+ENABLE_FILE_LOG = False       # Save logs to file
+LOG_FILE = "logs/generator.log"
 
 COLORS = {
-    "INFO": "\033[94m",   # Blue
-    "SKIP": "\033[93m",   # Yellow
-    "WORK": "\033[96m",   # Cyan
-    "DONE": "\033[92m",   # Green
-    "ERROR": "\033[91m",  # Red
+    "INFO":  "\033[94m",   # Blue
+    "WORK":  "\033[93m",   # Yellow
+    "DONE":  "\033[92m",   # Green
+    "SKIP":  "\033[90m",   # Grey
+    "WARN":  "\033[95m",   # Magenta
+    "FAIL":  "\033[91m",   # Red
     "RESET": "\033[0m",
 }
 
+# Track entire pipeline start
+PIPELINE_START_TIME = time.time()
 
-# ============================
-# Core Logging
-# ============================
 
-def log(level, msg):
+# ============================================================================
+# HELPERS
+# ============================================================================
+def fmt_sec(sec):
+    """Return a clean human-readable time string."""
+    if sec < 1:
+        return f"{sec*1000:.0f}ms"
+    if sec < 60:
+        return f"{sec:.1f}s"
+    return str(timedelta(seconds=int(sec)))
+
+
+def human_duration(seconds):
+    """Backward-compatible for old code."""
+    return fmt_sec(seconds)
+
+
+def _line(level, msg):
+    """ Standard log line formatter. """
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Apply color if enabled
     if ENABLE_COLORS:
         color = COLORS.get(level, "")
         reset = COLORS["RESET"]
@@ -40,56 +51,86 @@ def log(level, msg):
     else:
         level_str = f"{level:<5}"
 
-    line = f"{ts} | {level_str} | {msg}"
+    return f"{ts} | {level_str} | {msg}"
 
-    # Print to console
+
+def _flush(line):
+    """Prints to stdout safely for multiprocessing."""
     print(line, flush=True)
 
-    # Optional logging to file
     if ENABLE_FILE_LOG:
         os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{ts} | {level:<5} | {msg}\n")
+            f.write(line + "\n")
 
 
-# ============================
-# Helper Shortcuts
-# ============================
-
-def info(msg): log("INFO", msg)
-def skip(msg): log("SKIP", msg)
-def work(msg): log("WORK", msg)
-def done(msg): log("DONE", msg)
-def error(msg): log("ERROR", msg)
+# ============================================================================
+# BASIC LOG LEVEL FUNCTIONS
+# ============================================================================
+def info(msg):
+    _flush(_line("INFO", msg))
 
 
-# ============================
-# Stage Context Manager
-# ============================
-
-@contextmanager
-def stage(label: str):
-    """Prints start and end timestamps with duration."""
-    info(f"{label}...")
-    start = datetime.now()
-
-    yield  # run the wrapped block
-
-    duration = (datetime.now() - start).total_seconds()
-    done(f"{label} ({duration:.2f}s)")
+def warn(msg):
+    _flush(_line("WARN", msg))
 
 
-def human_duration(seconds: float):
-    seconds = int(seconds)
-    mins, secs = divmod(seconds, 60)
-    hours, mins = divmod(mins, 60)
+def fail(msg):
+    _flush(_line("FAIL", msg))
+
+
+def skip(msg):
+    _flush(_line("SKIP", msg))
+
+
+def done(msg):
+    _flush(_line("DONE", msg))
+
+
+# ============================================================================
+# STAGE CONTEXT MANAGER (Auto-timed)
+# ============================================================================
+class stage:
+    """Clean stage logging without arrows or tick marks."""
+
+    def __init__(self, msg):
+        self.msg = msg
+        self.start = None
+
+    def __enter__(self):
+        self.start = time.time()
+        info(self.msg)   # No arrow
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        elapsed = fmt_sec(time.time() - self.start)
+        done(f"{self.msg} completed in {elapsed}")
+
+
+# ============================================================================
+# ENHANCED WORK LOGGER (For Multiprocessing Workers)
+# ============================================================================
+def work(msg="", *, chunk=None, total=None, outfile=None, **_ignore):
+    """
+    Simplified WORK logger.
+    Only prints:
+        - timestamp
+        - WORK level
+        - Chunk X/Y
+        - Output path
+    """
 
     parts = []
-    if hours > 0:
-        parts.append(f"{hours} hour" + ("s" if hours != 1 else ""))
-    if mins > 0:
-        parts.append(f"{mins} minute" + ("s" if mins != 1 else ""))
-    if secs > 0 or len(parts) == 0:
-        parts.append(f"{secs} second" + ("s" if secs != 1 else ""))
 
-    return ", ".join(parts)
+    # Show chunk progress if available
+    if chunk is not None and total is not None:
+        parts.append(f"Chunk {chunk}/{total}")
+
+    # Show output file path if available
+    if outfile:
+        parts.append(f"→ {outfile}")
+
+    # Build final message
+    final = " | ".join(parts) if parts else msg
+
+    _flush(_line("WORK", final))
