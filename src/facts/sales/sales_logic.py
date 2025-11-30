@@ -155,8 +155,9 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     due_date_np = od_np + due_offset.astype("timedelta64[D]")
 
     line_seed = (product_keys + (hash_vals % 100)) % 100
+    order_seed = hash_vals % 100
     product_seed = (hash_vals + product_keys) % 100
-    order_seed = (hash_vals % 100).astype(np.int64)
+
 
     base_offset = np.zeros(n, dtype=np.int64)
     mask_c = (60 <= order_seed) & (order_seed < 85) & (product_seed >= 60)
@@ -174,25 +175,28 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     delivery_date_np = due_date_np + delivery_offset.astype("timedelta64[D]")
 
     # delivery_status as fixed-length numpy unicode array (avoids python object arrays)
-    delivery_status = np.where(
-        delivery_date_np < due_date_np, "Early Delivery",
-        np.where(delivery_date_np > due_date_np, "Delayed", "On Time")
-    ).astype(f'U15')  # small fixed-width unicode dtype
+    delivery_status = np.full(n, "On Time", dtype='U15')
+    delivery_status[delivery_date_np < due_date_np] = "Early Delivery"
+    delivery_status[delivery_date_np > due_date_np] = "Delayed"
+
 
     # ---------------------------------------------------------
     # PROMOTIONS (keeps loop — cheap if promo list small)
     # ---------------------------------------------------------
     promo_keys = np.full(n, no_discount_key, dtype=np.int64)
-    promo_pct = np.zeros(n, dtype=np.float64)
+    promo_pct  = np.zeros(n, dtype=np.float64)
 
     if promo_keys_all is not None and promo_keys_all.size > 0:
-        # promo_start_all / promo_end_all are expected to be numpy datetimes
-        for pk, pct, start, end in zip(promo_keys_all, promo_pct_all, promo_start_all, promo_end_all):
-            # mask is boolean vector over order dates (od_np)
-            mask = (od_np >= start) & (od_np <= end)
-            if mask.any():
-                promo_keys[mask] = pk
-                promo_pct[mask] = pct
+        od_expanded = od_np[:, None]
+
+        start_ok = od_expanded >= promo_start_all
+        end_ok   = od_expanded <= promo_end_all
+        mask_all = start_ok & end_ok
+
+        if mask_all.any():
+            promo_keys = np.where(mask_all.any(axis=1), promo_keys_all[np.argmax(mask_all, axis=1)], promo_keys)
+            promo_pct  = np.where(mask_all.any(axis=1), promo_pct_all[np.argmax(mask_all, axis=1)], promo_pct)
+
 
     # ---------------------------------------------------------
     # DISCOUNTS
@@ -211,11 +215,11 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     # ---------------------------------------------------------
     # ORDER DELAY FLAG (order-level → line-level) using int grouping
     # ---------------------------------------------------------
-    delayed_line = (delivery_status == "Delayed").astype(np.int64)
-    unique_ids, inv_idx = np.unique(sales_order_num_int, return_inverse=True)
-    counts = np.bincount(inv_idx, weights=delayed_line, minlength=len(unique_ids))
-    delayed_any = (counts > 0).astype(np.int8)
+    delayed_line = (delivery_status == "Delayed")
+    _, inv_idx = np.unique(sales_order_num_int, return_inverse=True)
+    delayed_any = np.bincount(inv_idx, weights=delayed_line).astype(bool)
     is_order_delayed = delayed_any[inv_idx].astype(np.int8)
+
 
     # ---------------------------------------------------------
     # FINAL PRICE & COST TRANSFORM
@@ -231,30 +235,41 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     # OUTPUT: PYARROW OR PANDAS (Arrow-first, minimizing copies)
     # ---------------------------------------------------------
     if pa is not None:
+        # --- Precast dates once (your current block recasts twice) ---
+        od_d  = od_np.astype("datetime64[D]")
+        due_d = due_date_np.astype("datetime64[D]")
+        del_d = delivery_date_np.astype("datetime64[D]")
+
+        # --- Build Arrow arrays (no schema changes, same columns) ---
         cols = {
-            "OrderDate": pa.array(od_np),
-            "DueDate": pa.array(due_date_np.astype("datetime64[D]")),
-            "DeliveryDate": pa.array(delivery_date_np.astype("datetime64[D]")),
+            "OrderDate": pa.array(od_d),
+            "DueDate": pa.array(due_d),
+            "DeliveryDate": pa.array(del_d),
+
             "StoreKey": pa.array(store_key_arr, pa.int64()),
             "ProductKey": pa.array(product_keys, pa.int64()),
             "PromotionKey": pa.array(promo_keys, pa.int64()),
             "CurrencyKey": pa.array(currency_arr, pa.int64()),
             "CustomerKey": pa.array(customer_keys, pa.int64()),
+
             "Quantity": pa.array(qty, pa.int64()),
             "NetPrice": pa.array(final_net_price, pa.float64()),
             "UnitCost": pa.array(final_unit_cost, pa.float64()),
             "UnitPrice": pa.array(final_unit_price, pa.float64()),
             "DiscountAmount": pa.array(final_discount_amt, pa.float64()),
-            # delivery_status is a numpy unicode (fixed-width) — pass directly
+
+            # SAME: delivery_status is already a numpy unicode array
             "DeliveryStatus": pa.array(delivery_status, pa.string()),
             "IsOrderDelayed": pa.array(is_order_delayed, pa.int8()),
         }
 
+        # --- KEEP EXACT SAME LOGIC FOR OPTIONAL COLUMNS ---
         if not skip_cols:
             cols["SalesOrderNumber"] = pa.array(sales_order_num, pa.string())
             cols["SalesOrderLineNumber"] = pa.array(line_num, pa.int64())
 
         return pa.table(cols)
+
 
     else:
         df = {

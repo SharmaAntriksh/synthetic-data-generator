@@ -303,13 +303,18 @@ def generate_sales_fact(
     idx = 0
     rng_master = np.random.default_rng(seed + 1)
 
-    while remaining > 0:
-        batch = min(chunk_size, remaining)
+    seeds = rng_master.integers(1, 1<<30, size=ceil(total_rows / chunk_size))
 
-        tasks.append((idx, batch, int(rng_master.integers(1, 1 << 30))))
-        
+    idx = 0
+    remaining = total_rows
+    for seed in seeds:
+        batch = min(chunk_size, remaining)
+        tasks.append((idx, batch, int(seed)))
         remaining -= batch
         idx += 1
+        if remaining <= 0:
+            break
+
 
     total_chunks = len(tasks)
 
@@ -370,7 +375,7 @@ def generate_sales_fact(
             # deltaparquet -> ("delta", idx, table)
             if isinstance(result, tuple) and result[0] == "delta":
                 _, idx_returned, part_path = result
-                print(f"MASTER RECEIVED DELTA idx={idx_returned} → {part_path}")
+                info(f"MASTER DELTA {idx_returned}: {part_path}")
                 delta_part_paths.append(part_path)
                 continue
 
@@ -395,15 +400,14 @@ def generate_sales_fact(
         tables = []
         for p in delta_part_paths:
             try:
-                tbl = pa.parquet.read_table(p)
-                tables.append(tbl)
+                tbl = pa.parquet.read_table(p, use_threads=True)
             except Exception as e:
                 info(f"MASTER: ERROR reading parquet part {p}: {e}")
                 raise
 
         # 2. CONCAT INTO ONE TABLE
         try:
-            final_table = pa.concat_tables(tables, promote=True)
+            final_table = pa.concat_tables(tables, promote_options="default")
         except Exception as e:
             info(f"MASTER: ERROR concatenating tables: {e}")
             raise
@@ -466,7 +470,7 @@ def generate_sales_fact(
             )
 
         # FINAL SAFETY: remove any stray chunk files (ensures exactly one file left)
-        for stray in glob.glob(os.path.join(out_folder, "sales_chunk*.parquet")):
+        for stray in glob.iglob(os.path.join(out_folder, "sales_chunk*.parquet")):
             try:
                 os.remove(stray)
             except Exception:

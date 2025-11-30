@@ -208,9 +208,9 @@ def _worker_task(args):
     if _G_file_format == "deltaparquet":
 
         # Workers write into:  <delta_output_folder>/_tmp_parts/
-        os.makedirs(_G_delta_output_folder, exist_ok=True)
         tmp_dir = os.path.join(_G_delta_output_folder, "_tmp_parts")
         os.makedirs(tmp_dir, exist_ok=True)
+
 
         out_path = os.path.join(tmp_dir, f"delta_part_{idx:04d}.parquet")
 
@@ -233,7 +233,7 @@ def _worker_task(args):
         out_path = os.path.join(_G_out_folder, f"sales_chunk{idx:04d}.csv")
         if not _try_write_csv_arrow(table, out_path):
             # Fallback: use pandas write (only if Arrow CSV unavailable)
-            table.to_pandas().to_csv(out_path, index=False)
+            table.to_pandas(split_blocks=True).to_csv(out_path, index=False)
         work(f"Chunk {idx} → {out_path}")
         return out_path
 

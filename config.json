@@ -3,7 +3,7 @@
     "seed": 42,
 
     "dates": {
-      "start": "2020-01-01",
+      "start": "2020-01-02",
       "end": "2025-12-31"
     },
 
@@ -18,7 +18,7 @@
     "total_rows": 10000000,
     "chunk_size": 1000000,
 
-    "file_format": "deltaparquet",
+    "file_format": "parquet",
     "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 
@@ -51,7 +51,7 @@
   },
 
   "customers": {
-    "total_customers": 49237,
+    "total_customers": 1349237,
 
     "pct_india": 1,
     "pct_us": 60,
