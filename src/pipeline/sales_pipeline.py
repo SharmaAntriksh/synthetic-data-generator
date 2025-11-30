@@ -47,6 +47,12 @@ def run_sales_pipeline(sales_cfg, fact_out: Path, parquet_dims: Path, cfg):
         partition_enabled = partition_cfg.get("enabled", False)
         partition_cols    = partition_cfg.get("columns", [])
 
+    # Enforce correct behavior for DeltaParquet mode
+    if sales_cfg["file_format"] == "deltaparquet":
+        sales_cfg["write_delta"] = True
+        sales_cfg["merge_parquet"] = False
+
+
         with stage("Generating Sales"):
             generate_sales_fact(
                 parquet_folder=sales_cfg["parquet_folder"],

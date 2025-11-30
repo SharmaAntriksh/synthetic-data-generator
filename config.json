@@ -16,7 +16,7 @@
     "out_folder": "./data/fact_out",
 
     "total_rows": 1000000,
-    "chunk_size": 1000000,
+    "chunk_size": 100000,
 
     "file_format": "csv",
     "write_delta": false,

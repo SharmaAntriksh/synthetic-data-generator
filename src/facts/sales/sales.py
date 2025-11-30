@@ -141,7 +141,6 @@ def generate_sales_fact(
     write_pyarrow=True,
     partition_enabled=False,
     partition_cols=None
-
 ):
     """
     Orchestrator for sales generation.
@@ -293,12 +292,13 @@ def generate_sales_fact(
 
     while remaining > 0:
         batch = min(chunk_size, remaining)
-        tasks.append((idx, batch, None, int(rng_master.integers(1, 1 << 30))))
+
+        tasks.append((idx, batch, int(rng_master.integers(1, 1 << 30))))
+        
         remaining -= batch
         idx += 1
 
     total_chunks = len(tasks)
-    tasks = [(i, b, total_chunks, s) for (i, b, _, s) in tasks]
 
     # Determine workers
     if workers is None:
@@ -338,6 +338,10 @@ def generate_sales_fact(
     )
 
     created_files = []
+    # --- DEBUG: diagnostics before multiprocessing ---
+    print(f"DEBUG total_rows={total_rows}, chunk_size={chunk_size}, num_tasks={len(tasks)}")
+    print(f"DEBUG out_folder (expected): {out_folder}")
+    print(f"DEBUG file_format: {file_format}, merge_parquet: {merge_parquet}, write_delta: {write_delta}")
 
     # ------------------------------------------------------------
     # Multiprocessing
@@ -345,15 +349,37 @@ def generate_sales_fact(
     with Pool(
         processes=n_workers,
         initializer=init_sales_worker,
-        initargs=init_args,
+        initargs=init_args
     ) as pool:
-
         for result in pool.imap_unordered(_worker_task, tasks):
-            # worker may return either a dict {"path": "..."} or a plain path string
-            if isinstance(result, dict):
-                created_files.append(result.get("path"))
+            if isinstance(result, tuple) and len(result) == 3 and result[0] == "delta":
+                _, _, table = result
+                write_deltalake(
+                    delta_output_folder,
+                    table,
+                    mode="append",
+                    partition_by=partition_cols  # IMPORTANT: ENABLE PARTITIONING
+                )
+                continue
+
+            # Normalize: accept either plain path strings OR dicts with "path"
+            path = None
+            if isinstance(result, str):
+                path = result
+            elif isinstance(result, dict):
+                path = result.get("path")
+            elif isinstance(result, tuple) and len(result) >= 1:
+                # deltaparquet workers return ("delta", idx, table) — ignore here
+                path = None
             else:
-                created_files.append(result)
+                path = None
+
+            if path:
+                created_files.append(path)
+            else:
+                # log unexpected return for debugging but do not break the flow
+                info(f"Worker returned non-path result (ignored): {type(result)}")
+
 
 
     done("All chunks completed.")
@@ -362,73 +388,39 @@ def generate_sales_fact(
     # Delta merge (FAST: streaming + vectorized partition filtering)
     # ------------------------------------------------------------
     if file_format == "deltaparquet":
-        info("Building partition buckets (vectorized streaming)...")
+        info("DeltaParquet mode: workers append directly to Delta Lake. No parquet merge required.")
+        return created_files
 
-        import pyarrow.parquet as pq
-        import pyarrow.compute as pc
-        from deltalake import write_deltalake
-
-        parquet_chunks = sorted(
-            [f for f in created_files if str(f).lower().endswith(".parquet")]
-        )
-
-        if not parquet_chunks:
-            raise RuntimeError("No parquet chunk files found for Delta merge.")
-
-        buckets = {}     # (Year, Month) -> list of Arrow tables
-        first_write = True
-
-        for pf in parquet_chunks:
-            tbl = pq.read_table(pf)
-
-            # Unique partition keys in this chunk (vectorized)
-            # Unique Year–Month pairs in this chunk (correct)
-            ym_df = tbl.select(["Year", "Month"]).to_pandas().drop_duplicates()
-            for y, m in zip(ym_df["Year"].astype(int), ym_df["Month"].astype(int)):
-                filter_expr = (
-                    (pc.field("Year") == pa.scalar(int(y))) &
-                    (pc.field("Month") == pa.scalar(int(m)))
-                )
-                part_tbl = tbl.filter(filter_expr)
-                buckets.setdefault((int(y), int(m)), []).append(part_tbl)
-
-
-        info("Writing Delta table (one file per partition)...")
-
-        os.makedirs(delta_output_folder, exist_ok=True)
-
-        for (y, m), tables in buckets.items():
-            # Vectorized concat for the small subset of tables
-            final_tbl = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
-
-            write_deltalake(
-                delta_output_folder,
-                final_tbl,
-                mode="overwrite" if first_write else "append",
-                partition_by=["Year", "Month"],
-            )
-            first_write = False
-
-        # cleanup
-        if delete_chunks:
-            for pf in parquet_chunks:
-                try: os.remove(pf)
-                except: pass
-
-        info("Delta merge completed (FAST).")
-
+    # ------------------------------------------------------------
+    # CSV mode — no merge
+    # ------------------------------------------------------------
+    if file_format == "csv":
+        info("CSV mode: writing CSV chunks only. No merge performed.")
+        return created_files
 
     # ------------------------------------------------------------
     # Merging parquet chunks (only if enabled)
     # ------------------------------------------------------------
-    if file_format == "parquet" and merge_parquet:
+    if file_format == "parquet":
         parquet_chunks = sorted(
-            glob.glob(os.path.join(out_folder, "sales_chunk*.parquet"))
+            f for f in glob.glob(os.path.join(out_folder, "sales_chunk*.parquet"))
+            if os.path.isfile(f)
         )
-        merge_parquet_files(
-            parquet_chunks,
-            os.path.join(out_folder, merged_file),
-            delete_after=delete_chunks,
-        )
+
+        if parquet_chunks:
+            # merge and ask merge_parquet_files to delete chunk files it processed
+            merge_parquet_files(
+                parquet_chunks,
+                os.path.join(out_folder, merged_file),
+                delete_after=True
+            )
+
+        # FINAL SAFETY: remove any stray chunk files (ensures exactly one file left)
+        for stray in glob.glob(os.path.join(out_folder, "sales_chunk*.parquet")):
+            try:
+                os.remove(stray)
+            except Exception:
+                info(f"Could not remove stray chunk file: {stray}")
+
 
     return created_files
