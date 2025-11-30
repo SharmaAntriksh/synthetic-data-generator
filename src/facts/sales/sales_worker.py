@@ -117,13 +117,17 @@ def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_grou
         normal_cols = [c for c in table.column_names if c not in part_cols]
         table = table.select(normal_cols + part_cols)
 
+    # Enable dictionary encoding for all columns EXCEPT SalesOrderNumber
+    dict_cols = [c for c in table.column_names if c != "SalesOrderNumber"]
+
     writer = pq.ParquetWriter(
         path,
         table.schema,
         compression=compression,
-        use_dictionary=False,
+        use_dictionary=dict_cols,   # <-- key change
         write_statistics=False,
     )
+
     try:
         total = table.num_rows
         # Write in row-group-sized slices to avoid allocating huge memory buffers

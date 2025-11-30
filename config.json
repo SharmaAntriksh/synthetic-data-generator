@@ -18,7 +18,7 @@
     "total_rows": 10000000,
     "chunk_size": 1000000,
 
-    "file_format": "parquet",
+    "file_format": "deltaparquet",
     "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 
