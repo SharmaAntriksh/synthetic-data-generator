@@ -350,13 +350,8 @@ def generate_sales_fact(
         partition_cols,      # 21
     )
 
-
     created_files = []
-    # --- DEBUG: diagnostics before multiprocessing ---
-    print(f"DEBUG total_rows={total_rows}, chunk_size={chunk_size}, num_tasks={len(tasks)}")
-    print(f"DEBUG out_folder (expected): {out_folder}")
-    print(f"DEBUG file_format: {file_format}, merge_parquet: {merge_parquet}, write_delta: {write_delta}")
-
+    delta_part_paths = [] 
     # ------------------------------------------------------------
     # Multiprocessing
     # ------------------------------------------------------------
@@ -373,14 +368,10 @@ def generate_sales_fact(
                 continue
             
             # deltaparquet -> ("delta", idx, table)
-            if isinstance(result, tuple) and len(result) == 3 and result[0] == "delta":
-                _, idx_returned, table = result
-                print(f"MASTER RECEIVED DELTA idx={idx_returned}; writing to {delta_output_folder}")
-                try:
-                    write_deltalake(delta_output_folder, table, mode="append", partition_by=partition_cols)
-                    print(f"MASTER DELTA WRITE OK idx={idx_returned}")
-                except Exception as e:
-                    print(f"MASTER DELTA WRITE FAILED idx={idx_returned} -> {e}")
+            if isinstance(result, tuple) and result[0] == "delta":
+                _, idx_returned, part_path = result
+                print(f"MASTER RECEIVED DELTA idx={idx_returned} → {part_path}")
+                delta_part_paths.append(part_path)
                 continue
 
             # unexpected cases
@@ -389,18 +380,65 @@ def generate_sales_fact(
 
     done("All chunks completed.")
 
-    # ------------------------------------------------------------
-    # Delta merge (FAST: streaming + vectorized partition filtering)
-    # ------------------------------------------------------------
-    if file_format == "deltaparquet":
-        info("DeltaParquet mode: workers append directly to Delta Lake. No parquet merge required.")
+    # ==============================================================
+    # FINAL DELTA ASSEMBLY — READ PARQUET PARTS → WRITE DELTA TABLE
+    # ==============================================================
 
-        # Create marker file to prevent pipeline thinking folder is empty
-        marker = os.path.join(out_folder, "_delta_complete.marker")
-        with open(marker, "w") as f:
-            f.write("delta generation complete")
+    if file_format == "deltaparquet":
+        info("MASTER: assembling Delta table from worker parquet parts...")
+
+        if not delta_part_paths:
+            info("MASTER: No delta parts found — cannot assemble Delta table.")
+            return created_files
+
+        # 1. READ ALL TEMP PARQUET PARTS INTO ARROW TABLES
+        tables = []
+        for p in delta_part_paths:
+            try:
+                tbl = pa.parquet.read_table(p)
+                tables.append(tbl)
+            except Exception as e:
+                info(f"MASTER: ERROR reading parquet part {p}: {e}")
+                raise
+
+        # 2. CONCAT INTO ONE TABLE
+        try:
+            final_table = pa.concat_tables(tables, promote=True)
+        except Exception as e:
+            info(f"MASTER: ERROR concatenating tables: {e}")
+            raise
+
+        # 3. WRITE DELTA LAKE TABLE (single atomic operation)
+        try:
+            write_deltalake(
+                delta_output_folder,
+                final_table,
+                mode="append",
+                partition_by=partition_cols
+            )
+        except Exception as e:
+            import traceback
+            info("MASTER: write_deltalake ERROR:")
+            info(traceback.format_exc())
+            raise
+
+        info("MASTER: Delta table write DONE.")
+
+        # 4. DELETE TEMP PART FILES
+        for p in delta_part_paths:
+            try:
+                os.remove(p)
+            except Exception as e:
+                info(f"Could not delete temp part {p}: {e}")
+
+        # 5. DELETE TEMP DIR IF EMPTY
+        tmp_dir = os.path.join(delta_output_folder, "_tmp_parts")
+        if os.path.isdir(tmp_dir) and not os.listdir(tmp_dir):
+            os.rmdir(tmp_dir)
 
         return created_files
+
+
 
 
     # ------------------------------------------------------------
