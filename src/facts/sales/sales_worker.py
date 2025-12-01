@@ -25,7 +25,7 @@ _G_date_prob = None
 _G_out_folder = None
 _G_file_format = None
 _G_row_group_size = 250_000
-_G_compression = "lz4"
+_G_compression = "snappy"
 
 _G_no_discount_key = None
 _G_delta_output_folder = None
@@ -118,7 +118,7 @@ def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_grou
         table = table.select(normal_cols + part_cols)
 
     # Enable dictionary encoding for all columns EXCEPT SalesOrderNumber
-    dict_cols = [c for c in table.column_names if c != "SalesOrderNumber"]
+    dict_cols = [c for c in table.column_names if not c in ["SalesOrderNumber", 'CustomerKey']]
 
     writer = pq.ParquetWriter(
         path,
@@ -199,7 +199,14 @@ def _worker_task(args):
     table = _ensure_arrow_table(table_or_df)
 
     # Partitioning (vectorized, low-overhead)
-    if _G_partition_enabled and "OrderDate" in table.column_names:
+    # Partition columns should only be added for deltaparquet
+    add_partitions = (
+        _G_file_format == "deltaparquet"
+        and _G_partition_enabled
+        and "OrderDate" in table.column_names
+    )
+
+    if add_partitions:
         table = _extract_partition_cols(table)
 
     # ------------------------------------------------------------

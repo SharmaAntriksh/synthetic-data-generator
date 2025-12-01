@@ -18,7 +18,7 @@
     "total_rows": 1000000,
     "chunk_size": 100000,
 
-    "file_format": "deltaparquet",
+    "file_format": "csv",
     "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 
@@ -36,7 +36,7 @@
     "write_pyarrow": true,
     "tune_chunk": false,
 
-    "skip_order_cols": true,
+    "skip_order_cols": false,
 
     "override": {
       "dates": {
@@ -51,7 +51,7 @@
   },
 
   "customers": {
-    "total_customers": 49237,
+    "total_customers": 1349237,
 
     "pct_india": 1,
     "pct_us": 60,

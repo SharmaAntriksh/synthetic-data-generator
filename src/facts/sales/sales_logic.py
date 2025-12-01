@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+PA_AVAILABLE = pa is not None
+
 # ============================================================
 # GLOBAL WORKER STATE (injected via bind_globals)
 # ============================================================
@@ -61,22 +63,35 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     prod_idx = rng.integers(0, len(product_np), size=n)
     prods = product_np[prod_idx]  # shape (n, cols)
 
-    # ensure numeric dtypes (avoid Python objects)
-    product_keys = prods[:, 0].astype(np.int64)
-    unit_price = prods[:, 1].astype(np.float64)
-    unit_cost = prods[:, 2].astype(np.float64)
+    # ensure numeric dtypes once (copy=False avoids copying when unnecessary)
+    product_keys = prods[:, 0].astype(np.int64, copy=False)
+    unit_price    = prods[:, 1].astype(np.float64, copy=False)
+    unit_cost     = prods[:, 2].astype(np.float64, copy=False)
 
     # ---------------------------------------------------------
-    # STORE → GEO → CURRENCY (vectorized fast path)
+    # STORE → GEO → CURRENCY (vectorized fast path) — defensive
     # ---------------------------------------------------------
     store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n)].astype(np.int64)
+
     if st2g_arr is not None and g2c_arr is not None:
-        geo_arr = st2g_arr[store_key_arr]
-        currency_arr = g2c_arr[geo_arr].astype(np.int64)
+        # Defensive: ensure arrays are 1-D and large enough to index directly
+        try:
+            max_key = int(store_key_arr.max()) if store_key_arr.size else -1
+            if st2g_arr.ndim == 1 and g2c_arr.ndim == 1 and max_key < st2g_arr.shape[0]:
+                geo_arr = st2g_arr[store_key_arr]
+                currency_arr = g2c_arr[geo_arr].astype(np.int64)
+            else:
+                # fallback safe path
+                geo_arr = np.fromiter((store_to_geo[s] for s in store_key_arr), dtype=np.int64, count=n)
+                currency_arr = np.fromiter((geo_to_currency[g] for g in geo_arr), dtype=np.int64, count=n)
+        except Exception:
+            # any unexpected issue — use safe fallback
+            geo_arr = np.fromiter((store_to_geo[s] for s in store_key_arr), dtype=np.int64, count=n)
+            currency_arr = np.fromiter((geo_to_currency[g] for g in geo_arr), dtype=np.int64, count=n)
     else:
-        # fallback to mapping dicts (avoid list comprehensions in hot path where possible)
         geo_arr = np.fromiter((store_to_geo[s] for s in store_key_arr), dtype=np.int64, count=n)
         currency_arr = np.fromiter((geo_to_currency[g] for g in geo_arr), dtype=np.int64, count=n)
+
 
     # ---------------------------------------------------------
     # QUANTITY
@@ -131,11 +146,13 @@ def _build_chunk_table(n, seed, no_discount_key=1):
         ext_ids_str = np.char.add(ext_dt_str, ext_suf)
         ext_ids_int = ext_ids_str.astype(np.int64)
 
+        # single-shot concatenation (keeps number of copies minimal)
         sales_order_num = np.concatenate([sales_order_num, ext_ids_str])
         sales_order_num_int = np.concatenate([sales_order_num_int, ext_ids_int])
         line_num = np.concatenate([line_num, np.ones(extra, dtype=np.int64)])
         customer_keys = np.concatenate([customer_keys, customers[rng.integers(0, len(customers), extra)]])
         order_dates_expanded = np.concatenate([order_dates_expanded, ext_dates])
+
 
     # trim/truncate exactly to n rows
     sales_order_num = sales_order_num[:n]
@@ -179,23 +196,37 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     delivery_status[delivery_date_np < due_date_np] = "Early Delivery"
     delivery_status[delivery_date_np > due_date_np] = "Delayed"
 
-
     # ---------------------------------------------------------
-    # PROMOTIONS (keeps loop — cheap if promo list small)
+    # PROMOTIONS — vectorized for small promo lists, safe loop for large lists
     # ---------------------------------------------------------
     promo_keys = np.full(n, no_discount_key, dtype=np.int64)
     promo_pct  = np.zeros(n, dtype=np.float64)
 
     if promo_keys_all is not None and promo_keys_all.size > 0:
-        od_expanded = od_np[:, None]
-
-        start_ok = od_expanded >= promo_start_all
-        end_ok   = od_expanded <= promo_end_all
-        mask_all = start_ok & end_ok
-
-        if mask_all.any():
-            promo_keys = np.where(mask_all.any(axis=1), promo_keys_all[np.argmax(mask_all, axis=1)], promo_keys)
-            promo_pct  = np.where(mask_all.any(axis=1), promo_pct_all[np.argmax(mask_all, axis=1)], promo_pct)
+        m = promo_keys_all.size
+        if m < 256:
+            # keep original vectorized fast path for typical small promo sets
+            od_expanded = od_np[:, None]
+            start_ok = od_expanded >= promo_start_all
+            end_ok   = od_expanded <= promo_end_all
+            mask_all = start_ok & end_ok
+            if mask_all.any():
+                # argmax returns first matching promo — preserve that behavior
+                chosen = np.argmax(mask_all, axis=1)
+                any_mask = mask_all.any(axis=1)
+                promo_keys = np.where(any_mask, promo_keys_all[chosen], promo_keys)
+                promo_pct  = np.where(any_mask, promo_pct_all[chosen], promo_pct)
+        else:
+            # safe loop-based assign that preserves "first-match-wins" semantics
+            # (assumes promo_keys_all is ordered same as before)
+            for pk, pstart, pend, ppct in zip(promo_keys_all, promo_start_all, promo_end_all, promo_pct_all):
+                sel = (od_np >= pstart) & (od_np <= pend)
+                if sel.any():
+                    # only fill where still default — preserves first-match semantics
+                    to_set = sel & (promo_keys == no_discount_key)
+                    if to_set.any():
+                        promo_keys[to_set] = pk
+                        promo_pct[to_set] = ppct
 
 
     # ---------------------------------------------------------
@@ -234,7 +265,7 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     # ---------------------------------------------------------
     # OUTPUT: PYARROW OR PANDAS (Arrow-first, minimizing copies)
     # ---------------------------------------------------------
-    if pa is not None:
+    if PA_AVAILABLE:
         # --- Precast dates once (your current block recasts twice) ---
         od_d  = od_np.astype("datetime64[D]")
         due_d = due_date_np.astype("datetime64[D]")

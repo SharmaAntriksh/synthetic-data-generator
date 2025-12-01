@@ -351,7 +351,7 @@ def generate_sales_fact(
         delta_output_folder, # 17
         write_delta,         # 18
         skip_order_cols,     # 19
-        partition_enabled,   # 20
+        (file_format == "deltaparquet"),   # 20
         partition_cols,      # 21
     )
 
