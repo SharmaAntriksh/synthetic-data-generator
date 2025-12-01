@@ -68,30 +68,26 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     unit_price    = prods[:, 1].astype(np.float64, copy=False)
     unit_cost     = prods[:, 2].astype(np.float64, copy=False)
 
-    # ---------------------------------------------------------
-    # STORE → GEO → CURRENCY (vectorized fast path) — defensive
-    # ---------------------------------------------------------
+    # STORE -> GEO -> CURRENCY (vectorized fast path, faster safe indexing)
     store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n)].astype(np.int64)
 
     if st2g_arr is not None and g2c_arr is not None:
-        # Defensive: ensure arrays are 1-D and large enough to index directly
+        # fast path only if arrays are 1-D and sized appropriately
         try:
             max_key = int(store_key_arr.max()) if store_key_arr.size else -1
             if st2g_arr.ndim == 1 and g2c_arr.ndim == 1 and max_key < st2g_arr.shape[0]:
+                # use direct indexing (fast, vectorized)
                 geo_arr = st2g_arr[store_key_arr]
-                currency_arr = g2c_arr[geo_arr].astype(np.int64)
+                currency_arr = g2c_arr[geo_arr].astype(np.int64, copy=False)
             else:
-                # fallback safe path
-                geo_arr = np.fromiter((store_to_geo[s] for s in store_key_arr), dtype=np.int64, count=n)
-                currency_arr = np.fromiter((geo_to_currency[g] for g in geo_arr), dtype=np.int64, count=n)
+                raise IndexError("mapping arrays too small")
         except Exception:
-            # any unexpected issue — use safe fallback
-            geo_arr = np.fromiter((store_to_geo[s] for s in store_key_arr), dtype=np.int64, count=n)
-            currency_arr = np.fromiter((geo_to_currency[g] for g in geo_arr), dtype=np.int64, count=n)
+            # fallback safe path using dicts
+            geo_arr = np.fromiter((store_to_geo.get(int(s), 0) for s in store_key_arr), dtype=np.int64, count=n)
+            currency_arr = np.fromiter((geo_to_currency.get(int(g), 0) for g in geo_arr), dtype=np.int64, count=n)
     else:
-        geo_arr = np.fromiter((store_to_geo[s] for s in store_key_arr), dtype=np.int64, count=n)
-        currency_arr = np.fromiter((geo_to_currency[g] for g in geo_arr), dtype=np.int64, count=n)
-
+        geo_arr = np.fromiter((store_to_geo.get(int(s), 0) for s in store_key_arr), dtype=np.int64, count=n)
+        currency_arr = np.fromiter((geo_to_currency.get(int(g), 0) for g in geo_arr), dtype=np.int64, count=n)
 
     # ---------------------------------------------------------
     # QUANTITY
@@ -109,12 +105,24 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     od_idx = rng.choice(len(date_pool), size=order_count, p=date_prob)
     order_dates = date_pool[od_idx]  # numpy datetime64 array
 
-    # vectorized date string without Python loop
+    # vectorized date string (only create the string ids if we need them)
     date_str = np.datetime_as_string(order_dates, unit='D')  # 'YYYY-MM-DD'
     date_str = np.char.replace(date_str, "-", "")  # 'YYYYMMDD'
-    order_ids_str = np.char.add(date_str, suffix)  # numpy char array
-    # integer ID (use for grouping to avoid string-heavy operations)
-    order_ids_int = order_ids_str.astype(np.int64)
+
+    # ORDER IDS (integer form always needed for grouping)
+    # Create integer order id directly (YYYYMMDD + suffix) without building full python strings
+    # Build suffix numeric and combine to integer
+    suffix_int = rng.integers(0, 999999, order_count).astype(np.int64)
+    date_int = date_str.astype(np.int64)  # YYYYMMDD as int
+    order_ids_int = (date_int * 1_000_000) + suffix_int  # integer order id
+
+    # Only create human-readable zero-padded string IDs when order columns are requested
+    if not skip_cols:
+        # create suffix string and padded string only when needed
+        suffix = np.char.zfill(suffix_int.astype(str), 6)
+        order_ids_str = np.char.add(date_str, suffix)  # numpy char array
+    else:
+        order_ids_str = None
 
     # customers
     cust_idx = rng.integers(0, len(customers), order_count)
@@ -129,8 +137,13 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     line_num = (np.arange(expanded_len) - starts + 1).astype(np.int64)
 
     # expand order-level arrays to line-level
-    sales_order_num = np.repeat(order_ids_str, lines_per_order)           # strings (numpy char array)
-    sales_order_num_int = np.repeat(order_ids_int, lines_per_order)      # integer IDs for grouping
+    if order_ids_str is None:
+        sales_order_num = None
+    else:
+        sales_order_num = np.repeat(order_ids_str, lines_per_order)
+
+    sales_order_num_int = np.repeat(order_ids_int, lines_per_order)
+
     customer_keys = np.repeat(order_customers, lines_per_order).astype(np.int64)
     order_dates_expanded = np.repeat(order_dates, lines_per_order)
 

@@ -22,6 +22,10 @@ _G_geo_to_currency = None
 _G_date_pool = None
 _G_date_prob = None
 
+# Dense mapping arrays for vectorized lookup (optional fast-path)
+_G_store_to_geo_arr = None
+_G_geo_to_currency_arr = None
+
 _G_out_folder = None
 _G_file_format = None
 _G_row_group_size = 250_000
@@ -66,7 +70,8 @@ def init_sales_worker(
     global _G_file_format, _G_row_group_size, _G_compression, _G_no_discount_key
     global _G_delta_output_folder, _G_write_delta, _G_skip_order_cols
     global _G_partition_enabled, _G_partition_cols
-
+    global _G_store_to_geo_arr, _G_geo_to_currency_arr
+    
     _G_product_np = product_np
     _G_store_keys = store_keys
     _G_promo_keys_all = promo_keys_all
@@ -92,6 +97,38 @@ def init_sales_worker(
     _G_partition_enabled = partition_enabled
     _G_partition_cols = partition_cols
 
+    # ------------------------------------------------------------
+    # Build dense numpy mapping arrays for fast vectorized lookup
+    # (safe fallback to dict mode if keys are sparse or inconsistent)
+    # ------------------------------------------------------------
+
+    # ---- STORE → GEO array ----
+    try:
+        if isinstance(_G_store_to_geo, dict) and len(_G_store_to_geo) > 0:
+            max_store = max(_G_store_to_geo.keys())
+            arr = np.full(max_store + 1, -1, dtype=np.int64)
+            for k, v in _G_store_to_geo.items():
+                arr[int(k)] = int(v)
+            _G_store_to_geo_arr = arr
+        else:
+            _G_store_to_geo_arr = None
+    except Exception:
+        _G_store_to_geo_arr = None
+
+    # ---- GEO → CURRENCY array ----
+    try:
+        if isinstance(_G_geo_to_currency, dict) and len(_G_geo_to_currency) > 0:
+            max_geo = max(_G_geo_to_currency.keys())
+            arr2 = np.full(max_geo + 1, -1, dtype=np.int64)
+            for k, v in _G_geo_to_currency.items():
+                arr2[int(k)] = int(v)
+            _G_geo_to_currency_arr = arr2
+        else:
+            _G_geo_to_currency_arr = None
+    except Exception:
+        _G_geo_to_currency_arr = None
+
+
     # update sales_logic globals in one shot
     bind_globals({
         "_G_product_np": _G_product_np,
@@ -103,6 +140,8 @@ def init_sales_worker(
         "_G_customers": _G_customers,
         "_G_store_to_geo": _G_store_to_geo,
         "_G_geo_to_currency": _G_geo_to_currency,
+        "_G_store_to_geo_arr": _G_store_to_geo_arr,
+        "_G_geo_to_currency_arr": _G_geo_to_currency_arr,
         "_G_date_pool": _G_date_pool,
         "_G_date_prob": _G_date_prob,
         "_G_skip_order_cols": _G_skip_order_cols,
