@@ -5,7 +5,7 @@
 
     "dates": {
       "start": "2020-01-01",
-      "end": "2025-12-31"
+      "end": "2025-10-31"
     },
 
     "paths": {
@@ -16,10 +16,10 @@
     "parquet_folder": "./data/parquet_dims",
     "out_folder": "./data/fact_out",
 
-    "total_rows": 20000000,
-    "chunk_size": 1000000,
+    "total_rows": 2000000,
+    "chunk_size": 100000,
 
-    "file_format": "deltaparquet",
+    "file_format": "csv",
     "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 

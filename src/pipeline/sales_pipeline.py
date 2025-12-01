@@ -27,40 +27,6 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         dim_file = parquet_dims / f"{name}.parquet"
         return should_regenerate(name, section_cfg, dim_file)
 
-
-    # sales_dependencies_changed = any([
-    #     changed("geography", cfg["geography"]),
-    #     changed("customers", cfg["customers"]),
-    #     changed("promotions", cfg["promotions"]),
-    #     changed("stores", cfg["stores"]),
-    #     changed("dates", cfg["dates"]),
-    #     changed("currency", cfg["exchange_rates"]),
-    #     changed("exchange_rates", cfg["exchange_rates"]),
-    # ])
-
-    # ------------------------------------------------------------
-    # If dimensions changed → sales must regenerate
-    # ------------------------------------------------------------
-    # if sales_dependencies_changed:
-    #     info("Dependency triggered: Sales will regenerate.")
-    # else:
-    #     delta_root = Path(sales_cfg["delta_output_folder"]).resolve()
-
-    #     # Find at least one parquet file
-    #     parquet_files = list(delta_root.rglob("*.parquet"))
-
-    #     if not parquet_files:
-    #         info("No sales parquet found — regenerating.")
-    #     else:
-    #         # Version anchor = first parquet file found
-    #         anchor_file = parquet_files[0]
-
-    #         if not should_regenerate("sales", sales_cfg, anchor_file):
-    #             skip("Sales up-to-date; skipping regeneration")
-    #             return
-
-    #     info("Dependency triggered: Sales will regenerate.")
-
     info("Sales will regenerate (forced).")
 
     # ------------------------------------------------------------

@@ -159,18 +159,21 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Load dimensions (unchanged)
     # ------------------------------------------------------------
+    info(f"Loading customers from: {os.path.join(parquet_folder, 'customers.parquet')}")
     customers_raw = load_parquet_column(
         os.path.join(parquet_folder, "customers.parquet"),
         "CustomerKey",
     )
     customers = build_weighted_customers(customers_raw, heavy_pct, heavy_mult, seed).astype(np.int64)
 
+    info(f"Loading products from: {os.path.join(parquet_folder, 'products.parquet')}")
     prod_df = load_parquet_df(
         os.path.join(parquet_folder, "products.parquet"),
         ["ProductKey", "UnitPrice", "UnitCost"],
     )
     product_np = prod_df.to_numpy()
 
+    info(f"Loading stores from: {os.path.join(parquet_folder, 'stores.parquet')}")
     store_keys = load_parquet_column(
         os.path.join(parquet_folder, "stores.parquet"),
         "StoreKey"
@@ -183,7 +186,8 @@ def generate_sales_fact(
         geo_path,
         ["GeographyKey", "Country", "ISOCode"]
     )
-
+    
+    info(f"Loading currency from: {os.path.join(parquet_folder, 'currency.parquet')}")
     currency_df = pd.read_parquet(
         os.path.join(parquet_folder, "currency.parquet")
     )[["CurrencyKey", "ISOCode"]]
@@ -228,6 +232,7 @@ def generate_sales_fact(
         for mg in missing_geos:
             geo_to_currency[int(mg)] = default_currency_key
 
+    info(f"Loading promotions from: {os.path.join(parquet_folder, 'promotions.parquet')}")
     promo_df = pd.read_parquet(os.path.join(parquet_folder, "promotions.parquet"))
     if not promo_df.empty:
         promo_df["StartDate"] = pd.to_datetime(promo_df["StartDate"]).dt.normalize()

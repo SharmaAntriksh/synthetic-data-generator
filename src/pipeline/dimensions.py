@@ -60,6 +60,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
         with stage("Generating Geography"):
             build_dim_geography(cfg)
             save_version("geography", cfg["geography"])
+            info(f"Saved geography → {out('geography')}")
     else:
         skip("Geography up-to-date; skipping regeneration")
 
@@ -74,6 +75,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             df = generate_synthetic_customers(cfg)
             df.to_parquet(out("customers"), index=False)
             save_version("customers", cfg["customers"])
+            info(f"Saved customers → {out('customers')}")
     else:
         skip("Customers up-to-date; skipping regeneration")
 
@@ -139,6 +141,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
 
             df.to_parquet(out("promotions"), index=False)
             save_version("promotions", promo_cfg)
+            info(f"Saved promotions → {out('promotions')}")
 
     else:
         skip("Promotions up-to-date; skipping regeneration")
@@ -167,7 +170,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             )
             df.to_parquet(out("stores"), index=False)
             save_version("stores", cfg["stores"])
-
+            info(f"Saved stores → {out('stores')}")
 
     # --------------------------------------------------
     # Dates
@@ -185,6 +188,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             df = generate_date_table(start, end, cfg["dates"]["fiscal_month_offset"])
             df.to_parquet(out("dates"), index=False)
             save_version("dates", cfg["dates"])
+            info(f"Saved dates → {out('dates')}")
     else:
         skip("Dates up-to-date; skipping regeneration")
 
@@ -197,6 +201,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             df = generate_currency_dimension(cfg["exchange_rates"]["currencies"])
             df.to_parquet(out("currency"), index=False)
             save_version("currency", cfg["exchange_rates"])
+            info(f"Saved currency → {out('currency')}")
     else:
         skip("Currency dimension up-to-date; skipping regeneration")
 
@@ -226,6 +231,7 @@ def generate_dimensions(cfg, parquet_dims: Path):
             )
             df.to_parquet(out("exchange_rates"), index=False)
             save_version("exchange_rates", cfg["exchange_rates"])
+            info(f"Saved exchange_rates → {out('exchange_rates')}")
     else:
         skip("Exchange Rates up-to-date; skipping regeneration")
 

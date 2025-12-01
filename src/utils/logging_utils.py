@@ -2,6 +2,39 @@ import os
 import time
 from datetime import datetime, timedelta
 
+from pathlib import Path
+
+# Compute project root (top-level folder)
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+def short_path(p):
+    if not p:
+        return p
+    p = Path(p)
+    try:
+        return str(p.relative_to(PROJECT_ROOT))
+    except Exception:
+        return p.name  # last component only
+
+
+def _shorten_path_in_msg(msg: str) -> str:
+    """
+    If message ends with a path (after ': '), shorten that path preserving internal spaces.
+    Fallback: return original msg unchanged.
+    """
+    if not isinstance(msg, str):
+        return msg
+
+    # If message contains a colon-space then the trailing part is likely a path in many logs:
+    head, sep, tail = msg.rpartition(': ')
+    if sep and (('\\' in tail) or ('/' in tail)):
+        shortened = short_path(tail)
+        return f"{head}{sep}{shortened}"
+
+    # Otherwise leave unchanged
+    return msg
+
+
 # ============================================================================
 # CONFIG
 # ============================================================================
@@ -22,10 +55,10 @@ COLORS = {
 # Track entire pipeline start
 PIPELINE_START_TIME = time.time()
 
-
 # ============================================================================
 # HELPERS
 # ============================================================================
+
 def fmt_sec(sec):
     """Return a clean human-readable time string."""
     if sec < 1:
@@ -68,6 +101,7 @@ def _flush(line):
 # BASIC LOG LEVEL FUNCTIONS
 # ============================================================================
 def info(msg):
+    msg = _shorten_path_in_msg(msg)
     _flush(_line("INFO", msg))
 
 
@@ -122,13 +156,17 @@ def work(msg="", *, chunk=None, total=None, outfile=None, **_ignore):
 
     parts = []
 
-    # Show chunk progress if available
-    if chunk is not None and total is not None:
-        parts.append(f"Chunk {chunk}/{total}")
+    # Always show chunk if provided
+    if chunk is not None:
+        if total is not None:
+            parts.append(f"Chunk {chunk}/{total}")
+        else:
+            parts.append(f"Chunk {chunk}")
 
-    # Show output file path if available
+    # Auto shorten output paths
     if outfile:
-        parts.append(f"→ {outfile}")
+        parts.append(f"→ {Path(outfile).name}")
+
 
     # Build final message
     final = " | ".join(parts) if parts else msg

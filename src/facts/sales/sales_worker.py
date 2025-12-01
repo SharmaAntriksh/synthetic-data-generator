@@ -283,7 +283,7 @@ def _worker_task(args):
             compression=_G_compression,
             row_group_size=int(_G_row_group_size)
         )
-        work(f"Delta chunk {idx} → {out_path}")
+        work(chunk=idx, outfile=out_path)
 
         # Return path (never Arrow table)
         return {
@@ -314,5 +314,6 @@ def _worker_task(args):
         compression=_G_compression,
         row_group_size=int(_G_row_group_size),
     )
-    work(f"Chunk {idx} → {out_path}")
+    # work(f"Chunk {idx} → {out_path}")
+    work(chunk=idx, outfile=out_path)
     return out_path
