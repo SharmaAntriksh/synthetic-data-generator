@@ -36,7 +36,7 @@
     "write_pyarrow": true,
     "tune_chunk": false,
 
-    "skip_order_cols": false,
+    "skip_order_cols": true,
 
     "override": {
       "dates": {

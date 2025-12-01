@@ -157,14 +157,16 @@ def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_grou
         table = table.select(normal_cols + part_cols)
 
     # Enable dictionary encoding for all columns EXCEPT SalesOrderNumber
-    dict_cols = [c for c in table.column_names if not c in ["SalesOrderNumber", 'CustomerKey']]
-
+    dict_cols = [
+        c for c in table.column_names
+        if c not in ["SalesOrderNumber", "CustomerKey"]
+    ]
     writer = pq.ParquetWriter(
         path,
         table.schema,
         compression=compression,
-        use_dictionary=dict_cols,   # <-- key change
-        write_statistics=False,
+        use_dictionary=dict_cols,
+        write_statistics=True,
     )
 
     try:

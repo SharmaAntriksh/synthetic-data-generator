@@ -101,7 +101,9 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     order_count = max(1, int(n / avg_lines))
 
     # suffix & order dates (vectorized)
-    suffix = np.char.zfill(rng.integers(0, 999999, order_count).astype(str), 6)
+    suffix_int = rng.integers(0, 999999, order_count, dtype=np.int64)
+    suffix = np.char.zfill(suffix_int.astype(str), 6)
+
     od_idx = rng.choice(len(date_pool), size=order_count, p=date_prob)
     order_dates = date_pool[od_idx]  # numpy datetime64 array
 
@@ -112,7 +114,6 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     # ORDER IDS (integer form always needed for grouping)
     # Create integer order id directly (YYYYMMDD + suffix) without building full python strings
     # Build suffix numeric and combine to integer
-    suffix_int = rng.integers(0, 999999, order_count).astype(np.int64)
     date_int = date_str.astype(np.int64)  # YYYYMMDD as int
     order_ids_int = (date_int * 1_000_000) + suffix_int  # integer order id
 
@@ -137,42 +138,66 @@ def _build_chunk_table(n, seed, no_discount_key=1):
     line_num = (np.arange(expanded_len) - starts + 1).astype(np.int64)
 
     # expand order-level arrays to line-level
+    # expand order-level arrays to line-level
+    # integer order id is always needed for grouping
+    sales_order_num_int = np.repeat(order_ids_int, lines_per_order)
+
+    # sales_order_num (string) only when requested
     if order_ids_str is None:
         sales_order_num = None
     else:
         sales_order_num = np.repeat(order_ids_str, lines_per_order)
 
-    sales_order_num_int = np.repeat(order_ids_int, lines_per_order)
-
     customer_keys = np.repeat(order_customers, lines_per_order).astype(np.int64)
     order_dates_expanded = np.repeat(order_dates, lines_per_order)
 
     # pad if needed to reach exactly n rows
-    curr_len = len(sales_order_num)
+    # use integer id length as truth (always present)
+    curr_len = len(sales_order_num_int)
     if curr_len < n:
         extra = n - curr_len
-        ext_suf = np.char.zfill(rng.integers(0, 999999, extra).astype(str), 6)
-        ext_dates = date_pool[rng.choice(len(date_pool), size=extra, p=date_prob)]
+        # Only create string extras if we need string column
+        if not skip_cols:
+            ext_suf = np.char.zfill(rng.integers(0, 999999, extra).astype(str), 6)
+            ext_dates = date_pool[rng.choice(len(date_pool), size=extra, p=date_prob)]
 
-        ext_dt_str = np.datetime_as_string(ext_dates, unit='D')
-        ext_dt_str = np.char.replace(ext_dt_str, "-", "")
-        ext_ids_str = np.char.add(ext_dt_str, ext_suf)
-        ext_ids_int = ext_ids_str.astype(np.int64)
+            ext_dt_str = np.datetime_as_string(ext_dates, unit='D')
+            ext_dt_str = np.char.replace(ext_dt_str, "-", "")
+            ext_ids_str = np.char.add(ext_dt_str, ext_suf)
+            ext_ids_int = ext_ids_str.astype(np.int64)
 
-        # single-shot concatenation (keeps number of copies minimal)
-        sales_order_num = np.concatenate([sales_order_num, ext_ids_str])
-        sales_order_num_int = np.concatenate([sales_order_num_int, ext_ids_int])
+            # append to string array
+            sales_order_num = np.concatenate([sales_order_num, ext_ids_str]) if sales_order_num is not None else ext_ids_str
+            sales_order_num_int = np.concatenate([sales_order_num_int, ext_ids_int])
+        else:
+            # skip creating string ids; only extend integer ids & other arrays
+            ext_dates = date_pool[rng.choice(len(date_pool), size=extra, p=date_prob)]
+            # build integer ext ids directly: YYYYMMDD*1e6 + suffix
+            ext_suffix_int = rng.integers(0, 999999, extra).astype(np.int64)
+            ext_dt_str = np.datetime_as_string(ext_dates, unit='D')
+            ext_dt_str = np.char.replace(ext_dt_str, "-", "")
+            ext_dt_int = ext_dt_str.astype(np.int64)
+            ext_ids_int = (ext_dt_int * 1_000_000) + ext_suffix_int
+
+            sales_order_num_int = np.concatenate([sales_order_num_int, ext_ids_int])
+
+        # extend line_num, customer_keys, order_dates_expanded
         line_num = np.concatenate([line_num, np.ones(extra, dtype=np.int64)])
         customer_keys = np.concatenate([customer_keys, customers[rng.integers(0, len(customers), extra)]])
         order_dates_expanded = np.concatenate([order_dates_expanded, ext_dates])
 
 
     # trim/truncate exactly to n rows
-    sales_order_num = sales_order_num[:n]
-    sales_order_num_int = sales_order_num_int[:n].astype(np.int64)
-    line_num = line_num[:n].astype(np.int64)
-    customer_keys = customer_keys[:n].astype(np.int64)
+    sales_order_num_int = sales_order_num_int[:n]
+
+    # only trim string version if it exists
+    if sales_order_num is not None:
+        sales_order_num = sales_order_num[:n]
+
+    line_num = line_num[:n]
+    customer_keys = customer_keys[:n]
     order_dates_expanded = order_dates_expanded[:n]
+
 
     od_np = order_dates_expanded.astype("datetime64[D]")
 

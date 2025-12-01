@@ -31,13 +31,21 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
     schema = first_reader.schema_arrow
 
     # Create writer for the merged file
+    # Enable dictionary encoding for low-cardinality columns only
+    # Exclude high-cardinality ones to avoid memory blow-up
+    dict_cols = [
+        c for c in schema.names
+        if c not in ["SalesOrderNumber", "CustomerKey"]
+    ]
+
     writer = pq.ParquetWriter(
         merged_file,
         schema,
-        compression="snappy",      # you may change to lz4 to match worker
-        use_dictionary=False,      # same as worker
-        write_statistics=False,
+        compression="snappy",           # or "lz4" to match chunks
+        use_dictionary=dict_cols,       # selective dictionary encoding
+        write_statistics=True,          # reduces final file size
     )
+
 
     # ------------------------------------------------------------------
     # STEP 2: STREAM each chunk row-group-by-row-group
