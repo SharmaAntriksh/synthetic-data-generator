@@ -19,7 +19,7 @@
     "total_rows": 100000,
     "chunk_size": 100000,
 
-    "file_format": "csv",
+    "file_format": "deltaparquet",
     "write_delta": true,
     "delta_output_folder": "./data/fact_out/delta",
 

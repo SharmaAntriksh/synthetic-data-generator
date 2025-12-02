@@ -313,27 +313,36 @@ def _build_chunk_table(n, seed, no_discount_key=1):
 
 
         # --- Build Arrow arrays (no schema changes, same columns) ---
-        cols = {
-            "OrderDate": pa.array(od_d),
-            "DueDate": pa.array(due_d),
-            "DeliveryDate": pa.array(del_d),
+        cols = {}
 
-            "StoreKey": pa.array(store_key_arr, pa.int64()),
-            "ProductKey": pa.array(product_keys, pa.int64()),
-            "PromotionKey": pa.array(promo_keys, pa.int64()),
-            "CurrencyKey": pa.array(currency_arr, pa.int64()),
-            "CustomerKey": pa.array(customer_keys, pa.int64()),
+        # 1. Order columns (only if SkipOrderCols = False)
+        if not skip_cols:
+            cols["SalesOrderNumber"] = pa.array(sales_order_num, pa.string())
+            cols["SalesOrderLineNumber"] = pa.array(line_num, pa.int64())
 
-            "Quantity": pa.array(qty, pa.int64()),
-            "NetPrice": pa.array(final_net_price, pa.float64()),
-            "UnitCost": pa.array(final_unit_cost, pa.float64()),
-            "UnitPrice": pa.array(final_unit_price, pa.float64()),
-            "DiscountAmount": pa.array(final_discount_amt, pa.float64()),
+        # 2. Core dimension / key columns
+        cols["CustomerKey"] = pa.array(customer_keys, pa.int64())
+        cols["ProductKey"] = pa.array(product_keys, pa.int64())
+        cols["StoreKey"] = pa.array(store_key_arr, pa.int64())
+        cols["PromotionKey"] = pa.array(promo_keys, pa.int64())
+        cols["CurrencyKey"] = pa.array(currency_arr, pa.int64())
 
-            # SAME: delivery_status is already a numpy unicode array
-            "DeliveryStatus": pa.array(delivery_status, pa.string()),
-            "IsOrderDelayed": pa.array(is_order_delayed, pa.int8()),
-        }
+        # 3. Dates
+        cols["OrderDate"]    = pa.array(od_d)
+        cols["DueDate"]      = pa.array(due_d)
+        cols["DeliveryDate"] = pa.array(del_d)
+
+        # 4. Measures
+        cols["Quantity"]        = pa.array(qty, pa.int64())
+        cols["NetPrice"]        = pa.array(final_net_price, pa.float64())
+        cols["UnitCost"]        = pa.array(final_unit_cost, pa.float64())
+        cols["UnitPrice"]       = pa.array(final_unit_price, pa.float64())
+        cols["DiscountAmount"]  = pa.array(final_discount_amt, pa.float64())
+
+        # 5. Status columns
+        cols["DeliveryStatus"]  = pa.array(delivery_status, pa.string())
+        cols["IsOrderDelayed"]  = pa.array(is_order_delayed, pa.int8())
+
         
         # --- Partition columns (Arrow) ---
         # compute year/month from od_d (datetime64[D]) in a vectorized, copy-free way
@@ -346,33 +355,33 @@ def _build_chunk_table(n, seed, no_discount_key=1):
             cols["Year"] = pa.array(year_arr, pa.int16())
             cols["Month"] = pa.array(month_arr, pa.int8())
 
-
-        # --- KEEP EXACT SAME LOGIC FOR OPTIONAL COLUMNS ---
-        if not skip_cols:
-            cols["SalesOrderNumber"] = pa.array(sales_order_num, pa.string())
-            cols["SalesOrderLineNumber"] = pa.array(line_num, pa.int64())
-
         return pa.table(cols)
 
-
     else:
-        df = {
-            "OrderDate": od_np,
-            "DueDate": due_date_np.astype("datetime64[D]"),
-            "DeliveryDate": delivery_date_np.astype("datetime64[D]"),
-            "StoreKey": store_key_arr,
-            "ProductKey": product_keys,
-            "PromotionKey": promo_keys,
-            "CurrencyKey": currency_arr,
-            "CustomerKey": customer_keys,
-            "Quantity": qty,
-            "NetPrice": final_net_price,
-            "UnitCost": final_unit_cost,
-            "UnitPrice": final_unit_price,
-            "DiscountAmount": final_discount_amt,
-            "DeliveryStatus": delivery_status,
-            "IsOrderDelayed": is_order_delayed,
-        }
+        df = {}
+
+        if not skip_cols:
+            df["SalesOrderNumber"]     = sales_order_num.astype(str)
+            df["SalesOrderLineNumber"] = line_num
+
+        df["CustomerKey"] = customer_keys
+        df["ProductKey"]  = product_keys
+        df["StoreKey"]    = store_key_arr
+        df["PromotionKey"] = promo_keys
+        df["CurrencyKey"]  = currency_arr
+
+        df["OrderDate"]    = od_np
+        df["DueDate"]      = due_date_np.astype("datetime64[D]")
+        df["DeliveryDate"] = delivery_date_np.astype("datetime64[D]")
+
+        df["Quantity"]       = qty
+        df["NetPrice"]       = final_net_price
+        df["UnitCost"]       = final_unit_cost
+        df["UnitPrice"]      = final_unit_price
+        df["DiscountAmount"] = final_discount_amt
+
+        df["DeliveryStatus"] = delivery_status
+        df["IsOrderDelayed"] = is_order_delayed
 
         # --- Partition columns (NumPy/Pandas) ---
         months_since_1970 = od_np.astype("datetime64[M]").astype("int64")
@@ -382,9 +391,5 @@ def _build_chunk_table(n, seed, no_discount_key=1):
         if _G_file_format == "deltaparquet":
             df["Year"] = year_np
             df["Month"] = month_np
-
-        if not skip_cols:
-            df["SalesOrderNumber"] = sales_order_num.astype(str)
-            df["SalesOrderLineNumber"] = line_num
 
         return pd.DataFrame(df)
