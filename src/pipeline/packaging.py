@@ -91,7 +91,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                 shutil.copy2(child, out_path)
 
             done("Sales fact copied (CSV flat).")
-            return final_folder
+            # return final_folder
 
 
         if not src_sales.exists():

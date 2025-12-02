@@ -20,7 +20,7 @@ STATIC_SCHEMAS = {
     ],
 
     "Geography": [
-        ("GeographyKey", "INT NOT NULL"),
+        ("GeographyKey", "SMALLINT NOT NULL"),
         ("GeographyType","VARCHAR(50)"),
         ("City",         "VARCHAR(100)"),
         ("State",        "VARCHAR(100)"),
@@ -30,11 +30,11 @@ STATIC_SCHEMAS = {
     ],
 
     "Products": [
-        ("ProductKey",              "INT NOT NULL"),
+        ("ProductKey",              "SMALLINT NOT NULL"),
         ("ProductCode",             "VARCHAR(200)"),
         ("ProductName",             "VARCHAR(200)"),
         ("ProductDescription",      "VARCHAR(200)"),
-        ("ProductSubcategoryKey",   "INT"),
+        ("ProductSubcategoryKey",   "TINYINT"),
         ("Brand",                   "VARCHAR(20)"),
         ("Class",                   "VARCHAR(20)"),
         ("Color",                   "VARCHAR(20)"),
@@ -45,28 +45,28 @@ STATIC_SCHEMAS = {
     ],
 
     "Product_Category": [
-        ("ProductCategoryKey", "INT"),
-        ("ProductCategoryName","VARCHAR(100)"),
-        ("CategoryLabel",   "VARCHAR(10)")
+        ("ProductCategoryKey",      "TINYINT NOT NULL"),
+        ("ProductCategoryName",     "VARCHAR(100)"),
+        ("CategoryLabel",           "VARCHAR(10)")
     ],
 
     "Product_Subcategory": [
-        ("ProductSubcategoryKey", "INT"),
-        ("SubcategoryLabel","VARCHAR(10)"),
-        ("Subcategory","VARCHAR(100)"),
-        ("CategoryKey",    "INT")
+        ("ProductSubcategoryKey",   "TINYINT NOT NULL"),
+        ("SubcategoryLabel",        "VARCHAR(10)"),
+        ("Subcategory",             "VARCHAR(100)"),
+        ("CategoryKey",             "INT")
     ],
 
     "Promotions": [
-        ("PromotionKey",         "INT NOT NULL"),
-        ("PromotionLabel",        "VARCHAR(20)"),
-        ("PromotionName",        "VARCHAR(50)"),
-        ("PromotionDescription",  "VARCHAR(100)"),
-        ("DiscountPct",          "DECIMAL(6,2)"),
-        ("PromotionType",        "VARCHAR(20)"),
-        ("PromotionCategory",     "VARCHAR(20)"),
-        ("StartDate",            "DATE"),
-        ("EndDate",              "DATE")
+        ("PromotionKey",            "SMALLINT NOT NULL"),
+        ("PromotionLabel",          "VARCHAR(20)"),
+        ("PromotionName",           "VARCHAR(50)"),
+        ("PromotionDescription",    "VARCHAR(100)"),
+        ("DiscountPct",             "DECIMAL(6,2)"),
+        ("PromotionType",           "VARCHAR(20)"),
+        ("PromotionCategory",       "VARCHAR(20)"),
+        ("StartDate",               "DATE"),
+        ("EndDate",                 "DATE")
     ],
 
     "Stores": [
@@ -74,7 +74,7 @@ STATIC_SCHEMAS = {
         ("StoreName",        "VARCHAR(100)"),
         ("StoreType",        "VARCHAR(20)"),
         ("Status",           "VARCHAR(10)"),
-        ("GeographyKey",     "INT"),
+        ("GeographyKey",     "SMALLINT"),
         ("OpenDate",         "DATETIME"),
         ("CloseDate",        "DATETIME"),
         ("OpenFlag",         "BIT"),
@@ -86,20 +86,20 @@ STATIC_SCHEMAS = {
         ("CloseReason",      "VARCHAR(MAX)"),
     ],
 
-    "Dates": [
+   "Dates": [
         ("Date",                         "DATE NOT NULL"),
         ("Date Key",                     "INT NOT NULL"),
         ("Year",                         "INT"),
         ("Is Year Start",                "INT"),
         ("Is Year End",                  "INT"),
-        ("Year Month Number",            "INT"),
-        ("Year Quarter Number",          "INT"),
+
         ("Quarter",                      "INT"),
-        ("Quarter Year",                 "VARCHAR(10)"),
         ("Quarter Start Date",           "DATE"),
         ("Quarter End Date",             "DATE"),
         ("Is Quarter Start",             "INT"),
         ("Is Quarter End",               "INT"),
+        ("Quarter Year",                 "VARCHAR(10)"),
+
         ("Month",                        "INT"),
         ("Month Name",                   "VARCHAR(10)"),
         ("Month Short",                  "VARCHAR(10)"),
@@ -109,11 +109,13 @@ STATIC_SCHEMAS = {
         ("Month Year Number",            "INT"),
         ("Is Month Start",               "INT"),
         ("Is Month End",                 "INT"),
+
         ("Week Of Year ISO",             "INT"),
         ("ISO Year",                     "INT"),
         ("Week Of Month",                "INT"),
         ("Week Start Date",              "DATE"),
         ("Week End Date",                "DATE"),
+
         ("Day",                          "INT"),
         ("Day Name",                     "VARCHAR(10)"),
         ("Day Short",                    "VARCHAR(10)"),
@@ -123,6 +125,7 @@ STATIC_SCHEMAS = {
         ("Is Business Day",              "INT"),
         ("Next Business Day",            "DATE"),
         ("Previous Business Day",        "DATE"),
+
         ("Fiscal Year Start Year",       "INT"),
         ("Fiscal Month Number",          "INT"),
         ("Fiscal Quarter Number",        "INT"),
@@ -134,16 +137,19 @@ STATIC_SCHEMAS = {
         ("Fiscal Year End Date",         "DATE"),
         ("Fiscal Quarter Start Date",    "DATE"),
         ("Fiscal Quarter End Date",      "DATE"),
-        ("Is Fiscal Year Start",         "INT"),
-        ("Is Fiscal Year End",           "INT"),
-        ("Is Fiscal Quarter Start",      "INT"),
-        ("Is Fiscal Quarter End",        "INT"),
+        ("Is Fiscal Year Start",         "BIT"),
+        ("Is Fiscal Year End",           "BIT"),
+        ("Is Fiscal Quarter Start",      "BIT"),
+        ("Is Fiscal Quarter End",        "BIT"),
+
         ("Fiscal Year",                  "INT"),
         ("Fiscal Year Label",            "VARCHAR(10)"),
-        ("Is Today",                     "INT"),
-        ("Is Current Year",              "INT"),
-        ("Is Current Month",             "INT"),
-        ("Is Current Quarter",           "INT"),
+
+        ("Is Today",                     "BIT"),
+        ("Is Current Year",              "BIT"),
+        ("Is Current Month",             "BIT"),
+        ("Is Current Quarter",           "BIT"),
+
         ("Current Day Offset",           "INT")
     ],
 
@@ -158,29 +164,33 @@ STATIC_SCHEMAS = {
     # -----------------------
     "Sales": [
         ("SalesOrderNumber",     "VARCHAR(30)"),
-        ("SalesOrderLineNumber", "INT"),
+        ("SalesOrderLineNumber", "TINYINT"),
+
+        ("CustomerKey",          "INT"),
+        ("ProductKey",           "SMALLINT"),
+        ("StoreKey",             "SMALLINT"),
+        ("PromotionKey",         "SMALLINT"),
+        ("CurrencyKey",          "TINYINT"),
+
         ("OrderDate",            "DATE"),
         ("DueDate",              "DATE"),
         ("DeliveryDate",         "DATE"),
-        ("StoreKey",             "INT"),
-        ("ProductKey",           "INT"),
-        ("PromotionKey",         "INT"),
-        ("CurrencyKey",          "INT"),
-        ("CustomerKey",          "INT"),
-        ("Quantity",             "INT"),
+
+        ("Quantity",             "TINYINT"),
         ("NetPrice",             "DECIMAL(10, 4)"),
         ("UnitCost",             "DECIMAL(10, 4)"),
         ("UnitPrice",            "DECIMAL(10, 4)"),
         ("DiscountAmount",       "DECIMAL(10, 4)"),
+
         ("DeliveryStatus",       "VARCHAR(20)"),
-        ("IsOrderDelayed",       "INT")
+        ("IsOrderDelayed",       "BIT")
     ],
 
     "Exchange_Rates": [
         ("Date",         "DATE"),
         ("FromCurrency", "VARCHAR(10)"),
         ("ToCurrency",   "VARCHAR(10)"),
-        ("ExchangeRate", "FLOAT")
+        ("ExchangeRate", "DECIMAL(10, 6)")
     ]
 }
 

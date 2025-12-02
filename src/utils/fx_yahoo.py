@@ -83,7 +83,7 @@ def download_history(cur, start, end):
             "Date": dt,
             "FromCurrency": BASE,
             "ToCurrency": cur,
-            "ExchangeRate": round(float(rate), 6),
+            "ExchangeRate": round(float(rate), 8),
         })
 
     return pd.DataFrame(rows)
