@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 import pyarrow.parquet as pq
 from src.utils.logging_utils import stage, done, info
+from datetime import datetime
 
 
 # ============================================================
@@ -31,17 +32,39 @@ def create_final_output_folder(
     """
     stage("Creating Final Output Folder")
 
-    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-    # FIXED — correct folder naming
+    # ---------------------------
+    # Build human-readable timestamp   (Windows-safe)
+    # ---------------------------
+    now = datetime.now()
+    timestamp = now.strftime("%Y-%m-%d %I_%M_%S %p")  # 12-hour format, AM/PM, safe
+
+    # ---------------------------
+    # Short counts
+    # ---------------------------
     customer_total = cfg["customers"]["total_customers"]
     sales_total = sales_cfg["total_rows"]
 
-    dataset_name = (
-        f"Customers {format_number_short(customer_total)} "
-        f"Sales {format_number_short(sales_total)} "
-        f"{timestamp}"
-    )
+    cust_short = format_number_short(customer_total)
+    sales_short = format_number_short(sales_total)
 
+    # ---------------------------
+    # Format label
+    # ---------------------------
+    fmt_label = {
+        "deltaparquet": "DeltaParquet",
+        "parquet": "Parquet",
+        "csv": "CSV",
+    }.get(file_format.lower(), file_format)
+
+    # ---------------------------
+    # Final folder naming
+    # ---------------------------
+    dataset_name = (
+        f"{timestamp} "
+        f"Customers {cust_short} "
+        f"Sales {sales_short} "
+        f"{fmt_label}"
+    )
 
     final_folder = final_folder_root / dataset_name
     dims_out = final_folder / "dimensions"
