@@ -126,13 +126,17 @@ def run_geography(cfg, parquet_folder: Path):
     """
     out_path = parquet_folder / "geography.parquet"
 
-    if not should_regenerate("geography", cfg, out_path):
+    # Use only the geography section for versioning
+    geo_cfg = cfg["geography"]
+
+    if not should_regenerate("geography", geo_cfg, out_path):
         skip("Geography up-to-date; skipping.")
         return
 
     with stage("Generating Geography"):
-        df = build_dim_geography(cfg)
+        df = build_dim_geography(cfg)   # still pass full cfg for building
         df.to_parquet(out_path, index=False)
 
-    save_version("geography", cfg, out_path)
+    save_version("geography", geo_cfg, out_path)
+
     info(f"Geography dimension written → {out_path}")

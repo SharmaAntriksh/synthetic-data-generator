@@ -49,21 +49,32 @@ def resolve_fx_dates(fx_cfg, global_defaults):
 
 def run_exchange_rates(cfg, parquet_folder: Path):
     """
-    Generate Exchange Rates dimension using Yahoo Finance.
-    Corrected to respect use_global_dates flag.
+    Exchange Rates dimension:
+    - respects use_global_dates=true/false
+    - regenerates only when FX-related cfg or date window changes
     """
 
     out_path = parquet_folder / "exchange_rates.parquet"
-
     fx_cfg = cfg["exchange_rates"]
-    global_defaults = cfg["_defaults"]["dates"]
 
-    # 1) Resolve dates FIRST
+    # ---------------------------------------------------------
+    # GLOBAL DEFAULTS (supports both `defaults` and `_defaults`)
+    # ---------------------------------------------------------
+    global_defaults = (
+        cfg.get("defaults", {}).get("dates")
+        or cfg.get("_defaults", {}).get("dates")
+    )
+
+    # ---------------------------------------------------------
+    # Resolve effective FX date window
+    # ---------------------------------------------------------
     start_str, end_str = resolve_fx_dates(fx_cfg, global_defaults)
     start = pd.to_datetime(start_str).date()
     end   = pd.to_datetime(end_str).date()
 
-    # Build a small, stable config for version checks (order/stable types only)
+    # ---------------------------------------------------------
+    # Minimal config for versioning (dimension-only)
+    # ---------------------------------------------------------
     minimal_cfg = {
         "currencies": fx_cfg.get("currencies"),
         "base": fx_cfg.get("base_currency"),
@@ -77,33 +88,24 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         return
 
     # ---------------------------------------------------------
-    # Retrieve TRUE global defaults (not merged)
+    # Pull parameters
     # ---------------------------------------------------------
-    global_defaults = cfg["_defaults"]["dates"]
-
-    # ---------------------------------------------------------
-    # Resolve effective date range
-    # ---------------------------------------------------------
-    start_str, end_str = resolve_fx_dates(fx_cfg, global_defaults)
-
-    start = pd.to_datetime(start_str).date()
-    end   = pd.to_datetime(end_str).date()
-
     currencies = fx_cfg["currencies"]
     base       = fx_cfg["base_currency"]
     master     = fx_cfg["master_file"]
 
     # ---------------------------------------------------------
-    # Step 1: Update or build master FX file from Yahoo Finance
+    # Step 1: Update or build FX master
     # ---------------------------------------------------------
     with stage("Updating FX Master"):
         master_fx = build_or_update_fx(start, end, master, currencies=currencies)
 
-    # Ensure Date is normalized before slicing
-    master_fx["Date"] = pd.to_datetime(master_fx["Date"], errors = 'coerce', format = '%Y-%m-%d').dt.date
+    master_fx["Date"] = (
+        pd.to_datetime(master_fx["Date"], errors="coerce", format="%Y-%m-%d").dt.date
+    )
 
     # ---------------------------------------------------------
-    # Step 2: Slice master FX file based on resolved dates
+    # Step 2: Slice master based on final date window
     # ---------------------------------------------------------
     with stage("Generating Exchange Rates"):
         df = master_fx[
@@ -112,10 +114,9 @@ def run_exchange_rates(cfg, parquet_folder: Path):
             (master_fx["Date"] >= start) &
             (master_fx["Date"] <= end)
         ].reset_index(drop=True)
-        
+
         df = df[["Date", "FromCurrency", "ToCurrency", "Rate"]]
         df.to_parquet(out_path, index=False)
 
     save_version("exchange_rates", minimal_cfg, out_path)
-
     info(f"Exchange Rates dimension written → {out_path}")

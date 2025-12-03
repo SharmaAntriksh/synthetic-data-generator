@@ -8,7 +8,7 @@ defaults:
   seed: 42
 
   dates:
-    start: "2020-01-02"
+    start: "2020-01-03"
     end: "2025-10-18"
 
   paths:
@@ -25,7 +25,7 @@ sales:
   total_rows: 1000000
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "deltaparquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -103,14 +103,15 @@ geography:
 # PROMOTIONS
 # ---------------------------------------------------------------------
 promotions:
-  date_ranges: []
-
   num_seasonal: 21
   num_clearance: 8
   num_limited: 12
 
   override:
-    dates: {}
+    dates:
+      start: null      # null means: use defaults
+      end: null
+    seed: null
 
 
 # ---------------------------------------------------------------------
@@ -138,7 +139,8 @@ dates:
 
   override:
     dates:
-      end: "2026-12-31"
+      start: "2020-01-01"     # optional, null = use defaults
+      end:   "2026-12-31"     # optional, null = use defaults
 
 
 # ---------------------------------------------------------------------

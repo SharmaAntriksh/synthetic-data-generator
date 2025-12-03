@@ -238,48 +238,50 @@ def generate_promotions_catalog(
 # ---------------------------------------------------------
 
 def run_promotions(cfg, parquet_folder: Path):
-    """
-    Wrapper around promotion generation.
-    - extracts config values
-    - performs regeneration logic
-    - writes parquet
-    - saves version
-    """
     out_path = parquet_folder / "promotions.parquet"
 
-    if not should_regenerate("promotions", cfg, out_path):
+    # ---------------------------------------------------------
+    # Promotions depend on cfg["promotions"] + defaults dates
+    # ---------------------------------------------------------
+    promo_cfg = cfg["promotions"]
+    defaults_dates = cfg.get("defaults", {}).get("dates") or cfg.get("_defaults", {}).get("dates")
+
+    # Build versioning input = promotions section + global default dates
+    version_cfg = {
+        **promo_cfg,
+        "global_dates": defaults_dates
+    }
+
+    # ---------------------------------------------------------
+    # Regeneration check (correct)
+    # ---------------------------------------------------------
+    if not should_regenerate("promotions", version_cfg, out_path):
         skip("Promotions up-to-date; skipping.")
         return
 
-    promo_cfg = cfg["promotions"]
-
     # ---------------------------------------------------------
-    # Determine promo year range from defaults (merged into section)
+    # Resolve start/end dates
     # ---------------------------------------------------------
-    default_dates = promo_cfg["dates"]
-
-    start = pd.to_datetime(default_dates["start"])
-    end   = pd.to_datetime(default_dates["end"])
+    override_dates = promo_cfg.get("override", {}).get("dates")
+    if override_dates and override_dates.get("start") and override_dates.get("end"):
+        start = pd.to_datetime(override_dates["start"])
+        end   = pd.to_datetime(override_dates["end"])
+    else:
+        start = pd.to_datetime(defaults_dates["start"])
+        end   = pd.to_datetime(defaults_dates["end"])
 
     years = list(range(start.year, end.year + 1))
 
-    # ---------------------------------------------------------
-    # Build synthetic yearly windows (no config date_windows required)
-    # ---------------------------------------------------------
     windows = {}
-
     for y in years:
-        year_start = pd.Timestamp(f"{y}-01-01")
-        year_end   = pd.Timestamp(f"{y}-12-31")
-
-        # clamp inside global default date range
-        year_start = max(year_start, start)
-        year_end   = min(year_end, end)
-
-        windows[y] = (year_start, year_end)
+        ys = pd.Timestamp(f"{y}-01-01")
+        ye = pd.Timestamp(f"{y}-12-31")
+        ys = max(ys, start)
+        ye = min(ye, end)
+        windows[y] = (ys, ye)
 
     # ---------------------------------------------------------
-    # Generate promotions using computed windows
+    # Generate promotions
     # ---------------------------------------------------------
     with stage("Generating Promotions"):
         df = generate_promotions_catalog(
@@ -288,9 +290,10 @@ def run_promotions(cfg, parquet_folder: Path):
             num_seasonal=promo_cfg.get("num_seasonal", 20),
             num_clearance=promo_cfg.get("num_clearance", 8),
             num_limited=promo_cfg.get("num_limited", 12),
-            seed=promo_cfg.get("seed", 42)
+            seed=promo_cfg.get("override", {}).get("seed", 42)
         )
         df.to_parquet(out_path, index=False)
 
-    save_version("promotions", cfg, out_path)
+    save_version("promotions", version_cfg, out_path)
     info(f"Promotions dimension written → {out_path}")
+

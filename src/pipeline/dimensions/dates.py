@@ -239,29 +239,61 @@ def generate_date_table(start_date, end_date, first_fy_month):
 # ---------------------------------------------------------
 # PIPELINE WRAPPER
 # ---------------------------------------------------------
-
 def run_dates(cfg, parquet_folder: Path):
     """
     Pipeline wrapper for Date dimension.
-    Handles:
-    - version checks
-    - logging
-    - writing parquet
-    - version saving
+    Uses:
+    - cfg["dates"]
+    - cfg["defaults"]["dates"]
     """
 
     out_path = parquet_folder / "dates.parquet"
 
-    if not should_regenerate("dates", cfg, out_path):
+    # ---------------------------------------------------------
+    # Build versioning input
+    # ---------------------------------------------------------
+    dates_cfg = cfg["dates"]
+    defaults_dates = (
+        cfg.get("defaults", {}).get("dates")
+        or cfg.get("_defaults", {}).get("dates")
+    )
+
+    # Versioning must depend on BOTH the per-dimension config AND defaults.dates
+    version_cfg = {
+        **dates_cfg,
+        "global_dates": defaults_dates
+    }
+
+    # ---------------------------------------------------------
+    # Version check (correct)
+    # ---------------------------------------------------------
+    if not should_regenerate("dates", version_cfg, out_path):
         skip("Dates up-to-date; skipping.")
         return
 
-    dates_cfg = cfg["dates"]
+    # ---------------------------------------------------------
+    # Resolve actual date range
+    # Priority:
+    #   1. override.dates.start / override.dates.end
+    #   2. defaults.dates.start / defaults.dates.end
+    # ---------------------------------------------------------
+    override_dates = dates_cfg.get("override", {}).get("dates", {})
 
-    start_date = dates_cfg.get("start_date")
-    end_date = dates_cfg.get("end_date")
-    fiscal_start_month = dates_cfg.get("fiscal_start_month", 5)
+    start_date = (
+        override_dates.get("start")
+        or defaults_dates.get("start")
+    )
 
+    end_date = (
+        override_dates.get("end")
+        or defaults_dates.get("end")
+    )
+
+    fiscal_start_month = dates_cfg.get("fiscal_month_offset", 5)
+
+    # ---------------------------------------------------------
+    # Generate date dimension
+    # ---------------------------------------------------------
     with stage("Generating Dates"):
         df = generate_date_table(
             start_date=start_date,
@@ -270,5 +302,5 @@ def run_dates(cfg, parquet_folder: Path):
         )
         df.to_parquet(out_path, index=False)
 
-    save_version("dates", cfg, out_path)
+    save_version("dates", version_cfg, out_path)
     info(f"Dates dimension written → {out_path}")

@@ -130,24 +130,27 @@ def run_stores(cfg, parquet_folder: Path):
 
     out_path = parquet_folder / "stores.parquet"
 
-    if not should_regenerate("stores", cfg, out_path):
+    # Use only the stores section for versioning
+    store_cfg = cfg["stores"]
+
+    if not should_regenerate("stores", store_cfg, out_path):
         skip("Stores up-to-date; skipping.")
         return
 
-    store_cfg = cfg["stores"]
     geo_path = parquet_folder / "geography.parquet"
 
     with stage("Generating Stores"):
         df = generate_store_table(
             geography_parquet_path=geo_path,
-            num_stores=store_cfg.get("total_stores", 200),
-            opening_start=store_cfg.get("opening_start", "2018-01-01"),
-            opening_end=store_cfg.get("opening_end", "2023-01-31"),
+            num_stores=store_cfg.get("num_stores", 200),
+            opening_start=store_cfg.get("opening", {}).get("start", "1995-01-01"),
+            opening_end=store_cfg.get("opening", {}).get("end", "2020-12-31"),
             closing_end=store_cfg.get("closing_end", "2025-12-31"),
-            seed=store_cfg.get("seed", 42),
+            seed=store_cfg.get("override", {}).get("seed", 42),
         )
-
         df.to_parquet(out_path, index=False)
 
-    save_version("stores", cfg, out_path)
+    save_version("stores", store_cfg, out_path)
+    info(f"Stores dimension written → {out_path}")
+
     info(f"Stores dimension written → {out_path}")

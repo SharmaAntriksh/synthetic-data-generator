@@ -243,7 +243,10 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
 def run_customers(cfg, parquet_folder: Path):
     out_path = parquet_folder / "customers.parquet"
 
-    if not should_regenerate("customers", cfg, out_path):
+    # Use ONLY the customers section for versioning
+    cust_cfg = cfg["customers"]
+
+    if not should_regenerate("customers", cust_cfg, out_path):
         skip("Customers up-to-date; skipping.")
         return
 
@@ -251,5 +254,6 @@ def run_customers(cfg, parquet_folder: Path):
         df = generate_synthetic_customers(cfg, parquet_folder)
         df.to_parquet(out_path, index=False)
 
-    save_version("customers", cfg, out_path)
+    save_version("customers", cust_cfg, out_path)
     info(f"Customers dimension written → {out_path}")
+
