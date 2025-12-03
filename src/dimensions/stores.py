@@ -7,7 +7,7 @@ import numpy as np
 from pathlib import Path
 
 from src.utils.logging_utils import info, fail, skip, stage
-from src.engine.versioning import should_regenerate, save_version
+from src.versioning.version_store import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
 
 

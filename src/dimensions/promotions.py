@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.utils.logging_utils import info, fail, skip, stage
-from src.engine.versioning import should_regenerate, save_version
+from src.versioning.version_store import should_regenerate, save_version
 
 
 # ---------------------------------------------------------

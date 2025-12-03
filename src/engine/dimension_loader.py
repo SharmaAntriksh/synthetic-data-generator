@@ -3,7 +3,7 @@ import pyarrow.parquet as pq
 import pandas as pd
 
 from src.utils.logging_utils import info
-from src.engine.versioning import load_version
+from src.versioning.version_store import load_version
 
 
 def load_dimension(name, parquet_dims_path, expected_config):

@@ -2,7 +2,7 @@ import pandas as pd
 from pathlib import Path
 
 from src.utils.logging_utils import info, skip, stage
-from src.engine.versioning import should_regenerate, save_version
+from src.versioning.version_store import should_regenerate, save_version
 from src.integrations.fx_yahoo import build_or_update_fx
 
 
