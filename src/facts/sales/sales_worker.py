@@ -7,7 +7,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.utils.logging_utils import work
-from .sales_logic import bind_globals, _build_chunk_table
+from .sales_logic import chunk_builder, globals as gl
+
 
 # Module-level globals (kept same names as sales_logic expects)
 _G_product_np = None
@@ -130,7 +131,7 @@ def init_sales_worker(
 
 
     # update sales_logic globals in one shot
-    bind_globals({
+    gl.bind_globals({
         "_G_product_np": _G_product_np,
         "_G_store_keys": _G_store_keys,
         "_G_promo_keys_all": _G_promo_keys_all,
@@ -253,7 +254,7 @@ def _worker_task(args):
 
     # Build the chunk (sales_logic._build_chunk_table should be vectorized when possible)
     # pass the computed seed_for_chunk so each worker produces different data
-    table_or_df = _build_chunk_table(batch_size, seed_for_chunk, no_discount_key=_G_no_discount_key)
+    table_or_df = chunk_builder.build_chunk_table(batch_size, seed_for_chunk, no_discount_key=_G_no_discount_key)
 
 
     # Ensure Arrow table quickly (fast path if already Arrow)
