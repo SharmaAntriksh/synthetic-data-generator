@@ -85,7 +85,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         master_fx = build_or_update_fx(start, end, master, currencies=currencies)
 
     # Ensure Date is normalized before slicing
-    master_fx["Date"] = pd.to_datetime(master_fx["Date"], errors = 'coerce', format = '%Y-%b-%D').dt.date
+    master_fx["Date"] = pd.to_datetime(master_fx["Date"], errors = 'coerce', format = '%Y-%m-%d').dt.date
 
     # ---------------------------------------------------------
     # Step 2: Slice master FX file based on resolved dates
@@ -94,8 +94,8 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         df = master_fx[
             (master_fx["ToCurrency"].isin(currencies)) &
             (master_fx["FromCurrency"] == base) &
-            (master_fx["Date"] >= pd.to_datetime(start)) &
-            (master_fx["Date"] <= pd.to_datetime(end))
+            (master_fx["Date"] >= start) &
+            (master_fx["Date"] <= end)
         ].reset_index(drop=True)
         
         df = df[["Date", "FromCurrency", "ToCurrency", "Rate"]]
