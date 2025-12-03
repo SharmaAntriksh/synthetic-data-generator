@@ -3,8 +3,8 @@ import time
 from pathlib import Path
 
 from src.engine.config.config_loader import load_config_file, load_config
-from src.engine.dimensions_runner import generate_dimensions
-from src.engine.sales_runner import run_sales_pipeline
+from src.engine.runners.dimensions_runner import generate_dimensions
+from src.engine.runners.sales_runner import run_sales_pipeline
 from src.utils.logging_utils import info, fail, PIPELINE_START_TIME, fmt_sec
 
 
