@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2020-01-03"
-    end: "2025-10-18"
+    start: "2022-04-08"
+    end: "2025-05-18"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -57,7 +57,7 @@ sales:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: false   # true=Contoso, false=Fake generated
+  use_contoso_products: true   # true=Contoso, false=Fake generated
   num_products: 17301
   num_categories: 5            # MAX 15 for now
   num_subcategories: 25        # MAX 75 for now: 15 Category x 5 Subcategory under each category

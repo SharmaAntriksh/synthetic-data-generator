@@ -109,7 +109,7 @@ def build_chunk_table(n, seed, no_discount_key=1):
     order_dates[0] = date_pool[0]
     order_dates[-1] = date_pool[-1]
     
-    qty = np.clip(rng.poisson(3, n) + 1, 1, 10)
+    qty = np.clip(rng.poisson(3, n) + 1, 1, 5)
 
     # ------------------------------------------------------------
     # DATE LOGIC

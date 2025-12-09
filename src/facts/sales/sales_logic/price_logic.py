@@ -12,7 +12,7 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
     discount_amt = np.minimum(discount_amt, unit_price - 0.01)
 
     # Final price transforms
-    factor = rng.uniform(0.43, 0.61, size=n)
+    factor = rng.uniform(0.02, 0.04, size=n)
     final_unit_price = np.round(unit_price * factor, 2)
     final_unit_cost = np.round(unit_cost * factor, 2)
     final_discount_amt = np.round(discount_amt * factor, 2)

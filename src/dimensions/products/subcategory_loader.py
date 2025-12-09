@@ -27,45 +27,14 @@ def load_subcategory_dimension(config, output_folder: Path):
 
 
 # ---------------------------------------------------------
-# CONTOSO MODE
+# CONTOSO MODE — PASSTHROUGH
 # ---------------------------------------------------------
 def _load_contoso_subcategory(output_folder: Path, parquet_path: Path):
     src = Path("data/contoso_products/product_subcategory.parquet")
+
     df = pd.read_parquet(src)
 
-    rename_map = {}
-
-    # Normalize names
-    if "ProductSubcategoryKey" in df.columns:
-        rename_map["ProductSubcategoryKey"] = "SubcategoryKey"
-
-    if "ProductCategoryKey" in df.columns:
-        rename_map["ProductCategoryKey"] = "CategoryKey"
-
-    if "SubcategoryName" in df.columns:
-        rename_map["SubcategoryName"] = "Subcategory"
-    elif "Subcategory Label" in df.columns:
-        rename_map["Subcategory Label"] = "Subcategory"
-
-    # CategoryName → Category
-    if "CategoryName" in df.columns:
-        rename_map["CategoryName"] = "Category"
-
-    df = df.rename(columns=rename_map)
-
-    # Ensure required columns
-    required = ["SubcategoryKey", "CategoryKey", "Subcategory"]
-    for c in required:
-        if c not in df.columns:
-            raise ValueError(f"Missing required field {c} in Contoso subcategory file")
-
-    # If Category missing, join with product_category.parquet
-    if "Category" not in df.columns:
-        cat_df = pd.read_parquet(output_folder / "product_category.parquet")
-        df = df.merge(cat_df, on="CategoryKey", how="left")
-
-    df = df[["SubcategoryKey", "CategoryKey", "Subcategory", "Category"]]
-
+    # Write as-is
     df.to_parquet(parquet_path, index=False)
     return df
 

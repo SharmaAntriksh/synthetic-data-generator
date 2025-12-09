@@ -28,33 +28,14 @@ def load_category_dimension(config, output_folder: Path):
 
 
 # ---------------------------------------------------------
-# CONTOSO MODE — Normalize to (CategoryKey, Category)
+# CONTOSO MODE — PASSTHROUGH
 # ---------------------------------------------------------
 def _load_contoso_category(parquet_path: Path):
-    source_file = Path("data/contoso_products/product_category.parquet")
-    df = pd.read_parquet(source_file)
+    src = Path("data/contoso_products/product_category.parquet")
 
-    rename_map = {}
+    df = pd.read_parquet(src)
 
-    # Normalize names
-    if "CategoryName" in df.columns:
-        rename_map["CategoryName"] = "Category"
-
-    if "ProductCategoryKey" in df.columns:
-        rename_map["ProductCategoryKey"] = "CategoryKey"
-
-    # Apply renaming
-    df = df.rename(columns=rename_map)
-
-    # Validate required fields
-    required = ["CategoryKey", "Category"]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"Contoso category file missing required fields: {missing}")
-
-    # Keep clean output
-    df = df[["CategoryKey", "Category"]]
-
+    # Write as-is
     df.to_parquet(parquet_path, index=False)
     return df
 

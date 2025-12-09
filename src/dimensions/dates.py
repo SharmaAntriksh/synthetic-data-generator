@@ -54,6 +54,8 @@ def generate_date_table(start_date, end_date, first_fy_month):
     df["Day Short"] = df["Date"].dt.strftime("%a")
     df["Day Of Year"] = df["Date"].dt.dayofyear
 
+    df["Calendar Year Month Number"] = df["Year"] * 12 + df["Month"]
+
     # ============================================================
     # WEEKDAY / BUSINESS-DAY LOGIC
     # ============================================================
@@ -213,7 +215,7 @@ def generate_date_table(start_date, end_date, first_fy_month):
             "Quarter Year",
             "Month","Month Name","Month Short",
             "Month Start Date","Month End Date",
-            "Month Year","Month Year Number",
+            "Month Year","Month Year Number", "Calendar Year Month Number",
             "Is Month Start","Is Month End",
             "Week Of Year ISO","ISO Year","Week Of Month",
             "Week Start Date","Week End Date",
@@ -274,20 +276,27 @@ def run_dates(cfg, parquet_folder: Path):
     # ---------------------------------------------------------
     # Resolve actual date range
     # Priority:
-    #   1. override.dates.start / override.dates.end
-    #   2. defaults.dates.start / defaults.dates.end
+    #   1. override.dates.start/end → EXACT (no expansion)
+    #   2. defaults.dates.start/end → EXPANDED to full calendar years
     # ---------------------------------------------------------
     override_dates = dates_cfg.get("override", {}).get("dates", {})
 
-    start_date = (
-        override_dates.get("start")
-        or defaults_dates.get("start")
-    )
+    if "start" in override_dates and "end" in override_dates:
+        # Override provided → use exact range
+        start_date = override_dates["start"]
+        end_date   = override_dates["end"]
+    else:
+        # Use defaults and expand to full calendar years
+        start_date = defaults_dates.get("start")
+        end_date   = defaults_dates.get("end")
 
-    end_date = (
-        override_dates.get("end")
-        or defaults_dates.get("end")
-    )
+        if start_date:
+            s = pd.to_datetime(start_date)
+            start_date = s.replace(month=1, day=1).strftime("%Y-%m-%d")
+
+        if end_date:
+            e = pd.to_datetime(end_date)
+            end_date = e.replace(month=12, day=31).strftime("%Y-%m-%d")
 
     fiscal_start_month = dates_cfg.get("fiscal_month_offset", 5)
 
