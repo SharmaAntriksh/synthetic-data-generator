@@ -37,6 +37,14 @@ class State:
     row_group_size = None
     compression = None
 
+    # pricing config
+    pricing_mode = None
+    enforce_min_price = None
+    bucket_size = None
+    discrete_factors = None
+    discount_bucket_size = None
+    unit_bucket_size = None
+
     # delta options
     no_discount_key = None
     delta_output_folder = None

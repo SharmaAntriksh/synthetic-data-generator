@@ -8,7 +8,7 @@ defaults:
   seed: 42
 
   dates:
-    start: "2022-04-08"
+    start: "2022-01-01"
     end: "2025-05-18"
 
   paths:
@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 100000
+  total_rows: 10000
   chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -52,6 +52,13 @@ sales:
   partitioning:
     enabled: true
     columns: ["Year", "Month"]
+
+  pricing:
+    enforce_min_price: true
+    pricing_mode: "bucketed"       # or "bucketed"
+    bucket_size: 0.25            # used only when pricing_mode = bucketed
+    discrete_factors: false      # optional alternative discretization mode
+
 
 # ---------------------------------------------------------------------
 # PRODUCTS

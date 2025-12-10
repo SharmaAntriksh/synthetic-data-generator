@@ -287,6 +287,24 @@ def generate_sales_fact(
 
     no_discount_key = 1
 
+    # ------------------------------------------------------------
+    # NEW: Bind pricing config into global State (for workers too)
+    # ------------------------------------------------------------
+    from src.facts.sales.sales_logic.globals import bind_globals as _bind_globals
+
+    pricing_cfg = cfg.get("sales", {}).get("pricing", {})
+    print("DEBUG: pricing_cfg loaded from YAML =", pricing_cfg)
+
+    _bind_globals({
+        "pricing_mode": pricing_cfg.get("pricing_mode", "random"),
+        "enforce_min_price": pricing_cfg.get("enforce_min_price", False),
+        "bucket_size": pricing_cfg.get("bucket_size", 0.25),
+        "discrete_factors": pricing_cfg.get("discrete_factors", False),
+        "discount_bucket_size": pricing_cfg.get("discount_bucket_size", 0.50),
+        "unit_bucket_size": pricing_cfg.get("unit_bucket_size", 1.00),
+    })
+
+
     # Init args for workers
     initargs = (
         product_np,
@@ -310,6 +328,12 @@ def generate_sales_fact(
         skip_order_cols,
         (file_format == "deltaparquet"),   # partition flag in worker
         partition_cols,
+        pricing_cfg.get("pricing_mode", "random"),
+        pricing_cfg.get("enforce_min_price", False),
+        pricing_cfg.get("bucket_size", 0.25),
+        pricing_cfg.get("discrete_factors", False),
+        pricing_cfg.get("discount_bucket_size", 0.50),
+        pricing_cfg.get("unit_bucket_size", 1.00),
     )
 
     created_files = []
