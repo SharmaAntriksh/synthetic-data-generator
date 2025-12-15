@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 100000
+  total_rows: 12583
   chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -59,6 +59,11 @@ sales:
     bucket_size: 0.25
     discrete_factors: false
 
+    value_scale: 0.05
+
+    min_unit_price: 10
+    max_unit_price: 2000
+
     retail_price_endings: false 
     
     decimals:
@@ -80,7 +85,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 18237
+  total_customers: 8237
 
   pct_india: 1
   pct_us: 60

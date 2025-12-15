@@ -28,11 +28,6 @@ def _micro_adjust(values, scale):
 # Main
 # -------------------------------------------------
 def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
-    print(
-        "DECIMAL MODE CHECK →",
-        State.decimals_mode,
-        type(State.decimals_mode)
-    )
 
     # -------------------------------------------------
     # CONFIG (FLAT STATE)
@@ -52,10 +47,15 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
 
     retail_endings = bool(State.retail_price_endings)
 
+    min_price = getattr(State, "min_unit_price", None)
+    max_price = getattr(State, "max_unit_price", None)
+
     # -------------------------------------------------
-    # 1. LIST PRICE
+    # 1. BASE LIST PRICE
     # -------------------------------------------------
-    base_unit_price = np.round(unit_price, 2)
+    value_scale = getattr(State, "value_scale", 1.0)
+
+    base_unit_price = np.round(unit_price * value_scale, 2)
 
     # -------------------------------------------------
     # 2. SALES DISCOUNT
@@ -63,16 +63,37 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
     sales_disc_pct = rng.choice(
         [0, 2, 5, 10],
         size=n,
-        p=[0.70, 0.15, 0.10, 0.05]
+        p=[0.45, 0.25, 0.20, 0.10]
     )
 
     base_discount = np.round(base_unit_price * sales_disc_pct / 100.0, 2)
     base_discount = np.minimum(base_discount, base_unit_price * 0.30)
+    
+    # -------------------------------------------------
+    # 2a. SMALL INCIDENTAL DISCOUNTS (convert some zeros)
+    # -------------------------------------------------
+    zero_mask = base_discount == 0
+    apply_small = rng.random(zero_mask.sum()) < 0.65   # 35% of zero rows
+
+    base_discount[zero_mask] += apply_small * rng.choice(
+        [0.5, 1.0],
+        size=zero_mask.sum(),
+        p=[0.7, 0.3]
+    )
 
     # -------------------------------------------------
-    # 3. COST
+    # 3. COST (CONTROLLED MARGIN)
     # -------------------------------------------------
-    base_unit_cost = np.round(unit_cost, 2)
+    # Target gross margin band (training-friendly)
+    min_margin = 0.02   # 15%
+    max_margin = 0.08   # 30%
+
+    margin_pct = rng.uniform(min_margin, max_margin, size=n)
+
+    base_unit_cost = np.round(
+        base_unit_price * (1 - margin_pct),
+        2
+    )
 
     # -------------------------------------------------
     # 4. NET PRICE (STRUCTURAL)
@@ -102,19 +123,18 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
         base_net_price  = np.round(base_unit_price - base_discount, 2)
 
     # -------------------------------------------------
-    # 7. RETAIL ENDINGS (STRUCTURAL)
+    # 7. RETAIL ENDINGS
     # -------------------------------------------------
     if retail_endings or decimals_mode == "strict":
         base_unit_price = _round_price_endings(base_unit_price, rng)
         base_net_price  = np.round(base_unit_price - base_discount, 2)
 
     # -------------------------------------------------
-    # 8. MICRO DECIMALS (FINAL PRESENTATION ONLY)
+    # 8. MICRO DECIMALS (PRESENTATION)
     # -------------------------------------------------
     if decimals_mode == "micro":
         final_unit_price = _micro_adjust(base_unit_price, decimals_scale)
         discount_amt     = _micro_adjust(base_discount, decimals_scale)
-        discount_amt     = np.clip(discount_amt, 0, None)
         final_unit_cost  = _micro_adjust(base_unit_cost, decimals_scale)
         final_net_price  = _micro_adjust(base_net_price, decimals_scale)
     else:
@@ -124,10 +144,43 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
         final_net_price  = base_net_price
 
     # -------------------------------------------------
-    # 9. SAFETY
+    # 9. HARD LIMITS (FINAL & AUTHORITATIVE)
     # -------------------------------------------------
+    min_price = getattr(State, "min_unit_price", None)
+    max_price = getattr(State, "max_unit_price", None)
+
+    if min_price is not None:
+        final_unit_price = np.maximum(final_unit_price, min_price)
+
+    if max_price is not None:
+        final_unit_price = np.minimum(final_unit_price, max_price)
+
+    # -------------------------------------------------
+    # 10. RE-DERIVE DISCOUNT & NET (INVARIANT RESTORE)
+    # -------------------------------------------------
+    # Discount must be relative to final UnitPrice
+    if min_price is not None:
+        max_discount = final_unit_price - min_price
+    else:
+        max_discount = final_unit_price
+
+    discount_amt = np.clip(discount_amt, 0, max_discount)
+
+    final_net_price = np.round(final_unit_price - discount_amt, 2)
+
+    # NetPrice must also respect limits
+    if min_price is not None:
+        final_net_price = np.maximum(final_net_price, min_price)
+
+    if max_price is not None:
+        final_net_price = np.minimum(final_net_price, max_price)
+
+    # -------------------------------------------------
+    # 11. COST SAFETY
+    # -------------------------------------------------
+    final_unit_cost = np.minimum(final_unit_cost, final_net_price)
     final_unit_cost = np.clip(final_unit_cost, 0.01, None)
-    final_net_price = np.clip(final_net_price, 0.01, None)
+
 
     return {
         "discount_amt": discount_amt,

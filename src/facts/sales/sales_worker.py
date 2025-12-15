@@ -45,6 +45,9 @@ def init_sales_worker(
     unit_bucket_size,
     decimals_mode,
     decimals_scale,
+    max_unit_price,
+    min_unit_price,
+    value_scale,
 ):
     """
     Initialize global state using the new 'State' container.
@@ -115,7 +118,9 @@ def init_sales_worker(
 
         "decimals_mode": decimals_mode,
         "decimals_scale": decimals_scale,
-
+        "max_unit_price": max_unit_price,
+        "min_unit_price": min_unit_price,
+        "value_scale": value_scale,
     })
 
 
