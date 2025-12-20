@@ -99,10 +99,16 @@ def build_chunk_table(n, seed, no_discount_key=1):
         _len_customers=_len_customers,
     )
 
-    order_ids_int = orders["order_ids_int"]
-    line_num = orders["line_num"]
     customer_keys = orders["customer_keys"]
     order_dates = orders["order_dates"]
+
+    if not skip_cols:
+        order_ids_int = orders["order_ids_int"]
+        line_num = orders["line_num"]
+    else:
+        order_ids_int = None
+        line_num = None
+
     order_dates[0] = date_pool[0]
     order_dates[-1] = date_pool[-1]
     

@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 12583000
+  total_rows: 12583
   chunk_size: 2000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -42,7 +42,7 @@ sales:
   write_pyarrow: true
   tune_chunk: false
 
-  skip_order_cols: false
+  skip_order_cols: true
 
   override:
     dates:
@@ -75,7 +75,7 @@ sales:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: false   # true=Contoso, false=Fake generated
+  use_contoso_products: true   # true=Contoso, false=Fake generated
   num_products: 53021
   num_categories: 5            # MAX 15 for now
   num_subcategories: 25        # MAX 75 for now: 15 Category x 5 Subcategory under each category
@@ -85,7 +85,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 1888237
+  total_customers: 2237
 
   pct_india: 1
   pct_us: 60
