@@ -236,8 +236,17 @@ def run_dates(cfg, parquet_folder: Path):
         return
 
     override = dates_cfg.get("override", {}).get("dates", {})
-    start_date = override.get("start") or defaults_dates.get("start")
-    end_date = override.get("end") or defaults_dates.get("end")
+    raw_start = pd.to_datetime(
+        override.get("start") or defaults_dates.get("start")
+    )
+    raw_end = pd.to_datetime(
+        override.get("end") or defaults_dates.get("end")
+    )
+
+    # Expand to full years + buffer
+    start_date = pd.Timestamp(raw_start.year - 1, 1, 1)
+    end_date = pd.Timestamp(raw_end.year + 1, 12, 31)
+
 
     fiscal_start_month = dates_cfg.get("fiscal_month_offset", 5)
 

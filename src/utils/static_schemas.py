@@ -168,7 +168,7 @@ STATIC_SCHEMAS = {
     # FACTS
     # -----------------------
     "Sales": [
-        ("SalesOrderNumber",     "VARCHAR(30)"),
+        ("SalesOrderNumber",     "BIGINT"),
         ("SalesOrderLineNumber", "TINYINT"),
 
         ("CustomerKey",          "INT"),
@@ -195,7 +195,7 @@ STATIC_SCHEMAS = {
         ("Date",         "DATE"),
         ("FromCurrency", "VARCHAR(10)"),
         ("ToCurrency",   "VARCHAR(10)"),
-        ("Rate", "DECIMAL(10, 6)")
+        ("Rate",         "DECIMAL(10, 6)")
     ]
 }
 
