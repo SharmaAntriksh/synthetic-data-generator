@@ -15,13 +15,17 @@ def load_product_dimension(config, output_folder: Path):
 
     Behavior:
     - use_contoso_products = True
-        → Load Contoso products as-is (≈ 2,517 rows)
+        → Load Contoso products
+        → Apply product pricing rules
 
     - use_contoso_products = False
         → Expand Contoso products to num_products
-          using deterministic replication
-    """
+        → Apply product pricing rules
 
+    Notes:
+    - BaseProductKey and VariantIndex are always present
+    - Pricing is authoritative at the product level
+    """
     p = config["products"]
     version_key = _version_key(p)
     parquet_path = output_folder / "products.parquet"
@@ -66,10 +70,13 @@ def load_product_dimension(config, output_folder: Path):
     # Required minimal fields for Sales
     required = [
         "ProductKey",
+        "BaseProductKey",
+        "VariantIndex",
         "SubcategoryKey",
         "UnitPrice",
         "UnitCost",
     ]
+
     for col in required:
         if col not in df.columns:
             raise ValueError(

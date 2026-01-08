@@ -1,6 +1,5 @@
 import os
 import pyarrow.parquet as pq
-import pandas as pd
 
 from src.utils.logging_utils import info
 from src.versioning.version_store import load_version
@@ -11,8 +10,11 @@ def load_dimension(name, parquet_dims_path, expected_config):
     Loads a dimension parquet file and returns:
         (pandas_dataframe, changed_flag)
 
-    changed_flag = True only when version file is missing or outdated.
-    DataFrame is ALWAYS returned if parquet exists.
+    Rules:
+    - If parquet is missing → changed_flag = True
+    - If version file is missing → changed_flag = True
+    - If expected_config is None (static dimension) → changed_flag = False
+    - Otherwise → changed_flag = version mismatch
     """
 
     path = os.path.join(str(parquet_dims_path), f"{name}.parquet")
@@ -31,9 +33,10 @@ def load_dimension(name, parquet_dims_path, expected_config):
     # If no version file exists → changed
     if prev_version is None:
         changed_flag = True
+    elif expected_config is None:
+        # static dimension: version existence is enough
+        changed_flag = False
     else:
-        # version changed if config dict differs
         changed_flag = prev_version != expected_config
-
 
     return df, changed_flag

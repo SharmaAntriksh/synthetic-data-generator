@@ -184,10 +184,10 @@ STATIC_SCHEMAS = {
         ("DeliveryDate",         "DATE"),
 
         ("Quantity",             "TINYINT"),
-        ("NetPrice",             "DECIMAL(10, 4)"),
-        ("UnitCost",             "DECIMAL(10, 4)"),
-        ("UnitPrice",            "DECIMAL(10, 4)"),
-        ("DiscountAmount",       "DECIMAL(10, 4)"),
+        ("NetPrice",             "DECIMAL(8, 2)"),
+        ("UnitCost",             "DECIMAL(8, 2)"),
+        ("UnitPrice",            "DECIMAL(8, 2)"),
+        ("DiscountAmount",       "DECIMAL(8, 2)"),
 
         ("DeliveryStatus",       "VARCHAR(20)"),
         ("IsOrderDelayed",       "TINYINT")

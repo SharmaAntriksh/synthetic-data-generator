@@ -62,10 +62,6 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
       - other dimensions (customers, geography) continue to receive the
         normal cfg and only regenerate when their own section changes.
     """
-
-    # date-dependent dimension keys (adjust if you add more date-sensitive dims)
-    date_dependent = {"dates", "exchange_rates", "stores", "promotions", "currency"}
-
     # 1 Geography (root) — not date-dependent
     run_geography(cfg, parquet_dims_folder)
 
@@ -80,8 +76,8 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
     cfg_for = _cfg_with_global_dates(cfg, "promotions")
     run_promotions(cfg_for, parquet_dims_folder)
 
-    # 5 Products (product_category, product_subcategory, product)
-    #     Not date-dependent, so no need for cfg_with_global_dates
+    # 5 Products (static category/subcategory + generated products)
+    #     Not date-dependent; pricing is scenario-based, not time-based
     run_products(cfg, parquet_dims_folder)
 
     # 6 Dates (obviously date-dependent) — include defaults.dates

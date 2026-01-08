@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 import pyarrow as pa
 
 PA_AVAILABLE = pa is not None
@@ -7,8 +6,11 @@ PA_AVAILABLE = pa is not None
 
 class State:
     """
-    Shared global state container for sales logic.
-    All modules reference the same class attributes.
+    Shared global state for Sales runtime only.
+
+    Holds cached dimension data, promotion context,
+    and output configuration. Must not contain
+    product pricing or catalog logic.
     """
 
     # core

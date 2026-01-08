@@ -11,7 +11,14 @@ from src.engine.packaging import package_output
 
 
 def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
-    """Run the sales fact pipeline with correct deltaparquet handling."""
+    """
+    Run the sales fact pipeline.
+
+    Notes:
+    - Products define UnitPrice and UnitCost
+    - Sales applies discounts, promotions, and safety guards only
+    - No catalog price shaping happens here
+    """
 
     # ------------------------------------------------------------
     # Resolve and normalize key paths
@@ -20,13 +27,6 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     parquet_dims = Path(parquet_dims).resolve()
 
     fact_out.mkdir(parents=True, exist_ok=True)
-
-    # ------------------------------------------------------------
-    # Dimension dependencies
-    # ------------------------------------------------------------
-    def changed(name, section_cfg):
-        dim_file = parquet_dims / f"{name}.parquet"
-        return should_regenerate(name, section_cfg, dim_file)
 
     info("Sales will regenerate (forced).")
 
@@ -47,29 +47,6 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     if sales_out_folder.exists():
         shutil.rmtree(sales_out_folder, ignore_errors=True)
     sales_out_folder.mkdir(parents=True, exist_ok=True)
-
-    # ------------------------------------------------------------
-    # Bind PRICING config into flat State (REQUIRED)
-    # ------------------------------------------------------------
-    from src.facts.sales.sales_logic.globals import State
-
-    pricing = sales_cfg.get("pricing", {})
-    
-    # Pricing contract:
-    # - Products define UnitPrice and UnitCost
-    # - Sales applies discounts + min/max guards + value scaling only
-
-    # ---- pricing (INTENTIONALLY SIMPLE) ----
-    State.min_unit_price = pricing.get("min_unit_price")
-    State.max_unit_price = pricing.get("max_unit_price")
-    State.value_scale = pricing.get("value_scale", 1.0)
-
-    info(
-        f"Pricing bound → "
-        f"min={State.min_unit_price}, "
-        f"max={State.max_unit_price}, "
-        f"scale={State.value_scale}"
-    )
 
     # ------------------------------------------------------------
     # Run sales fact builder

@@ -1,5 +1,4 @@
 import numpy as np
-from .globals import fmt
 
 
 def build_orders(
