@@ -143,9 +143,9 @@ def create_final_output_folder(
             if d.exists():
                 delta_src = d
 
-        # fallback to internal
+        # fallback to standard delta location
         if delta_src is None:
-            fb = fact_folder / "delta"
+            fb = fact_folder / "sales"
             if fb.exists():
                 delta_src = fb
 
