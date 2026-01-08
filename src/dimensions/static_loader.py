@@ -12,6 +12,7 @@ def load_static_dimension(
 ):
     """
     Load a static reference dimension by copying it as-is.
+    Returns: (DataFrame, regenerated: bool)
     """
 
     version_key = {
@@ -20,7 +21,7 @@ def load_static_dimension(
 
     if not should_regenerate(name, version_key, output_path):
         skip(f"{name} up-to-date; skipping")
-        return pd.read_parquet(output_path)
+        return pd.read_parquet(output_path), False
 
     info(f"Loading {name}")
 
@@ -28,4 +29,4 @@ def load_static_dimension(
     df.to_parquet(output_path, index=False)
 
     save_version(name, version_key, output_path)
-    return df
+    return df, True

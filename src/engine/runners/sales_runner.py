@@ -61,7 +61,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     generate_sales_fact(
         cfg,
         parquet_folder=str(parquet_folder),
-        out_folder=str(sales_out_folder),             # ✔ Corrected
+        out_folder=str(sales_out_folder),
         total_rows=sales_cfg["total_rows"],
         file_format=sales_cfg["file_format"],
         row_group_size=sales_cfg.get("row_group_size", 2000000),
@@ -80,7 +80,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # Packaging
     # ------------------------------------------------------------
 
-    stage("Creating Final Output Folder")
+    # stage("Creating Final Output Folder")
     t1 = time.time()
     package_output(cfg, sales_cfg, parquet_dims, fact_out)
     done(f"Creating Final Output Folder completed in {time.time() - t1:.1f}s")

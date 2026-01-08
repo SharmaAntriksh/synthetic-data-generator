@@ -6,7 +6,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import time
 
-from src.utils.logging_utils import work
+# from src.utils.logging_utils import work
 from .sales_logic import chunk_builder
 from .sales_logic.globals import State, bind_globals
 
@@ -188,7 +188,7 @@ def _worker_task(args):
             row_group_size=int(State.row_group_size),
         )
 
-        work(chunk=idx, outfile=out_path)
+        # work(chunk=idx, outfile=out_path)
 
         return {
             "delta_part": out_path,
@@ -227,7 +227,7 @@ def _worker_task(args):
             )
         )
 
-        work(msg=f"Chunk {idx} → {os.path.basename(out_path)}")
+        # work(msg=f"Chunk {idx} → {os.path.basename(out_path)}")
 
         return out_path
 
@@ -245,5 +245,5 @@ def _worker_task(args):
         row_group_size=int(State.row_group_size),
     )
 
-    work(chunk=idx, outfile=out_path)
+    # work(chunk=idx, outfile=out_path)
     return out_path

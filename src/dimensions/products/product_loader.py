@@ -13,34 +13,23 @@ def load_product_dimension(config, output_folder: Path):
     """
     Product dimension loader.
 
-    Behavior:
-    - use_contoso_products = True
-        → Load Contoso products
-        → Apply product pricing rules
-
-    - use_contoso_products = False
-        → Expand Contoso products to num_products
-        → Apply product pricing rules
-
-    Notes:
-    - BaseProductKey and VariantIndex are always present
-    - Pricing is authoritative at the product level
+    Returns:
+        (DataFrame, regenerated: bool)
     """
+
     p = config["products"]
     version_key = _version_key(p)
     parquet_path = output_folder / "products.parquet"
 
-    # Skip if unchanged
+    # ---------------- SKIP ----------------
     if not should_regenerate("products", version_key, parquet_path):
         skip("Products up-to-date; skipping regeneration")
-        return pd.read_parquet(parquet_path)
+        return pd.read_parquet(parquet_path), False
 
-    # Always load Contoso base products
+    # ---------------- WORK ----------------
     base_df = load_contoso_products(output_folder)
-    
-    # -------------------------------------------------
-    # ENSURE VARIANT COLUMNS ALWAYS EXIST
-    # -------------------------------------------------
+
+    # Ensure variant columns exist
     if "BaseProductKey" not in base_df.columns:
         base_df["BaseProductKey"] = base_df["ProductKey"]
 
@@ -58,9 +47,8 @@ def load_product_dimension(config, output_folder: Path):
             seed=int(p.get("seed", 42)),
             price_jitter_pct=float(p.get("price_jitter_pct", 0.0)),
         )
-    # -------------------------------------------------
-    # APPLY PRODUCT PRICING (AUTHORITATIVE)
-    # -------------------------------------------------
+
+    # Apply pricing (authoritative)
     df = apply_product_pricing(
         df=df,
         pricing_cfg=p.get("pricing"),
@@ -79,17 +67,15 @@ def load_product_dimension(config, output_folder: Path):
 
     for col in required:
         if col not in df.columns:
-            raise ValueError(
-                f"Missing required field in Products: {col}"
-            )
+            raise ValueError(f"Missing required field in Products: {col}")
 
-    # Write final parquet
+    # Write parquet
     df.to_parquet(parquet_path, index=False)
 
     # Save version metadata
     save_version("products", version_key, parquet_path)
 
-    return df
+    return df, True
 
 
 # ---------------------------------------------------------
@@ -103,4 +89,3 @@ def _version_key(p):
         "price_jitter_pct": p.get("price_jitter_pct", 0.0),
         "pricing": p.get("pricing"),
     }
-

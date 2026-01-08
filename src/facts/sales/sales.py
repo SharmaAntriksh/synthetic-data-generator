@@ -275,6 +275,7 @@ def generate_sales_fact(
             break
 
     total_chunks = len(tasks)
+    completed = 0
 
     # worker count
     if workers is None:
@@ -325,15 +326,18 @@ def generate_sales_fact(
     ) as pool:
         for result in pool.imap_unordered(_worker_task, tasks):
 
+            completed += 1
+
             if isinstance(result, str):
                 created_files.append(result)
+                work(f"[{completed}/{total_chunks}] → {os.path.basename(result)}")
                 continue
 
             if isinstance(result, dict) and "delta_part" in result:
                 delta_part_paths.append(result["delta_part"])
+                work(f"[{completed}/{total_chunks}] → {os.path.basename(result['delta_part'])}")
                 continue
 
-            info(f"Worker returned unexpected result: {result}")
 
     done("All chunks completed.")
 

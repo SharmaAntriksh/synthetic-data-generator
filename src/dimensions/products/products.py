@@ -11,29 +11,38 @@ def generate_product_dimension(config, output_folder: Path):
     1. Product Category (static)
     2. Product Subcategory (static)
     3. Product (scalable)
-
-    Ensures ordering and proper regeneration.
     """
 
-    info("Starting Product Dimension")
+    started = False
 
-    df_cat = load_static_dimension(
+    # ---------------- Product Category ----------------
+    df_cat, regen_cat = load_static_dimension(
         name="product_category",
         src_path=Path("data/contoso_products/product_category.parquet"),
         output_path=output_folder / "product_category.parquet",
     )
+    if regen_cat and not started:
+        info("Starting Product Dimension")
+        started = True
 
-    df_sub = load_static_dimension(
+    # ---------------- Product Subcategory ----------------
+    df_sub, regen_sub = load_static_dimension(
         name="product_subcategory",
         src_path=Path("data/contoso_products/product_subcategory.parquet"),
         output_path=output_folder / "product_subcategory.parquet",
     )
+    if regen_sub and not started:
+        info("Starting Product Dimension")
+        started = True
 
-    df_prod = load_product_dimension(config, output_folder)
+    # ---------------- Products ----------------
+    df_prod, regen_prod = load_product_dimension(config, output_folder)
+    if regen_prod and not started:
+        info("Starting Product Dimension")
+        started = True
 
     return {
         "category": df_cat,
         "subcategory": df_sub,
         "product": df_prod,
     }
-
