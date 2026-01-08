@@ -37,13 +37,6 @@ class State:
     row_group_size = None
     compression = None
 
-    # pricing config
-    # Products define UnitPrice and UnitCost
-    # Sales only apply discounts, min/max guards, and value scaling
-    min_unit_price = None
-    max_unit_price = None
-    value_scale = None
-
     # delta options
     no_discount_key = None
     delta_output_folder = None

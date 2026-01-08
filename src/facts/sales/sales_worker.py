@@ -37,9 +37,6 @@ def init_sales_worker(
     skip_order_cols,
     partition_enabled,
     partition_cols,
-    max_unit_price,
-    min_unit_price,
-    value_scale,
 ):
 
     """
@@ -101,10 +98,6 @@ def init_sales_worker(
 
         "partition_enabled": partition_enabled,
         "partition_cols": partition_cols,
-
-        "max_unit_price": max_unit_price,
-        "min_unit_price": min_unit_price,
-        "value_scale": value_scale,
     })
 
 

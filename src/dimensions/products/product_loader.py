@@ -6,6 +6,7 @@ from src.versioning import should_regenerate, save_version
 
 from .contoso_loader import load_contoso_products
 from .contoso_expander import expand_contoso_products
+from .pricing import apply_product_pricing
 
 
 def load_product_dimension(config, output_folder: Path):
@@ -32,6 +33,15 @@ def load_product_dimension(config, output_folder: Path):
 
     # Always load Contoso base products
     base_df = load_contoso_products(output_folder)
+    
+    # -------------------------------------------------
+    # ENSURE VARIANT COLUMNS ALWAYS EXIST
+    # -------------------------------------------------
+    if "BaseProductKey" not in base_df.columns:
+        base_df["BaseProductKey"] = base_df["ProductKey"]
+
+    if "VariantIndex" not in base_df.columns:
+        base_df["VariantIndex"] = 0
 
     if p["use_contoso_products"]:
         info("📦 USING CONTOSO PRODUCTS (AS-IS)")
@@ -44,6 +54,14 @@ def load_product_dimension(config, output_folder: Path):
             seed=int(p.get("seed", 42)),
             price_jitter_pct=float(p.get("price_jitter_pct", 0.0)),
         )
+    # -------------------------------------------------
+    # APPLY PRODUCT PRICING (AUTHORITATIVE)
+    # -------------------------------------------------
+    df = apply_product_pricing(
+        df=df,
+        pricing_cfg=p.get("pricing"),
+        seed=p.get("seed"),
+    )
 
     # Required minimal fields for Sales
     required = [
@@ -76,4 +94,6 @@ def _version_key(p):
         "num_products": p.get("num_products"),
         "seed": p.get("seed"),
         "price_jitter_pct": p.get("price_jitter_pct", 0.0),
+        "pricing": p.get("pricing"),
     }
+

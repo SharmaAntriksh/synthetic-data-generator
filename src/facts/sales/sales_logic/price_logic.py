@@ -30,39 +30,34 @@ DISCOUNT_LADDER = [
 # -------------------------------------------------
 # Helpers
 # -------------------------------------------------
-def _round_bucket(values, size):
-    return np.round(values / size) * size
-
-def _micro_adjust(values, scale=0.02):
-    eps = (np.mod(values * 100, 7) - 3) * scale
-    return np.maximum(0, np.round(values + eps, 2))
-
 def _quantize(values, decimals=4):
     return np.round(values.astype(np.float64), decimals)
 
 
-def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
+def compute_prices(
+    rng,
+    n,
+    unit_price,
+    unit_cost,
+    promo_pct=0.0,
+):
     """
     Simple, deterministic price realization.
 
     Inputs (authoritative):
-      - unit_price : from products.parquet
-      - unit_cost  : from products.parquet
+    - unit_price : from products.parquet
+    - unit_cost  : from products.parquet
 
     Applies:
-      - discount ladder
-      - loss-leader protection
-      - min / max visible price
-      - value scaling
+    - discount ladder
+    - loss-leader protection
+
+    Does NOT:
+    - rescale base prices
+    - clamp catalog prices
     """
+
     S = State
-
-    min_price = S.min_unit_price
-    max_price = S.max_unit_price
-    value_scale = S.value_scale if S.value_scale is not None else 1.0
-
-    if value_scale <= 0:
-        raise ValueError(f"value_scale must be > 0, got {value_scale}")
 
     # -------------------------------------------------
     # 1. AUTHORITATIVE BASE VALUES
@@ -98,6 +93,9 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
     # -------------------------------------------------
     net_price = base_price - discount_amt
 
+    # PROMOTIONAL DISCOUNT (VECTORISED)
+    net_price = net_price * (1.0 - promo_pct)
+
     # -------------------------------------------------
     # 4. LOSS-LEADER PROTECTION
     # -------------------------------------------------
@@ -108,35 +106,26 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
     discount_amt = base_price - net_price
 
     # -------------------------------------------------
-    # 5. VALUE SCALE (GLOBAL)
-    # -------------------------------------------------
-    base_price *= value_scale
-    net_price *= value_scale
-    cost *= value_scale
-
-    # -------------------------------------------------
-    # 6. HARD VISIBLE PRICE LIMITS
-    # -------------------------------------------------
-    if min_price is not None:
-        base_price = np.maximum(base_price, min_price)
-        net_price = np.maximum(net_price, min_price)
-
-    if max_price is not None:
-        base_price = np.minimum(base_price, max_price)
-        net_price = np.minimum(net_price, max_price)
-
-    net_price = np.minimum(net_price, base_price)
-    discount_amt = base_price - net_price
-
-    # -------------------------------------------------
-    # 7. FINAL SAFETY & ROUNDING
+    # 7. FINAL SAFETY
     # -------------------------------------------------
     cost = np.minimum(cost, net_price)
-    discount_amt = np.clip(discount_amt, 0, base_price)
+
+    # -------------------------------------------------
+    # 8. FINAL ROUNDING (AUTHORITATIVE)
+    # -------------------------------------------------
+    final_unit_price = _quantize(base_price, decimals=2)
+    final_net_price = _quantize(net_price, decimals=2)
+    final_unit_cost = _quantize(cost, decimals=2)
+
+    # 🔒 SINGLE SOURCE OF TRUTH
+    discount_amt = _quantize(
+        final_unit_price - final_net_price,
+        decimals=2,
+    )
 
     return {
-        "final_unit_price": _quantize(base_price),
-        "final_net_price": _quantize(net_price),
-        "final_unit_cost": _quantize(cost),
-        "discount_amt": _quantize(discount_amt),
+        "final_unit_price": final_unit_price,
+        "final_net_price": final_net_price,
+        "final_unit_cost": final_unit_cost,
+        "discount_amt": discount_amt,
     }

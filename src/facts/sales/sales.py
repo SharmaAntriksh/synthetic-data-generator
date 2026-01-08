@@ -287,20 +287,6 @@ def generate_sales_fact(
 
     no_discount_key = 1
 
-    # ------------------------------------------------------------
-    # NEW: Bind pricing config into global State (for workers too)
-    # ------------------------------------------------------------
-    from src.facts.sales.sales_logic.globals import bind_globals as _bind_globals
-
-    pricing_cfg = cfg.get("sales", {}).get("pricing", {})
-    # print("DEBUG: pricing_cfg loaded from YAML =", pricing_cfg)
-
-    _bind_globals({
-        "min_unit_price": pricing_cfg.get("min_unit_price"),
-        "max_unit_price": pricing_cfg.get("max_unit_price"),
-        "value_scale": pricing_cfg.get("value_scale", 1.0),
-    })
-
     # Init args for workers
     initargs = (
         product_np,
@@ -324,9 +310,6 @@ def generate_sales_fact(
         skip_order_cols,
         (file_format == "deltaparquet"),   # partition flag in worker
         partition_cols,
-        pricing_cfg.get("max_unit_price"),
-        pricing_cfg.get("min_unit_price"),
-        pricing_cfg.get("value_scale", 1.0),
     )
 
     created_files = []

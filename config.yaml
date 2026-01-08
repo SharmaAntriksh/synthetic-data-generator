@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 125830
+  total_rows: 12583
   chunk_size: 2000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -53,20 +53,27 @@ sales:
     enabled: true
     columns: ["Year", "Month"]
 
-  pricing:
-    min_unit_price: 10
-    max_unit_price: 10000
-    value_scale: 1         # <-- ONLY magnitude control
-
 # ---------------------------------------------------------------------
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: false   # true=Contoso, false=Fake generated
-  num_products: 30000
-  num_categories: 5            # MAX 15 for now
-  num_subcategories: 25        # MAX 75 for now: 15 Category x 5 Subcategory under each category
-  seed: 42       # optional: makes fake product generation repeatable
+  use_contoso_products: true
+  num_products: 3021
+  seed: 42
+
+  pricing:
+    base:
+      value_scale: 0.2
+      min_unit_price: 10
+      max_unit_price: 5000
+
+    cost:
+      min_margin_pct: 0.2
+      max_margin_pct: 0.45
+
+    jitter:
+      price_pct: 0.03
+      cost_pct: 0.02
 
 # ---------------------------------------------------------------------
 # CUSTOMERS

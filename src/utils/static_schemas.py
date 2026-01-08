@@ -40,7 +40,9 @@ STATIC_SCHEMAS = {
         ("StockTypeCode",           "TINYINT"),
         ("StockType",               "VARCHAR(20)"),
         ("UnitCost",                "DECIMAL(10,2)"),
-        ("UnitPrice",               "DECIMAL(10,2)")
+        ("UnitPrice",               "DECIMAL(10,2)"),
+        ("BaseProductKey",          "INT"),
+        ("VariantIndex",            "INT")
     ],
 
     "ProductCategory": [

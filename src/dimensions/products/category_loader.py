@@ -18,10 +18,7 @@ def load_category_dimension(config, output_folder: Path):
 
     info("Loading Product Category")
 
-    if p["use_contoso_products"]:
-        df = _load_contoso_category(parquet_path)
-    else:
-        df = _generate_fake_category(p, parquet_path)
+    df = _load_contoso_category(parquet_path)
 
     save_version("product_category", version_key, parquet_path)
     return df
@@ -61,6 +58,4 @@ def _generate_fake_category(p, parquet_path: Path):
 def _version_key(p):
     return {
         "use_contoso_products": p["use_contoso_products"],
-        "num_categories": p["num_categories"],
-        "seed": p.get("seed"),
     }

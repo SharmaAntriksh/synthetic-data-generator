@@ -17,10 +17,7 @@ def load_subcategory_dimension(config, output_folder: Path):
 
     info("Loading Product Subcategory")
 
-    if p["use_contoso_products"]:
-        df = _load_contoso_subcategory(output_folder, parquet_path)
-    else:
-        df = _generate_fake_subcategory(config, output_folder, parquet_path)
+    df = _load_contoso_subcategory(output_folder, parquet_path)
 
     save_version("product_subcategory", version_key, parquet_path)
     return df
@@ -75,7 +72,4 @@ def _generate_fake_subcategory(config, output_folder: Path, parquet_path: Path):
 def _version_key(p):
     return {
         "use_contoso_products": p["use_contoso_products"],
-        "num_categories": p.get("num_categories"),
-        "num_subcategories": p.get("num_subcategories"),
-        "seed": p.get("seed"),
     }
