@@ -1,33 +1,45 @@
 # FakeDataGenerator (Contoso-based)
 
-Generate a complete, analytics-ready retail dataset based on **ContosoRetailDW**, with scalable products and realistic sales behavior.
+Generate a complete, **analytics-ready retail dataset** inspired by **ContosoRetailDW**, with scalable products and realistic sales behavior suitable for BI, analytics, and modeling scenarios.
+
+The generator is designed to be **deterministic**, **schema-stable**, and **idempotent**, making it appropriate for repeatable demos, training, and benchmarking.
 
 ---
 
 ## What this generator produces
 
-**Dimensions**
-- Geography  
-- Customers  
-- Stores  
-- Dates  
-- Currency  
-- Exchange Rates  
-- ProductCategory (static reference)  
-- ProductSubcategory (static reference)  
-- Product (scalable, priced)
+### Dimensions
 
-**Facts**
-- Sales (orders, order lines, discounts, promotions)
+* Geography
+* Customers
+* Stores
+* Dates
+* Currency
+* Exchange Rates
+* ProductCategory *(static reference)*
+* ProductSubcategory *(static reference)*
+* Product *(scalable, priced)*
+
+### Facts
+
+* Sales (orders, order lines, discounts, promotions)
 
 ---
 
 ## Prerequisites
 
-- Python **3.10+**
-- Git
+* **Python 3.10 or later**
+* Git
 
-(Optional) Power BI Desktop for analysis.
+Optional:
+
+* Power BI Desktop (for analysis and modeling)
+
+Verify your Python version:
+
+```bash
+python --version
+```
 
 ---
 
@@ -37,18 +49,76 @@ Clone the repository:
 
 ```bash
 git clone https://github.com/SharmaAntriksh/contoso-fake-data-generator.git
-cd FakeDataGenerator
+cd contoso-fake-data-generator
 ```
 
-Create and activate a virtual environment:
+---
+
+## Quick start (Windows – recommended)
+
+If you are on **Windows**, the fastest way to get started is using the provided PowerShell scripts.
+
+### One-time setup
+
+This creates a virtual environment and installs all dependencies:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\setup.ps1
+```
+
+> The execution policy change applies **only to the current PowerShell session**.
+
+You only need to run this once.
+
+### Configure your run
+
+Open **`run.ps1`** and edit the parameters at the top:
+
+```powershell
+$Format        = "deltaparquet"
+$SalesRows     = 102500
+$Customers     = 10000
+$Products      = 6500
+$StartDate     = "2024-01-01"
+$EndDate       = "2024-12-31"
+```
+
+### Run the generator
+
+```powershell
+.\run.ps1
+```
+
+This is functionally equivalent to running `python main.py` with a full set of CLI arguments.
+
+---
+
+## Manual setup (cross-platform)
+
+Use this approach on **macOS**, **Linux**, or if you prefer a manual setup.
+
+### 1. Create a virtual environment
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # macOS / Linux
-.venv\Scripts\activate      # Windows
 ```
 
-Install dependencies:
+### 2. Activate the virtual environment
+
+**macOS / Linux**
+
+```bash
+source .venv/bin/activate
+```
+
+**Windows**
+
+```powershell
+.venv\Scripts\activate
+```
+
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -58,7 +128,7 @@ pip install -r requirements.txt
 
 ## Configuration
 
-Edit `config.yaml`.
+Edit **`config.yaml`** to control data volume, pricing, and regeneration behavior.
 
 ### Minimal working example
 
@@ -80,37 +150,54 @@ sales:
 
 ### Key options
 
-- **use_contoso_products**
-  - `true`  → use original Contoso products only
-  - `false` → expand products up to `num_products`
+* **use_contoso_products**
 
-- **num_products**
-  - Total number of products when expansion is enabled
+  * `true`  → use original Contoso products only
+  * `false` → expand products up to `num_products`
 
-- **value_scale**
-  - Global price multiplier (inflation / deflation)
+* **num_products**
+  Total number of products when expansion is enabled
+
+* **value_scale**
+  Global price multiplier (inflation / deflation scenarios)
 
 ---
 
 ## Run the generator
 
-From the project root:
+Below is an example of a **full production-style run** using explicit CLI arguments.
+This is equivalent to the parameters defined in `run.ps1`.
 
 ```bash
-python main.py
+python main.py \
+  --format parquet \
+  --row-group-size 500000 \
+  --skip-order-cols \
+  --sales-rows 102500 \
+  --customers 10000 \
+  --stores 300 \
+  --products 6500 \
+  --promotions 150 \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31 \
+  --workers 6 \
+  --chunk-size 2000000 \
+  --clean
 ```
 
-The pipeline is **idempotent**.  
-Dimensions are skipped if already generated unless `force_regenerate` is enabled.
+The pipeline is **idempotent**:
+
+* Dimensions are skipped if already generated
+* Regeneration occurs only when `force_regenerate: true` is set
 
 ---
 
 ## Output
 
-Generated data is written to the `output/` folder:
+Generated data is written to the `generated_datasets/` directory:
 
 ```
-output/
+2026-01-08 11_47_50 PM Customers 10K Sales 102K Parquet/
 ├── dimensions/
 │   ├── product_category.parquet
 │   ├── product_subcategory.parquet
@@ -120,36 +207,5 @@ output/
     └── sales.parquet
 ```
 
-- Default format: **Parquet**
-- CSV and SQL helpers are available under `tools/sql/`
-
----
-
-## Guarantees
-
-- ProductCategory and ProductSubcategory are static reference data
-- Products always include:
-  - `ProductKey`
-  - `BaseProductKey`
-  - `VariantIndex`
-- Product pricing is defined at product generation time
-- Sales only applies discounts and promotions
-- Schemas are stable across runs
-
----
-
-## Common issues
-
-**Prices look lower than expected**  
-Check `pricing.base.value_scale` in `config.yaml`.
-
-**Data is not regenerating**  
-Set `force_regenerate: true` in the relevant config section.
-
----
-
-## Next steps
-
-- Load Parquet files into Power BI
-- Use `BaseProductKey` to analyze product variants
-- Generate SQL DDL using `tools/sql/generate_create_table_scripts.py`
+* Default format: **Parquet**
+* CSV and SQL helpers are available under `tools/sql/`
