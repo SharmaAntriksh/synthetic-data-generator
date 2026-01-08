@@ -21,10 +21,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 12583
+  total_rows: 125830
   chunk_size: 2000000
 
-  file_format: "deltaparquet"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -33,7 +33,7 @@ sales:
   delete_chunks: true
 
   row_group_size: 2000000
-  compression: "snappy"
+  compression: "zstd"
 
   heavy_pct: 5
   heavy_mult: 5
@@ -54,22 +54,16 @@ sales:
     columns: ["Year", "Month"]
 
   pricing:
-    mode: "bucketed"          # bucketed | discrete | free
-    bucket_size: 0.25
-
     min_unit_price: 10
-    max_unit_price: 2000
-
-    value_scale: 0.60         # <-- ONLY magnitude control
-
-    decimals: "off"         # off | micro | strict
+    max_unit_price: 10000
+    value_scale: 1         # <-- ONLY magnitude control
 
 # ---------------------------------------------------------------------
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: true   # true=Contoso, false=Fake generated
-  num_products: 53021
+  use_contoso_products: false   # true=Contoso, false=Fake generated
+  num_products: 30000
   num_categories: 5            # MAX 15 for now
   num_subcategories: 25        # MAX 75 for now: 15 Category x 5 Subcategory under each category
   seed: 42       # optional: makes fake product generation repeatable

@@ -1,7 +1,6 @@
-# sales_writer.py
-# Hardened delta writer for Contoso Fake Generator
-# Inspects worker part files and builds a clean Delta table.
-# Based on uploaded file: :contentReference[oaicite:1]{index=1}
+# Sales fact writer (Parquet / Delta)
+# Pure I/O layer: does NOT interpret or modify business logic
+
 
 import os
 import shutil
@@ -35,6 +34,16 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
     # Schema from first file
     first_reader = pq.ParquetFile(parquet_files[0])
     schema = first_reader.schema_arrow
+
+    required_cols = {
+        "UnitPrice",
+        "NetPrice",
+        "UnitCost",
+        "DiscountAmount",
+    }
+    missing = required_cols - set(schema.names)
+    if missing:
+        raise RuntimeError(f"Missing required pricing columns: {missing}")
 
     dict_cols = [
         c for c in schema.names
@@ -82,7 +91,7 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
     Convert worker parquet parts into a fully partitioned Delta table.
 
     - Uses deltalake.write_deltalake() (REQUIRED). No pyarrow.dataset fallback.
-    - Reads worker part files (parquet) and concatenates using pandas.
+    - Reads worker part files (parquet) and concatenates using pyarrow.
     - Sorts by partition_cols if provided for cleaner partition files.
     - Writes a single clean Delta commit with partition_by=partition_cols.
     - Cleans up _tmp_parts after successful write.
@@ -106,7 +115,18 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
 
     # Read schema / preview from first part file (NO Arrow dataset)
     first_file = part_files[0]
+
     schema = pq.ParquetFile(first_file).schema_arrow
+    required_cols = {
+        "UnitPrice",
+        "NetPrice",
+        "UnitCost",
+        "DiscountAmount",
+    }
+    missing = required_cols - set(schema.names)
+    if missing:
+        raise RuntimeError(f"Missing required pricing columns: {missing}")
+
     # info(f"[DELTA] dataset schema fields: {schema.names}")
 
     if partition_cols is None:

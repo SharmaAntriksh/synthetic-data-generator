@@ -42,101 +42,81 @@ def _quantize(values, decimals=4):
 
 
 def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
-    S = State
+    """
+    Simple, deterministic price realization.
 
-    # -------------------------------
-    # CONFIG
-    # -------------------------------
-    mode = S.pricing_mode or "bucketed"
-    bucket = S.bucket_size or 0.25
+    Inputs (authoritative):
+      - unit_price : from products.parquet
+      - unit_cost  : from products.parquet
+
+    Applies:
+      - discount ladder
+      - loss-leader protection
+      - min / max visible price
+      - value scaling
+    """
+    S = State
 
     min_price = S.min_unit_price
     max_price = S.max_unit_price
-
-    decimals = S.decimals_mode or "off"
     value_scale = S.value_scale if S.value_scale is not None else 1.0
+
     if value_scale <= 0:
         raise ValueError(f"value_scale must be > 0, got {value_scale}")
 
-    # -------------------------------
-    # 1. BASE PRICE
-    # -------------------------------
-    base_price = unit_price.copy()
+    # -------------------------------------------------
+    # 1. AUTHORITATIVE BASE VALUES
+    # -------------------------------------------------
+    base_price = unit_price.astype(np.float64, copy=True)
+    cost = unit_cost.astype(np.float64, copy=True)
 
-    # -------------------------------
-    # 2. DISCOUNT LOGIC (LADDER-BASED)
-    # -------------------------------
+    # Hard sanity (product bug protection)
+    cost = np.clip(cost, 0, base_price)
+
+    # -------------------------------------------------
+    # 2. DISCOUNT LADDER
+    # -------------------------------------------------
     types, values, weights = zip(*DISCOUNT_LADDER)
-    weights = np.array(weights, dtype=np.float64)
+    weights = np.asarray(weights, dtype=np.float64)
     weights /= weights.sum()
 
     choices = rng.choice(len(DISCOUNT_LADDER), size=n, p=weights)
-
     discount_amt = np.zeros(n, dtype=np.float64)
 
     for i, idx in enumerate(choices):
-        dtype = types[idx]
-        dval = values[idx]
+        t = types[idx]
+        v = values[idx]
 
-        if dtype == "pct":
-            discount_amt[i] = base_price[i] * dval
-        elif dtype == "abs":
-            discount_amt[i] = dval
-        # "none" → 0 discount
+        if t == "pct":
+            discount_amt[i] = base_price[i] * v
+        elif t == "abs":
+            discount_amt[i] = v
+        # "none" → 0
 
-    # -------------------------------
-    # 3. NET PRICE
-    # -------------------------------
+    # -------------------------------------------------
+    # 3. NET PRICE (PRE-SAFETY)
+    # -------------------------------------------------
     net_price = base_price - discount_amt
 
-    # -------------------------------
-    # 4. COST & BASE MARGIN (HEALTHY)
-    # -------------------------------
-    # Higher baseline margins so profits are visible in aggregates
-    margin_pct = rng.uniform(0.15, 0.35, size=n)   # 15%–35% margin
-    cost = base_price * (1 - margin_pct)
-
-    # Allow discounts, but keep cost anchored
-    net_price = np.maximum(net_price, cost * MAX_DISCOUNT_COST_MULTIPLIER)
-
-    # -------------------------------
-    # 5. STRUCTURE (BUCKETS)
-    # -------------------------------
-    if mode == "bucketed":
-        base_price = _round_bucket(base_price, bucket)
-        discount_amt = _round_bucket(discount_amt, bucket)
-        cost = _round_bucket(cost, bucket)
-        net_price = base_price - discount_amt
-
-# -------------------------------
-    # 6. FINAL MARGIN SAFETY (LOSS-LEADER AWARE)
-    # -------------------------------
-    net_price = np.maximum(net_price, cost * MAX_DISCOUNT_COST_MULTIPLIER)
+    # -------------------------------------------------
+    # 4. LOSS-LEADER PROTECTION
+    # -------------------------------------------------
+    min_allowed = cost * MAX_DISCOUNT_COST_MULTIPLIER
+    net_price = np.maximum(net_price, min_allowed)
     net_price = np.minimum(net_price, base_price)
 
     discount_amt = base_price - net_price
-    discount_amt = np.clip(discount_amt, 0, base_price)
 
-    # -------------------------------
-    # 7. FINAL VALUE SCALING
-    # -------------------------------
+    # -------------------------------------------------
+    # 5. VALUE SCALE (GLOBAL)
+    # -------------------------------------------------
     base_price *= value_scale
     net_price *= value_scale
     cost *= value_scale
-    # discount_amt *= value_scale
 
-    # -------------------------------
-    # 8. DECIMALS (COSMETIC ONLY)
-    # -------------------------------
-    if decimals == "micro":
-        base_price = _micro_adjust(base_price)
-        net_price = _micro_adjust(net_price)
-        cost = _micro_adjust(cost)
-        discount_amt = _micro_adjust(discount_amt)
-
-    # -------------------------------
-    # 9. FINAL HARD CONSTRAINTS (VISIBLE PRICES)
-    # -------------------------------
+    # -------------------------------------------------
+    # 6. HARD VISIBLE PRICE LIMITS
+    # -------------------------------------------------
     if min_price is not None:
         base_price = np.maximum(base_price, min_price)
         net_price = np.maximum(net_price, min_price)
@@ -148,17 +128,12 @@ def compute_prices(rng, n, unit_price, unit_cost, promo_pct):
     net_price = np.minimum(net_price, base_price)
     discount_amt = base_price - net_price
 
-    cost = np.clip(cost, 0, None)
+    # -------------------------------------------------
+    # 7. FINAL SAFETY & ROUNDING
+    # -------------------------------------------------
+    cost = np.minimum(cost, net_price)
     discount_amt = np.clip(discount_amt, 0, base_price)
 
-    # -------------------------------
-    # 10. FINAL COST VISIBILITY SAFETY
-    # -------------------------------
-    cost = np.minimum(cost, net_price)
-
-    # -------------------------------
-    # 11. FINAL ROUNDING
-    # -------------------------------
     return {
         "final_unit_price": _quantize(base_price),
         "final_net_price": _quantize(net_price),

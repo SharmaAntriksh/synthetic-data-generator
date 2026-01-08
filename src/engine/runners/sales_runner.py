@@ -48,32 +48,27 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         shutil.rmtree(sales_out_folder, ignore_errors=True)
     sales_out_folder.mkdir(parents=True, exist_ok=True)
 
-    # info(f"Resolved sales output folder = {sales_out_folder}")
-    # print("SALES CFG PRICING →", sales_cfg.get("pricing"))
     # ------------------------------------------------------------
     # Bind PRICING config into flat State (REQUIRED)
     # ------------------------------------------------------------
     from src.facts.sales.sales_logic.globals import State
 
     pricing = sales_cfg.get("pricing", {})
+    
+    # Pricing contract:
+    # - Products define UnitPrice and UnitCost
+    # - Sales applies discounts + min/max guards + value scaling only
 
-    # ---- pricing (simplified) ----
-    State.pricing_mode = pricing.get("mode", "bucketed")
-    State.bucket_size = pricing.get("bucket_size", 0.25)
-
+    # ---- pricing (INTENTIONALLY SIMPLE) ----
     State.min_unit_price = pricing.get("min_unit_price")
     State.max_unit_price = pricing.get("max_unit_price")
-
     State.value_scale = pricing.get("value_scale", 1.0)
 
-    # ---- decimals (NOW FLAT STRING) ----
-    State.decimals_mode = pricing.get("decimals", "off")
-    State.decimals_scale = 0.02   # fixed constant, no longer configurable
-
     info(
-        f"Pricing bound → mode={State.pricing_mode}, "
-        f"decimals={State.decimals_mode}, "
-        f"retail_endings={State.retail_price_endings}"
+        f"Pricing bound → "
+        f"min={State.min_unit_price}, "
+        f"max={State.max_unit_price}, "
+        f"scale={State.value_scale}"
     )
 
     # ------------------------------------------------------------

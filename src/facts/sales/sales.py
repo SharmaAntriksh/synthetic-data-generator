@@ -296,9 +296,6 @@ def generate_sales_fact(
     # print("DEBUG: pricing_cfg loaded from YAML =", pricing_cfg)
 
     _bind_globals({
-        "pricing_mode": pricing_cfg.get("mode", "bucketed"),
-        "bucket_size": pricing_cfg.get("bucket_size", 0.25),
-        "decimals_mode": pricing_cfg.get("decimals", "off"),
         "min_unit_price": pricing_cfg.get("min_unit_price"),
         "max_unit_price": pricing_cfg.get("max_unit_price"),
         "value_scale": pricing_cfg.get("value_scale", 1.0),
@@ -327,9 +324,6 @@ def generate_sales_fact(
         skip_order_cols,
         (file_format == "deltaparquet"),   # partition flag in worker
         partition_cols,
-        pricing_cfg.get("mode", "bucketed"),
-        pricing_cfg.get("bucket_size", 0.25),
-        pricing_cfg.get("decimals", "off"),
         pricing_cfg.get("max_unit_price"),
         pricing_cfg.get("min_unit_price"),
         pricing_cfg.get("value_scale", 1.0),

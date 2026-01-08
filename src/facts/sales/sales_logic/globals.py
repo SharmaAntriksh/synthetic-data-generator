@@ -38,17 +38,11 @@ class State:
     compression = None
 
     # pricing config
-    pricing_mode = None
-    enforce_min_price = None
-    bucket_size = None
-    discrete_factors = None
-    discount_bucket_size = None
-    unit_bucket_size = None
-
-    # decimals config (NEW)
-    decimals_mode = None        # off | micro | strict
-    decimals_scale = None
-    retail_price_endings = None
+    # Products define UnitPrice and UnitCost
+    # Sales only apply discounts, min/max guards, and value scaling
+    min_unit_price = None
+    max_unit_price = None
+    value_scale = None
 
     # delta options
     no_discount_key = None
