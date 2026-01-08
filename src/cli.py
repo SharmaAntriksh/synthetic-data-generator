@@ -9,6 +9,15 @@ from src.engine.runners.dimensions_runner import generate_dimensions
 from src.engine.runners.sales_runner import run_sales_pipeline
 from src.utils.logging_utils import info, fail, PIPELINE_START_TIME, fmt_sec
 
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "1"):
+        return True
+    if v.lower() in ("no", "false", "0"):
+        return False
+    raise argparse.ArgumentTypeError("Boolean value expected.")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -26,8 +35,10 @@ def main():
 
     parser.add_argument(
         "--skip-order-cols",
-        action="store_true",
-        help="Exclude OrderNumber and LineNumber columns from sales output"
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False
     )
 
     parser.add_argument(
@@ -109,7 +120,7 @@ def main():
     parser.add_argument(
         "--products",
         type=int,
-        help="Override products.total_products"
+        help="Override products.num_products"
     )
 
     parser.add_argument(
@@ -144,8 +155,8 @@ def main():
         if args.chunk_size is not None:
             sales_cfg["chunk_size"] = args.chunk_size
 
-        if args.skip_order_cols:
-            sales_cfg["skip_order_cols"] = True
+        if args.skip_order_cols is not None:
+            sales_cfg["skip_order_cols"] = args.skip_order_cols
 
         # ----- Row group size (Parquet / Delta only) -----
         if args.row_group_size:
@@ -178,7 +189,7 @@ def main():
             cfg["stores"]["total_stores"] = args.stores
 
         if args.products is not None:
-            cfg["products"]["total_products"] = args.products
+            cfg["products"]["num_products"] = args.products
 
         if args.promotions is not None:
             cfg["promotions"]["total_promotions"] = args.promotions
