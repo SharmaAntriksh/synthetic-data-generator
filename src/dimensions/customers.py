@@ -6,11 +6,11 @@ import os
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from faker import Faker
 
 from src.utils import info, skip, stage
 from src.versioning import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
+
 
 # ---------------------------------------------------------
 # Helper: Load CSV lists
@@ -41,10 +41,15 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     seed = override_seed if override_seed is not None else 42
     rng = np.random.default_rng(seed)
 
-    # fake = Faker()
-    # fake_in = Faker("en_IN")
-    # fake_us = Faker("en_US")
-    # fake_eu = Faker("en_GB")
+    # -------------------------------------------------
+    # Email domain pools (simple, realistic)
+    # -------------------------------------------------
+    PERSONAL_EMAIL_DOMAINS = np.array([
+        "gmail.com",
+        "yahoo.com",
+        "outlook.com",
+        "hotmail.com",
+    ])
 
     names_folder = cust_cfg["names_folder"]
 
@@ -70,7 +75,7 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     eu_last   = load_list(paths["eu_last"])
 
     # -----------------------------------------------------
-    # Load Geography (correct way in new system)
+    # Load Geography
     # -----------------------------------------------------
     geography, _ = load_dimension(
         "geography",
@@ -94,8 +99,10 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     )
 
     IsOrg = rng.random(N) < (pct_org / 100)
-    Gender = rng.choice(["M", "F"], size=N)
-    Gender[IsOrg] = None
+
+    Gender = np.empty(N, dtype=object)
+    Gender[~IsOrg] = rng.choice(["Male", "Female"], size=(~IsOrg).sum())
+    Gender[IsOrg] = "Org"
 
     GeographyKey = rng.choice(geo_keys, size=N, replace=True)
 
@@ -105,7 +112,6 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     FirstName = np.empty(N, dtype=object)
     LastName = np.empty(N, dtype=object)
 
-    # Last names
     mask = (Region == "IN") & (~IsOrg)
     LastName[mask] = rng.choice(in_last, size=mask.sum())
 
@@ -117,14 +123,13 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
 
     LastName[IsOrg] = None
 
-    # First names
     mask = (Region == "IN") & (~IsOrg)
     FirstName[mask] = rng.choice(in_first, size=mask.sum())
 
-    mask = (Region == "US") & (~IsOrg) & (Gender == "M")
+    mask = (Region == "US") & (~IsOrg) & (Gender == "Male")
     FirstName[mask] = rng.choice(us_male, size=mask.sum())
 
-    mask = (Region == "US") & (~IsOrg) & (Gender == "F")
+    mask = (Region == "US") & (~IsOrg) & (Gender == "Female")
     FirstName[mask] = rng.choice(us_female, size=mask.sum())
 
     mask = (Region == "EU") & (~IsOrg)
@@ -155,14 +160,15 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     # Emails
     # -----------------------------------------------------
     Email = np.empty(N, dtype=object)
-
     person_mask = ~IsOrg
+
+    email_domain = rng.choice(PERSONAL_EMAIL_DOMAINS, size=person_mask.sum())
 
     Email[person_mask] = (
         np.char.lower(safe_first[person_mask]) + "." +
         np.char.lower(safe_last[person_mask]) +
         rng.integers(10, 99999, size=person_mask.sum()).astype(str) +
-        "@example.com"
+        "@" + email_domain
     )
 
     Email[IsOrg] = "info@" + OrgDomain[IsOrg]
@@ -187,9 +193,19 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
 
     BirthDate[IsOrg] = None
 
-    MaritalStatus = np.where(IsOrg, None, rng.choice(["M", "S"], size=N))
-    YearlyIncome = np.where(IsOrg, None,
-                            rng.integers(20000, 200000, size=N))
+    MaritalStatus = np.empty(N, dtype=object)
+    MaritalStatus[~IsOrg] = rng.choice(
+        ["Married", "Single"],
+        size=(~IsOrg).sum(),
+        p=[0.55, 0.45],
+    )
+    MaritalStatus[IsOrg] = None
+
+    YearlyIncome = np.where(
+        IsOrg,
+        None,
+        rng.integers(20000, 200000, size=N)
+    )
 
     TotalChildren = pd.Series(
         np.where(IsOrg, pd.NA, rng.integers(0, 5, size=N)),
@@ -199,9 +215,11 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     Education = np.where(
         IsOrg,
         None,
-        rng.choice(["High School", "Bachelors", "Masters", "PhD"],
-                   size=N,
-                   p=[0.2, 0.5, 0.25, 0.05]),
+        rng.choice(
+            ["High School", "Bachelors", "Masters", "PhD"],
+            size=N,
+            p=[0.2, 0.5, 0.25, 0.05],
+        ),
     )
 
     Occupation = np.where(
@@ -242,7 +260,6 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
 def run_customers(cfg, parquet_folder: Path):
     out_path = parquet_folder / "customers.parquet"
 
-    # Use ONLY the customers section for versioning
     cust_cfg = cfg["customers"]
 
     if not should_regenerate("customers", cust_cfg, out_path):
@@ -255,4 +272,3 @@ def run_customers(cfg, parquet_folder: Path):
 
     save_version("customers", cust_cfg, out_path)
     info(f"Customers dimension written → {out_path}")
-

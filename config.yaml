@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 5258300
+  total_rows: 525830
   chunk_size: 2000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet

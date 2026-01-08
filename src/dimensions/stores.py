@@ -73,20 +73,19 @@ def generate_store_table(
     )
 
     # --------------------------------------------------------
-    # Closing Date
+    # Closing Date (vectorized, schema-safe)
     # --------------------------------------------------------
     closing_cutoff_ts = pd.Timestamp(closing_end).value // 10**9
 
-    def compute_close_date(row):
-        if row["Status"] != "Closed":
-            return pd.NaT
-        open_ts = row["OpeningDate"].value // 10**9
-        return pd.to_datetime(
+    df["ClosingDate"] = pd.NaT
+    closed_mask = df["Status"] == "Closed"
+
+    if closed_mask.any():
+        open_ts = df.loc[closed_mask, "OpeningDate"].astype("int64") // 10**9
+        df.loc[closed_mask, "ClosingDate"] = pd.to_datetime(
             rng.integers(open_ts, closing_cutoff_ts),
             unit="s"
         )
-
-    df["ClosingDate"] = df.apply(compute_close_date, axis=1)
 
     # --------------------------------------------------------
     # Additional attributes
