@@ -62,6 +62,9 @@ def generate_dimensions(cfg: dict, parquet_dims_folder: Path):
       - other dimensions (customers, geography) continue to receive the
         normal cfg and only regenerate when their own section changes.
     """
+    parquet_dims_folder = Path(parquet_dims_folder).resolve()
+    parquet_dims_folder.mkdir(parents=True, exist_ok=True)
+    
     # 1 Geography (root) — not date-dependent
     run_geography(cfg, parquet_dims_folder)
 
