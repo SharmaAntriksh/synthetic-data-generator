@@ -16,7 +16,7 @@ def main():
         description="Contoso Fake Data Generator"
     )
 
-    # ----------------- OVERRIDES -------------------
+    # ----------------- SALES / OUTPUT OVERRIDES -----------------
 
     parser.add_argument(
         "--format",
@@ -29,7 +29,7 @@ def main():
         action="store_true",
         help="Exclude OrderNumber and LineNumber columns from sales output"
     )
-    
+
     parser.add_argument(
         "--sales-rows",
         type=int,
@@ -49,24 +49,24 @@ def main():
     )
 
     parser.add_argument(
+        "--row-group-size",
+        type=int,
+        help="Parquet / Delta row group size"
+    )
+
+    # ----------------- DATE OVERRIDES -----------------
+
+    parser.add_argument(
         "--start-date",
-        help="Override _defaults.dates.start (YYYY-MM-DD)"
+        help="Override global start date (YYYY-MM-DD)"
     )
 
     parser.add_argument(
         "--end-date",
-        help="Override _defaults.dates.end (YYYY-MM-DD)"
+        help="Override global end date (YYYY-MM-DD)"
     )
 
-    parser.add_argument(
-        "--xrates-start",
-        help="Override exchange_rates.dates.start (if use_global_dates=false)"
-    )
-
-    parser.add_argument(
-        "--xrates-end",
-        help="Override exchange_rates.dates.end (if use_global_dates=false)"
-    )
+    # ----------------- PIPELINE CONTROL -----------------
 
     parser.add_argument(
         "--only",
@@ -77,13 +77,13 @@ def main():
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="Delete fact_out and generated_datasets before running"
+        help="Delete output folders before running"
     )
 
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print resolved configuration and exit without running pipelines"
+        help="Print resolved configuration and exit"
     )
 
     parser.add_argument(
@@ -91,6 +91,8 @@ def main():
         default="config.yaml",
         help="Path to configuration file"
     )
+
+    # ----------------- DIMENSION SIZE OVERRIDES -----------------
 
     parser.add_argument(
         "--customers",
@@ -123,11 +125,11 @@ def main():
         raw_cfg = load_config_file(args.config)
         cfg = load_config(raw_cfg)
 
-        # ==================================================
-        # APPLY OVERRIDES (EXPLICIT AND SAFE)
-        # ==================================================
-
         sales_cfg = cfg["sales"]
+
+        # ==================================================
+        # APPLY OVERRIDES (SAFE + EXPLICIT)
+        # ==================================================
 
         # ----- SALES overrides -----
         if args.format:
@@ -145,26 +147,29 @@ def main():
         if args.skip_order_cols:
             sales_cfg["skip_order_cols"] = True
 
-        # ----- DEFAULT DATE overrides -----
+        # ----- Row group size (Parquet / Delta only) -----
+        if args.row_group_size:
+            fmt = sales_cfg.get("file_format")
+
+            if fmt not in ("parquet", "deltaparquet"):
+                fail("--row-group-size is only valid for parquet or deltaparquet output")
+
+            sales_cfg.setdefault(fmt, {})
+            sales_cfg[fmt]["row_group_size"] = args.row_group_size
+
+        # ----- Global date overrides -----
         if args.start_date:
             cfg["_defaults"]["dates"]["start"] = args.start_date
 
         if args.end_date:
             cfg["_defaults"]["dates"]["end"] = args.end_date
 
-        # ----- FX overrides -----
+        # ----- FX always follows global dates -----
         fx_cfg = cfg["exchange_rates"]
+        fx_cfg["use_global_dates"] = True
+        fx_cfg.pop("dates", None)
 
-        if not fx_cfg.get("use_global_dates", True):
-            fx_cfg.setdefault("dates", {})
-
-            if args.xrates_start:
-                fx_cfg["dates"]["start"] = args.xrates_start
-
-            if args.xrates_end:
-                fx_cfg["dates"]["end"] = args.xrates_end
-
-        # ---------------- DIMENSION ROW OVERRIDES ------------------
+        # ---------------- DIMENSION ROW OVERRIDES -----------------
 
         if args.customers is not None:
             cfg["customers"]["total_customers"] = args.customers
@@ -178,28 +183,24 @@ def main():
         if args.promotions is not None:
             cfg["promotions"]["total_promotions"] = args.promotions
 
-        # ---------------- CLEAN (OPTIONAL) ----------------
+        # ---------------- CLEAN -----------------
         if args.clean:
             info("Cleaning output folders before run...")
 
-            sales_cfg = cfg["sales"]
-
-            # Clean fact output
             if "out_folder" in sales_cfg:
                 shutil.rmtree(sales_cfg["out_folder"], ignore_errors=True)
 
-            # Clean generated datasets (if configured)
             gen_root = cfg.get("generated_datasets_root")
             if gen_root:
                 shutil.rmtree(gen_root, ignore_errors=True)
 
-        # ---------------- DRY RUN ----------------
+        # ---------------- DRY RUN -----------------
         if args.dry_run:
             info("Dry run enabled. Resolved configuration:")
             pprint(cfg)
             return
 
-        # ---------------- RUN PIPELINE ------------------
+        # ---------------- RUN PIPELINES -----------------
         info("Starting full Contoso pipeline...")
 
         parquet_dims = Path(sales_cfg["parquet_folder"])
