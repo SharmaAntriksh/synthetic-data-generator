@@ -152,4 +152,4 @@ def run_geography(cfg, parquet_folder: Path):
 
     save_version("geography", geo_cfg, out_path)
 
-    info(f"Geography dimension written → {out_path}")
+    info(f"Geography dimension written: {out_path}")

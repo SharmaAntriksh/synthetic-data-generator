@@ -280,4 +280,4 @@ def run_promotions(cfg, parquet_folder: Path):
         df.to_parquet(out_path, index=False)
 
     save_version("promotions", version_cfg, out_path)
-    info(f"Promotions dimension written → {out_path}")
+    info(f"Promotions dimension written: {out_path}")

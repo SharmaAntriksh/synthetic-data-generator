@@ -271,4 +271,4 @@ def run_customers(cfg, parquet_folder: Path):
         df.to_parquet(out_path, index=False)
 
     save_version("customers", cust_cfg, out_path)
-    info(f"Customers dimension written → {out_path}")
+    info(f"Customers dimension written: {out_path}")

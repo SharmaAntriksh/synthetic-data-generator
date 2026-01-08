@@ -256,4 +256,4 @@ def run_dates(cfg, parquet_folder: Path):
         df.to_parquet(out_path, index=False)
 
     save_version("dates", version_cfg, out_path)
-    info(f"Dates dimension written → {out_path}")
+    info(f"Dates dimension written: {out_path}")

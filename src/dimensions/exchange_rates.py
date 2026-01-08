@@ -144,4 +144,4 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         raise ValueError("Invalid FX rate: non-positive values.")
 
     save_version("exchange_rates", minimal_cfg, out_path)
-    info(f"Exchange Rates dimension written → {out_path}")
+    info(f"Exchange Rates dimension written: {out_path}")

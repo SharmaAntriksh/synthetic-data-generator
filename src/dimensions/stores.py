@@ -151,4 +151,4 @@ def run_stores(cfg, parquet_folder: Path):
 
     save_version("stores", store_cfg, out_path)
     
-    info(f"Stores dimension written → {out_path}")
+    info(f"Stores dimension written: {out_path}")

@@ -83,4 +83,4 @@ def run_currency(cfg, parquet_folder: Path):
         df.to_parquet(out_path, index=False)
 
     save_version("currency", version_cfg, out_path)
-    info(f"Currency dimension written → {out_path}")
+    info(f"Currency dimension written: {out_path}")
