@@ -49,7 +49,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
 
                 # Same logical dataset, encoded name → delete it
                 if decoded == real_name:
-                    info(f"Removing URL-encoded duplicate run folder: {sibling}")
+                    # info(f"Removing URL-encoded duplicate run folder: {sibling}")
                     shutil.rmtree(sibling)
 
         dims_out = final_folder / "dimensions"
