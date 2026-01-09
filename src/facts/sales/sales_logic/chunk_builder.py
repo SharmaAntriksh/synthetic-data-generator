@@ -13,9 +13,14 @@ def build_chunk_table(n, seed, no_discount_key=1):
     Build n synthetic sales rows.
     All shared state is read from `State`.
     """
+    if not PA_AVAILABLE:
+        raise RuntimeError("pyarrow is required")
+
     rng = np.random.default_rng(seed)
 
-    # pull from State instead of _G_
+    # ------------------------------------------------------------
+    # Pull immutable state once
+    # ------------------------------------------------------------
     skip_cols = State.skip_order_cols
     product_np = State.product_np
     customers = State.customers
@@ -33,7 +38,9 @@ def build_chunk_table(n, seed, no_discount_key=1):
 
     file_format = State.file_format
 
-    # Validate required globals
+    # ------------------------------------------------------------
+    # Validation (unchanged behavior)
+    # ------------------------------------------------------------
     if date_pool is None:
         raise RuntimeError("State.date_pool is None")
     if product_np is None:
@@ -41,13 +48,11 @@ def build_chunk_table(n, seed, no_discount_key=1):
     if store_keys is None:
         raise RuntimeError("State.store_keys is None")
 
-    _len_date_pool = len(date_pool)
-    _len_customers = len(customers)
-    _len_store_keys = len(store_keys)
     _len_products = len(product_np)
+    _len_store_keys = len(store_keys)
 
     # ------------------------------------------------------------
-    # PRODUCTS
+    # PRODUCTS (vectorized)
     # ------------------------------------------------------------
     prod_idx = rng.integers(0, _len_products, size=n)
     prods = product_np[prod_idx]
@@ -57,32 +62,19 @@ def build_chunk_table(n, seed, no_discount_key=1):
     unit_cost = prods[:, 2].astype(np.float64, copy=False)
 
     # ------------------------------------------------------------
-    # STORE → GEO → CURRENCY (FAST, NO PYTHON FALLBACKS)
+    # STORE → GEO → CURRENCY (pure NumPy)
     # ------------------------------------------------------------
-    # Generate StoreKey array
-    store_key_arr: np.ndarray = store_keys[
+    store_key_arr = store_keys[
         rng.integers(0, _len_store_keys, size=n)
     ].astype(np.int64, copy=False)
 
-    # Dense mapping arrays MUST exist (built in init_sales_worker)
     if st2g_arr is None or g2c_arr is None:
         raise RuntimeError(
-            "Dense store_to_geo_arr / geo_to_currency_arr not initialized. "
-            "Check init_sales_worker."
+            "Dense store_to_geo_arr / geo_to_currency_arr not initialized."
         )
 
-    # Bounds safety check (cheap, prevents silent corruption)
-    max_store_key = int(store_key_arr.max()) if store_key_arr.size else -1
-    if max_store_key >= st2g_arr.shape[0]:
-        raise RuntimeError(
-            f"StoreKey {max_store_key} exceeds store_to_geo_arr size "
-            f"{st2g_arr.shape[0]}"
-        )
-
-    # Vectorized lookup (pure NumPy, fast)
     geo_arr = st2g_arr[store_key_arr]
     currency_arr = g2c_arr[geo_arr].astype(np.int64, copy=False)
-
 
     # ------------------------------------------------------------
     # ORDERS
@@ -95,8 +87,8 @@ def build_chunk_table(n, seed, no_discount_key=1):
         date_prob=date_prob,
         customers=customers,
         product_keys=product_keys,
-        _len_date_pool=_len_date_pool,
-        _len_customers=_len_customers,
+        _len_date_pool=len(date_pool),
+        _len_customers=len(customers),
     )
 
     customer_keys = orders["customer_keys"]
@@ -109,9 +101,10 @@ def build_chunk_table(n, seed, no_discount_key=1):
         order_ids_int = None
         line_num = None
 
+    # preserve edge pinning behavior
     order_dates[0] = date_pool[0]
     order_dates[-1] = date_pool[-1]
-    
+
     qty = np.clip(rng.poisson(3, n) + 1, 1, 4)
 
     # ------------------------------------------------------------
@@ -155,58 +148,51 @@ def build_chunk_table(n, seed, no_discount_key=1):
         promo_pct=promo_pct,
     )
 
-    final_unit_price = price["final_unit_price"]
-    final_unit_cost = price["final_unit_cost"]
-    final_discount_amt = price["discount_amt"]
-    final_net_price = price["final_net_price"]
-
     # ------------------------------------------------------------
-    # OUTPUT — Arrow ONLY (pre-sized, no Python dict)
+    # YEAR / MONTH (computed once)
     # ------------------------------------------------------------
-    if not PA_AVAILABLE:
-        raise RuntimeError("pyarrow is required")
-
-    arrays = []
-    fields = []
-
-    def _add(name, arr, dtype):
-        arrays.append(pa.array(arr, type=dtype, safe=False))
-        fields.append(pa.field(name, dtype))
-
-    if not skip_cols:
-        _add("SalesOrderNumber", order_ids_int, pa.int64())
-        _add("SalesOrderLineNumber", line_num, pa.int64())
-
-    _add("CustomerKey", customer_keys, pa.int64())
-    _add("ProductKey", product_keys, pa.int64())
-    _add("StoreKey", store_key_arr, pa.int64())
-    _add("PromotionKey", promo_keys, pa.int64())
-    _add("CurrencyKey", currency_arr, pa.int64())
-
-    _add("OrderDate", order_dates, pa.date32())
-    _add("DueDate", due_date, pa.date32())
-    _add("DeliveryDate", delivery_date, pa.date32())
-
-    _add("Quantity", qty, pa.int64())
-    _add("NetPrice", final_net_price, pa.float64())
-    _add("UnitCost", final_unit_cost, pa.float64())
-    _add("UnitPrice", final_unit_price, pa.float64())
-    _add("DiscountAmount", final_discount_amt, pa.float64())
-
-    _add("DeliveryStatus", delivery_status, pa.string())
-    _add("IsOrderDelayed", is_order_delayed, pa.int8())
-
     months = order_dates.astype("datetime64[M]").astype("int64")
     year_arr = (months // 12 + 1970).astype("int16")
     month_arr = (months % 12 + 1).astype("int8")
 
+    # ------------------------------------------------------------
+    # Arrow output (NO schema inference)
+    # ------------------------------------------------------------
+    arrays = []
+    schema = State.sales_schema
+
+    def add(name, data):
+        arrays.append(pa.array(
+            data,
+            type=schema.field(name).type,
+            safe=False
+        ))
+
+    if not skip_cols:
+        add("SalesOrderNumber", order_ids_int)
+        add("SalesOrderLineNumber", line_num)
+
+    add("CustomerKey", customer_keys)
+    add("ProductKey", product_keys)
+    add("StoreKey", store_key_arr)
+    add("PromotionKey", promo_keys)
+    add("CurrencyKey", currency_arr)
+
+    add("OrderDate", order_dates)
+    add("DueDate", due_date)
+    add("DeliveryDate", delivery_date)
+
+    add("Quantity", qty)
+    add("NetPrice", price["final_net_price"])
+    add("UnitCost", price["final_unit_cost"])
+    add("UnitPrice", price["final_unit_price"])
+    add("DiscountAmount", price["discount_amt"])
+
+    add("DeliveryStatus", delivery_status)
+    add("IsOrderDelayed", is_order_delayed)
+
     if file_format == "deltaparquet":
-        months = order_dates.astype("datetime64[M]").astype("int64")
-        year_arr = (months // 12 + 1970).astype("int16")
-        month_arr = (months % 12 + 1).astype("int8")
-        _add("Year", year_arr, pa.int16())
-        _add("Month", month_arr, pa.int8())
+        add("Year", year_arr)
+        add("Month", month_arr)
 
-
-    schema = pa.schema(fields)
     return pa.Table.from_arrays(arrays, schema=schema)

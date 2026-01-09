@@ -1,18 +1,16 @@
-# sales_worker.py — cleaned for State-based global binding
+# sales_worker.py — optimized, deterministic, schema-safe
 
 import os
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-import time
 
-# from src.utils.logging_utils import work
 from .sales_logic import chunk_builder
 from .sales_logic.globals import State, bind_globals
 
 
 # ===============================================================
-# Worker initializer
+# Worker initializer (runs once per process)
 # ===============================================================
 
 def init_sales_worker(
@@ -38,38 +36,84 @@ def init_sales_worker(
     partition_enabled,
     partition_cols,
 ):
+    """Initialize immutable worker state."""
 
-    """
-    Initialize global state using the new 'State' container.
-    Called once per worker at pool startup.
-    """
+    def _dense_map(mapping: dict):
+        if not mapping:
+            return None
+        max_key = max(mapping.keys())
+        arr = np.full(max_key + 1, -1, dtype=np.int64)
+        for k, v in mapping.items():
+            arr[int(k)] = int(v)
+        return arr
 
-    # Build dense numpy mapping arrays for fast vectorized lookup
-    store_to_geo_arr = None
-    geo_to_currency_arr = None
+    store_to_geo_arr = _dense_map(store_to_geo) if isinstance(store_to_geo, dict) else None
+    geo_to_currency_arr = _dense_map(geo_to_currency) if isinstance(geo_to_currency, dict) else None
 
-    try:
-        if isinstance(store_to_geo, dict) and store_to_geo:
-            max_store = max(store_to_geo.keys())
-            arr = np.full(max_store + 1, -1, dtype=np.int64)
-            for k, v in store_to_geo.items():
-                arr[int(k)] = int(v)
-            store_to_geo_arr = arr
-    except Exception:
-        store_to_geo_arr = None
+    # Ensure folders once
+    if file_format != "deltaparquet":
+        os.makedirs(out_folder, exist_ok=True)
+    else:
+        os.makedirs(os.path.join(delta_output_folder, "_tmp_parts"), exist_ok=True)
 
-    try:
-        if isinstance(geo_to_currency, dict) and geo_to_currency:
-            max_geo = max(geo_to_currency.keys())
-            arr = np.full(max_geo + 1, -1, dtype=np.int64)
-            for k, v in geo_to_currency.items():
-                arr[int(k)] = int(v)
-            geo_to_currency_arr = arr
-    except Exception:
-        geo_to_currency_arr = None
+    # -----------------------------------------------------------
+    # Pre-built schemas (NO inference, NO drift)
+    # -----------------------------------------------------------
 
-    # Bind everything to the State container
+    base_fields = [
+        pa.field("CustomerKey", pa.int64()),
+        pa.field("ProductKey", pa.int64()),
+        pa.field("StoreKey", pa.int64()),
+        pa.field("PromotionKey", pa.int64()),
+        pa.field("CurrencyKey", pa.int64()),
+
+        pa.field("OrderDate", pa.date32()),
+        pa.field("DueDate", pa.date32()),
+        pa.field("DeliveryDate", pa.date32()),
+
+        pa.field("Quantity", pa.int64()),
+        pa.field("NetPrice", pa.float64()),
+        pa.field("UnitCost", pa.float64()),
+        pa.field("UnitPrice", pa.float64()),
+        pa.field("DiscountAmount", pa.float64()),
+
+        pa.field("DeliveryStatus", pa.string()),
+        pa.field("IsOrderDelayed", pa.int8()),
+    ]
+
+    order_fields = [
+        pa.field("SalesOrderNumber", pa.int64()),
+        pa.field("SalesOrderLineNumber", pa.int64()),
+    ]
+
+    delta_fields = [
+        pa.field("Year", pa.int16()),
+        pa.field("Month", pa.int8()),
+    ]
+
+    schema_no_order = pa.schema(base_fields)
+    schema_with_order = pa.schema(order_fields + base_fields)
+    schema_no_order_delta = pa.schema(base_fields + delta_fields)
+    schema_with_order_delta = pa.schema(order_fields + base_fields + delta_fields)
+
+    # -----------------------------------------------------------
+    # Canonical schema for chunk_builder (BACKWARD COMPAT)
+    # -----------------------------------------------------------
+    if file_format == "deltaparquet":
+        sales_schema = (
+            schema_with_order_delta
+            if not skip_order_cols
+            else schema_no_order_delta
+        )
+    else:
+        sales_schema = (
+            schema_with_order
+            if not skip_order_cols
+            else schema_no_order
+        )
+
     bind_globals({
+        # core data
         "product_np": product_np,
         "store_keys": store_keys,
         "promo_keys_all": promo_keys_all,
@@ -78,172 +122,158 @@ def init_sales_worker(
         "promo_end_all": promo_end_all,
         "customers": customers,
 
-        "store_to_geo": store_to_geo,
-        "geo_to_currency": geo_to_currency,
+        # fast lookup arrays
         "store_to_geo_arr": store_to_geo_arr,
         "geo_to_currency_arr": geo_to_currency_arr,
 
+        # dates
         "date_pool": date_pool,
         "date_prob": date_prob,
 
-        "skip_order_cols": skip_order_cols,
+        # output
         "file_format": file_format,
         "out_folder": out_folder,
-        "row_group_size": row_group_size,
+        "row_group_size": int(row_group_size),
         "compression": compression,
 
-        "no_discount_key": no_discount_key,
+        # delta
         "delta_output_folder": os.path.normpath(delta_output_folder),
         "write_delta": write_delta,
 
+        # behavior
+        "no_discount_key": no_discount_key,
+        "skip_order_cols": skip_order_cols,
         "partition_enabled": partition_enabled,
         "partition_cols": partition_cols,
+
+        # schemas
+        "schema_no_order": schema_no_order,
+        "schema_with_order": schema_with_order,
+        "schema_no_order_delta": schema_no_order_delta,
+        "schema_with_order_delta": schema_with_order_delta,
+        "sales_schema": sales_schema,
+
+        # parquet
+        "parquet_dict_exclude": {"SalesOrderNumber", "CustomerKey"},
     })
 
 
 # ===============================================================
-# Utilities
+# Helpers
 # ===============================================================
 
-def _stream_write_parquet(table: pa.Table, path: str, compression: str, row_group_size: int):
-    """Efficient streaming parquet writer for large tables."""
-    part_cols = [c for c in ("Year", "Month") if c in table.column_names]
-    if part_cols:
-        normal_cols = [c for c in table.column_names if c not in part_cols]
-        table = table.select(normal_cols + part_cols)
+def _select_schema():
+    if State.file_format == "deltaparquet":
+        return (
+            State.schema_with_order_delta
+            if not State.skip_order_cols
+            else State.schema_no_order_delta
+        )
+    return (
+        State.schema_with_order
+        if not State.skip_order_cols
+        else State.schema_no_order
+    )
 
-    dict_cols = [c for c in table.column_names if c not in ["SalesOrderNumber", "CustomerKey"]]
+
+# ===============================================================
+# Parquet writer
+# ===============================================================
+
+def _write_parquet_batches(table: pa.Table, path: str):
+    schema = _select_schema()
+
+    if table.schema != schema:
+        table = table.cast(schema, safe=False)
+
+    dict_cols = [
+        c for c in table.column_names
+        if c not in State.parquet_dict_exclude
+    ]
 
     writer = pq.ParquetWriter(
         path,
         table.schema,
-        compression=compression,
+        compression=State.compression,
         use_dictionary=dict_cols,
         write_statistics=True,
     )
 
     try:
-        total = table.num_rows
-        for start in range(0, total, int(row_group_size)):
-            length = min(int(row_group_size), total - start)
-            writer.write_table(table.slice(start, length))
+        for batch in table.to_batches(max_chunksize=State.row_group_size):
+            writer.write_batch(batch)
     finally:
         writer.close()
 
 
-# def _try_write_csv_arrow(table: pa.Table, out_path: str) -> bool:
-#     """Try Arrow CSV write; fallback to pandas if needed."""
-#     try:
-#         import pyarrow.csv as pacsv
-#         pacsv.write_csv(table, out_path)
-#         return True
-#     except Exception:
-#         return False
+# ===============================================================
+# CSV writer
+# ===============================================================
 
+def _write_csv(table: pa.Table, path: str):
+    import pyarrow.compute as pc
+    import pyarrow.csv as pacsv
 
-def _ensure_arrow_table(obj):
-    if isinstance(obj, pa.Table):
-        return obj
-    return pa.Table.from_pandas(obj, preserve_index=False, safe=False)
+    schema = _select_schema()
+
+    if table.schema != schema:
+        table = table.cast(schema, safe=False)
+
+    if "IsOrderDelayed" in table.column_names:
+        table = table.set_column(
+            table.schema.get_field_index("IsOrderDelayed"),
+            "IsOrderDelayed",
+            pc.cast(pc.fill_null(table["IsOrderDelayed"], 0), pa.int8()),
+        )
+
+    pacsv.write_csv(
+        table,
+        path,
+        write_options=pacsv.WriteOptions(
+            include_header=True,
+            quoting_style="none",
+        ),
+    )
 
 
 # ===============================================================
-# Worker Task (computes + writes one chunk)
+# Worker task
 # ===============================================================
 
 def _worker_task(args):
     idx, batch_size, seed = args
 
-    # Derive per-chunk seed
-    try:
-        pid = os.getpid()
-    except Exception:
-        pid = idx
-
     base_seed = int(seed) if seed is not None else 0
-    seed_for_chunk = base_seed ^ (idx + pid + (int(time.time()) & 0xFFFF))
+    chunk_seed = base_seed + idx * 10_000
 
-    # Build the data chunk
-    table_or_df = chunk_builder.build_chunk_table(
+    table = chunk_builder.build_chunk_table(
         batch_size,
-        seed_for_chunk,
+        chunk_seed,
         no_discount_key=State.no_discount_key,
     )
 
-    table = _ensure_arrow_table(table_or_df)
+    if not isinstance(table, pa.Table):
+        raise TypeError("chunk_builder must return pyarrow.Table")
 
-    # ------------------------------------------------------------
-    # DELTAPARQUET MODE
-    # ------------------------------------------------------------
+    # DELTA
     if State.file_format == "deltaparquet":
-        tmp_dir = os.path.join(State.delta_output_folder, "_tmp_parts")
-        os.makedirs(tmp_dir, exist_ok=True)
+        out_name = f"delta_part_{idx:04d}.parquet"
+        out_path = os.path.join(State.delta_output_folder, "_tmp_parts", out_name)
 
-        out_path = os.path.join(tmp_dir, f"delta_part_{idx:04d}.parquet")
+        _write_parquet_batches(table, out_path)
+        rows = table.num_rows
+        del table
+        return {"part": out_name, "rows": rows}
 
-        _stream_write_parquet(
-            table,
-            out_path,
-            compression=State.compression,
-            row_group_size=int(State.row_group_size),
-        )
-
-        # work(chunk=idx, outfile=out_path)
-
-        return {
-            "delta_part": out_path,
-            "chunk": idx,
-            "rows": table.num_rows,
-        }
-
-    # ------------------------------------------------------------
-    # CSV MODE
-    # ------------------------------------------------------------
+    # CSV
     if State.file_format == "csv":
-        os.makedirs(State.out_folder, exist_ok=True)
         out_path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.csv")
-
-        import pyarrow.compute as pc
-        import pyarrow.csv as pacsv
-
-        import pyarrow.compute as pc
-        import pyarrow as pa
-
-        if "IsOrderDelayed" in table.column_names:
-            col_idx = table.schema.get_field_index("IsOrderDelayed")
-            col = table.column(col_idx)
-
-            col = pc.fill_null(col, 0)
-            col = pc.cast(col, pa.int8())
-
-            table = table.set_column(col_idx, "IsOrderDelayed", col)
-
-        pacsv.write_csv(
-            table,
-            out_path,
-            write_options=pacsv.WriteOptions(
-                include_header=True,
-                quoting_style="none"
-            )
-        )
-
-        # work(msg=f"Chunk {idx} → {os.path.basename(out_path)}")
-
+        _write_csv(table, out_path)
+        del table
         return out_path
 
-
-    # ------------------------------------------------------------
-    # PARQUET MODE
-    # ------------------------------------------------------------
-    os.makedirs(State.out_folder, exist_ok=True)
+    # PARQUET
     out_path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.parquet")
-
-    _stream_write_parquet(
-        table,
-        out_path,
-        compression=State.compression,
-        row_group_size=int(State.row_group_size),
-    )
-
-    # work(chunk=idx, outfile=out_path)
+    _write_parquet_batches(table, out_path)
+    del table
     return out_path
