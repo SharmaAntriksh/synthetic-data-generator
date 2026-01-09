@@ -11,7 +11,7 @@ EXCLUDE_DIRS = {
 EXCLUDE_EXT = {".pyc", ".pyo", ".pyd", ".so"}
 
 # file types to display
-INCLUDE_EXT = {".py", ".ps1", ".pbix", ".pbit"}
+INCLUDE_EXT = {".py", ".ps1", ".pbix", ".pbit", '.png'}
 
 def print_tree(root=".", prefix=""):
     try:
