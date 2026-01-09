@@ -33,7 +33,7 @@ sales:
   delete_chunks: true
 
   row_group_size: 2000000
-  compression: "zstd"
+  compression: "snappy"
 
   heavy_pct: 5
   heavy_mult: 5
