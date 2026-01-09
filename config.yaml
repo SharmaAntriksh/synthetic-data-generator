@@ -22,7 +22,7 @@ sales:
   out_folder: "./data/fact_out"
 
   total_rows: 105258300
-  chunk_size: 2000000
+  chunk_size: 100000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
   write_delta: true
@@ -32,13 +32,13 @@ sales:
   merged_file: "sales.parquet"
   delete_chunks: true
 
-  row_group_size: 2000000
+  row_group_size: 100000
   compression: "snappy"
 
   heavy_pct: 5
   heavy_mult: 5
 
-  workers: null               # auto-detect if null
+  workers: 8               # auto-detect if null
   write_pyarrow: true
   tune_chunk: false
 
