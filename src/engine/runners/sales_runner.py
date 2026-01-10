@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
 import shutil
+from pathlib import Path
 
-from src.utils.logging_utils import stage, skip, info, done
-from src.engine.dimension_loader import load_dimension
-from src.versioning.version_store import should_regenerate, save_version
+from src.utils.logging_utils import stage, info, done
 from src.engine.packaging import package_output
 from src.facts.sales.sales_logic.globals import bind_globals
 
@@ -15,15 +13,15 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     """
     Run the sales fact pipeline.
 
-    Notes:
-    - Products define UnitPrice and UnitCost
-    - Sales applies discounts, promotions, and safety guards only
-    - No catalog price shaping happens here
+    Invariants:
+    - Sales schema is determined entirely by sales_cfg
+    - No implicit defaults override config
+    - CSV / Delta outputs are regenerated per run
+    - Parquet output is preserved for packaging
     """
-    info(f"DEBUG full sales_cfg = {sales_cfg}")
 
     # ------------------------------------------------------------
-    # Resolve and normalize key paths
+    # Resolve and normalize paths
     # ------------------------------------------------------------
     fact_out = Path(fact_out).resolve()
     parquet_dims = Path(parquet_dims).resolve()
@@ -33,65 +31,77 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     info("Sales will regenerate (forced).")
 
     # ------------------------------------------------------------
-    # Delta output folder
+    # Resolve file format and output folder
     # ------------------------------------------------------------
-    # Decide actual output folder based on file_format
     fmt = sales_cfg["file_format"].lower()
 
     if fmt == "csv":
-        sales_out_folder = Path(fact_out) / "csv"
+        sales_out_folder = fact_out / "csv"
     elif fmt == "parquet":
-        sales_out_folder = Path(fact_out) / "parquet"
+        sales_out_folder = fact_out / "parquet"
     else:  # deltaparquet
-        sales_out_folder = (fact_out / "sales").resolve()
+        sales_out_folder = fact_out / "sales"
 
-    # Clean output folder every run
-    if sales_out_folder.exists():
+    # ------------------------------------------------------------
+    # IMPORTANT: clean output folders ONLY where safe
+    # ------------------------------------------------------------
+    # CSV and Delta must be regenerated every run
+    # Parquet must NOT be deleted before packaging
+    if fmt != "parquet" and sales_out_folder.exists():
         shutil.rmtree(sales_out_folder, ignore_errors=True)
+
     sales_out_folder.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------
-    # Run sales fact builder
+    # Validate critical config early
+    # ------------------------------------------------------------
+    if "skip_order_cols" not in sales_cfg:
+        raise RuntimeError(
+            "sales.skip_order_cols must be explicitly defined in config"
+        )
+
+    skip_order_cols = bool(sales_cfg["skip_order_cols"])
+
+    # ------------------------------------------------------------
+    # Run sales fact generation
     # ------------------------------------------------------------
     from src.facts.sales.sales import generate_sales_fact
-
-    parquet_folder = parquet_dims
 
     stage("Generating Sales")
     t0 = time.time()
 
+    # Bind only runner-level globals
     bind_globals({
-        "skip_order_cols": sales_cfg.get("skip_order_cols", False),
+        "skip_order_cols": skip_order_cols,
     })
-    info(f"DEBUG skip_order_cols from config = {sales_cfg.get('skip_order_cols')}")
 
     generate_sales_fact(
         cfg,
-        parquet_folder=str(parquet_folder),
+        parquet_folder=str(parquet_dims),
         out_folder=str(sales_out_folder),
         total_rows=sales_cfg["total_rows"],
         file_format=sales_cfg["file_format"],
-        row_group_size=sales_cfg.get("row_group_size", 2000000),
+
+        # 🔥 REQUIRED FOR PARQUET MODE
+        merge_parquet=sales_cfg.get("merge_parquet", False),
+        merged_file=sales_cfg.get("merged_file", "sales.parquet"),
+
+        # existing args
+        row_group_size=sales_cfg.get("row_group_size", 2_000_000),
         compression=sales_cfg.get("compression", "snappy"),
-        chunk_size=sales_cfg.get("chunk_size", 1000000),
-        workers=sales_cfg.get("workers", None),
+        chunk_size=sales_cfg.get("chunk_size", 1_000_000),
+        workers=sales_cfg.get("workers"),
         partition_enabled=sales_cfg.get("partition_enabled", False),
         partition_cols=sales_cfg.get("partition_cols", ["Year", "Month"]),
         delta_output_folder=str(sales_out_folder),
-        skip_order_cols = bool(
-            sales_cfg.get("skip_order_cols", True)
-        )
+        skip_order_cols=skip_order_cols,
     )
 
     done(f"Generating Sales completed in {time.time() - t0:.1f}s")
 
     # ------------------------------------------------------------
-    # Packaging
+    # Packaging (consumes Parquet output)
     # ------------------------------------------------------------
-
-    # stage("Creating Final Output Folder")
     t1 = time.time()
     package_output(cfg, sales_cfg, parquet_dims, fact_out)
     done(f"Creating Final Output Folder completed in {time.time() - t1:.1f}s")
-
-

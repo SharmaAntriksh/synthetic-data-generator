@@ -15,19 +15,24 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     - Copying Sales fact (Delta / Parquet / CSV)
     - Generating SQL scripts (CSV only)
     - Cleaning stale output
+
+    Behavior is format-driven and deterministic.
     """
 
     file_format = sales_cfg["file_format"].lower()
     is_csv = file_format == "csv"
 
     # ============================================================
+    # Normalize final output root ONCE
+    # ============================================================
+    final_root = Path(unquote(str(cfg["final_output_folder"]))).resolve()
+
+    # ============================================================
     # Create final output folder
     # ============================================================
     with stage("Creating Final Output Folder"):
         final_folder = create_final_output_folder(
-            final_folder_root=Path(
-                str(cfg["final_output_folder"]).replace("%20", " ")
-            ).resolve(),
+            final_folder_root=final_root,
             parquet_dims=parquet_dims,
             fact_folder=fact_out,
             sales_cfg=sales_cfg,
@@ -43,31 +48,35 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         real_name = final_folder.name
 
         for sibling in parent.iterdir():
-            if sibling.is_dir() and "%20" in sibling.name:
-                if unquote(sibling.name) == real_name:
-                    shutil.rmtree(sibling)
+            if (
+                sibling.is_dir()
+                and "%20" in sibling.name
+                and unquote(sibling.name) == real_name
+            ):
+                shutil.rmtree(sibling)
 
         dims_out = final_folder / "dimensions"
         facts_out = final_folder / "facts"
 
         # ---------------------------------------------------------
-        # Clean old packaged sales folder
+        # Clean old packaged sales folder (idempotent)
         # ---------------------------------------------------------
         packaged_sales = facts_out / "sales"
         if packaged_sales.exists():
             shutil.rmtree(packaged_sales)
 
         # ---------------------------------------------------------
-        # Determine destination folder
+        # Determine destination sales folder
         # ---------------------------------------------------------
         if file_format == "deltaparquet":
             dst_sales = facts_out / "sales"
-            dst_sales.mkdir(parents=True, exist_ok=True)
         else:
             dst_sales = facts_out
 
+        dst_sales.mkdir(parents=True, exist_ok=True)
+
         # ============================================================
-        # PARQUET: single file copy and exit early
+        # PARQUET MODE — single file copy and exit early
         # ============================================================
         if file_format == "parquet":
             src_file = fact_out / "parquet" / "sales.parquet"
@@ -82,7 +91,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             shutil.copy2(src_file, dst_file)
             done("Sales fact copied (single parquet file).")
 
-            # ❗ Parquet never generates SQL scripts
+            # Parquet never generates SQL scripts
             return final_folder
 
         # ============================================================
@@ -90,20 +99,27 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         # ============================================================
         if file_format == "deltaparquet":
             src_sales = fact_out / "sales"
-        else:  # csv
+        else:  # CSV
             src_sales = fact_out / "csv"
 
         if not src_sales.exists():
             raise RuntimeError(f"Expected sales output folder not found: {src_sales}")
 
         # ============================================================
-        # CSV MODE — flat copy
+        # CSV MODE — flat copy (schema already resolved upstream)
         # ============================================================
         if is_csv:
-            info(f"Copying CSV sales fact from: {src_sales}")
+            csv_files = list(src_sales.glob("*.csv"))
+            info(f"Copying {len(csv_files)} CSV sales files from: {src_sales}")
 
-            for csv_file in src_sales.rglob("*.csv"):
-                shutil.copy2(csv_file, dst_sales / csv_file.name)
+            for csv_file in csv_files:
+                target = dst_sales / csv_file.name
+                if target.exists():
+                    raise RuntimeError(
+                        f"Duplicate CSV filename detected during packaging: "
+                        f"{csv_file.name}"
+                    )
+                shutil.copy2(csv_file, target)
 
             done("Sales fact copied (CSV flat).")
 
@@ -118,13 +134,12 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                     continue
 
                 target = dst_sales / item.name
-
                 if item.is_dir():
                     shutil.copytree(item, target, dirs_exist_ok=True)
                 else:
                     shutil.copy2(item, target)
 
-            done("Sales fact copied.")
+            done("Sales fact copied (Delta snapshot).")
 
     # ============================================================
     # SQL SCRIPT GENERATION — CSV ONLY (correct & reachable)
