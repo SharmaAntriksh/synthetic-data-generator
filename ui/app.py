@@ -3,6 +3,13 @@ import yaml
 from pathlib import Path
 import sys
 
+# ------------------------------------------------------------------
+# Bootstrap
+# ------------------------------------------------------------------
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from ui.presets import apply_preset, build_presets_by_sales
 from ui.sections import (
     render_output,
@@ -14,13 +21,6 @@ from ui.sections import (
     render_generate,
 )
 
-# ------------------------------------------------------------------
-# Bootstrap
-# ------------------------------------------------------------------
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 BASE_CONFIG_PATH = Path("config.yaml")
 
@@ -45,11 +45,11 @@ def require_key(cfg, path):
 # ------------------------------------------------------------------
 
 st.set_page_config(
-    page_title="Contoso Fake Data Generator",
+    page_title="Synthetic Retail Data Generator",
     layout="wide",
 )
 
-st.title("Contoso Fake Data Generator")
+st.title("Retail Data Generator")
 st.caption("Generate large, realistic datasets using a schema-safe web UI")
 
 if "config" not in st.session_state:
