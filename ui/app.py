@@ -131,6 +131,35 @@ sales["skip_order_cols"] = st.checkbox(
 
 st.subheader("2️⃣ Date range")
 
+st.subheader("📅 Calendar options")
+
+dates_cfg = require_key(cfg, ["dates"])
+
+dates_cfg["fiscal_month_offset"] = st.number_input(
+    "Fiscal month offset",
+    min_value=0,
+    max_value=11,
+    value=dates_cfg.get("fiscal_month_offset", 0),
+)
+
+include = dates_cfg.setdefault("include", {})
+
+include["calendar"] = st.checkbox(
+    "Include calendar columns",
+    value=include.get("calendar", True),
+    disabled=True,  # safe default, always on
+)
+
+include["iso"] = st.checkbox(
+    "Include ISO week columns",
+    value=include.get("iso", False),
+)
+
+include["fiscal"] = st.checkbox(
+    "Include fiscal calendar columns",
+    value=include.get("fiscal", False),
+)
+
 defaults_dates = require_key(cfg, ["defaults", "dates"])
 
 defaults_dates["start"] = st.date_input("Start date", value=defaults_dates["start"])
@@ -175,6 +204,24 @@ dim("customers", "Customers (entities)", step=1_000)
 dim("products", "Products (SKUs)", step=500)
 dim("stores", "Physical stores", step=10)
 dim("promotions", "Active promotions", step=5, min_val=0)
+
+st.subheader("💰 Pricing")
+
+pricing_base = (
+    cfg["products"]
+    .setdefault("pricing", {})
+    .setdefault("base", {})
+)
+
+pricing_base["value_scale"] = st.number_input(
+    "Base product value scale",
+    min_value=0.01,
+    max_value=10.0,
+    step=0.05,
+    format="%.2f",
+    value=pricing_base.get("value_scale", 1.0),
+    help="Scales base product prices (e.g. 0.2 = cheaper products)",
+)
 
 # ------------------------------------------------------------
 # Validation
