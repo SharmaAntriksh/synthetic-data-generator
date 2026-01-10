@@ -12,6 +12,7 @@ from src.utils.logging_utils import info, skip, done
 # Columns we never dictionary-encode
 DICT_EXCLUDE = {"SalesOrderNumber", "CustomerKey"}
 
+# Columns that must always exist in Sales
 REQUIRED_PRICING_COLS = {
     "UnitPrice",
     "NetPrice",
@@ -41,7 +42,11 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
 
     readers = [(p, pq.ParquetFile(p)) for p in parquet_files]
 
+    # ------------------------------------------------------------------
+    # Canonical schema (first file wins by design)
+    # ------------------------------------------------------------------
     schema = readers[0][1].schema_arrow
+
     missing = REQUIRED_PRICING_COLS - set(schema.names)
     if missing:
         raise RuntimeError(f"Missing required pricing columns: {missing}")
@@ -58,13 +63,14 @@ def merge_parquet_files(parquet_files, merged_file, delete_after=False):
 
     try:
         for path, reader in readers:
+            # Schema mismatch: project to canonical schema
             if reader.schema_arrow != schema:
-                # stream row-groups even on mismatch
                 for i in range(reader.num_row_groups):
                     batch = reader.read_row_group(i).select(schema.names)
                     writer.write_table(batch)
                 continue
 
+            # Fast path: identical schema
             for i in range(reader.num_row_groups):
                 writer.write_table(reader.read_row_group(i))
     finally:
@@ -107,7 +113,11 @@ def write_delta_partitioned(parts_folder, delta_output_folder, partition_cols):
     if not part_files:
         raise RuntimeError("No delta part files found.")
 
+    # ------------------------------------------------------------------
+    # Validate schema once (first file)
+    # ------------------------------------------------------------------
     first_schema = pq.ParquetFile(part_files[0]).schema_arrow
+
     missing = REQUIRED_PRICING_COLS - set(first_schema.names)
     if missing:
         raise RuntimeError(f"Missing required pricing columns: {missing}")
