@@ -248,7 +248,9 @@ def run_promotions(cfg, parquet_folder: Path):
 
     version_cfg = {**promo_cfg, "global_dates": defaults_dates}
 
-    if not should_regenerate("promotions", version_cfg, out_path):
+    force = promo_cfg.get("_force_regenerate", False)
+
+    if not force and not should_regenerate("promotions", version_cfg, out_path):
         skip("Promotions up-to-date; skipping.")
         return
 

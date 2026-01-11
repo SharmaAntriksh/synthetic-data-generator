@@ -231,7 +231,9 @@ def run_dates(cfg, parquet_folder: Path):
 
     version_cfg = {**dates_cfg, "global_dates": defaults_dates}
 
-    if not should_regenerate("dates", version_cfg, out_path):
+    force = dates_cfg.get("_force_regenerate", False)
+
+    if not force and not should_regenerate("dates", version_cfg, out_path):
         skip("Dates up-to-date; skipping.")
         return
 

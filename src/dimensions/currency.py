@@ -47,6 +47,9 @@ def run_currency(cfg, parquet_folder: Path):
     out_path = parquet_folder / "currency.parquet"
 
     ex_cfg = cfg["exchange_rates"]
+    cur_cfg = cfg["currency"]
+
+    force = cur_cfg.get("_force_regenerate", False)
 
     # --------------------------
     # Determine which date window we depend on
@@ -69,7 +72,7 @@ def run_currency(cfg, parquet_folder: Path):
         "effective_dates": date_dependency
     }
 
-    if not should_regenerate("currency", version_cfg, out_path):
+    if not force and not should_regenerate("currency", version_cfg, out_path):
         skip("Currency up-to-date; skipping.")
         return
 

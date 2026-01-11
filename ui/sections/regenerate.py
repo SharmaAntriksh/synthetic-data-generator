@@ -1,6 +1,6 @@
 import streamlit as st
 
-FORCE_REGENERATABLE_DIMENSIONS = [
+DIMENSIONS = [
     "customers",
     "products",
     "stores",
@@ -14,52 +14,40 @@ FORCE_REGENERATABLE_DIMENSIONS = [
 def render_regeneration():
     st.subheader("🔄 Regenerate dimensions")
 
-    if "force_regenerate_dimensions" not in st.session_state:
-        st.session_state.force_regenerate_dimensions = set()
+    # --------------------------------------------------
+    # One-shot UI reset after Generate
+    # --------------------------------------------------
+    if st.session_state.pop("_clear_regen_ui", False):
+        st.session_state.pop("regen_all_dims", None)
+        for dim in DIMENSIONS:
+            st.session_state.pop(f"regen_dim_{dim}", None)
 
-    # ---- Global option ----
+    # --------------------------------------------------
+    # Detect regen_all toggle OFF → clear stale flags
+    # --------------------------------------------------
+    prev_all = st.session_state.get("_prev_regen_all_dims", False)
+    current_all = st.session_state.get("regen_all_dims", False)
+
+    if prev_all and not current_all:
+        for dim in DIMENSIONS:
+            st.session_state.pop(f"regen_dim_{dim}", None)
+
+    st.session_state["_prev_regen_all_dims"] = current_all
+
+    # --------------------------------------------------
+    # Widgets
+    # --------------------------------------------------
     regen_all = st.checkbox(
         "Regenerate all dimensions",
-        key="regen_all_dimensions",
-        help="Forces regeneration of all dimensions, ignoring cache.",
+        key="regen_all_dims",
+        help="Applies to the next Generate run only.",
     )
 
-    # Compact separator (much tighter than st.divider)
-    st.markdown("<hr style='margin: 0.75rem 0;'>", unsafe_allow_html=True)
-
-    selected = set()
-
-    if regen_all:
-        selected = {
-            "customers",
-            "products",
-            "stores",
-            "promotions",
-            "dates",
-            "currency",
-            "exchange_rates",
-        }
-    else:
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown("**Core entities**")
-            if st.checkbox("Customers", key="regen_customers"):
-                selected.add("customers")
-            if st.checkbox("Stores", key="regen_stores"):
-                selected.add("stores")
-            if st.checkbox("Products", key="regen_products"):
-                selected.add("products")
-
-        with col2:
-            st.markdown("**Time & financials**")
-            if st.checkbox("Promotions", key="regen_promotions"):
-                selected.add("promotions")
-            if st.checkbox("Dates", key="regen_dates"):
-                selected.add("dates")
-            if st.checkbox("Currency", key="regen_currency"):
-                selected.add("currency")
-            if st.checkbox("Exchange rates", key="regen_exchange_rates"):
-                selected.add("exchange_rates")
-
-    st.session_state.force_regenerate_dimensions = selected
+    cols = st.columns(3)
+    for i, dim in enumerate(DIMENSIONS):
+        with cols[i % 3]:
+            st.checkbox(
+                dim.replace("_", " ").title(),
+                key=f"regen_dim_{dim}",
+                disabled=regen_all,
+            )

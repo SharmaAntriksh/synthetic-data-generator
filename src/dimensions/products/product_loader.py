@@ -22,7 +22,9 @@ def load_product_dimension(config, output_folder: Path):
     parquet_path = output_folder / "products.parquet"
 
     # ---------------- SKIP ----------------
-    if not should_regenerate("products", version_key, parquet_path):
+    force = p.get("_force_regenerate", False)
+
+    if not force and not should_regenerate("products", version_key, parquet_path):
         skip("Products up-to-date; skipping regeneration")
         return pd.read_parquet(parquet_path), False
 

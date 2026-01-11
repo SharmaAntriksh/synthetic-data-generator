@@ -24,7 +24,7 @@ def render_dates(cfg, require_key):
         dates_cfg = require_key(cfg, ["dates"])
 
         dates_cfg["fiscal_month_offset"] = st.number_input(
-            "Fiscal month offset",
+            "First month of fiscal year",
             min_value=0,
             max_value=11,
             value=dates_cfg.get("fiscal_month_offset", 0),

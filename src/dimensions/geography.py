@@ -126,10 +126,10 @@ def run_geography(cfg, parquet_folder: Path):
     """
     out_path = parquet_folder / "geography.parquet"
 
-    # Use only the geography section for versioning
     geo_cfg = cfg["geography"]
+    force = geo_cfg.get("_force_regenerate", False)
 
-    if not should_regenerate("geography", geo_cfg, out_path):
+    if not force and not should_regenerate("geography", geo_cfg, out_path):
         skip("Geography up-to-date; skipping.")
         return
 

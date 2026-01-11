@@ -129,10 +129,10 @@ def run_stores(cfg, parquet_folder: Path):
 
     out_path = parquet_folder / "stores.parquet"
 
-    # Use only the stores section for versioning
     store_cfg = cfg["stores"]
+    force = store_cfg.get("_force_regenerate", False)
 
-    if not should_regenerate("stores", store_cfg, out_path):
+    if not force and not should_regenerate("stores", store_cfg, out_path):
         skip("Stores up-to-date; skipping.")
         return
 
