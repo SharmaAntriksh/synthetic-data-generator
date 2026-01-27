@@ -28,11 +28,7 @@ def create_database_if_not_exists(cursor, database: str):
     Must be executed in autocommit mode.
     """
     try:
-        cursor.execute(
-            f"""
-            CREATE DATABASE [{database}]
-            """
-        )
+        cursor.execute(f"CREATE DATABASE [{database}]")
     except pyodbc.Error as exc:
         raise SqlServerImportError(
             f"Failed to create database '{database}'"
@@ -104,6 +100,9 @@ def import_sql_server(
       2. create_facts.sql
       3. bulk_insert_dims.sql
       4. bulk_insert_facts.sql
+
+    Optional (executed last if present):
+      - create_views.sql
     """
     run_dir = Path(run_dir)
 
@@ -120,7 +119,11 @@ def import_sql_server(
                 f"Missing required SQL file: {sql_file.name} in {run_dir}"
             )
 
+    views_file = run_dir / "create_views.sql"
+
+    # ------------------------------------------------------------
     # Step 1: connect to server context and check DB existence
+    # ------------------------------------------------------------
     try:
         with pyodbc.connect(connection_string, autocommit=True) as conn:
             cursor = conn.cursor()
@@ -139,15 +142,22 @@ def import_sql_server(
             f"Failed connecting to SQL Server '{server}'"
         ) from exc
 
+    # ------------------------------------------------------------
     # Step 2: connect to database and execute scripts
+    # ------------------------------------------------------------
     db_conn_str = f"{connection_string};DATABASE={database}"
 
     try:
         with pyodbc.connect(db_conn_str, autocommit=False) as conn:
             cursor = conn.cursor()
 
+            # Core schema + data
             for sql_file in sql_sequence:
                 execute_sql_file(cursor, sql_file)
+
+            # Optional views (must run last)
+            if views_file.is_file():
+                execute_sql_file(cursor, views_file)
 
             conn.commit()
 
