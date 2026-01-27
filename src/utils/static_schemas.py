@@ -11,7 +11,7 @@ STATIC_SCHEMAS = {
         ("Gender",             "VARCHAR(10)"),
         ("EmailAddress",       "VARCHAR(100)"),
         ("YearlyIncome",       "FLOAT"),
-        ("TotalChildren",      "TINYINT"),
+        ("TotalChildren",      "INT"),
         ("Education",          "VARCHAR(20)"),
         ("Occupation",         "VARCHAR(20)"),
         ("CustomerType",       "VARCHAR(20)"),
@@ -20,7 +20,7 @@ STATIC_SCHEMAS = {
     ],
 
     "Geography": [
-        ("GeographyKey", "SMALLINT NOT NULL"),
+        ("GeographyKey", "INT NOT NULL"),
         ("City",         "VARCHAR(100)"),
         ("State",        "VARCHAR(100)"),
         ("Country",      "VARCHAR(100)"),
@@ -33,11 +33,11 @@ STATIC_SCHEMAS = {
         ("ProductCode",             "VARCHAR(200)"),
         ("ProductName",             "VARCHAR(200)"),
         ("ProductDescription",      "VARCHAR(500)"),
-        ("ProductSubcategoryKey",   "TINYINT"),
+        ("ProductSubcategoryKey",   "INT"),
         ("Brand",                   "VARCHAR(30)"),
         ("Class",                   "VARCHAR(30)"),
         ("Color",                   "VARCHAR(30)"),
-        ("StockTypeCode",           "TINYINT"),
+        ("StockTypeCode",           "INT"),
         ("StockType",               "VARCHAR(20)"),
         ("UnitCost",                "DECIMAL(10,2)"),
         ("UnitPrice",               "DECIMAL(10,2)"),
@@ -46,20 +46,20 @@ STATIC_SCHEMAS = {
     ],
 
     "ProductCategory": [
-        ("ProductCategoryKey",      "TINYINT NOT NULL"),
+        ("ProductCategoryKey",      "INT NOT NULL"),
         ("ProductCategoryName",     "VARCHAR(100)"),
         ("CategoryLabel",           "VARCHAR(10)")
     ],
 
     "ProductSubcategory": [
-        ("ProductSubcategoryKey",   "TINYINT NOT NULL"),
+        ("ProductSubcategoryKey",   "INT NOT NULL"),
         ("SubcategoryLabel",        "VARCHAR(10)"),
         ("Subcategory",             "VARCHAR(100)"),
         ("CategoryKey",             "INT")
     ],
 
     "Promotions": [
-        ("PromotionKey",            "SMALLINT NOT NULL"),
+        ("PromotionKey",            "INT NOT NULL"),
         ("PromotionLabel",          "VARCHAR(20)"),
         ("PromotionName",           "VARCHAR(50)"),
         ("PromotionDescription",    "VARCHAR(100)"),
@@ -75,7 +75,7 @@ STATIC_SCHEMAS = {
         ("StoreName",        "VARCHAR(100)"),
         ("StoreType",        "VARCHAR(20)"),
         ("Status",           "VARCHAR(10)"),
-        ("GeographyKey",     "SMALLINT"),
+        ("GeographyKey",     "INT"),
         ("OpenDate",         "DATETIME"),
         ("CloseDate",        "DATETIME"),
         ("OpenFlag",         "BIT"),
@@ -171,26 +171,26 @@ STATIC_SCHEMAS = {
     # -----------------------
     "Sales": [
         ("SalesOrderNumber",     "BIGINT"),
-        ("SalesOrderLineNumber", "TINYINT"),
+        ("SalesOrderLineNumber", "INT"),
 
         ("CustomerKey",          "INT"),
         ("ProductKey",           "INT"),
         ("StoreKey",             "INT"),
-        ("PromotionKey",         "SMALLINT"),
-        ("CurrencyKey",          "TINYINT"),
+        ("PromotionKey",         "INT"),
+        ("CurrencyKey",          "INT"),
 
         ("OrderDate",            "DATE"),
         ("DueDate",              "DATE"),
         ("DeliveryDate",         "DATE"),
 
-        ("Quantity",             "TINYINT"),
+        ("Quantity",             "INT"),
         ("NetPrice",             "DECIMAL(8, 2)"),
         ("UnitCost",             "DECIMAL(8, 2)"),
         ("UnitPrice",            "DECIMAL(8, 2)"),
         ("DiscountAmount",       "DECIMAL(8, 2)"),
 
         ("DeliveryStatus",       "VARCHAR(20)"),
-        ("IsOrderDelayed",       "TINYINT")
+        ("IsOrderDelayed",       "INT")
     ],
 
     "ExchangeRates": [

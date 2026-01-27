@@ -9,7 +9,7 @@ defaults:
 
   dates:
     start: "2021-04-07"
-    end: "2025-12-31"
+    end: "2025-09-30"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -21,10 +21,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 10525
+  total_rows: 115253
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -63,9 +63,9 @@ products:
 
   pricing:
     base:
-      value_scale: 0.20
+      value_scale: 0.11
       min_unit_price: 10
-      max_unit_price: 2000
+      max_unit_price: 3315
 
     cost:
       min_margin_pct: 0.2
@@ -79,7 +79,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 2125
+  total_customers: 12125
 
   pct_india: 1
   pct_us: 60
