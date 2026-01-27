@@ -9,6 +9,21 @@ from src.utils.logging_utils import stage, done, info
 # ============================================================
 # Helpers
 # ============================================================
+def copy_sql_views(final_folder: Path):
+    """
+    Copy SQL views script into final output folder (CSV mode only).
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    views_file = project_root / "scripts" / "sql" / "views" / "create_views.sql"
+
+    if not views_file.exists():
+        info("No create_views.sql found; skipping SQL views copy")
+        return
+
+    shutil.copy2(views_file, final_folder / views_file.name)
+    info("Included create_views.sql in final output")
+
+
 
 def format_number_short(n: int) -> str:
     if n >= 1_000_000_000: return f"{n // 1_000_000_000}B"
@@ -197,6 +212,8 @@ def create_final_output_folder(
                 encoding="utf-8",
                 quoting=csv.QUOTE_MINIMAL
             )
+            
+        copy_sql_views(final_folder)
 
         done("Creating Final Output Folder")
         return final_folder
