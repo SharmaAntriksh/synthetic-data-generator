@@ -63,7 +63,7 @@ def compute_prices(
     base_price = base_price * price_pressure
     
     # Cost follows price, but less aggressively
-    cost = cost * (1.0 + (price_pressure - 1.0) * 0.15)
+    cost = cost * (1.0 + (price_pressure - 1.0) * 0.05)
 
     # Hard sanity (product bug protection)
     cost = np.clip(cost, 0, base_price)

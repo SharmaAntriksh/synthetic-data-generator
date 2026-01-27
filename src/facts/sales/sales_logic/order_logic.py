@@ -1,27 +1,39 @@
 import numpy as np
 
 # ------------------------------------------------------------
-# Time-based demand shaping
+# Demand model (parameter-driven, deterministic)
 # ------------------------------------------------------------
-MONTH_DEMAND = np.array([
-    0.85,  # Jan
-    0.90,  # Feb
-    1.00,  # Mar
-    1.05,  # Apr
-    1.10,  # May
-    1.00,  # Jun
-    0.95,  # Jul
-    1.00,  # Aug
-    1.05,  # Sep
-    1.20,  # Oct
-    1.35,  # Nov
-    1.50,  # Dec
-], dtype=np.float64)
+def build_month_demand(
+    base=1.0,
+    amplitude=0.55,
+    q4_boost=0.60,
+    phase_shift=-2,
+):
+    """
+    Generate month-level demand multipliers.
 
-YEAR_DEMAND = {
-    2021: 0.95,
-    2022: 1.10,
-}
+    amplitude   : strength of annual seasonality
+    q4_boost    : extra holiday uplift (Oct–Dec)
+    phase_shift : moves peak earlier/later in year
+    """
+    months = np.arange(12)
+
+    seasonal = base + amplitude * np.sin(
+        2 * np.pi * (months + phase_shift) / 12
+    )
+
+    # Q4 uplift
+    seasonal[9:12] *= (1.0 + q4_boost)
+
+    return seasonal.astype(np.float64)
+
+
+def year_demand(year, base_year=2021, growth=0.08):
+    """
+    Compound year-over-year growth.
+    """
+    return (1.0 + growth) ** (year - base_year)
+
 
 def build_orders(
     rng,
@@ -59,9 +71,15 @@ def build_orders(
     months = dates.astype(int) % 12
     years = (dates.astype("datetime64[Y]").astype(int) + 1970)
 
+    MONTH_DEMAND = build_month_demand(
+        amplitude=0.55,   # Training / Teaching
+        q4_boost=0.60,
+    )
+
     month_factor = MONTH_DEMAND[months]
+
     year_factor = np.array(
-        [YEAR_DEMAND.get(y, 1.0) for y in years],
+        [year_demand(y) for y in years],
         dtype=np.float64
     )
 
@@ -95,7 +113,7 @@ def build_orders(
     # ------------------------------------------------------------
     # Lines per order
     # ------------------------------------------------------------
-    holiday_boost = month_factor[od_idx] > 1.25
+    holiday_boost = month_factor[od_idx] > 1.10
 
     base_p = np.array([0.55, 0.25, 0.10, 0.06, 0.04])
     holiday_p = np.array([0.40, 0.30, 0.15, 0.10, 0.05])

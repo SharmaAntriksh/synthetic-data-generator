@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 105250
+  total_rows: 10525
   chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -63,9 +63,9 @@ products:
 
   pricing:
     base:
-      value_scale: 0.13
+      value_scale: 0.20
       min_unit_price: 10
-      max_unit_price: 3000
+      max_unit_price: 2000
 
     cost:
       min_margin_pct: 0.2
