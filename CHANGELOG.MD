@@ -7,6 +7,19 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [v0.3.0] – 2026-01-28
+
+### ✨ Added
+- End-to-end CSV to SQL Server workflow with automatic view creation
+- Automatic inclusion of `create_views.sql` in CSV output for SQL consumers
+- Adaptive SQL views that support optional order number columns
+
+### 🛠 Improvements
+- Cleaner output packaging for CSV runs
+- More robust SQL Server import sequencing (views created after schema and data load)
+
+---
+
 ## [v0.2.1] – 2026-01-11
 
 ### 🐛 Fixed
