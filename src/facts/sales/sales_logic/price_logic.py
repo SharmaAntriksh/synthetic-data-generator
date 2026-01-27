@@ -40,6 +40,7 @@ def compute_prices(
     unit_price,
     unit_cost,
     promo_pct=0.0,
+    price_pressure=1.0,
 ):
     """
     Deterministic, vectorized price realization.
@@ -55,6 +56,14 @@ def compute_prices(
     # -------------------------------------------------
     base_price = unit_price.astype(np.float64, copy=True)
     cost = unit_cost.astype(np.float64, copy=True)
+
+    # Guardrail: prevent extreme pricing behavior
+    price_pressure = np.clip(price_pressure, 0.90, 1.20)
+
+    base_price = base_price * price_pressure
+    
+    # Cost follows price, but less aggressively
+    cost = cost * (1.0 + (price_pressure - 1.0) * 0.15)
 
     # Hard sanity (product bug protection)
     cost = np.clip(cost, 0, base_price)

@@ -1,5 +1,27 @@
 import numpy as np
 
+# ------------------------------------------------------------
+# Time-based demand shaping
+# ------------------------------------------------------------
+MONTH_DEMAND = np.array([
+    0.85,  # Jan
+    0.90,  # Feb
+    1.00,  # Mar
+    1.05,  # Apr
+    1.10,  # May
+    1.00,  # Jun
+    0.95,  # Jul
+    1.00,  # Aug
+    1.05,  # Sep
+    1.20,  # Oct
+    1.35,  # Nov
+    1.50,  # Dec
+], dtype=np.float64)
+
+YEAR_DEMAND = {
+    2021: 0.95,
+    2022: 1.10,
+}
 
 def build_orders(
     rng,
@@ -33,7 +55,21 @@ def build_orders(
     # ------------------------------------------------------------
     # Order-level data
     # ------------------------------------------------------------
-    od_idx = rng.choice(_len_date_pool, size=order_count, p=date_prob)
+    dates = date_pool.astype("datetime64[M]")
+    months = dates.astype(int) % 12
+    years = (dates.astype("datetime64[Y]").astype(int) + 1970)
+
+    month_factor = MONTH_DEMAND[months]
+    year_factor = np.array(
+        [YEAR_DEMAND.get(y, 1.0) for y in years],
+        dtype=np.float64
+    )
+
+    demand = date_prob * month_factor * year_factor
+    demand /= demand.sum()
+
+    od_idx = rng.choice(_len_date_pool, size=order_count, p=demand)
+
     order_dates = date_pool[od_idx]
 
     # Fast YYYYMMDD integer construction
@@ -59,11 +95,21 @@ def build_orders(
     # ------------------------------------------------------------
     # Lines per order
     # ------------------------------------------------------------
-    lines_per_order = rng.choice(
-        np.array([1, 2, 3, 4, 5], dtype=np.int8),
-        size=order_count,
-        p=[0.55, 0.25, 0.10, 0.06, 0.04],
+    holiday_boost = month_factor[od_idx] > 1.25
+
+    base_p = np.array([0.55, 0.25, 0.10, 0.06, 0.04])
+    holiday_p = np.array([0.40, 0.30, 0.15, 0.10, 0.05])
+
+    p = np.where(
+        holiday_boost[:, None],
+        holiday_p,
+        base_p
     )
+
+    lines_per_order = np.array([
+        rng.choice([1,2,3,4,5], p=pi)
+        for pi in p
+    ], dtype=np.int8)
 
     expanded_len = int(lines_per_order.sum())
 
