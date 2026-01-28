@@ -1,0 +1,278 @@
+createOrReplace
+
+	table Sales
+		lineageTag: 841f29c8-ce54-4f98-9618-7fd9520a7235
+
+		measure 'Sales Amount' = ```
+				
+				SUMX ( 
+				    Sales, 
+				    Sales[Quantity] * Sales[NetPrice]
+				)
+				```
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: 48d9e8b9-f997-475d-b363-973edb1d5bb3
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure 'Cost Amount' = ```
+				
+				SUMX ( 
+				    Sales, 
+				    Sales[Quantity] * Sales[UnitCost]
+				)
+				```
+			formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+			displayFolder: 01 - Base Measures
+			lineageTag: 161627e6-1af2-4474-94e3-8f71733d228e
+
+			annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+		measure 'Profit Amount' =
+				
+				[Sales Amount] - [Cost Amount]
+			formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+			displayFolder: 01 - Base Measures
+			lineageTag: a95a2156-9a97-45f8-b9a9-08a4ef5a8d06
+
+			annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+		measure Transactions =
+				
+				COUNTROWS ( Sales )
+			formatString: 0
+			displayFolder: 01 - Base Measures
+			lineageTag: f941d2a9-2c52-4441-ba75-afa6c2f91413
+
+		measure '# Customers' =
+				
+				DISTINCTCOUNT ( Sales[CustomerKey] )
+			formatString: 0
+			displayFolder: 01 - Base Measures
+			lineageTag: 6ec8f0ae-723d-46cd-b46d-b9c1cedc3068
+
+		column SalesOrderNumber
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: bd434ec5-b048-4413-a8fb-337ce3a31dce
+			summarizeBy: sum
+			sourceColumn: SalesOrderNumber
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesOrderLineNumber
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 891a20fd-55bf-4ad1-921e-909b6fd27acc
+			summarizeBy: sum
+			sourceColumn: SalesOrderLineNumber
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 745ec7ca-ae29-4825-9611-c01ced52cf5a
+			summarizeBy: none
+			sourceColumn: CustomerKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column ProductKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 722964a7-101a-41fa-946f-2599d7dfb2fd
+			summarizeBy: none
+			sourceColumn: ProductKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column StoreKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 74b38b8d-8369-44ad-873b-ef4608635655
+			summarizeBy: none
+			sourceColumn: StoreKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column PromotionKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 8dc9c36c-b864-4aa7-9471-19195a4ae37e
+			summarizeBy: none
+			sourceColumn: PromotionKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CurrencyKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: a47ee7e7-7f02-492d-8137-ba0e9f70a19f
+			summarizeBy: none
+			sourceColumn: CurrencyKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column OrderDate
+			dataType: dateTime
+			isHidden
+			formatString: Short Date
+			lineageTag: c314268e-c43b-4ecc-a045-b44a2a8b7e1b
+			summarizeBy: none
+			sourceColumn: OrderDate
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column DueDate
+			dataType: dateTime
+			isHidden
+			formatString: Short Date
+			lineageTag: 54103780-3f2c-442c-bd32-92840ee9d521
+			summarizeBy: none
+			sourceColumn: DueDate
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column DeliveryDate
+			dataType: dateTime
+			isHidden
+			formatString: Short Date
+			lineageTag: d9c2ff06-1469-4bb9-a4f4-794a1e1459f4
+			summarizeBy: none
+			sourceColumn: DeliveryDate
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column Quantity
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 23a5aa37-c1f6-450c-b27b-147383a2c81f
+			summarizeBy: sum
+			sourceColumn: Quantity
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column NetPrice
+			dataType: decimal
+			isHidden
+			formatString: #,0.00
+			lineageTag: e44e78c4-de74-4514-aa78-6063604430c3
+			summarizeBy: sum
+			sourceColumn: NetPrice
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column UnitCost
+			dataType: decimal
+			isHidden
+			formatString: #,0.00
+			lineageTag: 63dd36d7-bf98-4ff7-86f4-08945fcdefbe
+			summarizeBy: sum
+			sourceColumn: UnitCost
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column UnitPrice
+			dataType: decimal
+			isHidden
+			formatString: #,0.00
+			lineageTag: 19486a46-2f70-490d-b2b1-cb1f0aeca624
+			summarizeBy: sum
+			sourceColumn: UnitPrice
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column DiscountAmount
+			dataType: decimal
+			isHidden
+			formatString: #,0.00
+			lineageTag: c1d79021-fe1c-452b-8614-317b1d7b5235
+			summarizeBy: sum
+			sourceColumn: DiscountAmount
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column DeliveryStatus
+			dataType: string
+			isHidden
+			lineageTag: 8253a3d3-cbe4-419a-bd11-ce5309e47dbe
+			summarizeBy: none
+			sourceColumn: DeliveryStatus
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsOrderDelayed
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 8a44ad81-9376-42da-8529-bc51af38c4ce
+			summarizeBy: sum
+			sourceColumn: IsOrderDelayed
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Sales = m
+			mode: import
+			queryGroup: Fact
+			source =
+					let
+					    Source = FxReadParquetFile ( "facts\sales" ),
+					    #"Rounded Off" = Table.TransformColumns(Source,{{"NetPrice", each Number.Round(_, 2), type number}, {"UnitCost", each Number.Round(_, 2), type number}, {"UnitPrice", each Number.Round(_, 2), type number}, {"DiscountAmount", each Number.Round(_, 2), type number}}),
+					    #"Changed Type" = Table.TransformColumnTypes(#"Rounded Off",{{"NetPrice", Currency.Type}, {"UnitCost", Currency.Type}, {"UnitPrice", Currency.Type}, {"DiscountAmount", Currency.Type}, {"IsOrderDelayed", Int64.Type}})
+					in
+					    #"Changed Type"
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
