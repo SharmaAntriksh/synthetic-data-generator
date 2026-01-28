@@ -212,8 +212,8 @@ def generate_date_table(start_date, end_date, first_fy_month):
     df["IsCurrentQuarter"] = ((df["Year"] == today.year) & (df["Quarter"] == current_quarter)).astype(int)
     df["CurrentDayOffset"] = (df["Date"] - today).dt.days
     
-    # date_cols = df.select_dtypes(include="datetime").columns
-    # df[date_cols] = df[date_cols].apply(lambda col: pd.to_datetime(col).dt.date)
+    date_cols = df.select_dtypes(include="datetime").columns
+    df[date_cols] = df[date_cols].apply(lambda col: pd.to_datetime(col).dt.date)
 
     df = df[CALENDAR_COLUMNS + ISO_COLUMNS + FISCAL_COLUMNS]
     return df

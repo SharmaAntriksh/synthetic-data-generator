@@ -33,7 +33,7 @@ STATIC_SCHEMAS = {
         ("ProductCode",             "VARCHAR(200)"),
         ("ProductName",             "VARCHAR(200)"),
         ("ProductDescription",      "VARCHAR(500)"),
-        ("ProductSubcategoryKey",   "INT"),
+        ("SubcategoryKey",          "INT"),
         ("Brand",                   "VARCHAR(30)"),
         ("Class",                   "VARCHAR(30)"),
         ("Color",                   "VARCHAR(30)"),
@@ -46,13 +46,13 @@ STATIC_SCHEMAS = {
     ],
 
     "ProductCategory": [
-        ("ProductCategoryKey",      "INT NOT NULL"),
-        ("ProductCategoryName",     "VARCHAR(100)"),
+        ("CategoryKey",             "INT NOT NULL"),
+        ("Category",                "VARCHAR(100)"),
         ("CategoryLabel",           "VARCHAR(10)")
     ],
 
     "ProductSubcategory": [
-        ("ProductSubcategoryKey",   "INT NOT NULL"),
+        ("SubcategoryKey",   "INT NOT NULL"),
         ("SubcategoryLabel",        "VARCHAR(10)"),
         ("Subcategory",             "VARCHAR(100)"),
         ("CategoryKey",             "INT")

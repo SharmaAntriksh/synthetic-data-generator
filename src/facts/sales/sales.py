@@ -204,10 +204,16 @@ def generate_sales_fact(
     )
     currency_df = load_parquet_df(
         os.path.join(parquet_folder, "currency.parquet"),
-        ["CurrencyKey", "ISOCode"],
+        ["CurrencyKey", "ToCurrency"],
     )
 
-    geo_df = geo_df.merge(currency_df, on="ISOCode", how="left")
+    geo_df = geo_df.merge(
+        currency_df,
+        left_on="ISOCode",
+        right_on="ToCurrency",
+        how="left",
+    )
+    
     if geo_df["CurrencyKey"].isna().any():
         default_currency = int(currency_df.iloc[0]["CurrencyKey"])
         geo_df["CurrencyKey"] = geo_df["CurrencyKey"].fillna(default_currency)
