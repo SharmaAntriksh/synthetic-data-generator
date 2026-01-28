@@ -109,14 +109,20 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
 
     fmt = sales_cfg["file_format"].lower()
 
+    pbip_template = None
+
     if fmt == "csv":
         pbip_template = Path("samples/powerbi/templates/PBIP CSV")
-    else:
+
+    elif fmt == "parquet":
         pbip_template = Path("samples/powerbi/templates/PBIP Parquet")
 
-    attach_pbip_project(
-        final_folder=final_folder,
-        pbip_template_root=pbip_template,
-    )
+    # deltaparquet → intentionally skip PBIP
+
+    if pbip_template is not None:
+        attach_pbip_project(
+            final_folder=final_folder,
+            pbip_template_root=pbip_template,
+        )
 
     done(f"Creating Final Output Folder completed in {time.time() - t1:.1f}s")
