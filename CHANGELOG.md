@@ -7,6 +7,26 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## v0.3.1 – Schema fixes and SQL import stability
+
+### 🐛 Fixes
+- Fixed SQL view creation failures on repeated imports by making all views idempotent
+- Corrected `vw_Sales` generation to safely handle optional `SalesOrderNumber` and `SalesOrderLineNumber`
+- Resolved SQL import errors caused by mismatches between generated schemas and SQL views
+
+### 🧱 Schema & Data Model
+- Normalized currency naming across Currency, Geography, and Sales logic
+- Clarified Geography ↔ Currency joins to avoid semantic overloading
+- Ensured all date-related columns in the Dates dimension are written as DATE (no DATETIME leakage)
+- Aligned Contoso product category and subcategory schemas across Parquet and SQL outputs
+
+### 🔧 Pipeline & Tooling
+- Improved robustness of the CSV → SQL Server import workflow
+- Reduced dependency on manual database cleanup between runs
+- Better consistency between generated CSV, Parquet, and SQL artifacts
+
+---
+
 ## [v0.3.0] – 2026-01-28
 
 ### ✨ Added
