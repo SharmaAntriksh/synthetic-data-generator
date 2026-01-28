@@ -7,6 +7,7 @@ from pathlib import Path
 from src.utils.logging_utils import stage, info, done
 from src.engine.packaging import package_output
 from src.facts.sales.sales_logic.globals import bind_globals
+from src.engine.powerbi_packaging import attach_pbip_project
 
 
 def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
@@ -103,5 +104,19 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # Packaging (consumes Parquet output)
     # ------------------------------------------------------------
     t1 = time.time()
-    package_output(cfg, sales_cfg, parquet_dims, fact_out)
+    
+    final_folder = package_output(cfg, sales_cfg, parquet_dims, fact_out)
+
+    fmt = sales_cfg["file_format"].lower()
+
+    if fmt == "csv":
+        pbip_template = Path("samples/powerbi/templates/PBIP CSV")
+    else:
+        pbip_template = Path("samples/powerbi/templates/PBIP Parquet")
+
+    attach_pbip_project(
+        final_folder=final_folder,
+        pbip_template_root=pbip_template,
+    )
+
     done(f"Creating Final Output Folder completed in {time.time() - t1:.1f}s")

@@ -1,0 +1,100 @@
+table Promotions
+	lineageTag: 398acef2-142d-4969-aba2-44201a493192
+
+	column PromotionKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 7e6df572-b676-4cca-a951-71240f847fa4
+		summarizeBy: count
+		sourceColumn: PromotionKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionLabel
+		dataType: int64
+		formatString: 0
+		lineageTag: 954fe7fd-37b0-4a45-bf0d-5efa7a04e569
+		summarizeBy: sum
+		sourceColumn: PromotionLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionName
+		dataType: string
+		lineageTag: 0c57aabe-5173-4e4a-8bff-2811e9658c4d
+		summarizeBy: none
+		sourceColumn: PromotionName
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionDescription
+		dataType: string
+		lineageTag: 7f871e60-ba9d-4abe-9a2f-76c5e1886ff5
+		summarizeBy: none
+		sourceColumn: PromotionDescription
+
+		annotation SummarizationSetBy = Automatic
+
+	column DiscountPct
+		dataType: double
+		lineageTag: d32f03db-d535-422f-96c3-f7673b9335c8
+		summarizeBy: sum
+		sourceColumn: DiscountPct
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column PromotionType
+		dataType: string
+		lineageTag: 02af240f-9a14-43d5-ac36-ff6f3084481e
+		summarizeBy: none
+		sourceColumn: PromotionType
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionCategory
+		dataType: string
+		lineageTag: 9e6cd0b7-b5a6-4770-916f-da1fef33d433
+		summarizeBy: none
+		sourceColumn: PromotionCategory
+
+		annotation SummarizationSetBy = Automatic
+
+	column StartDate
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: 8a50adea-bf23-4ecd-9453-ac764a1a7571
+		summarizeBy: none
+		sourceColumn: StartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column EndDate
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: 40dc50b6-653b-4693-b181-3c93c2e2e70f
+		summarizeBy: none
+		sourceColumn: EndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	partition Promotions = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "promotions" ),
+				    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+				    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"PromotionKey", Int64.Type}, {"PromotionLabel", Int64.Type}, {"PromotionName", type text}, {"PromotionDescription", type text}, {"DiscountPct", type number}, {"PromotionType", type text}, {"PromotionCategory", type text}, {"StartDate", type date}, {"EndDate", type date}})
+				in
+				    ChangedType
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

@@ -1,0 +1,41 @@
+table Currency
+	lineageTag: 6abe0bfa-86b5-4aa4-b99e-18a7cdc2214d
+
+	column CurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 05d148a7-8f50-4672-af86-2acd1915bde8
+		summarizeBy: none
+		sourceColumn: CurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencyName
+		dataType: string
+		lineageTag: 6a1b6312-51a5-48d6-8ce5-01e59ef35ba2
+		summarizeBy: none
+		sourceColumn: CurrencyName
+
+		annotation SummarizationSetBy = Automatic
+
+	column ISOCode
+		dataType: string
+		lineageTag: 28a96100-8997-4320-aa38-9766346376c5
+		summarizeBy: none
+		sourceColumn: ISOCode
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Currency = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\currency" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

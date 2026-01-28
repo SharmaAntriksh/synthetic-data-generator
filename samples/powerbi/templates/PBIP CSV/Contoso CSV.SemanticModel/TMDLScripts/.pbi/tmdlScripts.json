@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "tabOrder": [
+    "Model",
+    "Tables",
+    "Relationships",
+    "Expressions",
+    "Measures",
+    "Sales",
+    "Dates",
+    "Products",
+    "Customers"
+  ],
+  "defaultTab": "Customers"
+}
