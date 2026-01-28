@@ -7,6 +7,19 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## v0.4.0 – Power BI project packaging
+
+### Added
+- Include Power BI Project (PBIP) templates directly in final output folders
+- Automatically update dataset folder paths inside PBIP using a shared `ContosoFolder` expression
+- Support format-specific PBIP templates for CSV and Parquet outputs
+- Enable opening Power BI projects without manual path configuration
+
+### Fixed
+- Skip PBIP packaging for `deltaparquet` output format
+
+---
+
 ## v0.3.1 – Schema fixes and SQL import stability
 
 ### 🐛 Fixes
