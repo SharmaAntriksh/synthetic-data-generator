@@ -162,7 +162,7 @@ STATIC_SCHEMAS = {
 
     "Currency": [
         ("CurrencyKey", "INT"),
-        ("ISOCode",     "VARCHAR(10)"),
+        ("ToCurrency",     "VARCHAR(10)"),
         ("CurrencyName","VARCHAR(50)")
     ],
 
