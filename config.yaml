@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 1152503
+  total_rows: 115250
   chunk_size: 2000000
 
   file_format: "csv"          # csv | parquet | deltaparquet
@@ -42,7 +42,7 @@ sales:
   write_pyarrow: true
   tune_chunk: false
 
-  skip_order_cols: false
+  skip_order_cols: true
 
   override:
     dates:
