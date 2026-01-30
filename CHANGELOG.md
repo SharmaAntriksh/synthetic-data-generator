@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
 ---
+## v0.5.0 – Realistic data generation and improved SQL/Power BI compatibility
+
+### Added
+- Support for inactive dimension members during sales generation.
+  - Customers and products can now be generated without corresponding sales.
+  - Enables more realistic analytical scenarios.
+- Optional SQL Server helper scripts included with CSV output:
+  - Bootstrap scripts for table-valued types and stored procedures.
+  - Optional PK/FK constraint scripts.
+  - Optional clustered columnstore management script.
+  - Helper scripts are copied only and are not executed by the generator.
+
+### Changed
+- Standardized schemas and data types across generated datasets and Power BI models.
+- Boolean-style fields (e.g. IsActiveInSales) are now emitted as numeric flags (0/1).
+
+### Fixed
+- Improved Power BI / Power Query compatibility by aligning SQL data types.
+- Prevented BULK INSERT and Power Query type inference issues during CSV → SQL imports.
+
+---
 
 ## v0.4.0 – Power BI project packaging
 
