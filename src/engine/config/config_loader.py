@@ -102,6 +102,23 @@ def resolve_section(
             out[key] = value
 
     # --------------------------------------------------------
+    # Section-specific validation
+    # --------------------------------------------------------
+    if "active_ratio" in out:
+        if section_name not in {"customers", "products"}:
+            raise ValueError(
+                f"'active_ratio' is not supported for section '{section_name}'"
+            )
+
+        try:
+            ratio = float(out["active_ratio"])
+        except Exception:
+            raise ValueError("active_ratio must be a number")
+
+        if not 0 < ratio <= 1:
+            raise ValueError("active_ratio must be in the range (0, 1]")
+
+    # --------------------------------------------------------
     # Section-specific logic
     # --------------------------------------------------------
     if section_name == "promotions":

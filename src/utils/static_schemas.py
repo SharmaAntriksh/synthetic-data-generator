@@ -16,7 +16,8 @@ STATIC_SCHEMAS = {
         ("Occupation",         "VARCHAR(20)"),
         ("CustomerType",       "VARCHAR(20)"),
         ("CompanyName",        "VARCHAR(200)"),
-        ("GeographyKey",       "INT")
+        ("GeographyKey",       "INT"),
+        ("IsActiveInSales",    "VARCHAR(10)")
     ],
 
     "Geography": [
@@ -42,7 +43,8 @@ STATIC_SCHEMAS = {
         ("UnitCost",                "DECIMAL(10,2)"),
         ("UnitPrice",               "DECIMAL(10,2)"),
         ("BaseProductKey",          "INT"),
-        ("VariantIndex",            "INT")
+        ("VariantIndex",            "INT"),
+        ("IsActiveInSales",         "VARCHAR(10)")
     ],
 
     "ProductCategory": [

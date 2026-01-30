@@ -26,8 +26,18 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     if skip_cols not in (True, False):
         raise RuntimeError("State.skip_order_cols must be a boolean")
 
-    product_np = State.product_np
-    customers = State.customers
+    product_np = (
+        State.active_product_np
+        if hasattr(State, "active_product_np") and State.active_product_np is not None
+        else State.product_np
+    )
+
+    customers = (
+        State.active_customer_keys
+        if hasattr(State, "active_customer_keys") and State.active_customer_keys is not None
+        else State.customers
+    )
+
     date_pool = State.date_pool
     date_prob = State.date_prob
     store_keys = State.store_keys

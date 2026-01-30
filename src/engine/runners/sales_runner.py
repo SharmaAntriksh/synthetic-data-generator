@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 import shutil
 from pathlib import Path
+import pandas as pd
 
 from src.utils.logging_utils import stage, info, done
 from src.engine.packaging import package_output
@@ -64,6 +65,55 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     skip_order_cols = bool(sales_cfg["skip_order_cols"])
 
     # ------------------------------------------------------------
+    # Load active Customers for Sales generation
+    # ------------------------------------------------------------
+
+    customers_path = parquet_dims / "customers.parquet"
+
+    customers_df = pd.read_parquet(
+        customers_path,
+        columns=["CustomerKey", "IsActiveInSales"],
+    )
+
+    active_customer_keys = customers_df.loc[
+        customers_df["IsActiveInSales"],
+        "CustomerKey",
+    ].to_numpy()
+
+    if len(active_customer_keys) == 0:
+        raise RuntimeError("No active customers found for sales generation")
+
+    # ------------------------------------------------------------
+    # Load active Products for Sales generation
+    # ------------------------------------------------------------
+    products_path = parquet_dims / "products.parquet"
+
+    products_df = pd.read_parquet(
+        products_path,
+        columns=["ProductKey", "IsActiveInSales"],
+    )
+
+    active_product_keys = products_df.loc[
+        products_df["IsActiveInSales"],
+        "ProductKey",
+    ].to_numpy()
+
+    if len(active_product_keys) == 0:
+        raise RuntimeError("No active products found for sales generation")
+
+    # ------------------------------------------------------------
+    # Build active_product_np (shape-compatible with State.product_np)
+    # ------------------------------------------------------------
+    products_full_df = pd.read_parquet(
+        products_path,
+        columns=["ProductKey", "UnitPrice", "UnitCost"],
+    )
+
+    active_product_np = products_full_df.loc[
+        products_full_df["ProductKey"].isin(active_product_keys)
+    ].to_numpy()
+
+    # ------------------------------------------------------------
     # Run sales fact generation
     # ------------------------------------------------------------
     from src.facts.sales.sales import generate_sales_fact
@@ -74,6 +124,8 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # Bind only runner-level globals
     bind_globals({
         "skip_order_cols": skip_order_cols,
+        "active_customer_keys": active_customer_keys,
+        "active_product_np": active_product_np,
     })
 
     generate_sales_fact(
@@ -83,7 +135,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         total_rows=sales_cfg["total_rows"],
         file_format=sales_cfg["file_format"],
 
-        # 🔥 REQUIRED FOR PARQUET MODE
+        # REQUIRED FOR PARQUET MODE
         merge_parquet=sales_cfg.get("merge_parquet", False),
         merged_file=sales_cfg.get("merged_file", "sales.parquet"),
 
