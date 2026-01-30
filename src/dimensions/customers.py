@@ -32,6 +32,11 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     cust_cfg = cfg["customers"]
     total_customers = cust_cfg["total_customers"]
 
+    active_ratio = cust_cfg.get("active_ratio", 1.0)
+
+    if not isinstance(active_ratio, (int, float)) or not (0 < active_ratio <= 1):
+        raise ValueError("customers.active_ratio must be a number in the range (0, 1]")
+
     pct_india = cust_cfg["pct_india"]
     pct_us = cust_cfg["pct_us"]
     pct_eu = cust_cfg["pct_eu"]
@@ -91,6 +96,16 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     N = total_customers
 
     CustomerKey = np.arange(1, N + 1)
+
+    active_count = int(np.floor(N * active_ratio))
+
+    active_customer_keys = (
+        rng.choice(CustomerKey, size=active_count, replace=False)
+        if active_count < N
+        else CustomerKey
+    )
+
+    active_customer_set = set(active_customer_keys)
 
     Region = rng.choice(
         ["IN", "US", "EU"],
@@ -249,9 +264,10 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
         "CustomerType": np.where(IsOrg, "Organization", "Person"),
         "CompanyName": CompanyName,
         "GeographyKey": GeographyKey,
+        "IsActiveInSales": np.isin(CustomerKey, list(active_customer_set)),
     })
 
-    return df
+    return df, active_customer_set
 
 
 # ---------------------------------------------------------
@@ -268,7 +284,7 @@ def run_customers(cfg, parquet_folder: Path):
         return
 
     with stage("Generating Customers"):
-        df = generate_synthetic_customers(cfg, parquet_folder)
+        df, active_customer_keys = generate_synthetic_customers(cfg, parquet_folder)
         df.to_parquet(out_path, index=False)
 
     save_version("customers", cust_cfg, out_path)

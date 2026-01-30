@@ -8,6 +8,7 @@ from math import ceil
 from src.utils.logging_utils import info, work, skip, done
 from .sales_worker import init_sales_worker, _worker_task
 from .sales_writer import merge_parquet_files
+from .sales_logic.globals import State
 
 
 # =====================================================================
@@ -179,10 +180,18 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Load dimensions
     # ------------------------------------------------------------
-    customers_raw = load_parquet_column(
-        os.path.join(parquet_folder, "customers.parquet"),
-        "CustomerKey",
-    )
+    
+    # ------------------------------------------------------------
+    # Load Customers (respect active_customer_keys if provided)
+    # ------------------------------------------------------------
+    if hasattr(State, "active_customer_keys") and State.active_customer_keys is not None:
+        customers_raw = State.active_customer_keys
+    else:
+        customers_raw = load_parquet_column(
+            os.path.join(parquet_folder, "customers.parquet"),
+            "CustomerKey",
+        )
+
     customers = build_weighted_customers(
         customers_raw, heavy_pct, heavy_mult, seed
     ).astype(np.int64)
