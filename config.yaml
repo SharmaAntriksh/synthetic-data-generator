@@ -21,10 +21,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 115250
-  chunk_size: 1000000
+  total_rows: 1152503
+  chunk_size: 2000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -57,9 +57,9 @@ sales:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: true
+  use_contoso_products: false
   num_products: 8021
-  active_ratio: 0.85
+  active_ratio: 0.92
   seed: 42
 
   pricing:
@@ -80,8 +80,8 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 12125
-  active_ratio: 0.10
+  total_customers: 23125
+  active_ratio: 0.79
   
   pct_india: 1
   pct_us: 60

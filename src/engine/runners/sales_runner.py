@@ -84,6 +84,36 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         raise RuntimeError("No active customers found for sales generation")
 
     # ------------------------------------------------------------
+    # Load active Products for Sales generation
+    # ------------------------------------------------------------
+    products_path = parquet_dims / "products.parquet"
+
+    products_df = pd.read_parquet(
+        products_path,
+        columns=["ProductKey", "IsActiveInSales"],
+    )
+
+    active_product_keys = products_df.loc[
+        products_df["IsActiveInSales"],
+        "ProductKey",
+    ].to_numpy()
+
+    if len(active_product_keys) == 0:
+        raise RuntimeError("No active products found for sales generation")
+
+    # ------------------------------------------------------------
+    # Build active_product_np (shape-compatible with State.product_np)
+    # ------------------------------------------------------------
+    products_full_df = pd.read_parquet(
+        products_path,
+        columns=["ProductKey", "UnitPrice", "UnitCost"],
+    )
+
+    active_product_np = products_full_df.loc[
+        products_full_df["ProductKey"].isin(active_product_keys)
+    ].to_numpy()
+
+    # ------------------------------------------------------------
     # Run sales fact generation
     # ------------------------------------------------------------
     from src.facts.sales.sales import generate_sales_fact
@@ -95,6 +125,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     bind_globals({
         "skip_order_cols": skip_order_cols,
         "active_customer_keys": active_customer_keys,
+        "active_product_np": active_product_np,
     })
 
     generate_sales_fact(

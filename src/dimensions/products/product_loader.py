@@ -1,5 +1,6 @@
 from pathlib import Path
 import pandas as pd
+import numpy as np
 
 from src.utils import info, skip
 from src.versioning import should_regenerate, save_version
@@ -18,6 +19,11 @@ def load_product_dimension(config, output_folder: Path):
     """
 
     p = config["products"]
+    active_ratio = p.get("active_ratio", 1.0)
+
+    if not isinstance(active_ratio, (int, float)) or not (0 < active_ratio <= 1):
+        raise ValueError("products.active_ratio must be a number in the range (0, 1]")
+
     version_key = _version_key(p)
     parquet_path = output_folder / "products.parquet"
 
@@ -56,6 +62,33 @@ def load_product_dimension(config, output_folder: Path):
         pricing_cfg=p.get("pricing"),
         seed=p.get("seed"),
     )
+
+    # ------------------------------------------------------------
+    # Active products (eligibility for Sales)
+    # ------------------------------------------------------------
+    N = len(df)
+    active_count = int(N * active_ratio)
+    
+    if active_count == 0:
+        raise ValueError(
+            "products.active_ratio results in zero active products; "
+            "increase active_ratio or product count"
+        )
+
+    product_keys = df["ProductKey"].to_numpy()
+
+    if active_count < N:
+        rng = np.random.default_rng(int(p.get("seed", 42)))
+        active_product_keys = rng.choice(
+            product_keys,
+            size=active_count,
+            replace=False,
+        )
+        active_product_set = set(active_product_keys)
+    else:
+        active_product_set = set(product_keys)
+
+    df["IsActiveInSales"] = df["ProductKey"].isin(active_product_set)
 
     # Required minimal fields for Sales
     required = [

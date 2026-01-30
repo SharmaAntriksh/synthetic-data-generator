@@ -196,11 +196,18 @@ def generate_sales_fact(
         customers_raw, heavy_pct, heavy_mult, seed
     ).astype(np.int64)
 
-    prod_df = load_parquet_df(
-        os.path.join(parquet_folder, "products.parquet"),
-        ["ProductKey", "UnitPrice", "UnitCost"],
-    )
-    product_np = prod_df.to_numpy()
+    # ------------------------------------------------------------
+    # Load Products (respect active_product_np if provided)
+    # ------------------------------------------------------------
+    if hasattr(State, "active_product_np") and State.active_product_np is not None:
+        product_np = State.active_product_np
+    else:
+        prod_df = load_parquet_df(
+            os.path.join(parquet_folder, "products.parquet"),
+            ["ProductKey", "UnitPrice", "UnitCost"],
+        )
+        product_np = prod_df.to_numpy()
+
 
     store_keys = load_parquet_column(
         os.path.join(parquet_folder, "stores.parquet"),
