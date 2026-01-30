@@ -141,6 +141,14 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
 
             done("Sales fact copied (Delta snapshot).")
 
+    columnstore_sql = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "sql"
+        / "columnstore"
+        / "create_drop_cci.sql"
+    )
+
     # ============================================================
     # SQL SCRIPT GENERATION — CSV ONLY (correct & reachable)
     # ============================================================
@@ -174,6 +182,16 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                 cfg=cfg,
                 skip_order_cols=sales_cfg.get("skip_order_cols", False),
             )
+            # ---------------------------------------------------------
+            # Copy optional Columnstore helper SQL (CSV only)
+            # ---------------------------------------------------------
+            if columnstore_sql.is_file():
+                shutil.copy2(
+                    columnstore_sql,
+                    final_folder / "create_drop_cci.sql",
+                )
+                info("Included optional create_drop_cci.sql in CSV output.")
+
     else:
         info("Skipping SQL script generation for non-CSV format.")
 
