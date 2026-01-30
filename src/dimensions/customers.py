@@ -98,6 +98,11 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     CustomerKey = np.arange(1, N + 1)
 
     active_count = int(np.floor(N * active_ratio))
+    if active_count == 0:
+        raise ValueError(
+            "customers.active_ratio results in zero active customers; "
+            "increase active_ratio or total_customers"
+        )
 
     active_customer_keys = (
         rng.choice(CustomerKey, size=active_count, replace=False)
@@ -264,7 +269,7 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
         "CustomerType": np.where(IsOrg, "Organization", "Person"),
         "CompanyName": CompanyName,
         "GeographyKey": GeographyKey,
-        "IsActiveInSales": np.isin(CustomerKey, list(active_customer_set)),
+        "IsActiveInSales": np.isin(CustomerKey, list(active_customer_set)).astype("int8"),
     })
 
     return df, active_customer_set

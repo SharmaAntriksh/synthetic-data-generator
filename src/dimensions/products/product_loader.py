@@ -88,7 +88,7 @@ def load_product_dimension(config, output_folder: Path):
     else:
         active_product_set = set(product_keys)
 
-    df["IsActiveInSales"] = df["ProductKey"].isin(active_product_set)
+    df["IsActiveInSales"] = df["ProductKey"].isin(active_product_set).astype("int8")
 
     # Required minimal fields for Sales
     required = [
