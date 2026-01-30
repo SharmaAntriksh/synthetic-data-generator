@@ -149,6 +149,14 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         / "create_drop_cci.sql"
     )
 
+    constraints_sql = (
+        Path(__file__).resolve().parents[2]
+        / "scripts"
+        / "sql"
+        / "bootstrap"
+        / "create_constraints.sql"
+    )
+
     # ============================================================
     # SQL SCRIPT GENERATION — CSV ONLY (correct & reachable)
     # ============================================================
@@ -191,6 +199,13 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                     final_folder / "create_drop_cci.sql",
                 )
                 info("Included optional create_drop_cci.sql in CSV output.")
+
+            if constraints_sql.is_file():
+                shutil.copy2(
+                    constraints_sql,
+                    final_folder / "create_constraints.sql",
+                )
+                info("Included optional create_constraints.sql in CSV output.")
 
     else:
         info("Skipping SQL script generation for non-CSV format.")
