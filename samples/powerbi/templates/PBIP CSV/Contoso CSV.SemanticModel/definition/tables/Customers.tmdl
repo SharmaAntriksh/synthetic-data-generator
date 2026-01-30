@@ -112,6 +112,15 @@ table Customers
 
 		annotation SummarizationSetBy = Automatic
 
+	column IsActiveInSales
+		dataType: int64
+		formatString: 0
+		lineageTag: 1b05a06a-570a-4e1d-90cb-7d7c2bbbe78d
+		summarizeBy: sum
+		sourceColumn: IsActiveInSales
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Customers = m
 		mode: import
 		queryGroup: Dimensions
@@ -119,7 +128,7 @@ table Customers
 				let
 				    Source = FxReadCSVFile ( "dimensions", "customers" ),
 				    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
-				    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"CustomerKey", Int64.Type}, {"CustomerName", type text}, {"DOB", type date}, {"MaritalStatus", type text}, {"Gender", type text}, {"EmailAddress", type text}, {"YearlyIncome", Int64.Type}, {"TotalChildren", Int64.Type}, {"Education", type text}, {"Occupation", type text}, {"CustomerType", type text}, {"CompanyName", type text}, {"GeographyKey", Int64.Type}})
+				    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"CustomerKey", Int64.Type}, {"CustomerName", type text}, {"DOB", type date}, {"MaritalStatus", type text}, {"Gender", type text}, {"EmailAddress", type text}, {"YearlyIncome", Int64.Type}, {"TotalChildren", Int64.Type}, {"Education", type text}, {"Occupation", type text}, {"CustomerType", type text}, {"CompanyName", type text}, {"GeographyKey", Int64.Type}, {"IsActiveInSales", Int64.Type}})
 				in
 				    ChangedType
 

@@ -1,4 +1,4 @@
-expression ContosoFolder = "C:\Users\antsharma\Downloads\FakeDataGenerator\generated_datasets\2026-01-29 03_14_23 AM Customers 12K Sales 11K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-01-30 07_03_31 PM Customers 23K Sales 115K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
 	lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
 	queryGroup: 'Parameters & Functions'
 

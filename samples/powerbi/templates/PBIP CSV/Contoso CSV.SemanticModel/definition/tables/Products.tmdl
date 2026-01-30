@@ -121,6 +121,15 @@ table Products
 
 		annotation SummarizationSetBy = Automatic
 
+	column IsActiveInSales
+		dataType: int64
+		formatString: 0
+		lineageTag: 8c492ffd-f8ae-4dda-86fe-9a9c21684a60
+		summarizeBy: sum
+		sourceColumn: IsActiveInSales
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Products = m
 		mode: import
 		queryGroup: Dimensions
@@ -128,7 +137,7 @@ table Products
 				let
 				    Source = FxReadCSVFile ( "dimensions", "products" ),
 				    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
-				    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"ProductKey", Int64.Type}, {"ProductCode", Int64.Type}, {"ProductName", type text}, {"ProductDescription", type text}, {"SubcategoryKey", Int64.Type}, {"Brand", type text}, {"Class", type text}, {"Color", type text}, {"StockTypeCode", Int64.Type}, {"StockType", type text}, {"UnitCost", Currency.Type}, {"UnitPrice", Currency.Type}, {"BaseProductKey", Int64.Type}, {"VariantIndex", Int64.Type}})
+				    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"ProductKey", Int64.Type}, {"ProductCode", Int64.Type}, {"ProductName", type text}, {"ProductDescription", type text}, {"SubcategoryKey", Int64.Type}, {"Brand", type text}, {"Class", type text}, {"Color", type text}, {"StockTypeCode", Int64.Type}, {"StockType", type text}, {"UnitCost", Currency.Type}, {"UnitPrice", Currency.Type}, {"BaseProductKey", Int64.Type}, {"VariantIndex", Int64.Type}, {"IsActiveInSales", Int64.Type}})
 				in
 				    ChangedType
 

@@ -269,7 +269,7 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
         "CustomerType": np.where(IsOrg, "Organization", "Person"),
         "CompanyName": CompanyName,
         "GeographyKey": GeographyKey,
-        "IsActiveInSales": np.isin(CustomerKey, list(active_customer_set)).astype("int8"),
+        "IsActiveInSales": np.isin(CustomerKey, list(active_customer_set)).astype("int64"),
     })
 
     return df, active_customer_set
