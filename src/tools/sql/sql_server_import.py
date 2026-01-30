@@ -1,6 +1,7 @@
 from pathlib import Path
 import pyodbc
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 class SqlServerImportError(RuntimeError):
     """Raised when SQL Server import fails."""
@@ -33,52 +34,62 @@ def create_database_if_not_exists(cursor, database: str):
         raise SqlServerImportError(
             f"Failed to create database '{database}'"
         ) from exc
+    
 
+def execute_sql_batches(cursor, sql_file: Path):
+    import re
 
-def execute_sql_file(cursor, sql_file: Path):
-    """
-    Execute a SQL Server script, splitting batches on GO.
-
-    Rules:
-    - GO must appear alone on a line (ignoring whitespace)
-    - Case-insensitive
-    - Empty batches are ignored
-    """
-    if not sql_file.exists():
-        raise SqlServerImportError(f"SQL file not found: {sql_file}")
-
-    # Handle UTF-8 and UTF-16 (common from SSMS)
     try:
-        sql_text = sql_file.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        sql_text = sql_file.read_text(encoding="utf-16")
-
-    if not sql_text.strip():
-        return
-
-    batches: list[str] = []
-    current_batch: list[str] = []
-
-    for line in sql_text.splitlines():
-        if line.strip().upper() == "GO":
-            if current_batch:
-                batches.append("\n".join(current_batch).strip())
-                current_batch.clear()
-        else:
-            current_batch.append(line)
-
-    if current_batch:
-        batches.append("\n".join(current_batch).strip())
-
-    for idx, batch in enumerate(batches, start=1):
-        if not batch:
-            continue
         try:
-            cursor.execute(batch)
-        except pyodbc.Error as exc:
-            raise SqlServerImportError(
-                f"Error executing batch {idx} in file '{sql_file.name}'"
-            ) from exc
+            sql_text = sql_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            sql_text = sql_file.read_text(encoding="utf-16")
+
+        batches = re.split(
+            r'^\s*GO\s*$',
+            sql_text,
+            flags=re.MULTILINE | re.IGNORECASE,
+        )
+
+        for idx, batch in enumerate(batches, start=1):
+            batch = batch.strip()
+            if not batch:
+                continue
+            try:
+                cursor.execute(batch)
+            except pyodbc.Error as exc:
+                raise SqlServerImportError(
+                    f"Error executing batch {idx} in file '{sql_file.name}'"
+                ) from exc
+
+    except OSError as exc:
+        raise SqlServerImportError(
+            f"Failed reading SQL file '{sql_file.name}'"
+        ) from exc
+
+
+def execute_sql_single_batch(cursor, sql_file: Path):
+    try:
+        try:
+            sql_text = sql_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            sql_text = sql_file.read_text(encoding="utf-16")
+
+        sql_text = sql_text.strip()
+        if not sql_text:
+            return
+
+        cursor.execute(sql_text)
+
+    except pyodbc.Error as exc:
+        print("\n=== SQL SERVER ERROR (bootstrap) ===")
+        for arg in exc.args:
+            print(arg)
+        print("==================================\n")
+        raise SqlServerImportError(
+            f"Error executing SQL file '{sql_file.name}'"
+        ) from exc
+
 
 
 def import_sql_server(
@@ -92,7 +103,7 @@ def import_sql_server(
     Create database (if needed) and execute generated SQL scripts.
 
     Behavior:
-    - If database already exists → exit with message, no execution
+    - If database already exists → reuse database and import
     - If database does not exist → create and import
 
     Expected files in run_dir (executed in order):
@@ -121,6 +132,11 @@ def import_sql_server(
 
     views_file = run_dir / "create_views.sql"
 
+    bootstrap_dir = PROJECT_ROOT / "scripts" / "sql" / "bootstrap"
+
+    types_file = bootstrap_dir / "create_types.sql"
+    procs_file = bootstrap_dir / "create_procs.sql"
+
     # ------------------------------------------------------------
     # Step 1: connect to server context and check DB existence
     # ------------------------------------------------------------
@@ -128,22 +144,19 @@ def import_sql_server(
         with pyodbc.connect(connection_string, autocommit=True) as conn:
             cursor = conn.cursor()
 
-            if database_exists(cursor, database):
-                print(
-                    f"[INFO] Database '{database}' already exists. "
-                    "Skipping SQL import."
-                )
-                return
+            db_exists = database_exists(cursor, database)
 
-            create_database_if_not_exists(cursor, database)
+            if not db_exists:
+                create_database_if_not_exists(cursor, database)
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(
             f"Failed connecting to SQL Server '{server}'"
         ) from exc
-
+    
     # ------------------------------------------------------------
     # Step 2: connect to database and execute scripts
+    # (tables, data, views only — transactional)
     # ------------------------------------------------------------
     db_conn_str = f"{connection_string};DATABASE={database}"
 
@@ -153,11 +166,11 @@ def import_sql_server(
 
             # Core schema + data
             for sql_file in sql_sequence:
-                execute_sql_file(cursor, sql_file)
+                execute_sql_batches(cursor, sql_file)
 
             # Optional views (must run last)
             if views_file.is_file():
-                execute_sql_file(cursor, views_file)
+                execute_sql_batches(cursor, views_file)
 
             conn.commit()
 
@@ -169,3 +182,19 @@ def import_sql_server(
         raise SqlServerImportError(
             f"Failed importing SQL into database '{database}'"
         ) from exc
+
+    # ------------------------------------------------------------
+    # Step 3: columnstore bootstrap (TYPE + PROC only)
+    # Must run in autocommit mode
+    # ------------------------------------------------------------
+    with pyodbc.connect(db_conn_str, autocommit=True) as conn:
+        cursor = conn.cursor()
+
+        if types_file.is_file():
+            execute_sql_single_batch(cursor, types_file)
+
+        if procs_file.is_file():
+            execute_sql_single_batch(cursor, procs_file)
+
+    print("[INFO] Columnstore bootstrap completed (TYPE + PROC).")
+
