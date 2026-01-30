@@ -76,7 +76,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     )
 
     active_customer_keys = customers_df.loc[
-        customers_df["IsActiveInSales"],
+        customers_df["IsActiveInSales"] == 1,
         "CustomerKey",
     ].to_numpy()
 
@@ -94,7 +94,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     )
 
     active_product_keys = products_df.loc[
-        products_df["IsActiveInSales"],
+        products_df["IsActiveInSales"] == 1,
         "ProductKey",
     ].to_numpy()
 
