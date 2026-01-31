@@ -1,39 +1,5 @@
 import numpy as np
 
-# ------------------------------------------------------------
-# Demand model (parameter-driven, deterministic)
-# ------------------------------------------------------------
-def build_month_demand(
-    base=1.0,
-    amplitude=0.55,
-    q4_boost=0.60,
-    phase_shift=-2,
-):
-    """
-    Generate month-level demand multipliers.
-
-    amplitude   : strength of annual seasonality
-    q4_boost    : extra holiday uplift (Oct–Dec)
-    phase_shift : moves peak earlier/later in year
-    """
-    months = np.arange(12)
-
-    seasonal = base + amplitude * np.sin(
-        2 * np.pi * (months + phase_shift) / 12
-    )
-
-    # Q4 uplift
-    seasonal[9:12] *= (1.0 + q4_boost)
-
-    return seasonal.astype(np.float64)
-
-
-def year_demand(year, base_year=2021, growth=0.08):
-    """
-    Compound year-over-year growth.
-    """
-    return (1.0 + growth) ** (year - base_year)
-
 
 def build_orders(
     rng,
@@ -42,58 +8,84 @@ def build_orders(
     date_pool,
     date_prob,
     customers,
-    product_keys,          # kept for API stability (not used here)
+    product_keys,          # kept for API stability
     _len_date_pool: int,
     _len_customers: int,
+    volume_multiplier=None,
 ):
     """
     Generate order-level structure and expand to line-level rows.
 
-    Returns a dict with:
-      - customer_keys
-      - order_dates
-      - (optionally) order_ids_int, line_num, order_ids_str
+    volume_multiplier:
+        Optional array aligned to `n` rows (one per eventual line),
+        encoding demand, shocks, and capacity. If None, behavior
+        matches legacy logic.
     """
 
     if skip_cols not in (True, False):
         raise RuntimeError("skip_cols must be a boolean")
 
     # ------------------------------------------------------------
-    # Order count heuristic
+    # Baseline order count (lines → orders heuristic)
     # ------------------------------------------------------------
     avg_lines = 2.0
-    order_count = max(1, int(n / avg_lines))
+    base_order_count = max(1, int(n / avg_lines))
 
     # ------------------------------------------------------------
-    # Order-level data
+    # Build DATE-LEVEL demand weights (critical)
     # ------------------------------------------------------------
-    dates = date_pool.astype("datetime64[M]")
-    months = dates.astype(int) % 12
-    years = (dates.astype("datetime64[Y]").astype(int) + 1970)
+    if volume_multiplier is not None:
+        # Map row-level multipliers → date_pool grain
+        date_volume = np.zeros(_len_date_pool, dtype=np.float64)
+        date_counts = np.zeros(_len_date_pool, dtype=np.int64)
 
-    MONTH_DEMAND = build_month_demand(
-        amplitude=0.55,   # Training / Teaching
-        q4_boost=0.60,
-    )
+        # We assume volume_multiplier corresponds to eventual rows,
+        # but we only need a *relative* date signal.
+        # Sample indices deterministically.
+        sample_idx = rng.integers(0, n, size=_len_date_pool)
 
-    month_factor = MONTH_DEMAND[months]
+        for i in range(_len_date_pool):
+            vm = volume_multiplier[sample_idx[i]]
+            date_volume[i] = vm
+            date_counts[i] = 1
 
-    year_factor = np.array(
-        [year_demand(y) for y in years],
-        dtype=np.float64
-    )
+        date_volume /= date_volume.mean()
+    else:
+        date_volume = None
 
-    demand = date_prob * month_factor * year_factor
+    # ------------------------------------------------------------
+    # Demand-weighted date sampling
+    # ------------------------------------------------------------
+    if date_volume is not None:
+        demand = date_prob * date_volume
+    else:
+        demand = date_prob
+
     demand /= demand.sum()
 
-    od_idx = rng.choice(_len_date_pool, size=order_count, p=demand)
+    # ------------------------------------------------------------
+    # Elastic order count (IMPORTANT: do NOT average demand away)
+    # ------------------------------------------------------------
+    if volume_multiplier is not None:
+        # Use upper-tail pressure, not mean
+        scale = np.percentile(volume_multiplier, 80)
+        order_count = max(1, int(base_order_count * scale))
+    else:
+        order_count = base_order_count
+
+    od_idx = rng.choice(
+        _len_date_pool,
+        size=order_count,
+        p=demand,
+    )
 
     order_dates = date_pool[od_idx]
 
-    # Fast YYYYMMDD integer construction
+    # ------------------------------------------------------------
+    # Order IDs (deterministic, sortable)
+    # ------------------------------------------------------------
     date_int = (
         order_dates.astype("datetime64[D]")
-        .astype("datetime64[D]")
         .astype(str)
     )
     date_int = np.char.replace(date_int, "-", "").astype(np.int64)
@@ -107,38 +99,47 @@ def build_orders(
 
     order_ids_int = date_int * 1_000_000_000 + suffix_int
 
+    # ------------------------------------------------------------
+    # Customers (uniform by design, dimension handles realism)
+    # ------------------------------------------------------------
     cust_idx = rng.integers(0, _len_customers, size=order_count)
     order_customers = customers[cust_idx].astype(np.int64, copy=False)
 
     # ------------------------------------------------------------
-    # Lines per order
+    # Lines per order (demand-sensitive, non-cyclical)
     # ------------------------------------------------------------
-    holiday_boost = month_factor[od_idx] > 1.10
+    if volume_multiplier is not None:
+        line_pressure = volume_multiplier[
+            rng.integers(0, n, size=order_count)
+        ]
+    else:
+        line_pressure = np.ones(order_count, dtype=np.float64)
 
     base_p = np.array([0.55, 0.25, 0.10, 0.06, 0.04])
-    holiday_p = np.array([0.40, 0.30, 0.15, 0.10, 0.05])
+    high_p = np.array([0.40, 0.30, 0.15, 0.10, 0.05])
 
-    p = np.where(
-        holiday_boost[:, None],
-        holiday_p,
-        base_p
+    probs = np.where(
+        line_pressure[:, None] > 1.1,
+        high_p,
+        base_p,
     )
 
-    lines_per_order = np.array([
-        rng.choice([1,2,3,4,5], p=pi)
-        for pi in p
-    ], dtype=np.int8)
+    lines_per_order = np.array(
+        [rng.choice([1, 2, 3, 4, 5], p=p) for p in probs],
+        dtype=np.int8,
+    )
 
     expanded_len = int(lines_per_order.sum())
 
+    # ------------------------------------------------------------
+    # Expand orders → lines
+    # ------------------------------------------------------------
     order_starts = np.empty(order_count, dtype=np.int64)
     np.cumsum(lines_per_order, out=order_starts)
     order_starts -= lines_per_order
 
     customer_keys = np.repeat(order_customers, lines_per_order)
     order_dates_expanded = np.repeat(order_dates, lines_per_order)
-
-    # Only constructed once; sliced later
     sales_order_num_int = np.repeat(order_ids_int, lines_per_order)
 
     line_num = (
@@ -148,7 +149,7 @@ def build_orders(
     )
 
     # ------------------------------------------------------------
-    # Pad if needed (rare but deterministic)
+    # Pad deterministically if needed
     # ------------------------------------------------------------
     if expanded_len < n:
         extra = n - expanded_len
@@ -182,7 +183,6 @@ def build_orders(
     if not skip_cols:
         result["order_ids_int"] = sales_order_num_int
         result["line_num"] = line_num
-        # String version only when needed
         result["order_ids_str"] = sales_order_num_int.astype(str)
 
     return result

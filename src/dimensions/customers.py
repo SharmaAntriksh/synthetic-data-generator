@@ -97,21 +97,6 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
 
     CustomerKey = np.arange(1, N + 1)
 
-    active_count = int(np.floor(N * active_ratio))
-    if active_count == 0:
-        raise ValueError(
-            "customers.active_ratio results in zero active customers; "
-            "increase active_ratio or total_customers"
-        )
-
-    active_customer_keys = (
-        rng.choice(CustomerKey, size=active_count, replace=False)
-        if active_count < N
-        else CustomerKey
-    )
-
-    active_customer_set = set(active_customer_keys)
-
     Region = rng.choice(
         ["IN", "US", "EU"],
         size=N,
@@ -119,6 +104,48 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
     )
 
     IsOrg = rng.random(N) < (pct_org / 100)
+
+    YearlyIncome = np.where(
+        IsOrg,
+        None,
+        rng.integers(20000, 200000, size=N)
+    )
+
+    active_count = int(np.floor(N * active_ratio))
+    if active_count == 0:
+        raise ValueError(
+            "customers.active_ratio results in zero active customers; "
+            "increase active_ratio or total_customers"
+        )
+
+    # Activity propensity (static, dimension-level)
+    activity_weight = np.ones(N, dtype=np.float64)
+
+    # Organizations are more likely to be active
+    activity_weight[IsOrg] *= 2.5
+
+    # Higher income → more activity
+    income_mask = ~IsOrg
+    if income_mask.any():
+        income = YearlyIncome[income_mask].astype(np.float64)
+        income_norm = (income - income.min()) / (income.max() - income.min() + 1e-9)
+        activity_weight[income_mask] *= (0.7 + 1.3 * income_norm)
+
+    # Normalize
+    activity_weight /= activity_weight.sum()
+
+    active_customer_keys = (
+        rng.choice(
+            CustomerKey,
+            size=active_count,
+            replace=False,
+            p=activity_weight,
+        )
+        if active_count < N
+        else CustomerKey
+    )
+
+    active_customer_set = set(active_customer_keys)
 
     Gender = np.empty(N, dtype=object)
     Gender[~IsOrg] = rng.choice(["Male", "Female"], size=(~IsOrg).sum())
@@ -220,12 +247,6 @@ def generate_synthetic_customers(cfg, parquet_dims_folder):
         p=[0.55, 0.45],
     )
     MaritalStatus[IsOrg] = None
-
-    YearlyIncome = np.where(
-        IsOrg,
-        None,
-        rng.integers(20000, 200000, size=N)
-    )
 
     TotalChildren = pd.Series(
         np.where(IsOrg, pd.NA, rng.integers(0, 5, size=N)),

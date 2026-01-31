@@ -58,6 +58,11 @@ def compute_prices(
     cost = unit_cost.astype(np.float64, copy=True)
 
     # Guardrail: prevent extreme pricing behavior
+    # Allow scalar OR vector price pressure
+    if price_pressure is None:
+        price_pressure = 1.0
+
+    price_pressure = np.asarray(price_pressure, dtype=np.float64)
     price_pressure = np.clip(price_pressure, 0.90, 1.20)
 
     base_price = base_price * price_pressure
