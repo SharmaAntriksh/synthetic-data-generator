@@ -9,7 +9,31 @@ from src.utils.logging_utils import stage, done, info
 # ============================================================
 # Helpers
 # ============================================================
-def copy_sql_views(final_folder: Path):
+def copy_sql_constraints(sql_root: Path):
+    """
+    Copy SQL constraints script into schema folder (CSV mode only).
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    constraints_file = (
+        project_root / "scripts" / "sql" / "bootstrap" / "create_constraints.sql"
+    )
+
+    if not constraints_file.exists():
+        info("No create_constraints.sql found; skipping SQL constraints copy")
+        return
+
+    schema_dir = sql_root / "schema"
+    schema_dir.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(
+        constraints_file,
+        schema_dir / "03_create_constraints.sql"
+    )
+
+    info("Included create_constraints.sql in final output")
+
+
+def copy_sql_views(sql_root: Path):
     """
     Copy SQL views script into final output folder (CSV mode only).
     """
@@ -20,9 +44,43 @@ def copy_sql_views(final_folder: Path):
         info("No create_views.sql found; skipping SQL views copy")
         return
 
-    shutil.copy2(views_file, final_folder / views_file.name)
+    schema_dir = sql_root / "schema"
+    schema_dir.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(
+        views_file,
+        schema_dir / "04_create_views.sql"
+    )
+
     info("Included create_views.sql in final output")
 
+
+def copy_sql_indexes(sql_root: Path):
+    """
+    Copy SQL index / columnstore helper scripts into sql/indexes.
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    cci_file = (
+        project_root
+        / "scripts"
+        / "sql"
+        / "columnstore"
+        / "create_drop_cci.sql"
+    )
+
+    if not cci_file.exists():
+        info("No create_drop_cci.sql found; skipping SQL indexes")
+        return
+
+    indexes_dir = sql_root / "indexes"
+    indexes_dir.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(
+        cci_file,
+        indexes_dir / "create_drop_cci.sql"
+    )
+
+    info("Included create_drop_cci.sql in SQL indexes")
 
 
 def format_number_short(n: int) -> str:
@@ -200,6 +258,9 @@ def create_final_output_folder(
         partitioned_sales = fact_folder / "sales"
         import pandas as pd
 
+        sql_root = final_folder / "sql"
+        sql_root.mkdir(parents=True, exist_ok=True)
+
         for file in partitioned_sales.rglob("*.parquet"):
             rel = file.relative_to(partitioned_sales)
             out_file = sales_target / rel.with_suffix(".csv")
@@ -212,8 +273,11 @@ def create_final_output_folder(
                 encoding="utf-8",
                 quoting=csv.QUOTE_MINIMAL
             )
-            
-        copy_sql_views(final_folder)
+
+        # ---- SQL schema helpers (CSV only) ----
+        copy_sql_indexes(sql_root)
+        copy_sql_constraints(sql_root)
+        copy_sql_views(sql_root)
 
         done("Creating Final Output Folder")
         return final_folder

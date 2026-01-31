@@ -8,6 +8,18 @@ class SqlServerImportError(RuntimeError):
     pass
 
 
+def execute_sql_folder(cursor, folder: Path):
+    """
+    Execute all .sql files in a folder in sorted order.
+    """
+    sql_files = sorted(folder.glob("*.sql"))
+    if not sql_files:
+        return
+
+    for sql_file in sql_files:
+        execute_sql_batches(cursor, sql_file)
+
+
 def database_exists(cursor, database: str) -> bool:
     """
     Check whether a database already exists.
@@ -106,31 +118,27 @@ def import_sql_server(
     - If database already exists → reuse database and import
     - If database does not exist → create and import
 
-    Expected files in run_dir (executed in order):
-      1. create_dimensions.sql
-      2. create_facts.sql
-      3. bulk_insert_dims.sql
-      4. bulk_insert_facts.sql
+    Expected structure in run_dir (CSV mode only):
+        schema/   → tables, constraints, views
+        load/     → bulk insert scripts
+        indexes/  → optional performance indexes
 
     Optional (executed last if present):
       - create_views.sql
     """
     run_dir = Path(run_dir)
 
-    sql_sequence = [
-        run_dir / "create_dimensions.sql",
-        run_dir / "create_facts.sql",
-        run_dir / "bulk_insert_dims.sql",
-        run_dir / "bulk_insert_facts.sql",
-    ]
+    sql_dir     = run_dir / "sql"
+    schema_dir  = sql_dir / "schema"
+    load_dir    = sql_dir / "load"
+    indexes_dir = sql_dir / "indexes"
 
-    for sql_file in sql_sequence:
-        if not sql_file.is_file():
-            raise SqlServerImportError(
-                f"Missing required SQL file: {sql_file.name} in {run_dir}"
-            )
-
-    views_file = run_dir / "create_views.sql"
+    # CSV-only guard
+    if not schema_dir.is_dir() or not load_dir.is_dir():
+        raise SqlServerImportError(
+            "SQL Server import is supported only for CSV runs. "
+            "Expected 'schema/' and 'load/' folders in run directory."
+        )
 
     bootstrap_dir = PROJECT_ROOT / "scripts" / "sql" / "bootstrap"
 
@@ -164,13 +172,15 @@ def import_sql_server(
         with pyodbc.connect(db_conn_str, autocommit=False) as conn:
             cursor = conn.cursor()
 
-            # Core schema + data
-            for sql_file in sql_sequence:
-                execute_sql_batches(cursor, sql_file)
+            # ------------------------------------------------------------
+            # Step 2a: schema (tables, constraints, views) — transactional
+            # ------------------------------------------------------------
+            execute_sql_folder(cursor, schema_dir)
 
-            # Optional views (must run last)
-            if views_file.is_file():
-                execute_sql_batches(cursor, views_file)
+            # ------------------------------------------------------------
+            # Step 2b: data load — transactional
+            # ------------------------------------------------------------
+            execute_sql_folder(cursor, load_dir)
 
             conn.commit()
 

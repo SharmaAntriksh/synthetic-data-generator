@@ -141,26 +141,13 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
 
             done("Sales fact copied (Delta snapshot).")
 
-    columnstore_sql = (
-        Path(__file__).resolve().parents[2]
-        / "scripts"
-        / "sql"
-        / "columnstore"
-        / "create_drop_cci.sql"
-    )
-
-    constraints_sql = (
-        Path(__file__).resolve().parents[2]
-        / "scripts"
-        / "sql"
-        / "bootstrap"
-        / "create_constraints.sql"
-    )
-
     # ============================================================
     # SQL SCRIPT GENERATION — CSV ONLY (correct & reachable)
     # ============================================================
     if is_csv:
+        sql_root = final_folder / "sql"
+        sql_root.mkdir(parents=True, exist_ok=True)
+
         with stage("Generating BULK INSERT Scripts"):
             dims_csv = sorted(dims_out.glob("*.csv"))
             facts_csv = sorted(facts_out.glob("*.csv"))
@@ -171,13 +158,14 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                 generate_bulk_insert_script(
                     csv_folder=str(dims_out),
                     table_name=None,
-                    output_sql_file=str(final_folder / "bulk_insert_dims.sql"),
+                    output_sql_file=str(sql_root / "load" / "01_bulk_insert_dims.sql"),
                     mode="csv",
                 )
+
                 generate_bulk_insert_script(
                     csv_folder=str(facts_out),
                     table_name="Sales",
-                    output_sql_file=str(final_folder / "bulk_insert_facts.sql"),
+                    output_sql_file=str(sql_root / "load" / "02_bulk_insert_facts.sql"),
                     mode="legacy",
                     row_terminator="0x0a",
                 )
@@ -186,26 +174,10 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             generate_all_create_tables(
                 dim_folder=dims_out,
                 fact_folder=facts_out,
-                output_folder=final_folder,
+                output_folder=sql_root,
                 cfg=cfg,
                 skip_order_cols=sales_cfg.get("skip_order_cols", False),
             )
-            # ---------------------------------------------------------
-            # Copy optional Columnstore helper SQL (CSV only)
-            # ---------------------------------------------------------
-            if columnstore_sql.is_file():
-                shutil.copy2(
-                    columnstore_sql,
-                    final_folder / "create_drop_cci.sql",
-                )
-                info("Included optional create_drop_cci.sql in CSV output.")
-
-            if constraints_sql.is_file():
-                shutil.copy2(
-                    constraints_sql,
-                    final_folder / "create_constraints.sql",
-                )
-                info("Included optional create_constraints.sql in CSV output.")
 
     else:
         info("Skipping SQL script generation for non-CSV format.")

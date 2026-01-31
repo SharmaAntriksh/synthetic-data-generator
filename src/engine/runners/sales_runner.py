@@ -159,8 +159,6 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     
     final_folder = package_output(cfg, sales_cfg, parquet_dims, fact_out)
 
-    fmt = sales_cfg["file_format"].lower()
-
     pbip_template = None
 
     if fmt == "csv":
