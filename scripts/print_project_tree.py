@@ -5,13 +5,14 @@ EXCLUDE_DIRS = {
     "build", "dist", ".idea", ".vscode",
     ".mypy_cache", ".pytest_cache",
     "data", "generated_datasets",
-    "logs", "output", "fact_out", "parquet_dims"
+    "logs", "output", "fact_out", "parquet_dims", 
+    "PBIP Parquet", "PBIP CSV"
 }
 
 EXCLUDE_EXT = {".pyc", ".pyo", ".pyd", ".so"}
 
 # file types to display
-INCLUDE_EXT = {".py", ".ps1", ".pbix", ".pbit", '.png'}
+INCLUDE_EXT = {".py", ".ps1", ".pbix", ".pbit", '.png', ".parquet", ".sql"}
 
 def print_tree(root=".", prefix=""):
     try:
@@ -43,5 +44,13 @@ def print_tree(root=".", prefix=""):
 
 
 if __name__ == "__main__":
-    print("Project Structure:\n")
-    print_tree(".")
+    import sys
+
+    root_path = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else r"." # generated_datasets\2026-01-31 02_02_58 PM Customers 53K Sales 50K CSV
+    )
+
+    print(f"Project Structure ({os.path.abspath(root_path)}):\n")
+    print_tree(root_path)

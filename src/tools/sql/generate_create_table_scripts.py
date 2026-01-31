@@ -6,7 +6,7 @@ from src.utils.static_schemas import (
     get_sales_schema,
     get_dates_schema,
 )
-from src.utils.logging_utils import work, skip
+from src.utils.logging_utils import work
 
 
 def create_table_from_static_schema(table_name, cols):
@@ -25,10 +25,11 @@ def generate_all_create_tables(
     cfg,
     skip_order_cols=False,
 ):
-    os.makedirs(output_folder, exist_ok=True)
+    schema_dir = Path(output_folder) / "schema"
+    schema_dir.mkdir(parents=True, exist_ok=True)
 
-    dim_out_path = os.path.join(output_folder, "create_dimensions.sql")
-    fact_out_path = os.path.join(output_folder, "create_facts.sql")
+    dim_out_path  = schema_dir / "01_create_dimensions.sql"
+    fact_out_path = schema_dir / "02_create_facts.sql"
 
     dim_scripts = []
     fact_scripts = []

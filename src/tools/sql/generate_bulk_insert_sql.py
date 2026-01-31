@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 from pathlib import Path
-from src.utils.logging_utils import info, work, skip
+from src.utils.logging_utils import work, skip
 
 
 def generate_bulk_insert_script(
@@ -19,9 +19,17 @@ def generate_bulk_insert_script(
 
     csv_folder = Path(csv_folder)
 
-    # Prevent stray script in project root
-    if output_sql_file == "bulk_insert.sql":
-        output_sql_file = str(csv_folder / "_ignored_bulk_insert.sql")
+    output_sql_file = Path(output_sql_file)
+
+    # If caller provides a path, use it as the anchor
+    if output_sql_file.is_absolute():
+        load_dir = output_sql_file.parent
+    else:
+        # Fallback (legacy behavior)
+        load_dir = csv_folder.parent / "load"
+        output_sql_file = load_dir / output_sql_file
+
+    load_dir.mkdir(parents=True, exist_ok=True)
 
     # Collect CSV files
     csv_files = sorted(

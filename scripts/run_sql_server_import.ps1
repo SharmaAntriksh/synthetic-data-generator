@@ -1,3 +1,7 @@
+# NOTE:
+# This script is intended for CSV-based runs only.
+# The run path must contain 'schema/' and 'load/' folders.
+
 param (
     [Parameter(Mandatory = $true)]
     [string]$RunPath,
@@ -17,23 +21,31 @@ param (
 # Resolve run path to avoid relative path confusion
 $ResolvedRunPath = Resolve-Path $RunPath
 
-# Build authentication arguments
+# CSV-only guard (early, user-friendly failure)
+if (-not (Test-Path (Join-Path $ResolvedRunPath "sql\schema")) -or
+    -not (Test-Path (Join-Path $ResolvedRunPath "sql\load"))) {
+    Write-Error "CSV run required. Expected 'sql/schema/' and 'sql/load/' folders in run path."
+    exit 1
+}
+
+# Build authentication arguments (safe array form)
 if ($TrustedConnection) {
-    $AuthArgs = "--trusted"
+    $AuthArgs = @("--trusted")
 }
 else {
     if (-not $User -or -not $Password) {
         Write-Error "User and Password must be provided when not using -TrustedConnection"
         exit 1
     }
-    $AuthArgs = "--user $User --password $Password"
+    $AuthArgs = @("--user", $User, "--password", $Password)
 }
 
+# Execute SQL Server import
 python -m scripts.sql.run_sql_server_import `
-  --server $Server `
-  --database $Database `
-  --run-path $ResolvedRunPath `
-  $AuthArgs
+    --server $Server `
+    --database $Database `
+    --run-path $ResolvedRunPath `
+    @AuthArgs
 
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
