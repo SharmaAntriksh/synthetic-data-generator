@@ -72,78 +72,14 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     geo_arr = st2g_arr[store_key_arr]
     currency_arr = g2c_arr[geo_arr]
 
+# ------------------------------------------------------------
+    # SAMPLE ORDER DATES (GLOBAL, UNCONSTRAINED)
     # ------------------------------------------------------------
-    # YEAR-SPECIFIC CALENDAR DISTORTION (break repeating patterns)
-    # ------------------------------------------------------------
-    years = date_pool.astype("datetime64[Y]").astype(int)
-    unique_years = np.unique(years)
-
-    # Each year has its own calendar "personality"
-    year_factor = {
-        y: rng.normal(1.0, 0.20) for y in unique_years
-    }
-
-    date_year_factor = np.array(
-        [year_factor[y] for y in years],
-        dtype=np.float64,
+    order_dates = rng.choice(
+        date_pool,
+        size=n,
+        p=date_prob,
     )
-
-    date_prob_adj = date_prob * date_year_factor
-    date_prob_adj /= date_prob_adj.sum()
-
-    order_dates = np.empty(n, dtype="datetime64[D]")
-
-    rows_left = n
-    start = 0
-
-    for y in unique_years:
-        mask = years == y
-        year_dates = date_pool[mask]
-        year_probs = date_prob_adj[mask].copy()
-
-        # ------------------------------------------------------------
-        # YEAR-SPECIFIC MONTH STRENGTH (break fixed peak months)
-        # ------------------------------------------------------------
-        months = year_dates.astype("datetime64[M]").astype(int) % 12
-
-        # Random business seasonality per year
-        month_strength = rng.lognormal(mean=0.0, sigma=0.45, size=12)
-
-        # ------------------------------------------------------------
-        # Smooth month strength (adjacent months correlated)
-        # ------------------------------------------------------------
-        alpha = rng.uniform(0.50, 0.70)   # main month weight
-        beta = (1.0 - alpha) / 2.0        # neighbor weights
-
-        month_strength = (
-            alpha * month_strength
-            + beta * np.roll(month_strength, 1)
-            + beta * np.roll(month_strength, -1)
-        )
-
-        year_probs *= month_strength[months]
-
-        # ---- Normalize
-        year_probs /= year_probs.sum()
-
-        # ---- How many rows this year gets
-        year_weight = rng.lognormal(mean=0.0, sigma=0.35) * rng.normal(1.0, 0.15)
-        k = min(
-            rows_left,
-            int(n * year_weight / len(unique_years))
-        )
-        if y == unique_years[-1]:
-            k = rows_left
-
-        # ---- Sample dates FOR THIS YEAR ONLY
-        order_dates[start:start+k] = rng.choice(
-            year_dates,
-            size=k,
-            p=year_probs,
-        )
-
-        start += k
-        rows_left -= k
 
     rng.shuffle(order_dates)
 
@@ -189,40 +125,33 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     # Group rows by actual calendar day
     _, day_idx = np.unique(order_dates, return_inverse=True)
 
-    for d in np.unique(day_idx):
-        mask = day_idx == d
+    # Number of unique days
+    n_days = day_idx.max() + 1
 
-        # Some days are globally "bad"
-        if rng.random() < 0.12:
-            daily_shock[mask] *= rng.uniform(0.70, 0.90)
+    # Decide which days are bad
+    bad_days = rng.random(n_days) < 0.12
+
+    # Shock factor per day
+    day_factors = np.ones(n_days, dtype=np.float64)
+    day_factors[bad_days] = rng.uniform(0.70, 0.90, bad_days.sum())
+
+    # Apply to all rows
+    daily_shock *= day_factors[day_idx]
 
     # ------------------------------------------------------------
     # MONTHLY CAPACITY WITH PERSISTENCE (CLUSTERED BAD / GOOD MONTHS)
     # ------------------------------------------------------------
     unique_months = np.unique(order_months)
+    cap_arr = np.empty(len(unique_months), dtype=np.float64)
 
-    monthly_cap = {}
-    momentum = 0.0     # carries regime across months
-
-    for m in unique_months:
-        # Random shock this month
+    momentum = 0.0
+    for i, m in enumerate(unique_months):
         shock = rng.normal(0.0, 0.30)
-
-        # Momentum carries forward (0.6–0.8 is realistic)
         momentum = 0.75 * momentum + shock
+        cap_arr[i] = np.clip(1.0 + momentum, 0.40, 1.70)
 
-        # Convert momentum to capacity
-        cap = 1.0 + momentum
-
-        # Hard business limits
-        cap = np.clip(cap, 0.40, 1.70)
-
-        monthly_cap[m] = cap
-
-    capacity_multiplier = np.array(
-        [monthly_cap[m] for m in order_months],
-        dtype=np.float64,
-    )
+    month_idx = np.searchsorted(unique_months, order_months)
+    capacity_multiplier = cap_arr[month_idx]
 
     # ------------------------------------------------------------
     # FINAL VOLUME MULTIPLIER (clipped safety rail)

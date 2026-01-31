@@ -166,6 +166,23 @@ def generate_sales_fact(
         end_date = defaults["end"]
 
     # ------------------------------------------------------------
+    # Initialize shared date pool for sales workers
+    # ------------------------------------------------------------
+    if State.date_pool is None or State.date_prob is None:
+        date_pool, date_prob = build_weighted_date_pool(
+            start_date,
+            end_date,
+            seed,
+        )
+        State.date_pool = date_pool
+        State.date_prob = date_prob
+
+        info(
+            f"Initialized sales date pool: "
+            f"{State.date_pool.min()} → {State.date_pool.max()}"
+        )
+
+    # ------------------------------------------------------------
     # Delta setup
     # ------------------------------------------------------------
     if file_format == "deltaparquet":
@@ -274,9 +291,8 @@ def generate_sales_fact(
         promo_start_all = promo_df["StartDate"].to_numpy("datetime64[D]")
         promo_end_all = promo_df["EndDate"].to_numpy("datetime64[D]")
 
-    date_pool, date_prob = build_weighted_date_pool(
-        start_date, end_date, seed
-    )
+    date_pool = State.date_pool
+    date_prob = State.date_prob
 
     # ------------------------------------------------------------
     # Chunk scheduling
