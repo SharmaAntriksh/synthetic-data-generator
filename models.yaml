@@ -11,6 +11,9 @@ models:
     # Lower value → large datasets become smoother
     size_scale_threshold: 50000
 
+    # controls continuity of order volume (transactions per mont
+    month_inertia: 0.7
+
     # Relative transaction intensity by calendar month.
     # Values >1 increase activity, <1 reduce activity.
     # Changing these reshapes the yearly sales curve.
@@ -67,6 +70,9 @@ models:
     # Lower → more single-item purchases
     base_poisson_lambda: 2.2
 
+    # controls continuity of average basket size
+    month_inertia: 0.75
+
     # Seasonal basket-size multipliers by month.
     # Impacts revenue without changing order counts.
     monthly_factors:
@@ -89,7 +95,7 @@ models:
 
     # Absolute safety bounds.
     min_qty: 1
-    max_qty: 10
+    max_qty: 4
 
   # ============================================================
   # CUSTOMER LIFECYCLE
@@ -119,6 +125,8 @@ models:
   # Controls HOW MUCH revenue is generated per unit
   # ============================================================
   pricing:
+    # controls continuity of average price level (not discounts)
+    month_inertia: 0.7
 
     ramp:
       # Number of months before business reaches maturity pricing.

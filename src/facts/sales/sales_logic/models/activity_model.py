@@ -29,6 +29,7 @@ def apply_activity_thinning(rng, order_dates):
     # Global scale: average rows per month
     avg_per_month = n // len(unique_months)
 
+    # Small vs large dataset behavior
     is_small = n < cfg["bounds"]["dataset_split_threshold"]
 
     low = (
@@ -48,30 +49,52 @@ def apply_activity_thinning(rng, order_dates):
         else cfg["row_noise"]["sigma_large_dataset"]
     )
 
+    # ------------------------------------------------------------
+    # MONTH-TO-MONTH INERTIA (KEY SMOOTHING MECHANISM)
+    # ------------------------------------------------------------
+    inertia = cfg.get("month_inertia", 0.0)
+    prev_target = None
+
     for m in range(len(unique_months)):
         month_rows = np.where(inv == m)[0]
 
-        # Month-of-year
+        # Month-of-year (0–11)
         month_num = int(unique_months[m].astype(int) % 12)
 
-        # BIG volatility (key driver)
+        # Month-level volatility
         volatility = rng.lognormal(
             mean=0.0,
             sigma=cfg["volatility"]["sigma"] * size_scale,
         )
 
-        target = int(
+        # Raw (unsmoothed) monthly target
+        raw_target = (
             avg_per_month
             * base_activity[month_num]
             * volatility
         )
 
-        target = np.clip(
-            target,
-            int(avg_per_month * low),
-            int(avg_per_month * high),
-        )
+        # Apply temporal smoothing
+        if prev_target is None or inertia <= 0.0:
+            target = raw_target
+        else:
+            target = (
+                inertia * prev_target
+                + (1.0 - inertia) * raw_target
+            )
 
+        # Clamp AFTER smoothing (important)
+        target = int(np.clip(
+            target,
+            avg_per_month * low,
+            avg_per_month * high,
+        ))
+
+        prev_target = target
+
+        # --------------------------------------------------------
+        # ROW SELECTION
+        # --------------------------------------------------------
         if len(month_rows) <= target:
             keep_mask[month_rows] = True
         else:
