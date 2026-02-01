@@ -106,19 +106,23 @@ models:
     # Initial fraction of customers active at simulation start.
     # Lower → sparse early months
     # Higher → dense initial activity
-    base_active_rate: 0.45
+    base_active_rate: 0.30
 
     # Net annual growth of active customer pool.
     # Drives long-term upward trend in orders.
-    annual_growth_rate: 0.13
+    annual_growth_rate: 0.24
 
     # Annual churn rate applied gradually.
     # Higher → more customer turnover
-    annual_churn_rate: 0.33
+    annual_churn_rate: 0.40
 
     # Month-to-month randomness applied to churn & growth.
     # Higher → less predictable active customer counts
-    monthly_noise: 0.04
+    monthly_noise: 0.05
+
+    seasonal_growth_amplitude: 0.35   # 0 = no cycles, 0.4 = strong waves
+    seasonal_period_months: 24       # 12 = yearly, 24 = 2-year cycles
+    min_monthly_new_customers: 500    # acquisition floor
 
   # ============================================================
   # PRICING PIPELINE
