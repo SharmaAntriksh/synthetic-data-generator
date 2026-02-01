@@ -333,6 +333,7 @@ def generate_sales_fact(
         skip_order_cols=skip_order_cols,
         partition_enabled=partition_enabled,
         partition_cols=partition_cols,
+        models_cfg=State.models_cfg,
     )
 
     created_files = []

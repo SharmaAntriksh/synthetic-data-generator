@@ -7,7 +7,7 @@ import pandas as pd
 
 from src.utils.logging_utils import stage, info, done
 from src.engine.packaging import package_output
-from src.facts.sales.sales_logic.globals import bind_globals
+from src.facts.sales.sales_logic.globals import bind_globals, State
 from src.engine.powerbi_packaging import attach_pbip_project
 
 
@@ -126,6 +126,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         "skip_order_cols": skip_order_cols,
         "active_customer_keys": active_customer_keys,
         "active_product_np": active_product_np,
+        "models_cfg": State.models_cfg,
     })
 
     generate_sales_fact(

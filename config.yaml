@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2021-04-07"
-    end: "2025-09-30"
+    start: "2021-01-01"
+    end: "2025-12-31"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -21,10 +21,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 50152
+  total_rows: 121523
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -57,9 +57,9 @@ sales:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: false
+  use_contoso_products: true
   num_products: 18021
-  active_ratio: 0.82
+  active_ratio: 0.96
   seed: 42
 
   pricing:
@@ -80,8 +80,8 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 53125
-  active_ratio: 0.79
+  total_customers: 18310
+  active_ratio: 0.96
   
   pct_india: 1
   pct_us: 60

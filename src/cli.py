@@ -105,6 +105,12 @@ def main():
     )
 
     parser.add_argument(
+        "--models-config",
+        default="models.yaml",
+        help="Path to models configuration file"
+    )
+
+    parser.add_argument(
         "--regen-dimensions",
         nargs="+",
         help=(
@@ -161,6 +167,13 @@ def main():
         raw_cfg = load_config_file(args.config)
         cfg = load_config(raw_cfg)
         sales_cfg = cfg["sales"]
+
+        models_raw = load_config_file(args.models_config)
+
+        if "models" not in models_raw or not isinstance(models_raw["models"], dict):
+            fail("models.yaml must contain a top-level 'models' section")
+
+        models_cfg = models_raw["models"]
 
         # ==================================================
         # APPLY OVERRIDES
@@ -223,6 +236,12 @@ def main():
             info("Dry run enabled. Resolved configuration:")
             pprint(cfg)
             return
+
+        # ==================================================
+        # ATTACH MODELS CONFIG TO RUNTIME STATE
+        # ==================================================
+        from src.facts.sales.sales_logic.globals import State
+        State.models_cfg = models_cfg
 
         # ==================================================
         # HARD RESET FACT OUTPUT
