@@ -86,7 +86,8 @@ class State:
     out_folder = None
     row_group_size = None
     compression = None
-
+    pricing_base_value_scale = None
+    
     # --------------------------------------------------------------
     # Delta options
     # --------------------------------------------------------------

@@ -7,11 +7,23 @@ from .date_logic import compute_dates
 from .promo_logic import apply_promotions
 from .price_logic import compute_prices
 
+from .models.activity_model import apply_activity_thinning
+from .models.quantity_model import build_quantity
+from .models.customer_lifecycle import apply_customer_churn
+from .models.pricing_pipeline import build_prices
+
 
 def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     """
-    Build `n` synthetic sales rows.
-    Deterministic, smooth, and Power BI–friendly.
+    Build a chunk of synthetic sales data.
+
+    Orchestrates:
+    - order creation
+    - customer lifecycle (growth & churn)
+    - activity thinning (transactions)
+    - quantity modeling
+    - pricing pipeline
+    - Arrow table output
     """
 
     if not PA_AVAILABLE:
@@ -20,15 +32,17 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     rng = np.random.default_rng(seed)
 
     # ------------------------------------------------------------
-    # Pull immutable state ONCE
+    # IMMUTABLE STATE
     # ------------------------------------------------------------
     skip_cols = State.skip_order_cols
+
     product_np = (
         State.active_product_np
         if getattr(State, "active_product_np", None) is not None
         else State.product_np
     )
-    customers = (
+
+    customers_all = (
         State.active_customer_keys
         if getattr(State, "active_customer_keys", None) is not None
         else State.customers
@@ -77,29 +91,25 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             skip_cols=False,
             date_pool=date_pool,
             date_prob=date_prob,
-            customers=customers,
+            customers=customers_all,
             product_keys=product_keys,
             _len_date_pool=len(date_pool),
-            _len_customers=len(customers),
+            _len_customers=len(customers_all),
         )
+
         customer_keys = orders["customer_keys"]
         order_dates = orders["order_dates"]
         order_ids_int = orders["order_ids_int"]
         line_num = orders["line_num"]
     else:
-        customer_keys = customers[rng.integers(0, len(customers), size=n)]
+        customer_keys = customers_all[rng.integers(0, len(customers_all), size=n)]
         order_dates = date_pool[rng.integers(0, len(date_pool), size=n)]
         order_ids_int = None
         line_num = None
 
-    # Ensure coverage
+    # Ensure full date coverage
     order_dates[0] = date_pool[0]
     order_dates[-1] = date_pool[-1]
-
-    # ------------------------------------------------------------
-    # QUANTITY
-    # ------------------------------------------------------------
-    qty = np.clip(rng.poisson(2.8, n) + 1, 1, 4)
 
     # ------------------------------------------------------------
     # DATE LOGIC
@@ -127,95 +137,66 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     )
 
     # ------------------------------------------------------------
-    # BASE PRICE COMPUTATION
+    # CUSTOMER LIFECYCLE (growth + churn)
+    # ------------------------------------------------------------
+    customer_keys = apply_customer_churn(
+        rng=rng,
+        customer_keys=customer_keys,
+        order_dates=order_dates,
+        all_customers=customers_all,
+        seed=seed,
+    )
+
+    # ------------------------------------------------------------
+    # ACTIVITY THINNING (row count control)
+    # ------------------------------------------------------------
+    keep_mask = apply_activity_thinning(
+        rng=rng,
+        order_dates=order_dates,
+    )
+
+    def _f(x):
+        return x[keep_mask]
+
+    product_keys = _f(product_keys)
+    unit_price = _f(unit_price)
+    unit_cost = _f(unit_cost)
+    store_key_arr = _f(store_key_arr)
+    geo_arr = _f(geo_arr)
+    currency_arr = _f(currency_arr)
+    order_dates = _f(order_dates)
+    customer_keys = _f(customer_keys)
+
+    if not skip_cols:
+        order_ids_int = _f(order_ids_int)
+        line_num = _f(line_num)
+
+    n = int(keep_mask.sum())
+
+    # ------------------------------------------------------------
+    # QUANTITY
+    # ------------------------------------------------------------
+    qty = build_quantity(rng, order_dates)
+
+    # ------------------------------------------------------------
+    # BASE PRICING (AFTER THINNING)
     # ------------------------------------------------------------
     price = compute_prices(
         rng=rng,
         n=n,
         unit_price=unit_price,
         unit_cost=unit_cost,
-        promo_pct=promo_pct,
+        promo_pct=promo_pct[keep_mask],
     )
 
     # ------------------------------------------------------------
-    # EARLY-RAMP (cold start only)
+    # PRICING PIPELINE
     # ------------------------------------------------------------
-    months_since_start = (
-        order_dates.astype("datetime64[M]").astype(int)
-        - order_dates.astype("datetime64[M]").min().astype(int)
-    )
-    ramp = np.clip(months_since_start / 9.0, 0.6, 1.0)
-
-    price["final_unit_price"] *= ramp
-    price["discount_amt"] *= ramp
-    price["final_net_price"] = (
-        price["final_unit_price"] - price["discount_amt"]
-    )
-
-    # ------------------------------------------------------------
-    # LONG-TERM GROWTH (trend backbone)
-    # ------------------------------------------------------------
-    base_year = order_dates.astype("datetime64[Y]").min().astype(int)
-    trend_year_idx = (
-        order_dates.astype("datetime64[Y]").astype(int) - base_year
-    )
-
-    inflation = (1.0 + 0.04) ** trend_year_idx
-
-    price["final_unit_price"] *= inflation
-    price["discount_amt"] *= inflation
-    price["final_net_price"] = (
-        price["final_unit_price"] - price["discount_amt"]
-    )
-
-    # ------------------------------------------------------------
-    # MONTHLY AGGREGATION
-    # ------------------------------------------------------------
-    order_months = order_dates.astype("datetime64[M]")
-    months, inv = np.unique(order_months, return_inverse=True)
-
-    monthly_sales = np.zeros(len(months), dtype=np.float64)
-    for i in range(len(months)):
-        mask = inv == i
-        monthly_sales[i] = np.sum(qty[mask] * price["final_net_price"][mask])
-
-    # ------------------------------------------------------------
-    # EMA SMOOTHING (defines the visible trend)
-    # ------------------------------------------------------------
-    alpha = 0.47
-    smoothed = monthly_sales.copy()
-    for i in range(1, len(smoothed)):
-        smoothed[i] = alpha * monthly_sales[i] + (1 - alpha) * smoothed[i - 1]
-
-    scale = smoothed / np.maximum(monthly_sales, 1.0)
-
-    price["final_unit_price"] *= scale[inv]
-    price["discount_amt"] *= scale[inv]
-    price["final_net_price"] = (
-        price["final_unit_price"] - price["discount_amt"]
-    )
-
-    # ------------------------------------------------------------
-    # RESIDUAL SEASONALITY (texture only)
-    # ------------------------------------------------------------
-    month_idx = order_months.astype(int) % 12
-    season_year_idx = (
-        order_months.astype("datetime64[Y]").astype(int)
-        - order_months.astype("datetime64[Y]").min().astype(int)
-    )
-
-    phase_shift = (season_year_idx % 5) * (np.pi / 10)
-    raw = np.sin(2 * np.pi * (month_idx - 1) / 12 + phase_shift)
-
-    seasonality = 1.0 + 0.025 * np.tanh(1.2 * raw)
-
-    n_years = season_year_idx.max() + 1
-    year_jitter = 1.0 + rng.normal(0, 0.015, size=n_years)[season_year_idx]
-    seasonality *= year_jitter
-
-    price["final_unit_price"] *= seasonality
-    price["final_net_price"] = (
-        price["final_unit_price"] - price["discount_amt"]
+    price = build_prices(
+        rng=rng,
+        order_dates=order_dates,
+        qty=qty,
+        price=price,
     )
 
     # ------------------------------------------------------------
@@ -233,12 +214,12 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     add("CustomerKey", customer_keys)
     add("ProductKey", product_keys)
     add("StoreKey", store_key_arr)
-    add("PromotionKey", promo_keys)
+    add("PromotionKey", promo_keys[keep_mask])
     add("CurrencyKey", currency_arr)
 
     add("OrderDate", order_dates)
-    add("DueDate", dates["due_date"])
-    add("DeliveryDate", dates["delivery_date"])
+    add("DueDate", dates["due_date"][keep_mask])
+    add("DeliveryDate", dates["delivery_date"][keep_mask])
 
     add("Quantity", qty)
     add("NetPrice", price["final_net_price"])
@@ -246,8 +227,8 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     add("UnitPrice", price["final_unit_price"])
     add("DiscountAmount", price["discount_amt"])
 
-    add("DeliveryStatus", dates["delivery_status"])
-    add("IsOrderDelayed", dates["is_order_delayed"])
+    add("DeliveryStatus", dates["delivery_status"][keep_mask])
+    add("IsOrderDelayed", dates["is_order_delayed"][keep_mask])
 
     if file_format == "deltaparquet":
         months_int = order_dates.astype("datetime64[M]").astype("int64")

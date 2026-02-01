@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 1015200
+  total_rows: 12152
   chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -57,9 +57,9 @@ sales:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: false
+  use_contoso_products: true
   num_products: 18021
-  active_ratio: 0.82
+  active_ratio: 0.96
   seed: 42
 
   pricing:
@@ -80,8 +80,8 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 53125
-  active_ratio: 0.79
+  total_customers: 1831
+  active_ratio: 0.96
   
   pct_india: 1
   pct_us: 60
