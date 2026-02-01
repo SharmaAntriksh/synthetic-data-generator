@@ -1,4 +1,5 @@
 import numpy as np
+from src.facts.sales.sales_logic.globals import State
 
 
 def apply_customer_churn(
@@ -7,10 +8,6 @@ def apply_customer_churn(
     order_dates,
     all_customers,
     seed,
-    base_active_rate=0.65,
-    annual_growth_rate=0.06,
-    annual_churn_rate=0.10,
-    monthly_noise=0.02,
 ):
     """
     Applies smooth customer lifecycle dynamics with:
@@ -19,7 +16,16 @@ def apply_customer_churn(
     - strong month-to-month continuity
     """
 
+    cfg = State.models_cfg["customers"]
+
+    base_active_rate = cfg["base_active_rate"]
+    annual_growth_rate = cfg["annual_growth_rate"]
+    annual_churn_rate = cfg["annual_churn_rate"]
+    monthly_noise = cfg["monthly_noise"]
+
+    # ------------------------------------------------------------
     # Convert dates to year-month index
+    # ------------------------------------------------------------
     months = order_dates.astype("datetime64[M]").astype(int)
     min_month = months.min()
     month_idx = months - min_month
@@ -49,9 +55,12 @@ def apply_customer_churn(
 
         rng_month = np.random.default_rng(seed + 10000 + m * 7919)
 
-        # --- Churn ---
+        # --------------------------------------------------------
+        # CHURN
+        # --------------------------------------------------------
         churn_rate = monthly_churn * rng_month.uniform(
-            1 - monthly_noise, 1 + monthly_noise
+            1 - monthly_noise,
+            1 + monthly_noise,
         )
         churn_n = int(len(active_customers) * churn_rate)
 
@@ -63,10 +72,13 @@ def apply_customer_churn(
             )
             active_customers -= set(churned)
 
-        # --- Growth ---
+        # --------------------------------------------------------
+        # GROWTH
+        # --------------------------------------------------------
         available = list(set(all_customers) - active_customers)
         growth_rate = monthly_growth * rng_month.uniform(
-            1 - monthly_noise, 1 + monthly_noise
+            1 - monthly_noise,
+            1 + monthly_noise,
         )
         grow_n = int(len(active_customers) * growth_rate)
 
@@ -78,7 +90,9 @@ def apply_customer_churn(
             )
             active_customers |= set(added)
 
-        # --- Assign customers for this month ---
+        # --------------------------------------------------------
+        # ASSIGN CUSTOMERS FOR THIS MONTH
+        # --------------------------------------------------------
         active_list = np.array(list(active_customers))
 
         out[mask] = rng_month.choice(

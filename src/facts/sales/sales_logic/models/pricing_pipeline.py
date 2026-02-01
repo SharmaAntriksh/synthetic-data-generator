@@ -1,10 +1,5 @@
-# Responsibility
-#   Price shaping only
-#   NO magnitude control (handled at Product level)
-#   NO revenue re-scaling
-#   All invariants enforced
-
 import numpy as np
+from src.facts.sales.sales_logic.globals import State
 
 
 def build_prices(
@@ -20,38 +15,47 @@ def build_prices(
       - mild seasonality
       - discount noise
       - cost anchoring with margin safety
-
-    IMPORTANT:
-      - Assumes unit price & cost are ALREADY value-scaled at product level
-      - Does NOT re-scale prices based on revenue
     """
+
+    cfg = State.models_cfg["pricing"]
 
     n = len(order_dates)
 
     # ------------------------------------------------------------
     # EARLY RAMP (business maturity)
     # ------------------------------------------------------------
+    ramp_cfg = cfg["ramp"]
+
     months_since_start = (
         order_dates.astype("datetime64[M]").astype(int)
         - order_dates.astype("datetime64[M]").min().astype(int)
     )
 
-    ramp = np.clip(months_since_start / 18.0, 0.85, 1.05)
+    ramp = np.clip(
+        months_since_start / float(ramp_cfg["months"]),
+        ramp_cfg["min_multiplier"],
+        ramp_cfg["max_multiplier"],
+    )
 
     price["final_unit_price"] *= ramp
     price["final_unit_cost"] *= ramp
 
     price["discount_amt"] *= (
         ramp
-        * 0.7
-        * rng.lognormal(mean=0.0, sigma=0.30, size=n)
+        * ramp_cfg["discount_scale"]
+        * rng.lognormal(
+            mean=0.0,
+            sigma=ramp_cfg["discount_noise_sigma"],
+            size=n,
+        )
     )
 
     # Guard: discount cannot exceed price
+    max_discount_pct = cfg["discount"]["max_pct_of_price"]
     price["discount_amt"] = np.clip(
         price["discount_amt"],
         0.0,
-        price["final_unit_price"] * 0.90,
+        price["final_unit_price"] * max_discount_pct,
     )
 
     price["final_net_price"] = (
@@ -61,13 +65,19 @@ def build_prices(
     # ------------------------------------------------------------
     # INFLATION (macro trend + very small noise)
     # ------------------------------------------------------------
+    infl_cfg = cfg["inflation"]
+
     base_year = order_dates.astype("datetime64[Y]").min().astype(int)
     year_idx = (
         order_dates.astype("datetime64[Y]").astype(int) - base_year
     )
 
-    inflation = (1.0 + 0.035) ** year_idx
-    inflation *= rng.lognormal(mean=0.0, sigma=0.01, size=n)
+    inflation = (1.0 + infl_cfg["annual_rate"]) ** year_idx
+    inflation *= rng.lognormal(
+        mean=0.0,
+        sigma=infl_cfg["noise_sigma"],
+        size=n,
+    )
 
     for k in ("final_unit_price", "discount_amt", "final_unit_cost"):
         price[k] *= inflation
@@ -75,7 +85,7 @@ def build_prices(
     price["discount_amt"] = np.clip(
         price["discount_amt"],
         0.0,
-        price["final_unit_price"] * 0.90,
+        price["final_unit_price"] * max_discount_pct,
     )
 
     price["final_net_price"] = (
@@ -85,40 +95,59 @@ def build_prices(
     # ------------------------------------------------------------
     # SEASONALITY (PRICE RESPONSE ONLY)
     # ------------------------------------------------------------
-    order_months = order_dates.astype("datetime64[M]")
-    month_idx = order_months.astype(int) % 12
+    seas_cfg = cfg["seasonality"]
 
-    raw = np.sin(2 * np.pi * (month_idx - 1) / 12)
+    if seas_cfg.get("enabled", True):
+        order_months = order_dates.astype("datetime64[M]")
+        month_idx = order_months.astype(int) % 12
 
-    seasonality = 1.0 + 0.025 * np.tanh(1.0 * raw)
+        raw = np.sin(
+            2 * np.pi * (month_idx + seas_cfg["phase_shift_months"]) / 12
+        )
 
-    for k in ("final_unit_price", "discount_amt", "final_unit_cost"):
-        price[k] *= seasonality
+        seasonality = (
+            1.0
+            + seas_cfg["amplitude"]
+            * np.tanh(seas_cfg["sharpness"] * raw)
+        )
 
-    price["discount_amt"] = np.clip(
-        price["discount_amt"],
-        0.0,
-        price["final_unit_price"] * 0.90,
-    )
+        for k in ("final_unit_price", "discount_amt", "final_unit_cost"):
+            price[k] *= seasonality
 
-    price["final_net_price"] = (
-        price["final_unit_price"] - price["discount_amt"]
-    )
+        price["discount_amt"] = np.clip(
+            price["discount_amt"],
+            0.0,
+            price["final_unit_price"] * max_discount_pct,
+        )
+
+        price["final_net_price"] = (
+            price["final_unit_price"] - price["discount_amt"]
+        )
 
     # Absolute floor
     price["final_net_price"] = np.maximum(
-        price["final_net_price"], 0.01
+        price["final_net_price"],
+        cfg["floors"]["min_net_price"],
     )
 
     # ------------------------------------------------------------
     # FINAL COST ANCHOR + MARGIN FLOOR (NON-CIRCULAR)
     # ------------------------------------------------------------
-    MIN_MARGIN_PCT = 0.05
+    cost_cfg = cfg["cost"]
 
-    cost_ratio = rng.uniform(0.60, 0.82, size=n)
+    cost_ratio = rng.uniform(
+        cost_cfg["cost_ratio_min"],
+        cost_cfg["cost_ratio_max"],
+        size=n,
+    )
+
     price["final_unit_cost"] = price["final_net_price"] * cost_ratio
 
-    max_allowed_cost = price["final_net_price"] * (1.0 - MIN_MARGIN_PCT)
+    max_allowed_cost = (
+        price["final_net_price"]
+        * (1.0 - cost_cfg["min_margin_pct"])
+    )
+
     price["final_unit_cost"] = np.minimum(
         price["final_unit_cost"],
         max_allowed_cost,

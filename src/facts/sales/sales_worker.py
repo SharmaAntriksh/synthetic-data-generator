@@ -50,6 +50,7 @@ def init_sales_worker(worker_cfg: dict):
         skip_order_cols = worker_cfg["skip_order_cols"]
         partition_enabled = worker_cfg["partition_enabled"]
         partition_cols = worker_cfg["partition_cols"]
+        models_cfg = worker_cfg["models_cfg"]
 
     except KeyError as e:
         raise RuntimeError(f"Missing worker config key: {e}") from None
@@ -183,7 +184,8 @@ def init_sales_worker(worker_cfg: dict):
         "skip_order_cols": skip_order_cols,
         "partition_enabled": partition_enabled,
         "partition_cols": partition_cols,
-
+        
+        "models_cfg": models_cfg,
         # schemas
         "schema_no_order": schema_no_order,
         "schema_with_order": schema_with_order,
