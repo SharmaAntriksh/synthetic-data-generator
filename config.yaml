@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2021-04-07"
-    end: "2025-09-30"
+    start: "2021-01-01"
+    end: "2025-12-31"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 50152
+  total_rows: 1015200
   chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet

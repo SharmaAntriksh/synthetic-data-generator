@@ -71,20 +71,7 @@ def build_orders(
     months = dates.astype(int) % 12
     years = (dates.astype("datetime64[Y]").astype(int) + 1970)
 
-    MONTH_DEMAND = build_month_demand(
-        amplitude=0.55,   # Training / Teaching
-        q4_boost=0.60,
-    )
-
-    month_factor = MONTH_DEMAND[months]
-
-    year_factor = np.array(
-        [year_demand(y) for y in years],
-        dtype=np.float64
-    )
-
-    demand = date_prob * month_factor * year_factor
-    demand /= demand.sum()
+    demand = date_prob / date_prob.sum()
 
     od_idx = rng.choice(_len_date_pool, size=order_count, p=demand)
 

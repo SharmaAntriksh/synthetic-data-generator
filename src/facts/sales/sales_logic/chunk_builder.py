@@ -11,7 +11,7 @@ from .price_logic import compute_prices
 def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     """
     Build `n` synthetic sales rows.
-    All shared, immutable state is read from `State`.
+    Deterministic, smooth, and Power BI–friendly.
     """
 
     if not PA_AVAILABLE:
@@ -20,21 +20,17 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     rng = np.random.default_rng(seed)
 
     # ------------------------------------------------------------
-    # Pull immutable state ONCE (important for multiprocessing)
+    # Pull immutable state ONCE
     # ------------------------------------------------------------
     skip_cols = State.skip_order_cols
-    if skip_cols not in (True, False):
-        raise RuntimeError("State.skip_order_cols must be a boolean")
-
     product_np = (
         State.active_product_np
-        if hasattr(State, "active_product_np") and State.active_product_np is not None
+        if getattr(State, "active_product_np", None) is not None
         else State.product_np
     )
-
     customers = (
         State.active_customer_keys
-        if hasattr(State, "active_customer_keys") and State.active_customer_keys is not None
+        if getattr(State, "active_customer_keys", None) is not None
         else State.customers
     )
 
@@ -50,24 +46,8 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     st2g_arr = State.store_to_geo_arr
     g2c_arr = State.geo_to_currency_arr
 
-    file_format = State.file_format
     schema = State.sales_schema
-
-    # ------------------------------------------------------------
-    # Validation (fail fast)
-    # ------------------------------------------------------------
-    if date_pool is None:
-        raise RuntimeError("State.date_pool is None")
-    if product_np is None:
-        raise RuntimeError("State.product_np is None")
-    if store_keys is None:
-        raise RuntimeError("State.store_keys is None")
-    if st2g_arr is None or g2c_arr is None:
-        raise RuntimeError(
-            "Dense store_to_geo_arr / geo_to_currency_arr not initialized"
-        )
-
-    # Cache schema types once (big win)
+    file_format = State.file_format
     schema_types = {f.name: f.type for f in schema}
 
     # ------------------------------------------------------------
@@ -83,21 +63,12 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     # ------------------------------------------------------------
     # STORE → GEO → CURRENCY
     # ------------------------------------------------------------
-    store_key_arr = store_keys[
-        rng.integers(0, len(store_keys), size=n)
-    ]
-
-    if store_key_arr.dtype != np.int64:
-        store_key_arr = store_key_arr.astype(np.int64, copy=False)
-
+    store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n)]
     geo_arr = st2g_arr[store_key_arr]
     currency_arr = g2c_arr[geo_arr]
 
-    if currency_arr.dtype != np.int64:
-        currency_arr = currency_arr.astype(np.int64, copy=False)
-
     # ------------------------------------------------------------
-    # ORDERS (ONLY if enabled)
+    # ORDERS
     # ------------------------------------------------------------
     if not skip_cols:
         orders = build_orders(
@@ -111,28 +82,24 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             _len_date_pool=len(date_pool),
             _len_customers=len(customers),
         )
-
         customer_keys = orders["customer_keys"]
         order_dates = orders["order_dates"]
         order_ids_int = orders["order_ids_int"]
         line_num = orders["line_num"]
-
     else:
-        customer_keys = customers[
-            rng.integers(0, len(customers), size=n)
-        ]
-        order_dates = date_pool[
-            rng.integers(0, len(date_pool), size=n)
-        ]
-
+        customer_keys = customers[rng.integers(0, len(customers), size=n)]
+        order_dates = date_pool[rng.integers(0, len(date_pool), size=n)]
         order_ids_int = None
         line_num = None
 
-    # Edge pinning: guarantees boundary coverage
+    # Ensure coverage
     order_dates[0] = date_pool[0]
     order_dates[-1] = date_pool[-1]
 
-    qty = np.clip(rng.poisson(3, n) + 1, 1, 4)
+    # ------------------------------------------------------------
+    # QUANTITY
+    # ------------------------------------------------------------
+    qty = np.clip(rng.poisson(2.8, n) + 1, 1, 4)
 
     # ------------------------------------------------------------
     # DATE LOGIC
@@ -144,11 +111,6 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         order_ids_int=order_ids_int,
         order_dates=order_dates,
     )
-
-    due_date = dates["due_date"]
-    delivery_date = dates["delivery_date"]
-    delivery_status = dates["delivery_status"]
-    is_order_delayed = dates["is_order_delayed"]
 
     # ------------------------------------------------------------
     # PROMOTIONS
@@ -165,7 +127,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     )
 
     # ------------------------------------------------------------
-    # PRICE LOGIC
+    # BASE PRICE COMPUTATION
     # ------------------------------------------------------------
     price = compute_prices(
         rng=rng,
@@ -176,58 +138,120 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     )
 
     # ------------------------------------------------------------
-    # YEAR / MONTH (partitioning only)
+    # EARLY-RAMP (cold start only)
     # ------------------------------------------------------------
-    if file_format == "deltaparquet":
-        months = order_dates.astype("datetime64[M]").astype("int64")
-        year_arr = (months // 12 + 1970).astype("int16")
-        month_arr = (months % 12 + 1).astype("int8")
+    months_since_start = (
+        order_dates.astype("datetime64[M]").astype(int)
+        - order_dates.astype("datetime64[M]").min().astype(int)
+    )
+    ramp = np.clip(months_since_start / 9.0, 0.6, 1.0)
+
+    price["final_unit_price"] *= ramp
+    price["discount_amt"] *= ramp
+    price["final_net_price"] = (
+        price["final_unit_price"] - price["discount_amt"]
+    )
 
     # ------------------------------------------------------------
-    # Arrow output (schema-driven, deterministic)
+    # LONG-TERM GROWTH (trend backbone)
+    # ------------------------------------------------------------
+    base_year = order_dates.astype("datetime64[Y]").min().astype(int)
+    trend_year_idx = (
+        order_dates.astype("datetime64[Y]").astype(int) - base_year
+    )
+
+    inflation = (1.0 + 0.04) ** trend_year_idx
+
+    price["final_unit_price"] *= inflation
+    price["discount_amt"] *= inflation
+    price["final_net_price"] = (
+        price["final_unit_price"] - price["discount_amt"]
+    )
+
+    # ------------------------------------------------------------
+    # MONTHLY AGGREGATION
+    # ------------------------------------------------------------
+    order_months = order_dates.astype("datetime64[M]")
+    months, inv = np.unique(order_months, return_inverse=True)
+
+    monthly_sales = np.zeros(len(months), dtype=np.float64)
+    for i in range(len(months)):
+        mask = inv == i
+        monthly_sales[i] = np.sum(qty[mask] * price["final_net_price"][mask])
+
+    # ------------------------------------------------------------
+    # EMA SMOOTHING (defines the visible trend)
+    # ------------------------------------------------------------
+    alpha = 0.47
+    smoothed = monthly_sales.copy()
+    for i in range(1, len(smoothed)):
+        smoothed[i] = alpha * monthly_sales[i] + (1 - alpha) * smoothed[i - 1]
+
+    scale = smoothed / np.maximum(monthly_sales, 1.0)
+
+    price["final_unit_price"] *= scale[inv]
+    price["discount_amt"] *= scale[inv]
+    price["final_net_price"] = (
+        price["final_unit_price"] - price["discount_amt"]
+    )
+
+    # ------------------------------------------------------------
+    # RESIDUAL SEASONALITY (texture only)
+    # ------------------------------------------------------------
+    month_idx = order_months.astype(int) % 12
+    season_year_idx = (
+        order_months.astype("datetime64[Y]").astype(int)
+        - order_months.astype("datetime64[Y]").min().astype(int)
+    )
+
+    phase_shift = (season_year_idx % 5) * (np.pi / 10)
+    raw = np.sin(2 * np.pi * (month_idx - 1) / 12 + phase_shift)
+
+    seasonality = 1.0 + 0.025 * np.tanh(1.2 * raw)
+
+    n_years = season_year_idx.max() + 1
+    year_jitter = 1.0 + rng.normal(0, 0.015, size=n_years)[season_year_idx]
+    seasonality *= year_jitter
+
+    price["final_unit_price"] *= seasonality
+    price["final_net_price"] = (
+        price["final_unit_price"] - price["discount_amt"]
+    )
+
+    # ------------------------------------------------------------
+    # ARROW OUTPUT
     # ------------------------------------------------------------
     arrays = []
 
     def add(name, data):
-        arrays.append(
-            pa.array(
-                data,
-                type=schema_types[name],
-                safe=False,
-            )
-        )
+        arrays.append(pa.array(data, type=schema_types[name], safe=False))
 
-    # Order columns (conditional)
     if not skip_cols:
         add("SalesOrderNumber", order_ids_int)
         add("SalesOrderLineNumber", line_num)
 
-    # Keys
     add("CustomerKey", customer_keys)
     add("ProductKey", product_keys)
     add("StoreKey", store_key_arr)
     add("PromotionKey", promo_keys)
     add("CurrencyKey", currency_arr)
 
-    # Dates
     add("OrderDate", order_dates)
-    add("DueDate", due_date)
-    add("DeliveryDate", delivery_date)
+    add("DueDate", dates["due_date"])
+    add("DeliveryDate", dates["delivery_date"])
 
-    # Measures
     add("Quantity", qty)
     add("NetPrice", price["final_net_price"])
     add("UnitCost", price["final_unit_cost"])
     add("UnitPrice", price["final_unit_price"])
     add("DiscountAmount", price["discount_amt"])
 
-    # Status
-    add("DeliveryStatus", delivery_status)
-    add("IsOrderDelayed", is_order_delayed)
+    add("DeliveryStatus", dates["delivery_status"])
+    add("IsOrderDelayed", dates["is_order_delayed"])
 
-    # Partitioning
     if file_format == "deltaparquet":
-        add("Year", year_arr)
-        add("Month", month_arr)
+        months_int = order_dates.astype("datetime64[M]").astype("int64")
+        add("Year", (months_int // 12 + 1970).astype("int16"))
+        add("Month", (months_int % 12 + 1).astype("int8"))
 
     return pa.Table.from_arrays(arrays, schema=schema)
