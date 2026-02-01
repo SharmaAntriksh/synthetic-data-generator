@@ -160,6 +160,19 @@ def build_prices(
         max_allowed_cost,
     )
 
+    # ------------------------------------------------------------
+    # FINAL ROUNDING + CONSISTENCY (AUTHORITATIVE)
+    # ------------------------------------------------------------
+    price["final_unit_price"] = np.round(price["final_unit_price"], 2)
+    price["discount_amt"] = np.round(price["discount_amt"], 2)
+
+    price["final_net_price"] = np.round(
+        price["final_unit_price"] - price["discount_amt"],
+        2,
+    )
+
+    price["final_unit_cost"] = np.round(price["final_unit_cost"], 2)
+
     # Final invariant
     assert np.all(price["final_unit_cost"] <= price["final_net_price"])
 
