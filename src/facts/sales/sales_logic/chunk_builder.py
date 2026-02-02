@@ -9,8 +9,8 @@ from .price_logic import compute_prices
 
 from .models.activity_model import apply_activity_thinning
 from .models.quantity_model import build_quantity
-from .models.customer_lifecycle import apply_customer_churn
 from .models.pricing_pipeline import build_prices
+from .models.customer_lifecycle import build_active_customer_pool
 
 
 def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
@@ -82,6 +82,25 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     currency_arr = g2c_arr[geo_arr]
 
     # ------------------------------------------------------------
+    # CUSTOMER LIFECYCLE (active customer pool)
+    # ------------------------------------------------------------
+    months_int = date_pool.astype("datetime64[M]").astype("int64")
+    start_month = int(months_int.min())
+    end_month = int(months_int.max())
+
+    active_by_month = build_active_customer_pool(
+        all_customers=customers_all,
+        start_month=0,
+        end_month=end_month - start_month,
+        seed=seed,
+    )
+
+    # Use union of all active customers in range (safe default)
+    active_customers = np.unique(
+        np.concatenate(list(active_by_month.values()))
+    )
+
+    # ------------------------------------------------------------
     # ORDERS
     # ------------------------------------------------------------
     if not skip_cols:
@@ -91,10 +110,10 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             skip_cols=False,
             date_pool=date_pool,
             date_prob=date_prob,
-            customers=customers_all,
+            customers=active_customers,
             product_keys=product_keys,
             _len_date_pool=len(date_pool),
-            _len_customers=len(customers_all),
+            _len_customers=len(active_customers),
         )
 
         customer_keys = orders["customer_keys"]
@@ -134,17 +153,6 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         promo_start_all=promo_start_all,
         promo_end_all=promo_end_all,
         no_discount_key=no_discount_key,
-    )
-
-    # ------------------------------------------------------------
-    # CUSTOMER LIFECYCLE (growth + churn)
-    # ------------------------------------------------------------
-    customer_keys = apply_customer_churn(
-        rng=rng,
-        customer_keys=customer_keys,
-        order_dates=order_dates,
-        all_customers=customers_all,
-        seed=seed,
     )
 
     # ------------------------------------------------------------
@@ -198,6 +206,14 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         qty=qty,
         price=price,
     )
+
+    if not skip_cols:
+        import pandas as pd
+        df = pd.DataFrame({
+            "order": order_ids_int,
+            "customer": customer_keys,
+        })
+        assert df.groupby("order")["customer"].nunique().max() == 1
 
     # ------------------------------------------------------------
     # ARROW OUTPUT

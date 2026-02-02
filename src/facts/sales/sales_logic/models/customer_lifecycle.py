@@ -2,19 +2,17 @@ import numpy as np
 from src.facts.sales.sales_logic.globals import State
 
 
-def apply_customer_churn(
-    rng,
-    customer_keys,
-    order_dates,
+def build_active_customer_pool(
     all_customers,
-    seed,
+    start_month: int,
+    end_month: int,
+    seed: int,
 ):
     """
-    Customer lifecycle model with:
-    - gradual churn
-    - cyclical acquisition (increase / decrease / increase)
-    - acquisition floor to prevent late-stage collapse
-    - stability across any simulation length
+    Build active customer pool per month.
+
+    Returns:
+        dict[int, np.ndarray]: month_idx -> active customer keys
     """
 
     cfg = State.models_cfg["customers"]
@@ -24,24 +22,13 @@ def apply_customer_churn(
     annual_churn_rate = cfg["annual_churn_rate"]
     monthly_noise = cfg["monthly_noise"]
 
-    # Cyclical acquisition knobs (month-based, single system)
     seasonal_amplitude = cfg.get("seasonal_growth_amplitude", 0.0)
     seasonal_period = cfg.get("seasonal_period_months", 24)
     min_monthly_new = cfg.get("min_monthly_new_customers", 0)
 
-    # ------------------------------------------------------------
-    # Convert order dates → contiguous month index
-    # ------------------------------------------------------------
-    months = order_dates.astype("datetime64[M]").astype(int)
-    min_month = months.min()
-    month_idx = months - min_month
-    n_months = int(month_idx.max()) + 1
-
     rng_global = np.random.default_rng(seed + 9000)
 
-    # ------------------------------------------------------------
-    # Initial active customer pool
-    # ------------------------------------------------------------
+    # Initial active pool
     active_customers = set(
         rng_global.choice(
             all_customers,
@@ -50,30 +37,19 @@ def apply_customer_churn(
         )
     )
 
-    out = customer_keys.copy()
-
     monthly_growth_base = annual_growth_rate / 12.0
     monthly_churn_base = annual_churn_rate / 12.0
 
-    # ------------------------------------------------------------
-    # Month-by-month lifecycle simulation
-    # ------------------------------------------------------------
-    for m in range(n_months):
-        mask = month_idx == m
-        if not mask.any():
-            continue
+    active_by_month = {}
 
+    for m in range(start_month, end_month + 1):
         rng_month = np.random.default_rng(seed + 10000 + m * 7919)
 
-        # --------------------------------------------------------
-        # Cyclical growth multiplier (business cycles)
-        # --------------------------------------------------------
+        # Business cycle
         cycle = np.sin(2 * np.pi * m / seasonal_period)
         cycle_multiplier = 1.0 + seasonal_amplitude * cycle
 
-        # --------------------------------------------------------
-        # CHURN
-        # --------------------------------------------------------
+        # --- CHURN ---
         churn_rate = monthly_churn_base * rng_month.uniform(
             1 - monthly_noise,
             1 + monthly_noise,
@@ -89,9 +65,7 @@ def apply_customer_churn(
             )
             active_customers -= set(churned)
 
-        # --------------------------------------------------------
-        # GROWTH (with acquisition floor)
-        # --------------------------------------------------------
+        # --- GROWTH ---
         available = list(set(all_customers) - active_customers)
 
         growth_rate = (
@@ -100,9 +74,12 @@ def apply_customer_churn(
             * rng_month.uniform(1 - monthly_noise, 1 + monthly_noise)
         )
 
-        market_base = max(len(all_customers) * 0.01, len(active_customers) * growth_rate)
-        grow_n = int(market_base * cycle_multiplier)
-        grow_n = max(grow_n, min_monthly_new)
+        market_base = max(
+            len(all_customers) * 0.01,
+            len(active_customers) * growth_rate,
+        )
+
+        grow_n = max(int(market_base), min_monthly_new)
 
         if available and grow_n > 0:
             added = rng_month.choice(
@@ -112,13 +89,7 @@ def apply_customer_churn(
             )
             active_customers |= set(added)
 
-        # --------------------------------------------------------
-        # Assign customers to orders in this month
-        # --------------------------------------------------------
-        active_list = np.array(list(active_customers))
+        # Snapshot (IMPORTANT: copy)
+        active_by_month[m] = np.array(list(active_customers), dtype=np.int64)
 
-        if len(active_list) == 0:
-            # Safety fallback (should never occur)
-            active_list = np.array(all_customers)
-
-    return customer_keys
+    return active_by_month

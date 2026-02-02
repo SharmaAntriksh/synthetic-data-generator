@@ -106,11 +106,11 @@ models:
     # Initial fraction of customers active at simulation start.
     # Lower → sparse early months
     # Higher → dense initial activity
-    base_active_rate: 0.30
+    base_active_rate: 0.10
 
     # Net annual growth of active customer pool.
     # Drives long-term upward trend in orders.
-    annual_growth_rate: 0.24
+    annual_growth_rate: 0.54
 
     # Annual churn rate applied gradually.
     # Higher → more customer turnover
