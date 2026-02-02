@@ -121,10 +121,4 @@ def apply_customer_churn(
             # Safety fallback (should never occur)
             active_list = np.array(all_customers)
 
-        out[mask] = rng_month.choice(
-            active_list,
-            size=mask.sum(),
-            replace=True,
-        )
-
-    return out
+    return customer_keys
