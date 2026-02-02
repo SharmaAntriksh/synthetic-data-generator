@@ -17,10 +17,11 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     """
     Build a chunk of synthetic sales data.
 
-    Design:
-    - Lifecycle controls which customers are ACTIVE per month
-    - Discovery controls when ACTIVE customers place their FIRST order
-    - Orders are generated only from eligible customers
+    Guarantees:
+    - Customer lifecycle controls eligibility
+    - Probabilistic discovery controls first appearance
+    - Newly discovered customers are forced to appear
+    - All per-order arrays remain perfectly aligned
     """
 
     if not PA_AVAILABLE:
@@ -61,7 +62,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     file_format = State.file_format
 
     # ------------------------------------------------------------
-    # CUSTOMER LIFECYCLE (month → active mask)
+    # CUSTOMER LIFECYCLE
     # ------------------------------------------------------------
     months_int = date_pool.astype("datetime64[M]").astype("int64")
     start_month = int(months_int.min())
@@ -75,28 +76,27 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     )
 
     # ------------------------------------------------------------
-    # SPLIT ROW BUDGET ACROSS MONTHS (scaled by active customers)
+    # SPLIT ROW BUDGET BY ACTIVE CUSTOMER WEIGHT
     # ------------------------------------------------------------
     active_counts = np.array(
         [mask.sum() for mask in active_by_month.values()],
         dtype=np.float64,
     )
 
-    active_weights = active_counts / active_counts.sum()
+    if active_counts.sum() == 0:
+        return pa.Table.from_arrays([], schema=schema)
 
-    rows_per_month = np.maximum(
-        1,
-        (active_weights * n).astype(int),
-    )
+    active_weights = active_counts / active_counts.sum()
+    rows_per_month = np.maximum(1, (active_weights * n).astype(int))
 
     # ------------------------------------------------------------
-    # DISCOVERY STATE (NEW)
+    # DISCOVERY CONFIG
     # ------------------------------------------------------------
     seen_customers = set()
 
     disc_cfg = State.models_cfg.get("customer_discovery", {})
 
-    base_discovery_rate = disc_cfg.get("base_discovery_rate", 0.12)
+    base_rate = disc_cfg.get("base_discovery_rate", 0.12)
     seasonal_amp = disc_cfg.get("seasonal_amplitude", 0.35)
     seasonal_period = disc_cfg.get("seasonal_period_months", 24)
 
@@ -104,7 +104,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     max_p = disc_cfg.get("max_discovery_rate", 0.60)
 
     # ------------------------------------------------------------
-    # COLLECT PER-MONTH RESULTS
+    # BUILD MONTHLY TABLES
     # ------------------------------------------------------------
     tables = []
 
@@ -118,7 +118,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             continue
 
         # --------------------------------------------------------
-        # PROBABILISTIC DISCOVERY (Option A)
+        # DISCOVERY (Option A)
         # --------------------------------------------------------
         undiscovered = np.array(
             [c for c in active_customers if c not in seen_customers],
@@ -127,10 +127,17 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
 
         if len(undiscovered) > 0:
             cycle = np.sin(2 * np.pi * m_offset / seasonal_period)
-            p_discovery = base_discovery_rate * (1.0 + seasonal_amp * cycle)
-            p_discovery = np.clip(p_discovery, min_p, max_p)
+            p = base_rate * (1.0 + seasonal_amp * cycle)
+            p = float(np.clip(p, min_p, max_p))
 
-            discover_n = max(1, int(len(undiscovered) * p_discovery))
+            # Scale discovery pressure with monthly order volume
+            row_scale = np.sqrt(m_rows / 10_000)
+
+            discover_n = max(
+                1,
+                int(len(undiscovered) * p * row_scale),
+            )
+
             newly_discovered = rng.choice(
                 undiscovered,
                 size=min(discover_n, len(undiscovered)),
@@ -139,21 +146,32 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         else:
             newly_discovered = np.empty(0, dtype=active_customers.dtype)
 
-        # customers allowed to place orders this month
-        eligible_customers = np.concatenate(
-            [
-                np.array(list(seen_customers), dtype=active_customers.dtype),
-                newly_discovered,
-            ]
-        )
+        # --------------------------------------------------------
+        # FORCE VISIBILITY OF NEW CUSTOMERS
+        # --------------------------------------------------------
+        forced = newly_discovered
+        remaining = max(0, m_rows - len(forced))
 
-        if len(eligible_customers) == 0:
+        if remaining > 0 and seen_customers:
+            repeat = rng.choice(
+                np.fromiter(seen_customers, dtype=active_customers.dtype),
+                size=remaining,
+                replace=True,
+            )
+        else:
+            repeat = np.empty(0, dtype=active_customers.dtype)
+
+        customer_keys = np.concatenate([forced, repeat])
+        if len(customer_keys) == 0:
             continue
 
+        rng.shuffle(customer_keys)
+        n_orders = len(customer_keys)
+
         # --------------------------------------------------------
-        # PRODUCTS
+        # PRODUCTS (PER ORDER)
         # --------------------------------------------------------
-        prod_idx = rng.integers(0, len(product_np), size=m_rows)
+        prod_idx = rng.integers(0, len(product_np), size=n_orders)
         prods = product_np[prod_idx]
 
         product_keys = prods[:, 0]
@@ -164,25 +182,25 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # STORE → GEO → CURRENCY
         # --------------------------------------------------------
         store_key_arr = store_keys[
-            rng.integers(0, len(store_keys), size=m_rows)
+            rng.integers(0, len(store_keys), size=n_orders)
         ]
         geo_arr = st2g_arr[store_key_arr]
         currency_arr = g2c_arr[geo_arr]
 
         # --------------------------------------------------------
-        # ORDERS (restricted to eligible customers)
+        # ORDERS
         # --------------------------------------------------------
         if not skip_cols:
             orders = build_orders(
                 rng=rng,
-                n=m_rows,
+                n=n_orders,
                 skip_cols=False,
                 date_pool=date_pool,
                 date_prob=date_prob,
-                customers=eligible_customers,
+                customers=customer_keys,
                 product_keys=product_keys,
                 _len_date_pool=len(date_pool),
-                _len_customers=len(eligible_customers),
+                _len_customers=n_orders,
             )
 
             customer_keys = orders["customer_keys"]
@@ -190,11 +208,8 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             order_ids_int = orders["order_ids_int"]
             line_num = orders["line_num"]
         else:
-            customer_keys = eligible_customers[
-                rng.integers(0, len(eligible_customers), size=m_rows)
-            ]
             order_dates = date_pool[
-                rng.integers(0, len(date_pool), size=m_rows)
+                rng.integers(0, len(date_pool), size=n_orders)
             ]
             order_ids_int = None
             line_num = None
@@ -204,7 +219,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # --------------------------------------------------------
         dates = compute_dates(
             rng=rng,
-            n=len(customer_keys),
+            n=n_orders,
             product_keys=product_keys,
             order_ids_int=order_ids_int,
             order_dates=order_dates,
@@ -215,7 +230,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # --------------------------------------------------------
         promo_keys, promo_pct = apply_promotions(
             rng=rng,
-            n=len(customer_keys),
+            n=n_orders,
             order_dates=order_dates,
             promo_keys_all=promo_keys_all,
             promo_pct_all=promo_pct_all,
@@ -227,11 +242,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # --------------------------------------------------------
         # ACTIVITY THINNING
         # --------------------------------------------------------
-        keep_mask = apply_activity_thinning(
-            rng=rng,
-            order_dates=order_dates,
-        )
-
+        keep_mask = apply_activity_thinning(rng=rng, order_dates=order_dates)
         if not keep_mask.any():
             continue
 
@@ -247,12 +258,15 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         currency_arr = _f(currency_arr)
         order_dates = _f(order_dates)
 
+        promo_keys = _f(promo_keys)
+        promo_pct = _f(promo_pct)
+
         if not skip_cols:
             order_ids_int = _f(order_ids_int)
             line_num = _f(line_num)
 
         # --------------------------------------------------------
-        # UPDATE DISCOVERY STATE (IMPORTANT)
+        # UPDATE DISCOVERY STATE
         # --------------------------------------------------------
         seen_customers.update(customer_keys.tolist())
 
@@ -266,7 +280,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             n=len(customer_keys),
             unit_price=unit_price,
             unit_cost=unit_cost,
-            promo_pct=promo_pct[keep_mask],
+            promo_pct=promo_pct,
         )
 
         price = build_prices(
@@ -291,7 +305,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         add("CustomerKey", customer_keys)
         add("ProductKey", product_keys)
         add("StoreKey", store_key_arr)
-        add("PromotionKey", promo_keys[keep_mask])
+        add("PromotionKey", promo_keys)
         add("CurrencyKey", currency_arr)
 
         add("OrderDate", order_dates)

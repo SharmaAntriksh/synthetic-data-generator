@@ -46,7 +46,7 @@ models:
     bounds:
       # Threshold that decides which bounds/noise model is used.
       # Smaller datasets need tighter control to avoid extreme spikes.
-      dataset_split_threshold: 30000
+      dataset_split_threshold: 300000
 
       # Hard clamps on per-month volume for small datasets.
       # Prevents unrealistic month collapse or explosions.
@@ -56,8 +56,8 @@ models:
 
       # Looser bounds for large datasets where law of large numbers applies.
       large_dataset:
-        low: 0.70
-        high: 1.25
+        low: 0.80
+        high: 1.15
 
   # ============================================================
   # QUANTITY / BASKET SIZE
@@ -110,11 +110,11 @@ models:
 
     # Net annual growth of active customer pool.
     # Drives long-term upward trend in orders.
-    annual_growth_rate: 0.40
+    annual_growth_rate: 0.65
 
     # Annual churn rate applied gradually.
     # Higher → more customer turnover
-    annual_churn_rate: 0.08
+    annual_churn_rate: 0.20
 
     # Month-to-month randomness applied to churn & growth.
     # Higher → less predictable active customer counts
@@ -153,7 +153,7 @@ models:
     ramp:
       # Number of months before business reaches maturity pricing.
       # Shorter → prices stabilize sooner
-      months: 24
+      months: 36
 
       # Lower/upper bounds on early-stage price scaling.
       min_multiplier: 0.90
@@ -169,11 +169,11 @@ models:
     inflation:
       # Annual price inflation rate.
       # Drives long-term revenue growth independent of volume.
-      annual_rate: 0.030
+      annual_rate: 0.15
 
       # Small randomness around inflation.
       # Prevents perfectly smooth year-over-year pricing.
-      noise_sigma: 0.01
+      noise_sigma: 0.008
 
     seasonality:
       # Enable/disable price seasonality entirely.
@@ -181,7 +181,7 @@ models:
 
       # Strength of seasonal price swings.
       # Higher → visible monthly price changes
-      amplitude: 0.015
+      amplitude: 0.018
 
       # Controls how sharp the seasonal response is.
       # Higher → flatter peaks, steeper transitions
