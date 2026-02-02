@@ -9,33 +9,30 @@ from .price_logic import compute_prices
 
 from .models.activity_model import apply_activity_thinning
 from .models.quantity_model import build_quantity
-from .models.customer_lifecycle import apply_customer_churn
 from .models.pricing_pipeline import build_prices
+from .models.customer_lifecycle import build_active_customer_pool
 
 
 def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     """
     Build a chunk of synthetic sales data.
 
-    Orchestrates:
-    - order creation
-    - customer lifecycle (growth & churn)
-    - activity thinning (transactions)
-    - quantity modeling
-    - pricing pipeline
-    - Arrow table output
+    Guarantees:
+    - Customer lifecycle controls eligibility
+    - Probabilistic discovery controls first appearance
+    - Newly discovered customers are forced to appear
+    - All per-order arrays remain perfectly aligned
     """
 
     if not PA_AVAILABLE:
         raise RuntimeError("pyarrow is required")
 
     rng = np.random.default_rng(seed)
-
-    # ------------------------------------------------------------
-    # IMMUTABLE STATE
-    # ------------------------------------------------------------
     skip_cols = State.skip_order_cols
 
+    # ------------------------------------------------------------
+    # STATIC STATE
+    # ------------------------------------------------------------
     product_np = (
         State.active_product_np
         if getattr(State, "active_product_np", None) is not None
@@ -61,178 +58,277 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     g2c_arr = State.geo_to_currency_arr
 
     schema = State.sales_schema
-    file_format = State.file_format
     schema_types = {f.name: f.type for f in schema}
+    file_format = State.file_format
 
     # ------------------------------------------------------------
-    # PRODUCTS
+    # CUSTOMER LIFECYCLE
     # ------------------------------------------------------------
-    prod_idx = rng.integers(0, len(product_np), size=n)
-    prods = product_np[prod_idx]
+    months_int = date_pool.astype("datetime64[M]").astype("int64")
+    start_month = int(months_int.min())
+    end_month = int(months_int.max())
 
-    product_keys = prods[:, 0]
-    unit_price = prods[:, 1].astype(np.float64, copy=False)
-    unit_cost = prods[:, 2].astype(np.float64, copy=False)
-
-    # ------------------------------------------------------------
-    # STORE → GEO → CURRENCY
-    # ------------------------------------------------------------
-    store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n)]
-    geo_arr = st2g_arr[store_key_arr]
-    currency_arr = g2c_arr[geo_arr]
-
-    # ------------------------------------------------------------
-    # ORDERS
-    # ------------------------------------------------------------
-    if not skip_cols:
-        orders = build_orders(
-            rng=rng,
-            n=n,
-            skip_cols=False,
-            date_pool=date_pool,
-            date_prob=date_prob,
-            customers=customers_all,
-            product_keys=product_keys,
-            _len_date_pool=len(date_pool),
-            _len_customers=len(customers_all),
-        )
-
-        customer_keys = orders["customer_keys"]
-        order_dates = orders["order_dates"]
-        order_ids_int = orders["order_ids_int"]
-        line_num = orders["line_num"]
-    else:
-        customer_keys = customers_all[rng.integers(0, len(customers_all), size=n)]
-        order_dates = date_pool[rng.integers(0, len(date_pool), size=n)]
-        order_ids_int = None
-        line_num = None
-
-    # Ensure full date coverage
-    order_dates[0] = date_pool[0]
-    order_dates[-1] = date_pool[-1]
-
-    # ------------------------------------------------------------
-    # DATE LOGIC
-    # ------------------------------------------------------------
-    dates = compute_dates(
-        rng=rng,
-        n=n,
-        product_keys=product_keys,
-        order_ids_int=order_ids_int,
-        order_dates=order_dates,
-    )
-
-    # ------------------------------------------------------------
-    # PROMOTIONS
-    # ------------------------------------------------------------
-    promo_keys, promo_pct = apply_promotions(
-        rng=rng,
-        n=n,
-        order_dates=order_dates,
-        promo_keys_all=promo_keys_all,
-        promo_pct_all=promo_pct_all,
-        promo_start_all=promo_start_all,
-        promo_end_all=promo_end_all,
-        no_discount_key=no_discount_key,
-    )
-
-    # ------------------------------------------------------------
-    # CUSTOMER LIFECYCLE (growth + churn)
-    # ------------------------------------------------------------
-    customer_keys = apply_customer_churn(
-        rng=rng,
-        customer_keys=customer_keys,
-        order_dates=order_dates,
+    active_by_month = build_active_customer_pool(
         all_customers=customers_all,
+        start_month=0,
+        end_month=end_month - start_month,
         seed=seed,
     )
 
     # ------------------------------------------------------------
-    # ACTIVITY THINNING (row count control)
+    # SPLIT ROW BUDGET BY ACTIVE CUSTOMER WEIGHT
     # ------------------------------------------------------------
-    keep_mask = apply_activity_thinning(
-        rng=rng,
-        order_dates=order_dates,
+    active_counts = np.array(
+        [mask.sum() for mask in active_by_month.values()],
+        dtype=np.float64,
     )
 
-    def _f(x):
-        return x[keep_mask]
+    if active_counts.sum() == 0:
+        return pa.Table.from_arrays([], schema=schema)
 
-    product_keys = _f(product_keys)
-    unit_price = _f(unit_price)
-    unit_cost = _f(unit_cost)
-    store_key_arr = _f(store_key_arr)
-    geo_arr = _f(geo_arr)
-    currency_arr = _f(currency_arr)
-    order_dates = _f(order_dates)
-    customer_keys = _f(customer_keys)
-
-    if not skip_cols:
-        order_ids_int = _f(order_ids_int)
-        line_num = _f(line_num)
-
-    n = int(keep_mask.sum())
+    active_weights = active_counts / active_counts.sum()
+    rows_per_month = np.maximum(1, (active_weights * n).astype(int))
 
     # ------------------------------------------------------------
-    # QUANTITY
+    # DISCOVERY CONFIG
     # ------------------------------------------------------------
-    qty = build_quantity(rng, order_dates)
+    seen_customers = set()
 
-    # ------------------------------------------------------------
-    # BASE PRICING (AFTER THINNING)
-    # ------------------------------------------------------------
-    price = compute_prices(
-        rng=rng,
-        n=n,
-        unit_price=unit_price,
-        unit_cost=unit_cost,
-        promo_pct=promo_pct[keep_mask],
-    )
+    disc_cfg = State.models_cfg.get("customer_discovery", {})
+
+    base_rate = disc_cfg.get("base_discovery_rate", 0.12)
+    seasonal_amp = disc_cfg.get("seasonal_amplitude", 0.35)
+    seasonal_period = disc_cfg.get("seasonal_period_months", 24)
+
+    min_p = disc_cfg.get("min_discovery_rate", 0.02)
+    max_p = disc_cfg.get("max_discovery_rate", 0.60)
 
     # ------------------------------------------------------------
-    # PRICING PIPELINE
+    # BUILD MONTHLY TABLES
     # ------------------------------------------------------------
-    price = build_prices(
-        rng=rng,
-        order_dates=order_dates,
-        qty=qty,
-        price=price,
-    )
+    tables = []
 
-    # ------------------------------------------------------------
-    # ARROW OUTPUT
-    # ------------------------------------------------------------
-    arrays = []
+    for m_offset, m_rows in enumerate(rows_per_month):
+        mask = active_by_month.get(m_offset)
+        if mask is None or not mask.any():
+            continue
 
-    def add(name, data):
-        arrays.append(pa.array(data, type=schema_types[name], safe=False))
+        active_customers = customers_all[mask]
+        if len(active_customers) == 0:
+            continue
 
-    if not skip_cols:
-        add("SalesOrderNumber", order_ids_int)
-        add("SalesOrderLineNumber", line_num)
+        # --------------------------------------------------------
+        # DISCOVERY (Option A)
+        # --------------------------------------------------------
+        undiscovered = np.array(
+            [c for c in active_customers if c not in seen_customers],
+            dtype=active_customers.dtype,
+        )
 
-    add("CustomerKey", customer_keys)
-    add("ProductKey", product_keys)
-    add("StoreKey", store_key_arr)
-    add("PromotionKey", promo_keys[keep_mask])
-    add("CurrencyKey", currency_arr)
+        if len(undiscovered) > 0:
+            cycle = np.sin(2 * np.pi * m_offset / seasonal_period)
+            p = base_rate * (1.0 + seasonal_amp * cycle)
+            p = float(np.clip(p, min_p, max_p))
 
-    add("OrderDate", order_dates)
-    add("DueDate", dates["due_date"][keep_mask])
-    add("DeliveryDate", dates["delivery_date"][keep_mask])
+            # Scale discovery pressure with monthly order volume
+            row_scale = np.sqrt(m_rows / 10_000)
 
-    add("Quantity", qty)
-    add("NetPrice", price["final_net_price"])
-    add("UnitCost", price["final_unit_cost"])
-    add("UnitPrice", price["final_unit_price"])
-    add("DiscountAmount", price["discount_amt"])
+            discover_n = max(
+                1,
+                int(len(undiscovered) * p * row_scale),
+            )
 
-    add("DeliveryStatus", dates["delivery_status"][keep_mask])
-    add("IsOrderDelayed", dates["is_order_delayed"][keep_mask])
+            newly_discovered = rng.choice(
+                undiscovered,
+                size=min(discover_n, len(undiscovered)),
+                replace=False,
+            )
+        else:
+            newly_discovered = np.empty(0, dtype=active_customers.dtype)
 
-    if file_format == "deltaparquet":
-        months_int = order_dates.astype("datetime64[M]").astype("int64")
-        add("Year", (months_int // 12 + 1970).astype("int16"))
-        add("Month", (months_int % 12 + 1).astype("int8"))
+        # --------------------------------------------------------
+        # FORCE VISIBILITY OF NEW CUSTOMERS
+        # --------------------------------------------------------
+        forced = newly_discovered
+        remaining = max(0, m_rows - len(forced))
 
-    return pa.Table.from_arrays(arrays, schema=schema)
+        if remaining > 0 and seen_customers:
+            repeat = rng.choice(
+                np.fromiter(seen_customers, dtype=active_customers.dtype),
+                size=remaining,
+                replace=True,
+            )
+        else:
+            repeat = np.empty(0, dtype=active_customers.dtype)
+
+        customer_keys = np.concatenate([forced, repeat])
+        if len(customer_keys) == 0:
+            continue
+
+        rng.shuffle(customer_keys)
+        n_orders = len(customer_keys)
+
+        # --------------------------------------------------------
+        # PRODUCTS (PER ORDER)
+        # --------------------------------------------------------
+        prod_idx = rng.integers(0, len(product_np), size=n_orders)
+        prods = product_np[prod_idx]
+
+        product_keys = prods[:, 0]
+        unit_price = prods[:, 1].astype(np.float64, copy=False)
+        unit_cost = prods[:, 2].astype(np.float64, copy=False)
+
+        # --------------------------------------------------------
+        # STORE → GEO → CURRENCY
+        # --------------------------------------------------------
+        store_key_arr = store_keys[
+            rng.integers(0, len(store_keys), size=n_orders)
+        ]
+        geo_arr = st2g_arr[store_key_arr]
+        currency_arr = g2c_arr[geo_arr]
+
+        # --------------------------------------------------------
+        # ORDERS
+        # --------------------------------------------------------
+        if not skip_cols:
+            orders = build_orders(
+                rng=rng,
+                n=n_orders,
+                skip_cols=False,
+                date_pool=date_pool,
+                date_prob=date_prob,
+                customers=customer_keys,
+                product_keys=product_keys,
+                _len_date_pool=len(date_pool),
+                _len_customers=n_orders,
+            )
+
+            customer_keys = orders["customer_keys"]
+            order_dates = orders["order_dates"]
+            order_ids_int = orders["order_ids_int"]
+            line_num = orders["line_num"]
+        else:
+            order_dates = date_pool[
+                rng.integers(0, len(date_pool), size=n_orders)
+            ]
+            order_ids_int = None
+            line_num = None
+
+        # --------------------------------------------------------
+        # DATE LOGIC
+        # --------------------------------------------------------
+        dates = compute_dates(
+            rng=rng,
+            n=n_orders,
+            product_keys=product_keys,
+            order_ids_int=order_ids_int,
+            order_dates=order_dates,
+        )
+
+        # --------------------------------------------------------
+        # PROMOTIONS
+        # --------------------------------------------------------
+        promo_keys, promo_pct = apply_promotions(
+            rng=rng,
+            n=n_orders,
+            order_dates=order_dates,
+            promo_keys_all=promo_keys_all,
+            promo_pct_all=promo_pct_all,
+            promo_start_all=promo_start_all,
+            promo_end_all=promo_end_all,
+            no_discount_key=no_discount_key,
+        )
+
+        # --------------------------------------------------------
+        # ACTIVITY THINNING
+        # --------------------------------------------------------
+        keep_mask = apply_activity_thinning(rng=rng, order_dates=order_dates)
+        if not keep_mask.any():
+            continue
+
+        def _f(x):
+            return x[keep_mask]
+
+        customer_keys = _f(customer_keys)
+        product_keys = _f(product_keys)
+        unit_price = _f(unit_price)
+        unit_cost = _f(unit_cost)
+        store_key_arr = _f(store_key_arr)
+        geo_arr = _f(geo_arr)
+        currency_arr = _f(currency_arr)
+        order_dates = _f(order_dates)
+
+        promo_keys = _f(promo_keys)
+        promo_pct = _f(promo_pct)
+
+        if not skip_cols:
+            order_ids_int = _f(order_ids_int)
+            line_num = _f(line_num)
+
+        # --------------------------------------------------------
+        # UPDATE DISCOVERY STATE
+        # --------------------------------------------------------
+        seen_customers.update(customer_keys.tolist())
+
+        # --------------------------------------------------------
+        # QUANTITY + PRICING
+        # --------------------------------------------------------
+        qty = build_quantity(rng, order_dates)
+
+        price = compute_prices(
+            rng=rng,
+            n=len(customer_keys),
+            unit_price=unit_price,
+            unit_cost=unit_cost,
+            promo_pct=promo_pct,
+        )
+
+        price = build_prices(
+            rng=rng,
+            order_dates=order_dates,
+            qty=qty,
+            price=price,
+        )
+
+        # --------------------------------------------------------
+        # BUILD ARROW TABLE
+        # --------------------------------------------------------
+        arrays = []
+
+        def add(name, data):
+            arrays.append(pa.array(data, type=schema_types[name], safe=False))
+
+        if not skip_cols:
+            add("SalesOrderNumber", order_ids_int)
+            add("SalesOrderLineNumber", line_num)
+
+        add("CustomerKey", customer_keys)
+        add("ProductKey", product_keys)
+        add("StoreKey", store_key_arr)
+        add("PromotionKey", promo_keys)
+        add("CurrencyKey", currency_arr)
+
+        add("OrderDate", order_dates)
+        add("DueDate", dates["due_date"][keep_mask])
+        add("DeliveryDate", dates["delivery_date"][keep_mask])
+
+        add("Quantity", qty)
+        add("NetPrice", price["final_net_price"])
+        add("UnitCost", price["final_unit_cost"])
+        add("UnitPrice", price["final_unit_price"])
+        add("DiscountAmount", price["discount_amt"])
+
+        add("DeliveryStatus", dates["delivery_status"][keep_mask])
+        add("IsOrderDelayed", dates["is_order_delayed"][keep_mask])
+
+        if file_format == "deltaparquet":
+            m_int = order_dates.astype("datetime64[M]").astype("int64")
+            add("Year", (m_int // 12 + 1970).astype("int16"))
+            add("Month", (m_int % 12 + 1).astype("int8"))
+
+        tables.append(pa.Table.from_arrays(arrays, schema=schema))
+
+    if not tables:
+        return pa.Table.from_arrays([], schema=schema)
+
+    return pa.concat_tables(tables)

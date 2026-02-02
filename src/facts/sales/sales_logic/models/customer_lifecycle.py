@@ -2,19 +2,24 @@ import numpy as np
 from src.facts.sales.sales_logic.globals import State
 
 
-def apply_customer_churn(
-    rng,
-    customer_keys,
-    order_dates,
+def build_active_customer_pool(
     all_customers,
-    seed,
+    start_month: int,
+    end_month: int,
+    seed: int,
 ):
     """
-    Applies smooth customer lifecycle dynamics with:
-    - gradual monthly churn
-    - gradual monthly growth
-    - strong month-to-month continuity
+    Build active customer pool per month.
+
+    Returns:
+        dict[int, np.ndarray]: month_idx -> boolean mask over all_customers
     """
+
+    # ------------------------------------------------------------------
+    # Setup
+    # ------------------------------------------------------------------
+    all_customers = np.asarray(all_customers, dtype=np.int64)
+    n_cust = len(all_customers)
 
     cfg = State.models_cfg["customers"]
 
@@ -23,82 +28,87 @@ def apply_customer_churn(
     annual_churn_rate = cfg["annual_churn_rate"]
     monthly_noise = cfg["monthly_noise"]
 
-    # ------------------------------------------------------------
-    # Convert dates to year-month index
-    # ------------------------------------------------------------
-    months = order_dates.astype("datetime64[M]").astype(int)
-    min_month = months.min()
-    month_idx = months - min_month
-    n_months = month_idx.max() + 1
+    seasonal_amplitude = cfg.get("seasonal_growth_amplitude", 0.0)
+    seasonal_period = cfg.get("seasonal_period_months", 24)
+    min_monthly_new = cfg.get("min_monthly_new_customers", 0)
+
+    monthly_growth_base = annual_growth_rate / 12.0
+    monthly_churn_base = annual_churn_rate / 12.0
 
     rng_global = np.random.default_rng(seed + 9000)
 
-    # Initial active customers
-    active_customers = set(
-        rng_global.choice(
-            all_customers,
-            size=int(len(all_customers) * base_active_rate),
-            replace=False,
-        )
-    )
+    # ------------------------------------------------------------------
+    # Authoritative lifecycle state: boolean mask
+    # ------------------------------------------------------------------
+    mask = np.zeros(n_cust, dtype=bool)
 
-    out = customer_keys.copy()
+    init_n = int(n_cust * base_active_rate)
+    if init_n > 0:
+        init_idx = rng_global.choice(n_cust, size=init_n, replace=False)
+        mask[init_idx] = True
 
-    # Convert annual rates to monthly
-    monthly_growth = annual_growth_rate / 12.0
-    monthly_churn = annual_churn_rate / 12.0
+    active_by_month = {}
 
-    for m in range(n_months):
-        mask = month_idx == m
-        if not mask.any():
-            continue
-
+    # ------------------------------------------------------------------
+    # Month-by-month lifecycle simulation
+    # ------------------------------------------------------------------
+    for m in range(start_month, end_month + 1):
         rng_month = np.random.default_rng(seed + 10000 + m * 7919)
 
-        # --------------------------------------------------------
+        # -----------------------------
+        # Seasonality
+        # -----------------------------
+        cycle = np.sin(2 * np.pi * m / seasonal_period)
+        cycle_multiplier = 1.0 + seasonal_amplitude * cycle
+
+        # -----------------------------
         # CHURN
-        # --------------------------------------------------------
-        churn_rate = monthly_churn * rng_month.uniform(
-            1 - monthly_noise,
-            1 + monthly_noise,
+        # -----------------------------
+        churn_rate = monthly_churn_base * rng_month.uniform(
+            1.0 - monthly_noise,
+            1.0 + monthly_noise,
         )
-        churn_n = int(len(active_customers) * churn_rate)
 
-        if churn_n > 0:
+        active_idx = np.flatnonzero(mask)
+        churn_n = int(len(active_idx) * churn_rate)
+
+        if churn_n > 0 and len(active_idx) > 0:
             churned = rng_month.choice(
-                list(active_customers),
-                size=min(churn_n, len(active_customers)),
+                active_idx,
+                size=min(churn_n, len(active_idx)),
                 replace=False,
             )
-            active_customers -= set(churned)
+            mask[churned] = False
 
-        # --------------------------------------------------------
+        # -----------------------------
         # GROWTH
-        # --------------------------------------------------------
-        available = list(set(all_customers) - active_customers)
-        growth_rate = monthly_growth * rng_month.uniform(
-            1 - monthly_noise,
-            1 + monthly_noise,
+        # -----------------------------
+        growth_rate = (
+            monthly_growth_base
+            * cycle_multiplier
+            * rng_month.uniform(1.0 - monthly_noise, 1.0 + monthly_noise)
         )
-        grow_n = int(len(active_customers) * growth_rate)
 
-        if available and grow_n > 0:
+        market_base = max(
+            n_cust * 0.01,
+            np.count_nonzero(mask) * growth_rate,
+        )
+
+        grow_n = max(int(market_base), min_monthly_new)
+
+        inactive_idx = np.flatnonzero(~mask)
+
+        if grow_n > 0 and len(inactive_idx) > 0:
             added = rng_month.choice(
-                available,
-                size=min(grow_n, len(available)),
+                inactive_idx,
+                size=min(grow_n, len(inactive_idx)),
                 replace=False,
             )
-            active_customers |= set(added)
+            mask[added] = True
 
-        # --------------------------------------------------------
-        # ASSIGN CUSTOMERS FOR THIS MONTH
-        # --------------------------------------------------------
-        active_list = np.array(list(active_customers))
+        # -----------------------------
+        # Snapshot (IMPORTANT: copy)
+        # -----------------------------
+        active_by_month[m] = mask.copy()
 
-        out[mask] = rng_month.choice(
-            active_list,
-            size=mask.sum(),
-            replace=True,
-        )
-
-    return out
+    return active_by_month
