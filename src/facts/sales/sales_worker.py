@@ -15,6 +15,11 @@ def init_sales_worker(worker_cfg: dict):
     """
     Initialize immutable worker state.
     Runs exactly once per worker process.
+
+    New in lifecycle-aware pipeline:
+      - Binds customer arrays needed by chunk_builder:
+        customer_keys, customer_is_active_in_sales, customer_start_month, customer_end_month,
+        optional customer_base_weight
     """
 
     # -----------------------------------------------------------
@@ -29,7 +34,15 @@ def init_sales_worker(worker_cfg: dict):
         promo_start_all = worker_cfg["promo_start_all"]
         promo_end_all = worker_cfg["promo_end_all"]
 
-        customers = worker_cfg["customers"]
+        # Backward compat: still accept 'customers' as a plain key array
+        customers = worker_cfg.get("customers")
+
+        # New contract (preferred)
+        customer_keys = worker_cfg.get("customer_keys", customers)
+        customer_is_active_in_sales = worker_cfg.get("customer_is_active_in_sales")
+        customer_start_month = worker_cfg.get("customer_start_month")
+        customer_end_month = worker_cfg.get("customer_end_month")
+        customer_base_weight = worker_cfg.get("customer_base_weight")
 
         store_to_geo = worker_cfg["store_to_geo"]
         geo_to_currency = worker_cfg["geo_to_currency"]
@@ -58,6 +71,32 @@ def init_sales_worker(worker_cfg: dict):
     if skip_order_cols not in (True, False):
         raise RuntimeError("skip_order_cols must be a boolean")
 
+    if customer_keys is None:
+        raise RuntimeError("worker_cfg must include customer_keys or customers")
+
+    # Normalize customer arrays
+    customer_keys = np.asarray(customer_keys, dtype=np.int64)
+
+    if customer_is_active_in_sales is not None:
+        customer_is_active_in_sales = np.asarray(customer_is_active_in_sales, dtype=np.int64)
+        if customer_is_active_in_sales.shape[0] != customer_keys.shape[0]:
+            raise RuntimeError("customer_is_active_in_sales must align with customer_keys length")
+
+    if customer_start_month is not None:
+        customer_start_month = np.asarray(customer_start_month, dtype=np.int64)
+        if customer_start_month.shape[0] != customer_keys.shape[0]:
+            raise RuntimeError("customer_start_month must align with customer_keys length")
+
+    if customer_end_month is not None:
+        customer_end_month = np.asarray(customer_end_month, dtype=np.int64)
+        if customer_end_month.shape[0] != customer_keys.shape[0]:
+            raise RuntimeError("customer_end_month must align with customer_keys length")
+
+    if customer_base_weight is not None:
+        customer_base_weight = np.asarray(customer_base_weight, dtype=np.float64)
+        if customer_base_weight.shape[0] != customer_keys.shape[0]:
+            raise RuntimeError("customer_base_weight must align with customer_keys length")
+
     # -----------------------------------------------------------
     # Dense mapping helpers (fast lookup)
     # -----------------------------------------------------------
@@ -70,23 +109,14 @@ def init_sales_worker(worker_cfg: dict):
             arr[int(k)] = int(v)
         return arr
 
-    store_to_geo_arr = (
-        _dense_map(store_to_geo) if isinstance(store_to_geo, dict) else None
-    )
-    geo_to_currency_arr = (
-        _dense_map(geo_to_currency)
-        if isinstance(geo_to_currency, dict)
-        else None
-    )
+    store_to_geo_arr = _dense_map(store_to_geo) if isinstance(store_to_geo, dict) else None
+    geo_to_currency_arr = _dense_map(geo_to_currency) if isinstance(geo_to_currency, dict) else None
 
     # -----------------------------------------------------------
     # Ensure output folders once
     # -----------------------------------------------------------
     if file_format == "deltaparquet":
-        os.makedirs(
-            os.path.join(delta_output_folder, "_tmp_parts"),
-            exist_ok=True,
-        )
+        os.makedirs(os.path.join(delta_output_folder, "_tmp_parts"), exist_ok=True)
     else:
         os.makedirs(out_folder, exist_ok=True)
 
@@ -134,17 +164,9 @@ def init_sales_worker(worker_cfg: dict):
     # Canonical sales schema (single source of truth)
     # -----------------------------------------------------------
     if file_format == "deltaparquet":
-        sales_schema = (
-            schema_with_order_delta
-            if not skip_order_cols
-            else schema_no_order_delta
-        )
+        sales_schema = schema_with_order_delta if not skip_order_cols else schema_no_order_delta
     else:
-        sales_schema = (
-            schema_with_order
-            if not skip_order_cols
-            else schema_no_order
-        )
+        sales_schema = schema_with_order if not skip_order_cols else schema_no_order
 
     # -----------------------------------------------------------
     # Bind immutable globals (ONCE)
@@ -153,7 +175,16 @@ def init_sales_worker(worker_cfg: dict):
         # core data
         "product_np": product_np,
         "store_keys": store_keys,
-        "customers": customers,
+
+        # Backward compat: keep 'customers' for any old codepaths
+        "customers": customers if customers is not None else customer_keys,
+
+        # New: lifecycle-aware customer arrays for chunk_builder
+        "customer_keys": customer_keys,
+        "customer_is_active_in_sales": customer_is_active_in_sales,
+        "customer_start_month": customer_start_month,
+        "customer_end_month": customer_end_month,
+        "customer_base_weight": customer_base_weight,
 
         # promotions
         "promo_keys_all": promo_keys_all,
@@ -184,8 +215,8 @@ def init_sales_worker(worker_cfg: dict):
         "skip_order_cols": skip_order_cols,
         "partition_enabled": partition_enabled,
         "partition_cols": partition_cols,
-        
         "models_cfg": models_cfg,
+
         # schemas
         "schema_no_order": schema_no_order,
         "schema_with_order": schema_with_order,
@@ -213,10 +244,7 @@ def _write_parquet_batches(table: pa.Table, path: str):
             f"Expected:\n{schema}\n\nGot:\n{table.schema}"
         )
 
-    dict_cols = [
-        c for c in table.column_names
-        if c not in State.parquet_dict_exclude
-    ]
+    dict_cols = [c for c in table.column_names if c not in State.parquet_dict_exclude]
 
     writer = pq.ParquetWriter(
         path,
@@ -227,9 +255,7 @@ def _write_parquet_batches(table: pa.Table, path: str):
     )
 
     try:
-        for batch in table.to_batches(
-            max_chunksize=State.row_group_size
-        ):
+        for batch in table.to_batches(max_chunksize=State.row_group_size):
             writer.write_batch(batch)
     finally:
         writer.close()
@@ -253,19 +279,13 @@ def _write_csv(table: pa.Table, path: str):
         table = table.set_column(
             idx,
             "IsOrderDelayed",
-            pc.cast(
-                pc.fill_null(table["IsOrderDelayed"], 0),
-                pa.int8(),
-            ),
+            pc.cast(pc.fill_null(table["IsOrderDelayed"], 0), pa.int8()),
         )
 
     pacsv.write_csv(
         table,
         path,
-        write_options=pacsv.WriteOptions(
-            include_header=True,
-            quoting_style="none",
-        ),
+        write_options=pacsv.WriteOptions(include_header=True, quoting_style="none"),
     )
 
 
@@ -305,11 +325,7 @@ def _worker_task(args):
         # DELTA
         if State.file_format == "deltaparquet":
             name = f"delta_part_{idx:04d}.parquet"
-            path = os.path.join(
-                State.delta_output_folder,
-                "_tmp_parts",
-                name,
-            )
+            path = os.path.join(State.delta_output_folder, "_tmp_parts", name)
             _write_parquet_batches(table, path)
             rows = table.num_rows
             del table
@@ -318,20 +334,14 @@ def _worker_task(args):
 
         # CSV
         if State.file_format == "csv":
-            path = os.path.join(
-                State.out_folder,
-                f"sales_chunk{idx:04d}.csv",
-            )
+            path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.csv")
             _write_csv(table, path)
             del table
             results.append(path)
             continue
 
         # PARQUET
-        path = os.path.join(
-            State.out_folder,
-            f"sales_chunk{idx:04d}.parquet",
-        )
+        path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.parquet")
         _write_parquet_batches(table, path)
         del table
         results.append(path)

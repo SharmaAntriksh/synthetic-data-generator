@@ -16,11 +16,12 @@ def _logical_to_arrow_schema(logical_schema):
     fields = []
 
     for name, sql_type in logical_schema:
-        t = sql_type.upper()
+        t = str(sql_type).upper()
 
         if "BIGINT" in t:
             pa_type = pa.int64()
         elif "SMALLINT" in t or "TINYINT" in t:
+            # NOTE: your pipeline may use int8 for some flags; keep schema source-of-truth in static_schemas
             pa_type = pa.int16()
         elif "INT" in t:
             pa_type = pa.int32()
@@ -57,14 +58,29 @@ class State:
     # Core runtime flags / data
     # --------------------------------------------------------------
     skip_order_cols = None
+
     product_np = None
+    active_product_np = None
+
+    # Backward-compat customer key pool
     customers = None
+
+    # New lifecycle-aware customer dimension arrays (aligned by row index)
+    customer_keys = None
+    customer_is_active_in_sales = None
+    customer_start_month = None
+    customer_end_month = None  # int64 with -1 meaning "no end"
+    customer_base_weight = None  # optional float64
+
+    # Discovery persistence (optional)
+    seen_customers = None
+
     date_pool = None
     date_prob = None
     store_keys = None
 
     models_cfg = None
-    
+
     # --------------------------------------------------------------
     # Promotions
     # --------------------------------------------------------------
@@ -78,6 +94,8 @@ class State:
     # --------------------------------------------------------------
     store_to_geo_arr = None
     geo_to_currency_arr = None
+
+    # (kept for compatibility; may be passed as dicts too)
     store_to_geo = None
     geo_to_currency = None
 
@@ -88,8 +106,10 @@ class State:
     out_folder = None
     row_group_size = None
     compression = None
-    pricing_base_value_scale = None
-    
+
+    # parquet tuning
+    parquet_dict_exclude = None
+
     # --------------------------------------------------------------
     # Delta options
     # --------------------------------------------------------------
@@ -117,15 +137,20 @@ class State:
         Reset all State fields.
         Intended for tests / development only.
         """
-        for key, val in list(vars(State).items()):
-            if not key.startswith("__") and not callable(val):
-                setattr(State, key, None)
+        for key in list(vars(State).keys()):
+            if key.startswith("__"):
+                continue
+            # keep methods / functions / descriptors intact
+            attr = getattr(State, key)
+            if callable(attr):
+                continue
+            setattr(State, key, None)
         State._sealed = False
 
     @staticmethod
     def validate(required):
         """
-        Validate required state fields exist.
+        Validate required state fields exist (not None).
         """
         missing = [r for r in required if getattr(State, r, None) is None]
         if missing:
@@ -155,6 +180,10 @@ def bind_globals(gdict: dict):
     # Bind raw values
     for k, v in gdict.items():
         setattr(State, k, v)
+
+    # Ensure seen_customers is initialized if discovery is enabled
+    if getattr(State, "seen_customers", None) is None:
+        State.seen_customers = set()
 
     # --------------------------------------------------------------
     # Bind Sales schema ONCE, respecting skip_order_cols
