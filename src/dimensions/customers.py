@@ -525,37 +525,36 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     else:
         CustomerEndDate = pd.Series(pd.NaT, index=np.arange(N), dtype="datetime64[ns]").to_numpy()
 
+    CustomerType = np.where(IsOrg, "Organization", "Individual")
+    CompanyName = np.where(IsOrg, OrgName, None)
+
     # -----------------------------------------------------
     # Build dataframe (preserve schema)
     # -----------------------------------------------------
     df = pd.DataFrame(
         {
+            # --- legacy schema (stable) ---
             "CustomerKey": CustomerKey,
-            "GeographyKey": GeographyKey,
-            "FirstName": FirstName,
-            "LastName": LastName,
             "CustomerName": CustomerName,
-            "Email": Email,
-            "Gender": Gender,
-            "BirthDate": BirthDate,
+            "DOB": BirthDate,
             "MaritalStatus": MaritalStatus,
+            "Gender": Gender,
+            "EmailAddress": Email,
             "YearlyIncome": YearlyIncome,
             "TotalChildren": TotalChildren,
             "Education": Education,
             "Occupation": Occupation,
-            "Region": Region,
-            "IsOrg": IsOrg.astype("int64"),
-            "OrgName": OrgName,
-            "OrgDomain": OrgDomain,
+            "CustomerType": CustomerType,
+            "CompanyName": CompanyName,
+            "GeographyKey": GeographyKey,
             "IsActiveInSales": is_active,
 
-            # lifecycle fields
+            # --- keep for now; strip at packaging ---
             "CustomerStartMonth": CustomerStartMonth.astype("int64"),
             "CustomerEndMonth": pd.Series(CustomerEndMonth, dtype="Int64"),
             "CustomerStartDate": pd.to_datetime(CustomerStartDate),
             "CustomerEndDate": pd.to_datetime(CustomerEndDate),
 
-            # helper knobs
             "CustomerWeight": CustomerWeight,
             "CustomerTemperature": CustomerTemperature,
             "CustomerSegment": CustomerSegment,
