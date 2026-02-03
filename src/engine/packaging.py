@@ -1,11 +1,41 @@
 import shutil
 from pathlib import Path
 from urllib.parse import unquote
+from typing import Optional
 
 from src.utils.output_utils import create_final_output_folder
 from src.tools.sql.generate_bulk_insert_sql import generate_bulk_insert_script
 from src.tools.sql.generate_create_table_scripts import generate_all_create_tables
 from src.utils.logging_utils import stage, info, skip, done
+
+
+def _get_first_existing_path(cfg: dict, keys: list[str]) -> Optional[Path]:
+    project_root = Path(__file__).resolve().parents[2]  # repo root
+
+    def _resolve_existing(v: str) -> Optional[Path]:
+        p = Path(str(v)).expanduser()
+        if p.is_absolute() and p.exists():
+            return p
+
+        cwd_candidate = (Path.cwd() / p).resolve()
+        if cwd_candidate.exists():
+            return cwd_candidate
+
+        repo_candidate = (project_root / p).resolve()
+        if repo_candidate.exists():
+            return repo_candidate
+
+        return None
+
+    for k in keys:
+        v = cfg.get(k)
+        if not v:
+            continue
+        resolved = _resolve_existing(v)
+        if resolved:
+            return resolved
+
+    return None
 
 
 def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
@@ -28,6 +58,32 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     final_root = Path(unquote(str(cfg["final_output_folder"]))).resolve()
 
     # ============================================================
+    # Resolve config/model yaml paths (optional)
+    # ============================================================
+    # These keys are guesses to be resilient across different entrypoints.
+    # Prefer storing the true file paths in cfg["config_yaml_path"] / cfg["model_yaml_path"] upstream.
+    config_yaml_path = _get_first_existing_path(
+        cfg,
+        keys=[
+            "config_yaml_path",
+            "config_path",
+            "config_file",
+            "config_yaml",
+            "config",
+        ],
+    )
+    model_yaml_path = _get_first_existing_path(
+        cfg,
+        keys=[
+            "model_yaml_path",
+            "model_path",
+            "model_file",
+            "model_yaml",
+            "model",
+        ],
+    )
+
+    # ============================================================
     # Create final output folder
     # ============================================================
     with stage("Creating Final Output Folder"):
@@ -39,6 +95,9 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             file_format=file_format,
             sales_rows_expected=sales_cfg["total_rows"],
             cfg=cfg,
+            # NEW: copy YAML specs into final_folder/config/
+            config_yaml_path=config_yaml_path,
+            model_yaml_path=model_yaml_path,
         )
 
         # ---------------------------------------------------------
