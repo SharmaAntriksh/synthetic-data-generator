@@ -353,6 +353,12 @@ def _sample_customers(
 
         row_scale = np.sqrt(max(n, 1) / 10_000)
         discover_n = max(1, int(undiscovered.size * p * row_scale))
+        
+        # --- HARD CAP: prevent early discovery spike ---
+        max_frac = discovery_cfg.get("max_fraction_per_month")
+        if max_frac is not None:
+            max_new = int(max_frac * customer_keys.size)
+            discover_n = min(discover_n, max_new)
 
         forced = rng.choice(
             undiscovered,
