@@ -15,13 +15,13 @@ models:
   # Controls WHEN orders occur and how dense each month is
   # ============================================================
   activity:
-    size_scale_threshold: 50000
+    size_scale_threshold: 200000
 
     # Keep false for realistic variability in month-by-month generation.
     preserve_row_count: false  # allow thinning to reduce month volume; set true only if you MUST hit an exact row total.
 
     # Higher = smoother month-to-month continuity
-    month_inertia: 0.88
+    month_inertia: 0.73
 
     # Monthly transaction intensity pattern (retail: Nov/Dec peak, Feb dip)
     monthly_baseline:
@@ -40,7 +40,7 @@ models:
 
     volatility:
       # Higher => more spiky months (use 0.06–0.10)
-      sigma: 0.012
+      sigma: 0.006
 
     row_noise:
       # Small dataset: keep lower noise so early months don’t collapse
@@ -69,7 +69,7 @@ models:
     base_level: 1.0
 
     # Mild long-run growth (keep low if you want stable totals across years)
-    yearly_growth: 0.07
+    yearly_growth: 0.23
 
     # Additional smooth seasonality (use alongside activity.monthly_baseline)
     seasonality_amplitude: 0.16
@@ -80,14 +80,13 @@ models:
 
     # Rare demand shocks to create “decline then recovery” windows
     shock_probability: 0.18
-    shock_impact: [-0.55, 0.25]   # multiplicative hit range
+    shock_impact: [-0.25, 0.23]   # multiplicative hit range
 
     # Prevent early months from concentrating too many rows on too few customers
     early_month_cap:
       enabled: true
       max_rows_per_customer: 8
       redistribute_excess: true
-
 
   # ============================================================
   # CUSTOMER PARTICIPATION (distinct customers per month)
@@ -136,7 +135,7 @@ models:
 
     noise_sd: 0.07
     min_qty: 1
-    max_qty: 4
+    max_qty: 6
 
 
   # ============================================================
@@ -186,15 +185,15 @@ models:
     month_inertia: 0.78
 
     ramp:
-      months: 18
-      min_multiplier: 0.96
-      max_multiplier: 1.03
+      months: 30
+      min_multiplier: 0.90
+      max_multiplier: 1.10
       discount_scale: 0.90
-      discount_noise_sigma: 0.20
+      discount_noise_sigma: 0.10
 
     inflation:
-      annual_rate: 0.12
-      noise_sigma: 0.015
+      annual_rate: 0.18
+      noise_sigma: 0.008
 
     seasonality:
       enabled: true
@@ -203,7 +202,7 @@ models:
       phase_shift_months: -1
 
     discount:
-      max_pct_of_price: 0.80
+      max_pct_of_price: 0.60
 
     floors:
       min_net_price: 0.01

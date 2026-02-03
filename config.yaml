@@ -21,7 +21,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 10052
+  total_rows: 1005200
   chunk_size: 1000000
 
   file_format: "csv"          # csv | parquet | deltaparquet
@@ -80,7 +80,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 2411
+  total_customers: 54117
   active_ratio: 0.90
 
   pct_india: 10
@@ -92,8 +92,8 @@ customers:
 
   lifecycle:
     enable_churn: true
-    base_monthly_churn: 0.015
-    min_tenure_months: 3
+    base_monthly_churn: 0.025
+    min_tenure_months: 5
     initial_active_customers: 200        # or 1000
     initial_spread_months: 36            # customers started in the 24 months before start_date
 
