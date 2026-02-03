@@ -31,27 +31,6 @@ def load_parquet_df(path: str, cols=None):
     return pd.read_parquet(path, columns=cols)
 
 
-def build_weighted_customers(keys, pct, mult, seed=42):
-    """
-    Expand customer population with a heavy-user skew.
-    """
-    rng = np.random.default_rng(seed)
-
-    mask = rng.random(len(keys)) < (pct / 100.0)
-    heavy = keys[mask]
-    normal = keys[~mask]
-
-    parts = []
-    if heavy.size:
-        parts.append(np.repeat(heavy, mult))
-    if normal.size:
-        parts.append(normal)
-
-    arr = np.concatenate(parts)
-    rng.shuffle(arr)
-    return arr
-
-
 def build_weighted_date_pool(start, end, seed=42):
     """
     Build a weighted daily date pool with realistic seasonality.
@@ -74,25 +53,25 @@ def build_weighted_date_pool(start, end, seed=42):
 
     # Month seasonality
     month_weights = {
-        1:0.82, 2:0.92, 3:1.03, 4:0.98, 5:1.07, 6:1.12,
-        7:1.18, 8:1.10, 9:0.96, 10:1.22, 11:1.48, 12:1.33
+        1: 0.82, 2: 0.92, 3: 1.03, 4: 0.98, 5: 1.07, 6: 1.12,
+        7: 1.18, 8: 1.10, 9: 0.96, 10: 1.22, 11: 1.48, 12: 1.33
     }
     mw = np.array([month_weights[m] for m in months])
 
     # Weekday effect
-    weekday_weights = {0:0.86,1:0.91,2:1.00,3:1.12,4:1.19,5:1.08,6:0.78}
+    weekday_weights = {0: 0.86, 1: 0.91, 2: 1.00, 3: 1.12, 4: 1.19, 5: 1.08, 6: 0.78}
     wdw = np.array([weekday_weights[d] for d in weekdays])
 
     # Promotional spikes
     spike = np.ones(n)
-    for s, e, f in [(140,170,1.28),(240,260,1.35),(310,350,1.72)]:
+    for s, e, f in [(140, 170, 1.28), (240, 260, 1.35), (310, 350, 1.72)]:
         spike[(doy >= s) & (doy <= e)] *= f
 
     # One-off trends
     ot = np.ones(n)
     for a, b, f in [
-        ("2021-06-01","2021-10-31",0.70),
-        ("2023-02-01","2023-08-31",1.40)
+        ("2021-06-01", "2021-10-31", 0.70),
+        ("2023-02-01", "2023-08-31", 1.40)
     ]:
         mask = (dates >= a) & (dates <= b)
         ot[mask] *= f
@@ -124,6 +103,43 @@ def batch_tasks(tasks, batch_size):
     ]
 
 
+def _normalize_nullable_int_month(arr, n):
+    """
+    Normalize CustomerEndMonth into int64 with -1 meaning "no end".
+    Supports:
+      - missing column -> all -1
+      - pandas nullable Int64 -> to_numpy may yield object; handle NA
+      - float with NaN -> map NaN to -1
+    """
+    if arr is None:
+        return np.full(n, -1, dtype=np.int64)
+
+    a = np.asarray(arr)
+
+    if a.dtype == object:
+        out = np.empty(n, dtype=np.int64)
+        for i in range(n):
+            v = a[i]
+            if v is None or v is pd.NA or v is np.nan:
+                out[i] = -1
+            else:
+                try:
+                    out[i] = int(v)
+                except Exception:
+                    out[i] = -1
+        out[out < 0] = -1
+        return out
+
+    if np.issubdtype(a.dtype, np.floating):
+        out = np.where(np.isnan(a), -1, a).astype(np.int64)
+        out[out < 0] = -1
+        return out
+
+    out = a.astype(np.int64, copy=False)
+    out[out < 0] = -1
+    return out
+
+
 # =====================================================================
 # Main Fact Generation
 # =====================================================================
@@ -141,13 +157,13 @@ def generate_sales_fact(
     merge_parquet=False,
     merged_file="sales.parquet",
     delete_chunks=False,
-    heavy_pct=5,
-    heavy_mult=5,
+    heavy_pct=5,           # legacy (kept for API compatibility; ignored if CustomerBaseWeight exists)
+    heavy_mult=5,          # legacy (kept for API compatibility; ignored if CustomerBaseWeight exists)
     seed=42,
     file_format="parquet",
     workers=None,
     tune_chunk=False,
-    write_delta=False,   # legacy (ignored)
+    write_delta=False,     # legacy (ignored)
     delta_output_folder=None,
     skip_order_cols=False,
     write_pyarrow=True,
@@ -180,21 +196,65 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Load dimensions
     # ------------------------------------------------------------
-    
-    # ------------------------------------------------------------
-    # Load Customers (respect active_customer_keys if provided)
-    # ------------------------------------------------------------
-    if hasattr(State, "active_customer_keys") and State.active_customer_keys is not None:
-        customers_raw = State.active_customer_keys
-    else:
-        customers_raw = load_parquet_column(
-            os.path.join(parquet_folder, "customers.parquet"),
-            "CustomerKey",
-        )
 
-    customers = build_weighted_customers(
-        customers_raw, heavy_pct, heavy_mult, seed
-    ).astype(np.int64)
+    # ------------------------------------------------------------
+    # Load Customers (NEW: lifecycle-aware arrays)
+    # ------------------------------------------------------------
+    customers_path = os.path.join(parquet_folder, "customers.parquet")
+    
+    # Required columns for the new pipeline
+    cust_cols = [
+        "CustomerKey",
+        "IsActiveInSales",
+        "CustomerStartMonth",
+        "CustomerEndMonth",
+    ]
+
+    # Read required customer columns first (never fails due to optional columns)
+    cust_df = load_parquet_df(customers_path, cust_cols)
+
+    # Load customer weight column separately (robust)
+    customer_base_weight = None
+    for wcol in ("CustomerBaseWeight", "CustomerWeight"):
+        try:
+            w = pd.read_parquet(customers_path, columns=[wcol])[wcol]
+            customer_base_weight = w.to_numpy(np.float64)
+            break
+        except Exception:
+            pass
+
+    if cust_df.empty:
+        raise RuntimeError("customers.parquet is empty; cannot generate sales")
+
+    # Ensure types
+    customer_keys = cust_df["CustomerKey"].to_numpy(np.int64)
+    is_active_in_sales = cust_df["IsActiveInSales"].to_numpy(np.int64)
+
+    # If these columns are missing (older customers.parquet), fall back to "everyone starts at 0"
+    if "CustomerStartMonth" in cust_df.columns:
+        customer_start_month = cust_df["CustomerStartMonth"].to_numpy(np.int64)
+    else:
+        customer_start_month = np.zeros(len(customer_keys), dtype=np.int64)
+
+    if "CustomerEndMonth" in cust_df.columns:
+        customer_end_month = _normalize_nullable_int_month(cust_df["CustomerEndMonth"].values, len(customer_keys))
+    else:
+        customer_end_month = np.full(len(customer_keys), -1, dtype=np.int64)
+
+    # customer_base_weight = None
+    # if "CustomerBaseWeight" in cust_df.columns:
+    #     customer_base_weight = cust_df["CustomerBaseWeight"].to_numpy(np.float64)
+    # elif "CustomerWeight" in cust_df.columns:
+    #     customer_base_weight = cust_df["CustomerWeight"].to_numpy(np.float64)
+
+    # NOTE: We intentionally do NOT expand/duplicate customer keys here.
+    # Duplicating keys breaks alignment with start/end month arrays.
+    # Heavy-user skew should come from CustomerBaseWeight (in customers.py),
+    # or from sampling weights in chunk_builder.
+    if customer_base_weight is None:
+        info("CustomerBaseWeight not found; customer sampling will be uniform unless chunk_builder applies other logic.")
+    else:
+        info("CustomerBaseWeight loaded; chunk_builder can use it for weighted sampling.")
 
     # ------------------------------------------------------------
     # Load Products (respect active_product_np if provided)
@@ -207,7 +267,6 @@ def generate_sales_fact(
             ["ProductKey", "UnitPrice", "UnitCost"],
         )
         product_np = prod_df.to_numpy()
-
 
     store_keys = load_parquet_column(
         os.path.join(parquet_folder, "stores.parquet"),
@@ -229,7 +288,7 @@ def generate_sales_fact(
         right_on="ToCurrency",
         how="left",
     )
-    
+
     if geo_df["CurrencyKey"].isna().any():
         default_currency = int(currency_df.iloc[0]["CurrencyKey"])
         geo_df["CurrencyKey"] = geo_df["CurrencyKey"].fillna(default_currency)
@@ -262,21 +321,15 @@ def generate_sales_fact(
         promo_start_all = np.array([], dtype="datetime64[D]")
         promo_end_all = np.array([], dtype="datetime64[D]")
     else:
-        promo_df["StartDate"] = pd.to_datetime(
-            promo_df["StartDate"]
-        ).dt.normalize()
-        promo_df["EndDate"] = pd.to_datetime(
-            promo_df["EndDate"]
-        ).dt.normalize()
+        promo_df["StartDate"] = pd.to_datetime(promo_df["StartDate"]).dt.normalize()
+        promo_df["EndDate"] = pd.to_datetime(promo_df["EndDate"]).dt.normalize()
 
         promo_keys_all = promo_df["PromotionKey"].to_numpy(np.int64)
         promo_pct_all = promo_df["DiscountPct"].to_numpy(np.float64)
         promo_start_all = promo_df["StartDate"].to_numpy("datetime64[D]")
         promo_end_all = promo_df["EndDate"].to_numpy("datetime64[D]")
 
-    date_pool, date_prob = build_weighted_date_pool(
-        start_date, end_date, seed
-    )
+    date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
 
     # ------------------------------------------------------------
     # Chunk scheduling
@@ -318,7 +371,17 @@ def generate_sales_fact(
         promo_pct_all=promo_pct_all,
         promo_start_all=promo_start_all,
         promo_end_all=promo_end_all,
-        customers=customers,
+
+        # Backward compat: keep 'customers' as keys array (no duplication)
+        customers=customer_keys,
+
+        # New contract for chunk_builder lifecycle eligibility
+        customer_keys=customer_keys,
+        customer_is_active_in_sales=is_active_in_sales,
+        customer_start_month=customer_start_month,
+        customer_end_month=customer_end_month,
+        customer_base_weight=customer_base_weight,
+
         store_to_geo=store_to_geo,
         geo_to_currency=geo_to_currency,
         date_pool=date_pool,
@@ -359,23 +422,12 @@ def generate_sales_fact(
                     completed_units += 1
                     if isinstance(r, str):
                         created_files.append(r)
-                        # work(
-                        #     f"[{completed_units}/{total_units}] → "
-                        #     f"{os.path.basename(r)}"
-                        # )
-                        work(
-                            f"[{completed_units}/{total_units}] -> "
-                            f"{os.path.basename(r)}"
-                        )
-
+                        work(f"[{completed_units}/{total_units}] -> {os.path.basename(r)}")
             else:
                 completed_units += 1
                 if isinstance(result, str):
                     created_files.append(result)
-                    work(
-                        f"[{completed_units}/{total_units}] → "
-                        f"{os.path.basename(result)}"
-                    )
+                    work(f"[{completed_units}/{total_units}] -> {os.path.basename(result)}")
 
     done("All chunks completed.")
 
@@ -396,9 +448,7 @@ def generate_sales_fact(
 
     if file_format == "parquet":
         parquet_chunks = sorted(
-            f for f in glob.glob(
-                os.path.join(out_folder, "sales_chunk*.parquet")
-            )
+            f for f in glob.glob(os.path.join(out_folder, "sales_chunk*.parquet"))
             if os.path.isfile(f)
         )
         if parquet_chunks and merge_parquet:

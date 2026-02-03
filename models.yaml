@@ -1,3 +1,13 @@
+# ============================================================
+# HIGH-LEVEL TUNING (preferred)
+# Edit ONLY these 3 knobs. config_loader.apply_acquisition_tuning()
+# will derive detailed customer discovery + participation settings.
+# ============================================================
+tuning:
+  acquisition_intensity: 0.55      # 0..1 (higher => more new customers)
+  acquisition_smoothness: 0.90     # 0..1 (higher => flatter spread)
+  acquisition_cycles: 0.2         # 0..1 (higher => bigger multi-year waves)
+
 models:
 
   # ============================================================
@@ -5,80 +15,114 @@ models:
   # Controls WHEN orders occur and how dense each month is
   # ============================================================
   activity:
+    size_scale_threshold: 200000
 
-    # As total rows approach this value, volatility scaling tapers off.
-    # Higher value → large datasets stay more volatile
-    # Lower value → large datasets become smoother
-    size_scale_threshold: 50000
+    # Keep false for realistic variability in month-by-month generation.
+    preserve_row_count: false  # allow thinning to reduce month volume; set true only if you MUST hit an exact row total.
 
-    # controls continuity of order volume (transactions per mont
-    month_inertia: 0.90
+    # Higher = smoother month-to-month continuity
+    month_inertia: 0.73
 
-    # Relative transaction intensity by calendar month.
-    # Values >1 increase activity, <1 reduce activity.
-    # Changing these reshapes the yearly sales curve.
+    # Monthly transaction intensity pattern (retail: Nov/Dec peak, Feb dip)
     monthly_baseline:
-      - 0.90  # Jan
-      - 0.88  # Feb
-      - 0.95  # Mar
+      - 0.92  # Jan
+      - 0.86  # Feb
+      - 0.96  # Mar
       - 1.00  # Apr
       - 1.03  # May
       - 1.05  # Jun
-      - 1.05  # Jul
+      - 1.04  # Jul
       - 1.02  # Aug
-      - 1.00  # Sep
+      - 0.99  # Sep
       - 1.06  # Oct
-      - 1.12  # Nov
-      - 1.10  # Dec
+      - 1.18  # Nov
+      - 1.16  # Dec
 
     volatility:
-      # Month-to-month randomness in activity.
-      # Higher → spikier months
-      # Lower → smoother curves
-      sigma: 0.07
+      # Higher => more spiky months (use 0.06–0.10)
+      sigma: 0.006
 
     row_noise:
-      # Row-level randomness when selecting which orders survive thinning.
-      # Higher values create more uneven per-day density.
+      # Small dataset: keep lower noise so early months don’t collapse
       sigma_small_dataset: 0.10
-      sigma_large_dataset: 0.35
+      sigma_large_dataset: 0.30
 
     bounds:
-      # Threshold that decides which bounds/noise model is used.
-      # Smaller datasets need tighter control to avoid extreme spikes.
       dataset_split_threshold: 300000
 
-      # Hard clamps on per-month volume for small datasets.
-      # Prevents unrealistic month collapse or explosions.
+      # Tight bounds for smaller datasets to avoid extremes
       small_dataset:
-        low: 0.90
-        high: 1.10
+        low: 0.82
+        high: 1.22
 
-      # Looser bounds for large datasets where law of large numbers applies.
+      # Larger datasets tolerate more natural variance
       large_dataset:
-        low: 0.80
-        high: 1.15
+        low: 0.82
+        high: 1.18
+
+
+  # ============================================================
+  # BASE DEMAND NORMALIZATION (macro volume shape)
+  # Drives overall row allocation per month BEFORE customer sampling
+  # ============================================================
+  macro_demand:
+    base_level: 1.0
+
+    # Mild long-run growth (keep low if you want stable totals across years)
+    yearly_growth: 0.23
+
+    # Additional smooth seasonality (use alongside activity.monthly_baseline)
+    seasonality_amplitude: 0.16
+    seasonality_phase: 0.0
+
+    # Small random drift month-to-month
+    noise_std: 0.05
+
+    # Rare demand shocks to create “decline then recovery” windows
+    shock_probability: 0.18
+    shock_impact: [-0.25, 0.23]   # multiplicative hit range
+
+    # Prevent early months from concentrating too many rows on too few customers
+    early_month_cap:
+      enabled: true
+      max_rows_per_customer: 8
+      redistribute_excess: true
+
+  # ============================================================
+  # CUSTOMER PARTICIPATION (distinct customers per month)
+  # This is the knob set that creates multi-year "incline/decline" in #customers.
+  # (Requires chunk_builder logic to use it; safe to keep even if unused.)
+  # ============================================================
+  customer_participation:
+    # target distinct customers ≈ base_distinct_ratio * eligible_customers (then modulated by cycles)
+    base_distinct_ratio: 0.50
+
+    # hard floors/caps (prevents “month has 1 customer” and “everyone buys every month”)
+    min_distinct_customers: 250
+    max_distinct_ratio: 0.62
+
+    # multi-year waves: incline -> decline -> incline ...
+    cycles:
+      enabled: true
+      period_months: 12       # 2-year waves
+      amplitude: 0.10         # +/-35% swing
+      phase: 0.0
+      noise_std: 0.06         # irregularity around the wave
+
 
   # ============================================================
   # QUANTITY / BASKET SIZE
   # Controls HOW MANY units per order line
   # ============================================================
   quantity:
+    base_poisson_lambda: 2.1
+    month_inertia: 0.82
 
-    # Base Poisson mean for units per order.
-    # Higher → larger baskets everywhere
-    # Lower → more single-item purchases
-    base_poisson_lambda: 2.0
-
-    # controls continuity of average basket size
-    month_inertia: 0.80
-
-    # Seasonal basket-size multipliers by month.
-    # Impacts revenue without changing order counts.
+    # Retail: slightly larger baskets in Nov/Dec
     monthly_factors:
-      - 0.98
-      - 0.97
       - 0.99
+      - 0.98
+      - 1.00
       - 1.00
       - 1.01
       - 1.02
@@ -89,124 +133,81 @@ models:
       - 1.06
       - 1.05
 
-    # Additive noise on quantities.
-    # Higher → more variety in order sizes
-    noise_sd: 0.06
-
-    # Absolute safety bounds.
+    noise_sd: 0.07
     min_qty: 1
-    max_qty: 5
+    max_qty: 6
+
 
   # ============================================================
-  # CUSTOMER LIFECYCLE
+  # CUSTOMER LIFECYCLE (macro pool evolution)
   # Controls WHICH customers are active over time
+  # (Keep conservative; customer start distribution + warm-start handles early base.)
   # ============================================================
   customers:
+    base_active_rate: 0.78
+    annual_growth_rate: 0.22
+    annual_churn_rate: 0.14
+    monthly_noise: 0.04
 
-    # Initial fraction of customers active at simulation start.
-    # Lower → sparse early months
-    # Higher → dense initial activity
-    base_active_rate: 0.75
-
-    # Net annual growth of active customer pool.
-    # Drives long-term upward trend in orders.
-    annual_growth_rate: 0.65
-
-    # Annual churn rate applied gradually.
-    # Higher → more customer turnover
-    annual_churn_rate: 0.20
-
-    # Month-to-month randomness applied to churn & growth.
-    # Higher → less predictable active customer counts
-    monthly_noise: 0.05
-
-    seasonal_growth_amplitude: 0.40   # 0 = no cycles, 0.4 = strong waves
-    seasonal_period_months: 24       # 12 = yearly, 24 = 2-year cycles
-    min_monthly_new_customers: 509    # acquisition floor
-
-  customer_discovery:
-    # Base probability that an active-but-undiscovered customer
-    # will place their FIRST order in a given month
-    base_discovery_rate: 0.22
-
-    # Strength of seasonal fluctuation in discovery
-    # 0 = flat, 0.3–0.5 = visible waves
-    seasonal_amplitude: 0.45
-
-    # Length of the discovery cycle
-    # 12 = yearly, 24 = multi-year adoption waves
+    # Optional waves in active pool (separate from participation waves)
+    seasonal_growth_amplitude: 0.12
     seasonal_period_months: 24
 
-    # Hard safety bounds (prevents degenerate behavior)
-    min_discovery_rate: 0.08
-    max_discovery_rate: 0.80
+    # Safety floor (used only if your lifecycle model enforces it)
+    min_monthly_new_customers: 80
+    even_start_months: false
 
+  # ============================================================
+  # CUSTOMER DISCOVERY (first-time appearance)
+  # Controls how quickly undiscovered-but-eligible customers get their first order.
+  # ============================================================
+  customer_discovery:
+    # Rate knobs (keep mild; they should not dominate if you're using target_new)
+    base_discovery_rate: 0.06
+    min_discovery_rate: 0.05
+    max_discovery_rate: 0.20
+    seasonal_amplitude: 0.0
+    seasonal_period_months: 24
 
+    # Shape knobs (these are the important ones)
+    max_fraction_per_month: 0.01
+    orders_per_new_customer: 28
+
+    min_new_customers_per_month: 160
+    min_new_customers_steady: 240
+    floor_ramp_months: 18
+    bootstrap_suppression_months: 12
   # ============================================================
   # PRICING PIPELINE
-  # Controls HOW MUCH revenue is generated per unit
+  # Controls HOW MUCH revenue is generated per unit (inflation + discounts)
   # ============================================================
   pricing:
-    # controls continuity of average price level (not discounts)
-    month_inertia: 0.75
+    month_inertia: 0.78
 
     ramp:
-      # Number of months before business reaches maturity pricing.
-      # Shorter → prices stabilize sooner
-      months: 36
-
-      # Lower/upper bounds on early-stage price scaling.
+      months: 30
       min_multiplier: 0.90
-      max_multiplier: 1.05
-
-      # Discount intensity during ramp-up phase.
-      # Lower → aggressive early discounts
-      discount_scale: 0.80
-
-      # Randomness applied to discounts during ramp.
-      discount_noise_sigma: 0.25
+      max_multiplier: 1.10
+      discount_scale: 0.90
+      discount_noise_sigma: 0.10
 
     inflation:
-      # Annual price inflation rate.
-      # Drives long-term revenue growth independent of volume.
-      annual_rate: 0.15
-
-      # Small randomness around inflation.
-      # Prevents perfectly smooth year-over-year pricing.
+      annual_rate: 0.18
       noise_sigma: 0.008
 
     seasonality:
-      # Enable/disable price seasonality entirely.
       enabled: true
-
-      # Strength of seasonal price swings.
-      # Higher → visible monthly price changes
-      amplitude: 0.018
-
-      # Controls how sharp the seasonal response is.
-      # Higher → flatter peaks, steeper transitions
+      amplitude: 0.012
       sharpness: 1.0
-
-      # Month offset for seasonal peak.
-      # -1 → peak around Nov/Dec
       phase_shift_months: -1
 
     discount:
-      # Hard cap on discount as a fraction of unit price.
-      # Prevents negative or near-zero net prices.
-      max_pct_of_price: 0.85
+      max_pct_of_price: 0.60
 
     floors:
-      # Absolute minimum net price per unit.
-      # Safety against pathological combinations.
       min_net_price: 0.01
 
     cost:
-      # Randomized cost ratio relative to net price.
-      # Controls margin variability.
-      cost_ratio_min: 0.60
-      cost_ratio_max: 0.82
-
-      # Minimum guaranteed margin.
-      # Higher → safer profitability
-      min_margin_pct: 0.05
+      cost_ratio_min: 0.62
+      cost_ratio_max: 0.84
+      min_margin_pct: 0.06
