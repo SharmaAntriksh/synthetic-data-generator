@@ -3,21 +3,27 @@ from __future__ import annotations
 import time
 import shutil
 from pathlib import Path
-import pandas as pd
 
 from src.utils.logging_utils import stage, info, done
 from src.engine.packaging import package_output
-from src.facts.sales.sales_logic.globals import bind_globals, State
 from src.engine.powerbi_packaging import attach_pbip_project
+from src.facts.sales.sales import generate_sales_fact
+from src.facts.sales.sales_logic.globals import bind_globals, State
 
 
 def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     """
     Run the sales fact pipeline.
 
+    UPDATED CONTRACT:
+    - Customer lifecycle is fully driven by customers.parquet
+      (IsActiveInSales, CustomerStartMonth, CustomerEndMonth, etc.)
+    - This runner MUST NOT filter customers anymore.
+    - Product filtering (IsActiveInSales) is still valid.
+    - All lifecycle logic happens inside sales.py + chunk_builder.py
+
     Invariants:
     - Sales schema is determined entirely by sales_cfg
-    - No implicit defaults override config
     - CSV / Delta outputs are regenerated per run
     - Parquet output is preserved for packaging
     """
@@ -65,69 +71,45 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     skip_order_cols = bool(sales_cfg["skip_order_cols"])
 
     # ------------------------------------------------------------
-    # Load active Customers for Sales generation
-    # ------------------------------------------------------------
-
-    customers_path = parquet_dims / "customers.parquet"
-
-    customers_df = pd.read_parquet(
-        customers_path,
-        columns=["CustomerKey", "IsActiveInSales"],
-    )
-
-    active_customer_keys = customers_df.loc[
-        customers_df["IsActiveInSales"] == 1,
-        "CustomerKey",
-    ].to_numpy()
-
-    if len(active_customer_keys) == 0:
-        raise RuntimeError("No active customers found for sales generation")
-
-    # ------------------------------------------------------------
-    # Load active Products for Sales generation
+    # Load ACTIVE PRODUCTS ONLY (customers are no longer filtered here)
     # ------------------------------------------------------------
     products_path = parquet_dims / "products.parquet"
 
+    import pandas as pd
+
     products_df = pd.read_parquet(
         products_path,
-        columns=["ProductKey", "IsActiveInSales"],
+        columns=["ProductKey", "IsActiveInSales", "UnitPrice", "UnitCost"],
     )
 
-    active_product_keys = products_df.loc[
-        products_df["IsActiveInSales"] == 1,
-        "ProductKey",
-    ].to_numpy()
+    active_products_df = products_df.loc[
+        products_df["IsActiveInSales"] == 1
+    ]
 
-    if len(active_product_keys) == 0:
+    if active_products_df.empty:
         raise RuntimeError("No active products found for sales generation")
 
-    # ------------------------------------------------------------
-    # Build active_product_np (shape-compatible with State.product_np)
-    # ------------------------------------------------------------
-    products_full_df = pd.read_parquet(
-        products_path,
-        columns=["ProductKey", "UnitPrice", "UnitCost"],
-    )
-
-    active_product_np = products_full_df.loc[
-        products_full_df["ProductKey"].isin(active_product_keys)
+    active_product_np = active_products_df[
+        ["ProductKey", "UnitPrice", "UnitCost"]
     ].to_numpy()
+
+    # ------------------------------------------------------------
+    # Bind ONLY runner-level globals
+    # ------------------------------------------------------------
+    # NOTE:
+    # - We do NOT bind active_customer_keys anymore
+    # - Customer lifecycle is resolved inside sales.py
+    bind_globals({
+        "skip_order_cols": skip_order_cols,
+        "active_product_np": active_product_np,
+        "models_cfg": State.models_cfg,
+    })
 
     # ------------------------------------------------------------
     # Run sales fact generation
     # ------------------------------------------------------------
-    from src.facts.sales.sales import generate_sales_fact
-
     stage("Generating Sales")
     t0 = time.time()
-
-    # Bind only runner-level globals
-    bind_globals({
-        "skip_order_cols": skip_order_cols,
-        "active_customer_keys": active_customer_keys,
-        "active_product_np": active_product_np,
-        "models_cfg": State.models_cfg,
-    })
 
     generate_sales_fact(
         cfg,
@@ -136,18 +118,21 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         total_rows=sales_cfg["total_rows"],
         file_format=sales_cfg["file_format"],
 
-        # REQUIRED FOR PARQUET MODE
+        # Parquet merge options
         merge_parquet=sales_cfg.get("merge_parquet", False),
         merged_file=sales_cfg.get("merged_file", "sales.parquet"),
 
-        # existing args
+        # Performance / execution
         row_group_size=sales_cfg.get("row_group_size", 2_000_000),
         compression=sales_cfg.get("compression", "snappy"),
         chunk_size=sales_cfg.get("chunk_size", 1_000_000),
         workers=sales_cfg.get("workers"),
+
+        # Partitioning / delta
         partition_enabled=sales_cfg.get("partition_enabled", False),
         partition_cols=sales_cfg.get("partition_cols", ["Year", "Month"]),
         delta_output_folder=str(sales_out_folder),
+
         skip_order_cols=skip_order_cols,
     )
 
@@ -157,18 +142,16 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # Packaging (consumes Parquet output)
     # ------------------------------------------------------------
     t1 = time.time()
-    
+
     final_folder = package_output(cfg, sales_cfg, parquet_dims, fact_out)
 
     pbip_template = None
 
     if fmt == "csv":
         pbip_template = Path("samples/powerbi/templates/PBIP CSV")
-
     elif fmt == "parquet":
         pbip_template = Path("samples/powerbi/templates/PBIP Parquet")
-
-    # deltaparquet → intentionally skip PBIP
+    # deltaparquet intentionally skips PBIP
 
     if pbip_template is not None:
         attach_pbip_project(

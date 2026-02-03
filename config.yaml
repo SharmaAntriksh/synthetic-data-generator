@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2021-05-03"
-    end: "2026-05-27"
+    start: "2021-01-01"
+    end: "2026-12-31"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -21,10 +21,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 200521
+  total_rows: 1005200
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -80,21 +80,27 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 38131
-  active_ratio: 0.97
-  
-  pct_india: 1
-  pct_us: 60
+  total_customers: 54117
+  active_ratio: 0.90
+
+  pct_india: 10
+  pct_us: 51
   pct_eu: 39
-  pct_org: 2
+  pct_org: 10
 
   names_folder: "./data/customer_names"
+
+  lifecycle:
+    enable_churn: true
+    base_monthly_churn: 0.025
+    min_tenure_months: 5
+    initial_active_customers: 200        # or 1000
+    initial_spread_months: 36            # customers started in the 24 months before start_date
 
   override:
     seed: null
     paths: {}
     dates: {}
-
 
 # ---------------------------------------------------------------------
 # GEOGRAPHY / LOCATIONS
@@ -166,8 +172,8 @@ dates:
 
   override:
     dates:
-      start: "2020-01-01"     # optional, null = use defaults
-      end:   "2026-12-31"     # optional, null = use defaults
+      start: null     # optional, null = use defaults
+      end:   null     # optional, null = use defaults
 
 
 # ---------------------------------------------------------------------
