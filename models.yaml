@@ -60,6 +60,20 @@ models:
         low: 0.80
         high: 1.15
 
+  macro_demand:
+    base_level: 1.0
+    yearly_growth: 0.03
+    seasonality_amplitude: 0.12
+    seasonality_phase: 0.0
+    noise_std: 0.04
+    shock_probability: 0.06
+    shock_impact: [-0.35, -0.10]
+
+    early_month_cap:
+      enabled: true
+      max_rows_per_customer: 10
+      redistribute_excess: true
+
   # ============================================================
   # QUANTITY / BASKET SIZE
   # Controls HOW MANY units per order line

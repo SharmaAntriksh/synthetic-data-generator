@@ -24,6 +24,7 @@ def load_list(path: str) -> np.ndarray:
         raise FileNotFoundError(f"Missing file: {path}")
 
     s = pd.read_csv(path, header=None, dtype=str)[0].str.strip()
+    # Keep only simple name tokens; drop junk rows
     s = s[s.str.match(r"^[A-Za-z\-\'. ]+$")]
     return s.str.title().unique()
 
@@ -33,13 +34,30 @@ def load_list(path: str) -> np.ndarray:
 # ---------------------------------------------------------
 def _parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
     """
-    Reads cfg['defaults']['dates']['start'/'end'].
-    Accepts strings parseable by pandas.
+    Resolve timeline dates from (priority order):
+      1) cfg['customers']['global_dates']  (runner injected)
+      2) cfg['defaults']['dates']
+      3) cfg['_defaults']['dates']         (backward compatibility)
+
+    Returns normalized pandas Timestamps (midnight).
     """
+    # 1) Runner-injected section-level dates
+    cust = cfg.get("customers") or {}
+    if isinstance(cust, dict):
+        gd = cust.get("global_dates")
+        if isinstance(gd, dict) and gd.get("start") and gd.get("end"):
+            start = pd.to_datetime(gd["start"]).normalize()
+            end = pd.to_datetime(gd["end"]).normalize()
+            if end < start:
+                raise ValueError("defaults.dates.end must be >= defaults.dates.start")
+            return start, end
+
+    # 2/3) Root defaults
     try:
-        dcfg = cfg["defaults"]["dates"]
-        start = pd.to_datetime(dcfg["start"])
-        end = pd.to_datetime(dcfg["end"])
+        defaults = cfg.get("defaults") or cfg.get("_defaults")
+        dcfg = defaults["dates"]
+        start = pd.to_datetime(dcfg["start"]).normalize()
+        end = pd.to_datetime(dcfg["end"]).normalize()
     except Exception as e:
         raise ValueError(
             "Missing or invalid defaults.dates.start/end in config.yaml"
@@ -51,30 +69,50 @@ def _parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
     return start, end
 
 
-def _month_index_space(start: pd.Timestamp, end: pd.Timestamp) -> Tuple[pd.Period, pd.Period, int]:
+def _month_index_space(start_date: pd.Timestamp, end_date: pd.Timestamp):
     """
-    Converts any start/end date into month buckets inclusive.
+    Build a month index space [0..T-1] over the inclusive month range.
+
+    Returns:
+      start_month0 : Timestamp at month start for start_date's month
+      end_month0   : Timestamp at month start for end_date's month
+      T            : int month count inclusive
     """
-    start_m = start.to_period("M")
-    end_m = end.to_period("M")
-    months = int((end_m - start_m) + 1)
-    if months <= 0:
-        raise ValueError("Computed non-positive number of months from defaults.dates")
-    return start_m, end_m, months
+    start_ts = pd.to_datetime(start_date).normalize()
+    end_ts = pd.to_datetime(end_date).normalize()
+
+    sp = start_ts.to_period("M")
+    ep = end_ts.to_period("M")
+
+    if ep < sp:
+        raise ValueError("defaults.dates.end must be >= defaults.dates.start")
+
+    T = int(ep.ordinal - sp.ordinal) + 1
+    start_month0 = sp.to_timestamp(how="start")
+    end_month0 = ep.to_timestamp(how="start")
+    return start_month0, end_month0, T
 
 
-def _month_idx_to_date(month0: pd.Period, month_idx: np.ndarray) -> np.ndarray:
+def _month_idx_to_date(month0, month_idx):
     """
-    Maps month indices (0..T-1) to a date (first day of month).
-    Returns numpy array of python 'date' objects.
+    Convert a 0-based month index array into timestamps (month start).
+
+    Accepts:
+      - month0 as pandas.Timestamp OR pandas.Period("M")
+      - month_idx as int or ndarray[int] (0-based)
+
+    Returns:
+      numpy array of pandas.Timestamp (datetime64[ns]) at month start.
     """
-    # month0.to_timestamp() gives first day of month at 00:00
-    base = month0.to_timestamp(how="start")
-    ts = base + pd.to_timedelta(month_idx.astype("int64") * 30, unit="D")  # coarse
-    # Replace coarse 30D with exact Period arithmetic
-    # Build PeriodIndex via add of months
-    p = (month0 + month_idx.astype("int64")).to_timestamp(how="start")
-    return pd.to_datetime(p).date
+    if isinstance(month0, pd.Period):
+        base_period = month0
+    else:
+        base_period = pd.to_datetime(month0).to_period("M")
+
+    idx = np.asarray(month_idx, dtype=np.int64)
+    ords = base_period.ordinal + idx
+    pi = pd.PeriodIndex.from_ordinals(ords, freq="M")
+    return pi.to_timestamp(how="start").to_numpy()
 
 
 # ---------------------------------------------------------
@@ -92,37 +130,26 @@ def _acquisition_weights(T: int, curve: str, params: Dict) -> np.ndarray:
     params vary by curve; all optional.
     """
     m = np.arange(T, dtype="float64")
-
     curve = (curve or "linear_ramp").lower()
 
     if curve == "uniform":
-        w = np.ones(T, dtype="float64")
-
+        w = np.ones(T)
     elif curve == "linear_ramp":
-        shape = float(params.get("shape", 2.0))  # higher = steeper ramp toward later months
+        shape = float(params.get("shape", 2.0))
         w = (m + 1.0) ** shape
-
     elif curve == "logistic":
-        # midpoint and steepness control
-        midpoint = float(params.get("midpoint", 0.55))  # fraction of T
+        midpoint = float(params.get("midpoint", 0.55))
         steep = float(params.get("steepness", 10.0))
         x0 = midpoint * (T - 1)
-        # logistic increasing, then we convert to per-month mass by differencing cumulative
         cdf = 1.0 / (1.0 + np.exp(-steep * ((m - x0) / max(T - 1, 1))))
-        # convert to pmf-like weights (differences); ensure non-zero
         w = np.diff(np.r_[0.0, cdf])
         w = np.clip(w, 1e-9, None)
-
     else:
-        raise ValueError(f"Unknown customers.lifecycle.acquisition_curve: {curve}")
+        raise ValueError(f"Unknown acquisition curve: {curve}")
 
-    w = np.clip(w, 1e-12, None)
     return w / w.sum()
 
 
-# ---------------------------------------------------------
-# Helper: Optional churn end-month simulation
-# ---------------------------------------------------------
 def _simulate_end_month(
     rng: np.random.Generator,
     start_month: np.ndarray,
@@ -133,35 +160,22 @@ def _simulate_end_month(
     min_tenure_months: int,
 ) -> np.ndarray:
     """
-    Returns CustomerEndMonth as Int64 array with pd.NA for "never churns inside window".
-    If enable=False: returns all pd.NA.
+    For each customer, possibly sample an end month (churn month).
+    If churn is disabled, returns pd.NA for all entries.
     """
     if not enable:
         return np.full(len(start_month), pd.NA, dtype="object")
 
-    if base_monthly_churn < 0 or base_monthly_churn > 0.5:
-        raise ValueError("customers.lifecycle.base_monthly_churn must be in [0, 0.5]")
-
-    min_tenure_months = int(max(min_tenure_months, 0))
-
     end_month = np.full(len(start_month), pd.NA, dtype="object")
-
-    # Vectorizing churn with varying hazards is non-trivial; do a tight loop.
-    # N is usually manageable (tens of thousands).
     for i in range(len(start_month)):
         s = int(start_month[i])
-        hazard = float(base_monthly_churn) * float(churn_bias[i])
-        hazard = min(max(hazard, 0.0), 0.95)
-
-        # enforce minimum tenure
-        m = s + min_tenure_months
-
+        hazard = min(max(base_monthly_churn * float(churn_bias[i]), 0.0), 0.95)
+        m = s + max(int(min_tenure_months), 0)
         while m < T:
             if rng.random() < hazard:
                 end_month[i] = int(m)
                 break
             m += 1
-
     return end_month
 
 
@@ -232,7 +246,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     # Allocate arrays
     # -----------------------------------------------------
-    N = total_customers
+    N = int(total_customers)
     CustomerKey = np.arange(1, N + 1, dtype="int64")
 
     # --- Preserve global sales eligibility ---
@@ -311,36 +325,44 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
             "ZenithSystems",
             "PrimeSource",
             "ApexCorp",
-            "GlobalWorks",
-            "VertexInnovations",
-            "OmniSoft",
-            "NimbusSolutions",
-            "SilverlineTech",
-        ]
+            "BluePeak",
+            "NimbusWorks",
+            "Evergreen Holdings",
+            "Sunrise Global",
+            "MetroLink",
+            "Ironclad Industries",
+            "Pioneer Labs",
+            "CoreAxis",
+            "Vertex Partners",
+            "OmniTrade",
+            "Silverline Group",
+            "Summit Ridge",
+            "Northstar Logistics",
+            "QuantumBridge",
+            "Cascade Ventures",
+        ],
+        dtype=object,
     )
 
-    CompanyName = np.empty(N, dtype=object)
-    CompanyName[IsOrg] = company_pool[rng.integers(0, len(company_pool), size=IsOrg.sum())]
-    CompanyName[~IsOrg] = None
-
-    safe_company = np.where(CompanyName == None, "", CompanyName.astype(str))
-    OrgDomain = np.where(IsOrg, np.char.lower(safe_company) + ".com", None)
+    OrgName = np.empty(N, dtype=object)
+    OrgName[IsOrg] = rng.choice(company_pool, size=IsOrg.sum(), replace=True)
+    OrgName[~IsOrg] = None
 
     # -----------------------------------------------------
-    # Emails
+    # Email
     # -----------------------------------------------------
     Email = np.empty(N, dtype=object)
-    person_mask = ~IsOrg
+    personal_mask = ~IsOrg
+    if personal_mask.sum():
+        domain = rng.choice(PERSONAL_EMAIL_DOMAINS, size=personal_mask.sum(), replace=True)
+        user = (safe_first[personal_mask] + "." + safe_last[personal_mask]).astype(str)
+        user = np.char.lower(np.char.replace(user, " ", ""))
+        Email[personal_mask] = user + "@" + domain
 
-    email_domain = rng.choice(PERSONAL_EMAIL_DOMAINS, size=person_mask.sum())
-    Email[person_mask] = (
-        np.char.lower(safe_first[person_mask])
-        + "."
-        + np.char.lower(safe_last[person_mask])
-        + rng.integers(10, 99999, size=person_mask.sum()).astype(str)
-        + "@"
-        + email_domain
-    )
+    # Org email
+    OrgDomain = np.empty(N, dtype=object)
+    OrgDomain[IsOrg] = np.char.lower(np.char.replace(OrgName[IsOrg].astype(str), " ", "")) + ".com"
+    OrgDomain[~IsOrg] = None
     Email[IsOrg] = "info@" + OrgDomain[IsOrg]
 
     # -----------------------------------------------------
@@ -356,9 +378,9 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # Demographics
     # -----------------------------------------------------
     BirthDate = np.empty(N, dtype=object)
+    person_mask = ~IsOrg
     if person_mask.sum():
         # Use a stable "as of" date so reruns are deterministic: pick cfg end_date
-        # (Previously used pd.Timestamp("today"), which changes every day.)
         ages = rng.integers(18 * 365, 70 * 365, size=person_mask.sum())
         anchor = end_date.normalize()
         dates = anchor - pd.to_timedelta(ages, unit="D")
@@ -370,7 +392,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     MaritalStatus[IsOrg] = None
 
     YearlyIncome = np.where(IsOrg, None, rng.integers(20000, 200000, size=N))
-
     TotalChildren = pd.Series(np.where(IsOrg, pd.NA, rng.integers(0, 5, size=N)), dtype="Int64")
 
     Education = np.where(
@@ -392,60 +413,28 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
 
     acquisition_curve = lifecycle_cfg.get("acquisition_curve", "linear_ramp")
     acquisition_params = lifecycle_cfg.get("acquisition_params", {}) or {}
+    weights = _acquisition_weights(T, acquisition_curve, acquisition_params)
 
-    # If you want to ensure some customers exist at month 0, allow a "launch_cohort" fraction.
-    launch_frac = float(lifecycle_cfg.get("launch_cohort_fraction", 0.10))
-    launch_frac = min(max(launch_frac, 0.0), 1.0)
-    launch_n = int(np.floor(N * launch_frac))
+    CustomerStartMonth = rng.choice(np.arange(T), size=N, p=weights)
 
-    weights = _acquisition_weights(T=T, curve=acquisition_curve, params=acquisition_params)
-
-    CustomerStartMonth = np.empty(N, dtype="int64")
-    if launch_n > 0:
-        # Force an initial cohort at month 0, then sample the rest from the curve
-        idx = np.arange(N)
-        rng.shuffle(idx)
-        launch_idx = idx[:launch_n]
-        rest_idx = idx[launch_n:]
-        CustomerStartMonth[launch_idx] = 0
-        CustomerStartMonth[rest_idx] = rng.choice(np.arange(T), size=len(rest_idx), p=weights)
-    else:
-        CustomerStartMonth[:] = rng.choice(np.arange(T), size=N, p=weights)
-
-    # Behavioral columns (defaults)
-    # Segments: useful for later multipliers; keep small and stable
-    seg_cfg = lifecycle_cfg.get("segments", None)
-    if isinstance(seg_cfg, dict) and "names" in seg_cfg and "p" in seg_cfg:
-        seg_names = seg_cfg["names"]
-        seg_p = seg_cfg["p"]
-    else:
-        seg_names = ["Value", "Core", "Budget"]
-        seg_p = [0.15, 0.65, 0.20]
-
-    CustomerSegment = rng.choice(seg_names, size=N, p=np.array(seg_p, dtype="float64") / np.sum(seg_p))
-
-    # Base weight: long-tail with some whales (lognormal works well)
-    base_mu = float(lifecycle_cfg.get("base_weight_mu", -0.1))
-    base_sigma = float(lifecycle_cfg.get("base_weight_sigma", 0.9))
-    CustomerBaseWeight = rng.lognormal(mean=base_mu, sigma=base_sigma, size=N).astype("float64")
-
-    # Segment multipliers (small, plausible)
-    seg_mult = {seg_names[0]: 1.8, seg_names[1]: 1.0, seg_names[2]: 0.7} if len(seg_names) >= 3 else {}
-    if seg_mult:
-        CustomerBaseWeight *= np.vectorize(lambda s: seg_mult.get(s, 1.0))(CustomerSegment)
-
-    # Temperature: burstiness/volatility; keep in [0.2, 2.0] range
-    CustomerTemperature = rng.lognormal(mean=-0.2, sigma=0.6, size=N).astype("float64")
-    CustomerTemperature = np.clip(CustomerTemperature, 0.2, 2.5)
-
-    # ChurnBias: hazard multiplier; most near 1.0, some higher
-    CustomerChurnBias = rng.lognormal(mean=0.0, sigma=0.5, size=N).astype("float64")
-    CustomerChurnBias = np.clip(CustomerChurnBias, 0.3, 4.0)
-
-    # Optional churn end month (nullable)
     enable_churn = bool(lifecycle_cfg.get("enable_churn", False))
     base_monthly_churn = float(lifecycle_cfg.get("base_monthly_churn", 0.01))
     min_tenure_months = int(lifecycle_cfg.get("min_tenure_months", 2))
+
+    # Behavior knobs (kept as in original)
+    CustomerWeight = rng.lognormal(mean=0.0, sigma=0.6, size=N).astype("float64")
+    CustomerTemperature = np.clip(rng.normal(loc=0.6, scale=0.25, size=N), 0.05, 1.0).astype("float64")
+
+    segment_cfg = lifecycle_cfg.get("segments", {}) or {}
+    seg_names = np.array(segment_cfg.get("names", ["Budget", "Mainstream", "Premium"]), dtype=object)
+    seg_probs = np.array(segment_cfg.get("probs", [0.35, 0.5, 0.15]), dtype="float64")
+    seg_probs = seg_probs / seg_probs.sum()
+    CustomerSegment = rng.choice(seg_names, size=N, p=seg_probs)
+
+    churn_bias_cfg = lifecycle_cfg.get("churn_bias", {}) or {}
+    # Generate a per-customer multiplicative bias for churn hazard
+    bias_sigma = float(churn_bias_cfg.get("sigma", 0.5))
+    CustomerChurnBias = rng.lognormal(mean=0.0, sigma=bias_sigma, size=N).astype("float64")
 
     CustomerEndMonth = _simulate_end_month(
         rng=rng,
@@ -457,48 +446,52 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         min_tenure_months=min_tenure_months,
     )
 
-    # Human-readable dates (useful for debugging/Power BI/SQL)
     CustomerStartDate = _month_idx_to_date(start_month0, CustomerStartMonth)
 
-    # CustomerEndDate: nullable
     if enable_churn:
-        end_idx = np.array([int(x) if x is not pd.NA else -1 for x in CustomerEndMonth], dtype="int64")
+        end_idx = np.array([int(x) if not pd.isna(x) else -1 for x in CustomerEndMonth], dtype="int64")
         CustomerEndDate = np.where(
             end_idx >= 0,
             _month_idx_to_date(start_month0, end_idx),
             pd.NaT,
         )
     else:
-        CustomerEndDate = np.full(N, pd.NaT, dtype="datetime64[ns]")
+        CustomerEndDate = pd.Series(pd.NaT, index=np.arange(N), dtype="datetime64[ns]").to_numpy()
 
     # -----------------------------------------------------
-    # Final DataFrame
+    # Build dataframe (preserve schema)
     # -----------------------------------------------------
     df = pd.DataFrame(
         {
             "CustomerKey": CustomerKey,
+            "GeographyKey": GeographyKey,
+            "FirstName": FirstName,
+            "LastName": LastName,
             "CustomerName": CustomerName,
-            "DOB": BirthDate,
-            "MaritalStatus": MaritalStatus,
+            "Email": Email,
             "Gender": Gender,
-            "EmailAddress": Email,
+            "BirthDate": BirthDate,
+            "MaritalStatus": MaritalStatus,
             "YearlyIncome": YearlyIncome,
             "TotalChildren": TotalChildren,
             "Education": Education,
             "Occupation": Occupation,
-            "CustomerType": np.where(IsOrg, "Organization", "Person"),
-            "CompanyName": CompanyName,
-            "GeographyKey": GeographyKey,
-            # Preserve the existing column name & semantics (global eligibility)
-            "IsActiveInSales": is_active.astype("int64"),
-            # NEW: lifecycle & behavior
+            "Region": Region,
+            "IsOrg": IsOrg.astype("int64"),
+            "OrgName": OrgName,
+            "OrgDomain": OrgDomain,
+            "IsActiveInSales": is_active,
+
+            # lifecycle fields
             "CustomerStartMonth": CustomerStartMonth.astype("int64"),
             "CustomerEndMonth": pd.Series(CustomerEndMonth, dtype="Int64"),
-            "CustomerStartDate": CustomerStartDate,
+            "CustomerStartDate": pd.to_datetime(CustomerStartDate),
             "CustomerEndDate": pd.to_datetime(CustomerEndDate),
-            "CustomerSegment": CustomerSegment,
-            "CustomerBaseWeight": CustomerBaseWeight,
+
+            # helper knobs
+            "CustomerWeight": CustomerWeight,
             "CustomerTemperature": CustomerTemperature,
+            "CustomerSegment": CustomerSegment,
             "CustomerChurnBias": CustomerChurnBias,
         }
     )

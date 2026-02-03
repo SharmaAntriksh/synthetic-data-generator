@@ -80,9 +80,9 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 38131
+  total_customers: 28131
   active_ratio: 0.97
-  
+
   pct_india: 1
   pct_us: 60
   pct_eu: 39
@@ -90,11 +90,15 @@ customers:
 
   names_folder: "./data/customer_names"
 
+  lifecycle:
+    enable_churn: true
+    base_monthly_churn: 0.03
+    min_tenure_months: 1
+
   override:
     seed: null
     paths: {}
     dates: {}
-
 
 # ---------------------------------------------------------------------
 # GEOGRAPHY / LOCATIONS
