@@ -410,12 +410,38 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # Lifecycle + behavioral knobs (NEW)
     # -----------------------------------------------------
     lifecycle_cfg = cust_cfg.get("lifecycle", {}) or {}
+    initial_active_customers = int(lifecycle_cfg.get("initial_active_customers", 0) or 0)
+    initial_spread_months = int(lifecycle_cfg.get("initial_spread_months", 0) or 0)
 
     acquisition_curve = lifecycle_cfg.get("acquisition_curve", "linear_ramp")
     acquisition_params = lifecycle_cfg.get("acquisition_params", {}) or {}
     weights = _acquisition_weights(T, acquisition_curve, acquisition_params)
 
     CustomerStartMonth = rng.choice(np.arange(T), size=N, p=weights)
+    # -----------------------------------------------------
+    # Warm-start cohort: ensure an "existing customer base" at month 0
+    # -----------------------------------------------------
+    if initial_active_customers > 0:
+        k = min(initial_active_customers, N)
+
+        # Prefer customers that are active for sales (IsActiveInSales=1)
+        active_idx = np.where(is_active == 1)[0]
+        if active_idx.size > 0:
+            k2 = min(k, active_idx.size)
+            warm_idx = rng.choice(active_idx, size=k2, replace=False)
+            # Top up from everyone if needed
+            if k2 < k:
+                rest = np.setdiff1d(np.arange(N), warm_idx, assume_unique=False)
+                extra = rng.choice(rest, size=(k - k2), replace=False)
+                warm_idx = np.concatenate([warm_idx, extra])
+        else:
+            warm_idx = rng.choice(np.arange(N), size=k, replace=False)
+
+        # Force warm cohort to exist from dataset start (month 0)
+        CustomerStartMonth[warm_idx] = 0
+
+        # Optional: if you later want to preserve "pre-start tenure", create a helper:
+        # CustomerTenureAtStartMonths[warm_idx] = rng.integers(0, initial_spread_months + 1, size=warm_idx.size)
 
     enable_churn = bool(lifecycle_cfg.get("enable_churn", False))
     base_monthly_churn = float(lifecycle_cfg.get("base_monthly_churn", 0.01))
