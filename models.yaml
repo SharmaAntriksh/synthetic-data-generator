@@ -10,6 +10,7 @@ models:
     # Higher value → large datasets stay more volatile
     # Lower value → large datasets become smoother
     size_scale_threshold: 50000
+    preserve_row_count: false  # When generating data month-by-month, do NOT rebalance rows back to the original count; allow activity thinning to actually reduce rows per month for realistic volume variation. Set true only for legacy full-range generation where total row count must remain fixed.
 
     # controls continuity of order volume (transactions per mont
     month_inertia: 0.90
