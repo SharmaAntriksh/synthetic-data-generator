@@ -656,8 +656,36 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # Tag month offset into discovery config for seasonal cycle
         disc_cfg_local = dict(disc_cfg)
         disc_cfg_local["_m_offset"] = int(m_offset)
+
         opc = float(disc_cfg_local.get("orders_per_new_customer", 20.0))
-        disc_cfg_local["_target_new_customers"] = int(max(1, round(int(m_rows) / max(opc, 1e-9))))
+        min_month = int(disc_cfg_local.get("min_new_customers_per_month", 0) or 0)
+
+        # demand-driven discovery
+        target_new = int(max(1, round(int(m_rows) / max(opc, 1e-9))))
+
+        # HARD FLOOR (prevents year-2 collapse)
+        if min_month > 0:
+            ramp_months = int(disc_cfg_local.get("floor_ramp_months", 12) or 0)
+            if ramp_months > 0:
+                # ramp floor up over first N months
+                t = min(1.0, max(0.0, m_offset / float(ramp_months)))
+                floor0 = float(min_month)
+                floor1 = float(disc_cfg_local.get("min_new_customers_steady", min_month))
+                floor = int(round(floor0 + t * (floor1 - floor0)))
+            else:
+                floor = int(min_month)
+            target_new = max(target_new, floor)
+
+        # --------------------------------------------------------
+        # BOOTSTRAP SUPPRESSION (removes Year-1 privilege)
+        # --------------------------------------------------------
+        bootstrap_months = int(disc_cfg_local.get("bootstrap_suppression_months", 12) or 0)
+        if bootstrap_months > 0 and m_offset < bootstrap_months:
+            scale = (m_offset + 1) / float(bootstrap_months)
+            target_new = int(round(target_new * scale))
+
+
+        disc_cfg_local["_target_new_customers"] = target_new
 
         target_distinct = None
         if use_participation:

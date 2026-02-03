@@ -17,17 +17,7 @@ STATIC_SCHEMAS = {
         ("CustomerType",       "VARCHAR(20) NOT NULL"),
         ("CompanyName",        "VARCHAR(200)"),
         ("GeographyKey",       "INT NOT NULL"),
-        ("IsActiveInSales",    "INT NOT NULL"),
-        
-        ("CustomerStartMonth", "INT NOT NULL"),     # 0..T-1 month index
-        ("CustomerEndMonth",   "INT NULL"),         # nullable churn month
-        ("CustomerStartDate",  "DATE NOT NULL"),    # month start date
-        ("CustomerEndDate",    "DATE NULL"),        # nullable churn date
-
-        ("CustomerWeight",      "FLOAT NOT NULL"),  # lognormal > 0
-        ("CustomerTemperature", "FLOAT NOT NULL"),  # typically 0..1
-        ("CustomerSegment",     "VARCHAR(30) NOT NULL"),
-        ("CustomerChurnBias",   "FLOAT NOT NULL")  # lognormal > 0
+        ("IsActiveInSales",    "INT NOT NULL")
     ],
 
     "Geography": [
