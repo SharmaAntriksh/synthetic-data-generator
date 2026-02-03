@@ -80,11 +80,11 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 18131
-  active_ratio: 0.80
+  total_customers: 38101
+  active_ratio: 0.90
 
   pct_india: 10
-  pct_us: 50
+  pct_us: 51
   pct_eu: 39
   pct_org: 10
 
@@ -94,8 +94,8 @@ customers:
     enable_churn: true
     base_monthly_churn: 0.015
     min_tenure_months: 3
-    initial_active_customers: 800        # or 1000
-    initial_spread_months: 12            # customers started in the 24 months before start_date
+    initial_active_customers: 1200        # or 1000
+    initial_spread_months: 36            # customers started in the 24 months before start_date
 
   override:
     seed: null

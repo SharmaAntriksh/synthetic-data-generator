@@ -352,7 +352,7 @@ def _sample_customers(
         p = float(np.clip(p, min_p, max_p))
 
         row_scale = np.sqrt(max(n, 1) / 10_000)
-        discover_n = max(1, int(undiscovered.size * p * row_scale))
+        discover_n = int(discovery_cfg.get("_target_new_customers", 1))
         
         # --- HARD CAP: prevent early discovery spike ---
         max_frac = discovery_cfg.get("max_fraction_per_month")
@@ -656,7 +656,8 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # Tag month offset into discovery config for seasonal cycle
         disc_cfg_local = dict(disc_cfg)
         disc_cfg_local["_m_offset"] = int(m_offset)
-
+        opc = float(disc_cfg_local.get("orders_per_new_customer", 20.0))
+        disc_cfg_local["_target_new_customers"] = int(max(1, round(int(m_rows) / max(opc, 1e-9))))
 
         target_distinct = None
         if use_participation:

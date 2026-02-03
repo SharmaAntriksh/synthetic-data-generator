@@ -86,7 +86,7 @@ models:
   # ============================================================
   customer_participation:
     # target distinct customers ≈ base_distinct_ratio * eligible_customers (then modulated by cycles)
-    base_distinct_ratio: 0.45
+    base_distinct_ratio: 0.50
 
     # hard floors/caps (prevents “month has 1 customer” and “everyone buys every month”)
     min_distinct_customers: 250
@@ -154,11 +154,12 @@ models:
   # ============================================================
   customer_discovery:
     base_discovery_rate: 0.08
-    seasonal_amplitude: 0.22
+    seasonal_amplitude: 0.0
     seasonal_period_months: 24
     min_discovery_rate: 0.07
     max_discovery_rate: 0.30
-    max_fraction_per_month: 0.04
+    max_fraction_per_month: 0.03
+    orders_per_new_customer: 20
 
   # ============================================================
   # PRICING PIPELINE

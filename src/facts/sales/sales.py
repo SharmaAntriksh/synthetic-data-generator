@@ -201,7 +201,7 @@ def generate_sales_fact(
     # Load Customers (NEW: lifecycle-aware arrays)
     # ------------------------------------------------------------
     customers_path = os.path.join(parquet_folder, "customers.parquet")
-
+    
     # Required columns for the new pipeline
     cust_cols = [
         "CustomerKey",
@@ -210,16 +210,18 @@ def generate_sales_fact(
         "CustomerEndMonth",
     ]
 
-    # Optional (future-proof) weights; if absent, we still run
-    optional_cols = ["CustomerBaseWeight"]
-    available_cols = set(pd.read_parquet(customers_path, columns=["CustomerKey"]).columns)  # minimal read
+    # Read required customer columns first (never fails due to optional columns)
+    cust_df = load_parquet_df(customers_path, cust_cols)
 
-    # Safer approach: try read with optional and fallback if missing
-    read_cols = cust_cols + optional_cols
-    try:
-        cust_df = load_parquet_df(customers_path, read_cols)
-    except Exception:
-        cust_df = load_parquet_df(customers_path, cust_cols)
+    # Load customer weight column separately (robust)
+    customer_base_weight = None
+    for wcol in ("CustomerBaseWeight", "CustomerWeight"):
+        try:
+            w = pd.read_parquet(customers_path, columns=[wcol])[wcol]
+            customer_base_weight = w.to_numpy(np.float64)
+            break
+        except Exception:
+            pass
 
     if cust_df.empty:
         raise RuntimeError("customers.parquet is empty; cannot generate sales")
@@ -239,12 +241,11 @@ def generate_sales_fact(
     else:
         customer_end_month = np.full(len(customer_keys), -1, dtype=np.int64)
 
-    customer_base_weight = None
-    if "CustomerBaseWeight" in cust_df.columns:
-        try:
-            customer_base_weight = cust_df["CustomerBaseWeight"].to_numpy(np.float64)
-        except Exception:
-            customer_base_weight = None
+    # customer_base_weight = None
+    # if "CustomerBaseWeight" in cust_df.columns:
+    #     customer_base_weight = cust_df["CustomerBaseWeight"].to_numpy(np.float64)
+    # elif "CustomerWeight" in cust_df.columns:
+    #     customer_base_weight = cust_df["CustomerWeight"].to_numpy(np.float64)
 
     # NOTE: We intentionally do NOT expand/duplicate customer keys here.
     # Duplicating keys breaks alignment with start/end month arrays.
