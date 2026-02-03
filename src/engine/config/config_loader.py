@@ -52,6 +52,9 @@ def load_config(path: str | Path = "config.yaml") -> dict:
     if "customers" in cfg and not isinstance(cfg["customers"], dict):
         raise KeyError("Invalid 'customers' section in config (expected mapping)")
 
+    # Apply high-level acquisition tuning (if present)
+    cfg = apply_acquisition_tuning(cfg)
+
     return cfg
 
 
@@ -67,7 +70,72 @@ def load_config_file(path: str | Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
-    return _load_any(path)
+    cfg = _load_any(path)
+    cfg = apply_acquisition_tuning(cfg)
+    return cfg
+# ------------------------------------------------------------
+# High-level acquisition tuning
+# ------------------------------------------------------------
+
+def apply_acquisition_tuning(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate high-level acquisition tuning knobs into detailed model parameters.
+
+    Expected config shape:
+      tuning:
+        acquisition_intensity: 0..1   (higher => more new customers)
+        acquisition_smoothness: 0..1  (higher => flatter / fewer dead months)
+        acquisition_cycles: 0..1      (higher => stronger multi-year waves)
+
+    This is deliberately lightweight and safe:
+      - It does NOT require pipeline defaults (so it works for models.yaml too).
+      - It only mutates the 'models' subtree and only when 'tuning' exists.
+    """
+    tuning = cfg.get("tuning")
+    if not isinstance(tuning, dict):
+        return cfg
+
+    # Copy shallowly so callers don't get surprising side-effects
+    cfg = dict(cfg)
+    models = cfg.setdefault("models", {})
+
+    # Ensure subsections exist
+    discovery = models.setdefault("customer_discovery", {})
+    participation = models.setdefault("customer_participation", {})
+    cycles = participation.setdefault("cycles", {})
+
+    # Read knobs
+    def _clamp01(x: float) -> float:
+        return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
+
+    intensity = _clamp01(float(tuning.get("acquisition_intensity", 0.5)))
+    smoothness = _clamp01(float(tuning.get("acquisition_smoothness", 0.5)))
+    cycle_strength = _clamp01(float(tuning.get("acquisition_cycles", 0.3)))
+
+    # ------------------
+    # Discovery mapping
+    # ------------------
+    # More intensity => fewer orders per new customer (more new customers)
+    discovery["orders_per_new_customer"] = int(round(40 - 30 * intensity))  # 40..10
+
+    # Smoothness sets a monthly floor for new customers to prevent troughs
+    discovery["min_new_customers_per_month"] = int(round(30 + 200 * smoothness))  # 30..230
+
+    # Safety cap (unless explicitly overridden)
+    discovery.setdefault("max_fraction_per_month", 0.03)
+
+    # Avoid deterministic troughs caused by discovery seasonality
+    discovery["seasonal_amplitude"] = 0.0
+
+    # ----------------------
+    # Participation mapping
+    # ----------------------
+    # Keep enabled unless user explicitly disables it elsewhere
+    cycles.setdefault("enabled", True)
+
+    # Cycles amplitude: small baseline + user-controlled strength
+    cycles["amplitude"] = round(0.05 + 0.30 * cycle_strength, 3)  # 0.05..0.35
+
+    return cfg
 
 
 # ------------------------------------------------------------

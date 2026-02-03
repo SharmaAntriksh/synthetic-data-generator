@@ -1,12 +1,14 @@
 # ---------------------------------------------------------
 #  CUSTOMERS DIMENSION (REALISTIC CONTOSO VERSION)
-#  - Adds timeline-aware lifecycle fields for realistic acquisition over time
+#  - Adds timeline-aware lifecycle fields for acquisition/churn over time
 #  - Preserves customers.active_ratio as the global "eligible for sales" gate
+#  - FIX: warm-start cohort can be spread over early months (initial_spread_months)
+#  - FIX: optional even acquisition distribution for evenly split new customers
 # ---------------------------------------------------------
 
 import os
 from pathlib import Path
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -41,7 +43,6 @@ def _parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
 
     Returns normalized pandas Timestamps (midnight).
     """
-    # 1) Runner-injected section-level dates
     cust = cfg.get("customers") or {}
     if isinstance(cust, dict):
         gd = cust.get("global_dates")
@@ -52,16 +53,13 @@ def _parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
                 raise ValueError("defaults.dates.end must be >= defaults.dates.start")
             return start, end
 
-    # 2/3) Root defaults
     try:
         defaults = cfg.get("defaults") or cfg.get("_defaults")
         dcfg = defaults["dates"]
         start = pd.to_datetime(dcfg["start"]).normalize()
         end = pd.to_datetime(dcfg["end"]).normalize()
     except Exception as e:
-        raise ValueError(
-            "Missing or invalid defaults.dates.start/end in config.yaml"
-        ) from e
+        raise ValueError("Missing or invalid defaults.dates.start/end in config.yaml") from e
 
     if end < start:
         raise ValueError("defaults.dates.end must be >= defaults.dates.start")
@@ -97,12 +95,12 @@ def _month_idx_to_date(month0, month_idx):
     """
     Convert a 0-based month index array into timestamps (month start).
 
-    Accepts:
-      - month0 as pandas.Timestamp OR pandas.Period("M")
-      - month_idx as int or ndarray[int] (0-based)
+    month0: pandas.Timestamp OR pandas.Period("M")
+    month_idx: int or ndarray[int]
+    Returns: numpy array of datetime64[ns] at month start.
 
-    Returns:
-      numpy array of pandas.Timestamp (datetime64[ns]) at month start.
+    Note: This function supports negative month_idx values, but the wider pipeline
+    may not expect negative CustomerStartMonth. This file keeps defaults non-negative.
     """
     if isinstance(month0, pd.Period):
         base_period = month0
@@ -123,31 +121,45 @@ def _acquisition_weights(T: int, curve: str, params: Dict) -> np.ndarray:
     Produces weights over months 0..T-1 for sampling CustomerStartMonth.
 
     curve:
-      - "linear_ramp": w ~ (m+1)^shape
-      - "logistic": S-curve, slower start then plateau
       - "uniform": flat
+      - "linear_ramp": w ~ (m+1)^shape   (shape>1 back-loads; shape<1 front-loads)
+      - "logistic": S-curve
 
     params vary by curve; all optional.
     """
+    if T <= 0:
+        raise ValueError("T must be > 0")
+
     m = np.arange(T, dtype="float64")
     curve = (curve or "linear_ramp").lower()
 
     if curve == "uniform":
-        w = np.ones(T)
+        w = np.ones(T, dtype="float64")
+
     elif curve == "linear_ramp":
         shape = float(params.get("shape", 2.0))
+        if shape <= 0:
+            raise ValueError("acquisition_params.shape must be > 0")
         w = (m + 1.0) ** shape
+
     elif curve == "logistic":
         midpoint = float(params.get("midpoint", 0.55))
         steep = float(params.get("steepness", 10.0))
+        midpoint = float(np.clip(midpoint, 0.0, 1.0))
+        steep = max(steep, 1e-6)
+
         x0 = midpoint * (T - 1)
         cdf = 1.0 / (1.0 + np.exp(-steep * ((m - x0) / max(T - 1, 1))))
         w = np.diff(np.r_[0.0, cdf])
         w = np.clip(w, 1e-9, None)
+
     else:
         raise ValueError(f"Unknown acquisition curve: {curve}")
 
-    return w / w.sum()
+    wsum = float(w.sum())
+    if not np.isfinite(wsum) or wsum <= 0:
+        raise ValueError("Invalid acquisition weights; check acquisition parameters")
+    return w / wsum
 
 
 def _simulate_end_month(
@@ -162,21 +174,46 @@ def _simulate_end_month(
     """
     For each customer, possibly sample an end month (churn month).
     If churn is disabled, returns pd.NA for all entries.
+
+    IMPORTANT: This assumes start_month is within [0..T-1] (the default behavior).
     """
     if not enable:
         return np.full(len(start_month), pd.NA, dtype="object")
 
+    if base_monthly_churn < 0:
+        raise ValueError("base_monthly_churn must be >= 0")
+
     end_month = np.full(len(start_month), pd.NA, dtype="object")
+    mt = max(int(min_tenure_months), 0)
+
     for i in range(len(start_month)):
         s = int(start_month[i])
+        # safety clamp, in case upstream config is edited incorrectly
+        if s < 0:
+            s = 0
+        if s >= T:
+            continue
+
         hazard = min(max(base_monthly_churn * float(churn_bias[i]), 0.0), 0.95)
-        m = s + max(int(min_tenure_months), 0)
+        m = s + mt
         while m < T:
             if rng.random() < hazard:
                 end_month[i] = int(m)
                 break
             m += 1
+
     return end_month
+
+
+def _validate_percentages(pct_india: float, pct_us: float, pct_eu: float) -> Tuple[float, float, float]:
+    p = np.array([pct_india, pct_us, pct_eu], dtype="float64")
+    if np.any(~np.isfinite(p)) or np.any(p < 0):
+        raise ValueError("pct_india/pct_us/pct_eu must be finite and >= 0")
+    s = float(p.sum())
+    if s <= 0:
+        raise ValueError("pct_india/pct_us/pct_eu must sum to > 0")
+    p = p / s
+    return float(p[0]), float(p[1]), float(p[2])
 
 
 # ---------------------------------------------------------
@@ -190,17 +227,17 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
 
     # Global seed: defaults.seed (fallback 42), customers.override.seed takes precedence
     default_seed = cfg.get("defaults", {}).get("seed", 42)
-    override_seed = cust_cfg.get("override", {}).get("seed")
+    override_seed = (cust_cfg.get("override") or {}).get("seed")
     seed = override_seed if override_seed is not None else default_seed
     rng = np.random.default_rng(int(seed))
 
     # Timeline (month index space)
     start_date, end_date = _parse_cfg_dates(cfg)
-    start_month0, end_month0, T = _month_index_space(start_date, end_date)
+    start_month0, _end_month0, T = _month_index_space(start_date, end_date)
 
     # Active gate (must preserve semantics)
     active_ratio = cust_cfg.get("active_ratio", 1.0)
-    if not isinstance(active_ratio, (int, float)) or not (0 < active_ratio <= 1):
+    if not isinstance(active_ratio, (int, float)) or not (0 < float(active_ratio) <= 1):
         raise ValueError("customers.active_ratio must be a number in the range (0, 1]")
 
     # Region / org mix (existing behavior)
@@ -208,9 +245,10 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     pct_us = float(cust_cfg["pct_us"])
     pct_eu = float(cust_cfg["pct_eu"])
     pct_org = float(cust_cfg["pct_org"])
+    p_in, p_us, p_eu = _validate_percentages(pct_india, pct_us, pct_eu)
 
     # -------------------------------------------------
-    # Email domain pools (simple, realistic)
+    # Email domain pools
     # -------------------------------------------------
     PERSONAL_EMAIL_DOMAINS = np.array(["gmail.com", "yahoo.com", "outlook.com", "hotmail.com"])
 
@@ -251,7 +289,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
 
     # --- Preserve global sales eligibility ---
     active_count = int(np.floor(N * float(active_ratio)))
-    if active_count == 0:
+    if active_count <= 0:
         raise ValueError(
             "customers.active_ratio results in zero active customers; "
             "increase active_ratio or total_customers"
@@ -262,17 +300,10 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     else:
         active_customer_keys = CustomerKey
 
-    # More efficient than converting to Python set+list for np.isin
-    # Build mask by key->index
     is_active = np.zeros(N, dtype="int64")
     is_active[(active_customer_keys - 1).astype("int64")] = 1
 
-    Region = rng.choice(
-        ["IN", "US", "EU"],
-        size=N,
-        p=[pct_india / 100.0, pct_us / 100.0, pct_eu / 100.0],
-    )
-
+    Region = rng.choice(["IN", "US", "EU"], size=N, p=[p_in, p_us, p_eu])
     IsOrg = rng.random(N) < (pct_org / 100.0)
 
     Gender = np.empty(N, dtype=object)
@@ -312,8 +343,9 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
 
     FirstName[IsOrg] = None
 
-    safe_first = np.where(FirstName == None, "", FirstName.astype(str))
-    safe_last = np.where(LastName == None, "", LastName.astype(str))
+    safe_first = np.where(FirstName is None, "", FirstName)
+    safe_first = np.where(FirstName == None, "", FirstName.astype(object))
+    safe_last = np.where(LastName == None, "", LastName.astype(object))
 
     # -----------------------------------------------------
     # Organization handling
@@ -352,14 +384,14 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # Email
     # -----------------------------------------------------
     Email = np.empty(N, dtype=object)
+
     personal_mask = ~IsOrg
     if personal_mask.sum():
         domain = rng.choice(PERSONAL_EMAIL_DOMAINS, size=personal_mask.sum(), replace=True)
-        user = (safe_first[personal_mask] + "." + safe_last[personal_mask]).astype(str)
+        user = (safe_first[personal_mask].astype(str) + "." + safe_last[personal_mask].astype(str)).astype(str)
         user = np.char.lower(np.char.replace(user, " ", ""))
         Email[personal_mask] = user + "@" + domain
 
-    # Org email
     OrgDomain = np.empty(N, dtype=object)
     OrgDomain[IsOrg] = np.char.lower(np.char.replace(OrgName[IsOrg].astype(str), " ", "")) + ".com"
     OrgDomain[~IsOrg] = None
@@ -368,11 +400,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     # CustomerName
     # -----------------------------------------------------
-    CustomerName = np.where(
-        IsOrg,
-        "Organization " + CustomerKey.astype(str),
-        safe_first + " " + safe_last,
-    )
+    CustomerName = np.where(IsOrg, "Organization " + CustomerKey.astype(str), safe_first.astype(str) + " " + safe_last.astype(str))
 
     # -----------------------------------------------------
     # Demographics
@@ -380,7 +408,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     BirthDate = np.empty(N, dtype=object)
     person_mask = ~IsOrg
     if person_mask.sum():
-        # Use a stable "as of" date so reruns are deterministic: pick cfg end_date
         ages = rng.integers(18 * 365, 70 * 365, size=person_mask.sum())
         anchor = end_date.normalize()
         dates = anchor - pd.to_timedelta(ages, unit="D")
@@ -407,19 +434,31 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     )
 
     # -----------------------------------------------------
-    # Lifecycle + behavioral knobs (NEW)
+    # Lifecycle + behavioral knobs
     # -----------------------------------------------------
     lifecycle_cfg = cust_cfg.get("lifecycle", {}) or {}
+
     initial_active_customers = int(lifecycle_cfg.get("initial_active_customers", 0) or 0)
     initial_spread_months = int(lifecycle_cfg.get("initial_spread_months", 0) or 0)
 
-    acquisition_curve = lifecycle_cfg.get("acquisition_curve", "linear_ramp")
+    # New knob (optional): force even distribution of start months
+    even_start_months = bool(lifecycle_cfg.get("even_start_months", False))
+
+    # Acquisition curve selection:
+    # - if explicitly configured, honor it
+    # - else if even_start_months OR initial_spread_months>0, default to uniform (even split)
+    # - else keep original default linear_ramp
+    acquisition_curve = lifecycle_cfg.get("acquisition_curve")
+    if acquisition_curve is None:
+        acquisition_curve = "uniform" if (even_start_months or initial_spread_months > 0) else "linear_ramp"
+
     acquisition_params = lifecycle_cfg.get("acquisition_params", {}) or {}
     weights = _acquisition_weights(T, acquisition_curve, acquisition_params)
 
-    CustomerStartMonth = rng.choice(np.arange(T), size=N, p=weights)
+    CustomerStartMonth = rng.choice(np.arange(T), size=N, p=weights).astype("int64")
+
     # -----------------------------------------------------
-    # Warm-start cohort: ensure an "existing customer base" at month 0
+    # Warm-start cohort: EXISTING base, but do NOT force all to month 0
     # -----------------------------------------------------
     if initial_active_customers > 0:
         k = min(initial_active_customers, N)
@@ -429,7 +468,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         if active_idx.size > 0:
             k2 = min(k, active_idx.size)
             warm_idx = rng.choice(active_idx, size=k2, replace=False)
-            # Top up from everyone if needed
             if k2 < k:
                 rest = np.setdiff1d(np.arange(N), warm_idx, assume_unique=False)
                 extra = rng.choice(rest, size=(k - k2), replace=False)
@@ -437,17 +475,21 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         else:
             warm_idx = rng.choice(np.arange(N), size=k, replace=False)
 
-        # Force warm cohort to exist from dataset start (month 0)
-        CustomerStartMonth[warm_idx] = 0
+        # Warm-start placement mode:
+        # - If initial_spread_months > 0: spread across [0..min(initial_spread_months, T-1)]
+        # - Else: month 0 (backward compatible)
+        spread_hi = int(min(max(initial_spread_months, 0), max(T - 1, 0)))
+        if spread_hi > 0:
+            CustomerStartMonth[warm_idx] = rng.integers(0, spread_hi + 1, size=warm_idx.size, dtype=np.int64)
+        else:
+            CustomerStartMonth[warm_idx] = 0
 
-        # Optional: if you later want to preserve "pre-start tenure", create a helper:
-        # CustomerTenureAtStartMonths[warm_idx] = rng.integers(0, initial_spread_months + 1, size=warm_idx.size)
-
+    # Churn settings
     enable_churn = bool(lifecycle_cfg.get("enable_churn", False))
     base_monthly_churn = float(lifecycle_cfg.get("base_monthly_churn", 0.01))
     min_tenure_months = int(lifecycle_cfg.get("min_tenure_months", 2))
 
-    # Behavior knobs (kept as in original)
+    # Behavior knobs
     CustomerWeight = rng.lognormal(mean=0.0, sigma=0.6, size=N).astype("float64")
     CustomerTemperature = np.clip(rng.normal(loc=0.6, scale=0.25, size=N), 0.05, 1.0).astype("float64")
 
@@ -458,7 +500,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     CustomerSegment = rng.choice(seg_names, size=N, p=seg_probs)
 
     churn_bias_cfg = lifecycle_cfg.get("churn_bias", {}) or {}
-    # Generate a per-customer multiplicative bias for churn hazard
     bias_sigma = float(churn_bias_cfg.get("sigma", 0.5))
     CustomerChurnBias = rng.lognormal(mean=0.0, sigma=bias_sigma, size=N).astype("float64")
 
@@ -522,8 +563,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         }
     )
 
-    # Return active_customer_keys as a set for backward compatibility with your pipeline
-    # (some callers expect this)
+    # Return active_customer_keys as a set for backward compatibility
     active_customer_set = set(active_customer_keys.tolist())
     return df, active_customer_set
 

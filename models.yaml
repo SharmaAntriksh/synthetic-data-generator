@@ -1,3 +1,13 @@
+# ============================================================
+# HIGH-LEVEL TUNING (preferred)
+# Edit ONLY these 3 knobs. config_loader.apply_acquisition_tuning()
+# will derive detailed customer discovery + participation settings.
+# ============================================================
+tuning:
+  acquisition_intensity: 0.55      # 0..1 (higher => more new customers)
+  acquisition_smoothness: 0.90     # 0..1 (higher => flatter spread)
+  acquisition_cycles: 0.2         # 0..1 (higher => bigger multi-year waves)
+
 models:
 
   # ============================================================
@@ -30,7 +40,7 @@ models:
 
     volatility:
       # Higher => more spiky months (use 0.06–0.10)
-      sigma: 0.095
+      sigma: 0.012
 
     row_noise:
       # Small dataset: keep lower noise so early months don’t collapse
@@ -42,8 +52,8 @@ models:
 
       # Tight bounds for smaller datasets to avoid extremes
       small_dataset:
-        low: 0.88
-        high: 1.14
+        low: 0.82
+        high: 1.22
 
       # Larger datasets tolerate more natural variance
       large_dataset:
@@ -69,8 +79,8 @@ models:
     noise_std: 0.05
 
     # Rare demand shocks to create “decline then recovery” windows
-    shock_probability: 0.10
-    shock_impact: [-0.45, -0.12]   # multiplicative hit range
+    shock_probability: 0.18
+    shock_impact: [-0.55, 0.25]   # multiplicative hit range
 
     # Prevent early months from concentrating too many rows on too few customers
     early_month_cap:
@@ -90,15 +100,15 @@ models:
 
     # hard floors/caps (prevents “month has 1 customer” and “everyone buys every month”)
     min_distinct_customers: 250
-    max_distinct_ratio: 0.55
+    max_distinct_ratio: 0.62
 
     # multi-year waves: incline -> decline -> incline ...
     cycles:
       enabled: true
-      period_months: 30       # 2-year waves
-      amplitude: 0.18         # +/-35% swing
+      period_months: 12       # 2-year waves
+      amplitude: 0.10         # +/-35% swing
       phase: 0.0
-      noise_std: 0.08         # irregularity around the wave
+      noise_std: 0.06         # irregularity around the wave
 
 
   # ============================================================
@@ -141,26 +151,33 @@ models:
     monthly_noise: 0.04
 
     # Optional waves in active pool (separate from participation waves)
-    seasonal_growth_amplitude: 0.18
+    seasonal_growth_amplitude: 0.12
     seasonal_period_months: 24
 
     # Safety floor (used only if your lifecycle model enforces it)
     min_monthly_new_customers: 80
-
+    even_start_months: false
 
   # ============================================================
   # CUSTOMER DISCOVERY (first-time appearance)
   # Controls how quickly undiscovered-but-eligible customers get their first order.
   # ============================================================
   customer_discovery:
-    base_discovery_rate: 0.08
+    # Rate knobs (keep mild; they should not dominate if you're using target_new)
+    base_discovery_rate: 0.06
+    min_discovery_rate: 0.05
+    max_discovery_rate: 0.20
     seasonal_amplitude: 0.0
     seasonal_period_months: 24
-    min_discovery_rate: 0.07
-    max_discovery_rate: 0.30
-    max_fraction_per_month: 0.03
-    orders_per_new_customer: 20
 
+    # Shape knobs (these are the important ones)
+    max_fraction_per_month: 0.01
+    orders_per_new_customer: 28
+
+    min_new_customers_per_month: 160
+    min_new_customers_steady: 240
+    floor_ramp_months: 18
+    bootstrap_suppression_months: 12
   # ============================================================
   # PRICING PIPELINE
   # Controls HOW MUCH revenue is generated per unit (inflation + discounts)
@@ -176,8 +193,8 @@ models:
       discount_noise_sigma: 0.20
 
     inflation:
-      annual_rate: 0.10
-      noise_sigma: 0.006
+      annual_rate: 0.12
+      noise_sigma: 0.015
 
     seasonality:
       enabled: true
