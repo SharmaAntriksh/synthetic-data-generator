@@ -10,6 +10,27 @@ from src.engine.runners.sales_runner import run_sales_pipeline
 from src.utils.logging_utils import info, fail, PIPELINE_START_TIME, fmt_sec
 
 
+def _resolve_input_path(p: str) -> Path:
+    """
+    Resolve an input file path robustly:
+    - expanduser
+    - if absolute or exists relative to CWD, use that
+    - else try relative to repo root (one level above /src)
+    """
+    raw = Path(p).expanduser()
+
+    if raw.is_absolute() and raw.exists():
+        return raw.resolve()
+
+    cwd_candidate = (Path.cwd() / raw).resolve()
+    if cwd_candidate.exists():
+        return cwd_candidate
+
+    repo_root = Path(__file__).resolve().parents[1]  # .../src/cli.py -> repo root
+    repo_candidate = (repo_root / raw).resolve()
+    return repo_candidate  # may or may not exist; caller can decide
+
+
 def str2bool(v):
     if isinstance(v, bool):
         return v
@@ -182,6 +203,9 @@ def main():
             fail("models.yaml must contain a top-level 'models' section")
         models_cfg = models_raw["models"]
 
+        cfg["config_yaml_path"] = str(_resolve_input_path(args.config))
+        cfg["model_yaml_path"]  = str(_resolve_input_path(args.models_config))
+        info(f"CLI attached run spec paths: config={cfg['config_yaml_path']} model={cfg['model_yaml_path']}")
         # ==================================================
         # APPLY OVERRIDES (SALES)
         # ==================================================

@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 from pathlib import Path
 import yfinance as yf
 from datetime import timedelta
@@ -18,61 +17,83 @@ BASE = "USD"
 
 
 # ---------------------------------------------------------
-# Download single currency history
+# Download single currency history (USD -> CUR)
 # ---------------------------------------------------------
 def download_history(currency, start_date, end_date):
     """
-    Download historical FX data for currency/USD from Yahoo Finance.
-    Ensures Date is always datetime64[ns], and columns are flat.
+    Download historical FX data and return rates as:
+      Rate = units of `currency` per 1 USD  (USD -> currency)
+
+    Strategy:
+    - Prefer Yahoo ticker: USD{CUR}=X  (usually already USD -> CUR)
+    - Fallback to: {CUR}USD=X and invert
     """
+    # Normalize input dates to Timestamps (safe for yfinance + pd.date_range)
+    start_ts = pd.to_datetime(start_date).normalize()
+    end_ts = pd.to_datetime(end_date).normalize()
+
     if currency == BASE:
-        dates = pd.date_range(start=start_date, end=end_date)
+        dates = pd.date_range(start=start_ts, end=end_ts, freq="D")
         return pd.DataFrame({"Date": dates, "Rate": 1.0})
 
-    # INR uses USDINR=X (invert)
-    if currency == "INR":
-        ticker = "USDINR=X"
-        invert = False
-    else:
-        ticker = f"{currency}{BASE}=X"
-        invert = False
+    # Primary: USD -> CUR
+    primary = f"{BASE}{currency}=X"
+    fallback = f"{currency}{BASE}=X"  # may represent USD per 1 CUR, invert to get CUR per 1 USD
 
-    data = yf.download(
-        ticker,
-        start=start_date - timedelta(days=3),
-        end=end_date + timedelta(days=3),
-        auto_adjust=False,
-        progress=False
-    )
+    def _download(ticker: str) -> pd.DataFrame:
+        data = yf.download(
+            ticker,
+            start=start_ts - timedelta(days=3),
+            end=end_ts + timedelta(days=3),
+            auto_adjust=False,
+            progress=False
+        )
+        return data
+
+    invert = False
+    data = _download(primary)
 
     if data.empty:
-        raise ValueError(f"No FX data found for {currency}")
+        data = _download(fallback)
+        invert = True
 
-    # FIX: flatten MultiIndex columns
+    if data.empty:
+        raise ValueError(f"No FX data found for {currency} (tried {primary} and {fallback})")
+
+    # Flatten MultiIndex columns if present
     if isinstance(data.columns, pd.MultiIndex):
-        data.columns = ['_'.join([str(c) for c in col if c]).strip()
-                        for col in data.columns.values]
+        data.columns = [
+            "_".join([str(c) for c in col if c]).strip()
+            for col in data.columns.values
+        ]
 
-    # Prefer "Close" or "Close_" depending on Yahoo’s structure
+    # Pick a Close-like column
     rate_col = None
     for col in data.columns:
-        if col.lower().startswith("close"):
+        if str(col).lower().startswith("close"):
             rate_col = col
             break
 
     if rate_col is None:
-        raise ValueError(f"No 'Close' column found for {currency}. Found: {data.columns}")
+        raise ValueError(f"No 'Close' column found for {currency}. Found: {list(data.columns)}")
 
-    data = data[[rate_col]].rename(columns={rate_col: "Rate"})
-    data = data.reset_index().rename(columns={"Date": "Date"})
+    data = data[[rate_col]].rename(columns={rate_col: "Rate"}).reset_index()
 
-    # Convert Date to datetime64
-    data["Date"] = pd.to_datetime(data["Date"])
+    # Ensure Date is datetime64[ns]
+    if "Date" in data.columns:
+        data["Date"] = pd.to_datetime(data["Date"])
+    else:
+        # yfinance sometimes returns index under different name, but Date is typical
+        data = data.rename(columns={data.columns[0]: "Date"})
+        data["Date"] = pd.to_datetime(data["Date"])
 
+    # Invert if fallback ticker used (to get USD -> CUR)
     if invert:
-        data["Rate"] = 1 / data["Rate"]
+        if (data["Rate"] <= 0).any():
+            raise ValueError(f"Non-positive FX rates encountered for {currency} before inversion.")
+        data["Rate"] = 1.0 / data["Rate"]
 
-    return data
+    return data[["Date", "Rate"]]
 
 
 # ---------------------------------------------------------
@@ -80,16 +101,19 @@ def download_history(currency, start_date, end_date):
 # ---------------------------------------------------------
 def fill_missing_days(df, start_date, end_date):
     """
-    Fill weekends/holidays with forward fill.
-    Ensures both dfs use datetime64 for Date.
+    Fill weekends/holidays with forward fill (previous day),
+    then backfill for leading gaps, then default 1.0.
     """
-    # Ensure datetime
-    df["Date"] = pd.to_datetime(df["Date"])
+    start_ts = pd.to_datetime(start_date).normalize()
+    end_ts = pd.to_datetime(end_date).normalize()
 
-    full = pd.DataFrame({"Date": pd.date_range(start=start_date, end=end_date)})
+    df = df.copy()
+    df["Date"] = pd.to_datetime(df["Date"]).dt.normalize()
 
+    full = pd.DataFrame({"Date": pd.date_range(start=start_ts, end=end_ts, freq="D")})
     merged = full.merge(df, on="Date", how="left")
 
+    # Your requirement: missing days filled from previous day
     merged["Rate"] = merged["Rate"].ffill()
     merged["Rate"] = merged["Rate"].bfill().fillna(1.0)
 
@@ -103,47 +127,31 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None):
     """
     Build or update a master FX file covering the date range.
 
-    Ensures consistent datetime64 Date column.
+    Stored invariant:
+      FromCurrency = USD
+      ToCurrency   = CUR
+      Rate         = CUR per 1 USD (USD -> CUR)
+
+    Date is kept as datetime64[ns] throughout.
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     curr_list = currencies or CURRENCIES
 
-    # -------------------------------------------
-    # Load existing master file (keep datetime)
-    # -------------------------------------------
+    start_ts = pd.to_datetime(start_date).normalize()
+    end_ts = pd.to_datetime(end_date).normalize()
+
+    # Load existing master file (keep datetime64)
     if out_path.exists():
         master = pd.read_parquet(out_path)
-        # FIX: ensure dates are datetime.date
-        master["Date"] = pd.to_datetime(master["Date"]).dt.date
+        if not master.empty:
+            master["Date"] = pd.to_datetime(master["Date"]).dt.normalize()
     else:
         master = pd.DataFrame(columns=["Date", "FromCurrency", "ToCurrency", "Rate"])
 
-    # FIX: normalize input types
-    if isinstance(start_date, pd.Timestamp):
-        start_date = start_date.date()
-    if isinstance(end_date, pd.Timestamp):
-        end_date = end_date.date()
-
-    # -------------------------------------------
-    # Determine missing ranges
-    # -------------------------------------------
-    if master.empty:
-        existing_start = None
-        existing_end = None
-    else:
-        existing_start = master["Date"].min()
-        existing_end = master["Date"].max()
-
-    need_download_start = existing_start is None or start_date < existing_start
-    need_download_end   = existing_end is None or end_date > existing_end
-
     updates = []
 
-    # -------------------------------------------
-    # Download updates per currency
-    # -------------------------------------------
     for cur in curr_list:
         info(f"Updating FX for {cur}...")
 
@@ -156,17 +164,14 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None):
                 cur_existing_start = None
                 cur_existing_end = None
             else:
-                cur_existing_start = df_cur["Date"].min()
-                cur_existing_end = df_cur["Date"].max()
+                cur_existing_start = pd.to_datetime(df_cur["Date"].min()).normalize()
+                cur_existing_end = pd.to_datetime(df_cur["Date"].max()).normalize()
 
-        # Missing windows
-        dl_start = start_date if (cur_existing_start is None or start_date < cur_existing_start) else cur_existing_start
-        dl_end   = end_date   if (cur_existing_end is None   or end_date > cur_existing_end)   else cur_existing_end
+        # Keep your original “download range” behavior (safe, not optimized)
+        dl_start = start_ts if (cur_existing_start is None or start_ts < cur_existing_start) else cur_existing_start
+        dl_end = end_ts if (cur_existing_end is None or end_ts > cur_existing_end) else cur_existing_end
 
-        # Download + ensure datetime
         df_dl = download_history(cur, dl_start, dl_end)
-
-        # Fill missing days
         df_dl = fill_missing_days(df_dl, dl_start, dl_end)
 
         df_dl["FromCurrency"] = BASE
@@ -174,25 +179,19 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None):
 
         updates.append(df_dl)
 
-    # -------------------------------------------
-    # Combine master + updates
-    # -------------------------------------------
     updates_df = pd.concat(updates, ignore_index=True)
 
     if master.empty:
         master_updated = updates_df
     else:
         master_updated = pd.concat([master, updates_df], ignore_index=True)
-        master_updated["Date"] = pd.to_datetime(master_updated["Date"])
+        master_updated["Date"] = pd.to_datetime(master_updated["Date"]).dt.normalize()
         master_updated = (
             master_updated
             .drop_duplicates(subset=["Date", "FromCurrency", "ToCurrency"], keep="last")
-            .sort_values("Date")
+            .sort_values(["Date", "FromCurrency", "ToCurrency"])
+            .reset_index(drop=True)
         )
 
-    # -------------------------------------------
-    # Save
-    # -------------------------------------------
     master_updated.to_parquet(out_path, index=False)
-
     return master_updated
