@@ -148,7 +148,16 @@ def build_rows_per_month(
 
     # legacy behavior (backward compatibility)
     month_weights = eligible_counts / eligible_counts.sum()
-    return np.maximum(1, (month_weights * int(total_rows)).astype("int64"))
+    
+    # legacy behavior (backward compatibility) but preserve total_rows exactly
+    month_weights = eligible_counts / eligible_counts.sum()
+    rows = np.floor(month_weights * int(total_rows)).astype("int64")
 
+    remainder = int(int(total_rows) - int(rows.sum()))
+    if remainder > 0:
+        add_idx = np.argsort(-month_weights)[:remainder]
+        rows[add_idx] += 1
+
+    return rows
 
 __all__ = ["macro_month_weights", "build_rows_per_month"]

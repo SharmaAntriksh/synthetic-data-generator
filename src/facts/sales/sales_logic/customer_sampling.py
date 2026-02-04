@@ -229,10 +229,9 @@ def _sample_customers(
     # -----------------------------
     # Determine undiscovered among eligible
     if seen_set:
-        seen_arr = np.fromiter(seen_set, dtype=eligible_keys.dtype)
-        undiscovered_mask = ~np.isin(eligible_keys, seen_arr, assume_unique=False)
-        undiscovered = eligible_keys[undiscovered_mask]
-        seen_eligible = eligible_keys[~undiscovered_mask]
+        seen_eligible_mask = np.fromiter((k in seen_set for k in eligible_keys), dtype=bool, count=eligible_keys.size)
+        undiscovered = eligible_keys[~seen_eligible_mask]
+        seen_eligible = eligible_keys[seen_eligible_mask]
     else:
         undiscovered = eligible_keys
         seen_eligible = np.empty(0, dtype=eligible_keys.dtype)

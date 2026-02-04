@@ -57,8 +57,8 @@ sales:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: true
-  num_products: 18021
+  use_contoso_products: false
+  num_products: 6021
   active_ratio: 0.94
   seed: 42
 
@@ -66,7 +66,7 @@ products:
     base:
       value_scale: 0.11
       min_unit_price: 10
-      max_unit_price: 6315
+      max_unit_price: 8315
 
     cost:
       min_margin_pct: 0.2
@@ -94,7 +94,7 @@ customers:
     enable_churn: true
     base_monthly_churn: 0.52
     min_tenure_months: 22
-    initial_active_customers: 2000        # or 1000
+    initial_active_customers: 3000        # or 1000
     initial_spread_months: 24            # customers started in the 24 months before start_date
 
   override:

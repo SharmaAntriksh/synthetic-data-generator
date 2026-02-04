@@ -182,33 +182,7 @@ models:
   # Controls HOW MUCH revenue is generated per unit (inflation + discounts)
   # ============================================================
   pricing:
-    month_inertia: 0.65     # was 0.78 (prices react faster, more variation)
-
-    ramp:
-      months: 18
-      min_multiplier: 0.95
-      max_multiplier: 1.35
-      discount_scale: 0.60
-      discount_noise_sigma: 0.18
-
-    inflation:
-      annual_rate: 0.18
-      noise_sigma: 0.02
-
-    seasonality:
-      enabled: true
-      amplitude: 0.06
-      sharpness: 1.2
-      phase_shift_months: -1
-
-    discount:
-      max_pct_of_price: 0.40
-
-    floors:
-      min_net_price: 0.01
-
-    cost:
-      cost_ratio_min: 0.62
-      cost_ratio_max: 0.84
-      min_margin_pct: 0.06
+      inflation:
+        annual_rate: 0.04        # can be negative for deflation, e.g. -0.02
+        scale_discount: true  
 
