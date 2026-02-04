@@ -18,7 +18,7 @@ models:
     size_scale_threshold: 200000
 
     # Keep false for realistic variability in month-by-month generation.
-    preserve_row_count: false  # allow thinning to reduce month volume; set true only if you MUST hit an exact row total.
+    preserve_row_count: true  # allow thinning to reduce month volume; set true only if you MUST hit an exact row total.
 
     # Higher = smoother month-to-month continuity
     month_inertia: 0.73
@@ -69,18 +69,18 @@ models:
     base_level: 1.0
 
     # Mild long-run growth (keep low if you want stable totals across years)
-    yearly_growth: 0.10
+    yearly_growth: 0.08
 
     # Additional smooth seasonality (use alongside activity.monthly_baseline)
     seasonality_amplitude: 0.16
     seasonality_phase: 0.0
 
     # Small random drift month-to-month
-    noise_std: 0.08
+    noise_std: 0.10
 
     # Rare demand shocks to create “decline then recovery” windows
     shock_probability: 0.22
-    shock_impact: [-0.35, 0.28]   # multiplicative hit range
+    shock_impact: [-0.40, 0.30]   # multiplicative hit range
 
     # Prevent early months from concentrating too many rows on too few customers
     early_month_cap:

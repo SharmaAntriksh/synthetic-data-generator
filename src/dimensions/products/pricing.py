@@ -11,7 +11,7 @@ def apply_product_pricing(
     Apply pricing rules to Products.
 
     Products become the economic source of truth.
-    Sales must never rescale or clamp prices again.
+    Sales may apply macro factors (inflation/seasonality/ramp) but must not regenerate base UnitPrice/UnitCost.
     """
 
     if not pricing_cfg:
@@ -19,6 +19,9 @@ def apply_product_pricing(
 
     rng = np.random.default_rng(seed)
     out = df.copy()
+    # Ensure UnitCost exists (Contoso may have it; otherwise initialize from UnitPrice)
+    if "UnitCost" not in out.columns:
+        out["UnitCost"] = out["UnitPrice"]
 
     # -------------------------------------------------
     # 1. BASE PRICE SCALING
@@ -89,6 +92,15 @@ def apply_product_pricing(
             size=len(out),
         )
         out["UnitCost"] = out["UnitCost"] * cj
+
+    # Re-apply min/max AFTER jitter so bounds are hard
+    if min_price is not None:
+        out["UnitPrice"] = out["UnitPrice"].clip(lower=min_price)
+    if max_price is not None:
+        out["UnitPrice"] = out["UnitPrice"].clip(upper=max_price)
+
+    # Cost must never exceed price (re-check after clamp)
+    out["UnitCost"] = np.minimum(out["UnitCost"], out["UnitPrice"])
 
     # -------------------------------------------------
     # 4. HARD SAFETY RULES
