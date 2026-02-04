@@ -69,23 +69,23 @@ models:
     base_level: 1.0
 
     # Mild long-run growth (keep low if you want stable totals across years)
-    yearly_growth: 0.23
+    yearly_growth: 0.10
 
     # Additional smooth seasonality (use alongside activity.monthly_baseline)
     seasonality_amplitude: 0.16
     seasonality_phase: 0.0
 
     # Small random drift month-to-month
-    noise_std: 0.05
+    noise_std: 0.08
 
     # Rare demand shocks to create “decline then recovery” windows
-    shock_probability: 0.18
-    shock_impact: [-0.25, 0.23]   # multiplicative hit range
+    shock_probability: 0.22
+    shock_impact: [-0.35, 0.28]   # multiplicative hit range
 
     # Prevent early months from concentrating too many rows on too few customers
     early_month_cap:
       enabled: true
-      max_rows_per_customer: 8
+      max_rows_per_customer: 12
       redistribute_excess: true
 
   # ============================================================
@@ -95,19 +95,19 @@ models:
   # ============================================================
   customer_participation:
     # target distinct customers ≈ base_distinct_ratio * eligible_customers (then modulated by cycles)
-    base_distinct_ratio: 0.50
+    base_distinct_ratio: 0.30
 
     # hard floors/caps (prevents “month has 1 customer” and “everyone buys every month”)
-    min_distinct_customers: 250
-    max_distinct_ratio: 0.62
+    min_distinct_customers: 200
+    max_distinct_ratio: 0.65
 
     # multi-year waves: incline -> decline -> incline ...
     cycles:
       enabled: true
-      period_months: 12       # 2-year waves
-      amplitude: 0.10         # +/-35% swing
+      period_months: 24       # 2-year waves
+      amplitude: 0.30         # +/-35% swing
       phase: 0.0
-      noise_std: 0.06         # irregularity around the wave
+      noise_std: 0.05         # irregularity around the wave
 
 
   # ============================================================
@@ -115,7 +115,7 @@ models:
   # Controls HOW MANY units per order line
   # ============================================================
   quantity:
-    base_poisson_lambda: 2.1
+    base_poisson_lambda: 3.2
     month_inertia: 0.82
 
     # Retail: slightly larger baskets in Nov/Dec
@@ -133,7 +133,7 @@ models:
       - 1.06
       - 1.05
 
-    noise_sd: 0.07
+    noise_sd: 0.12
     min_qty: 1
     max_qty: 6
 
@@ -145,8 +145,8 @@ models:
   # ============================================================
   customers:
     base_active_rate: 0.78
-    annual_growth_rate: 0.22
-    annual_churn_rate: 0.14
+    annual_growth_rate: 0.08
+    annual_churn_rate: 0.18
     monthly_noise: 0.04
 
     # Optional waves in active pool (separate from participation waves)
@@ -154,7 +154,7 @@ models:
     seasonal_period_months: 24
 
     # Safety floor (used only if your lifecycle model enforces it)
-    min_monthly_new_customers: 80
+    min_monthly_new_customers: 40
     even_start_months: false
 
   # ============================================================
@@ -163,46 +163,46 @@ models:
   # ============================================================
   customer_discovery:
     # Rate knobs (keep mild; they should not dominate if you're using target_new)
-    base_discovery_rate: 0.06
+    base_discovery_rate: 0.08
     min_discovery_rate: 0.05
     max_discovery_rate: 0.20
-    seasonal_amplitude: 0.0
+    seasonal_amplitude: 0.40
     seasonal_period_months: 24
 
     # Shape knobs (these are the important ones)
     max_fraction_per_month: 0.01
-    orders_per_new_customer: 28
+    orders_per_new_customer: 30
 
-    min_new_customers_per_month: 160
-    min_new_customers_steady: 240
-    floor_ramp_months: 18
-    bootstrap_suppression_months: 12
+    min_new_customers_per_month: 60
+    min_new_customers_steady: 120
+    floor_ramp_months: 48
+    bootstrap_suppression_months: 3
   # ============================================================
   # PRICING PIPELINE
   # Controls HOW MUCH revenue is generated per unit (inflation + discounts)
   # ============================================================
   pricing:
-    month_inertia: 0.78
+    month_inertia: 0.65     # was 0.78 (prices react faster, more variation)
 
     ramp:
-      months: 30
-      min_multiplier: 0.90
-      max_multiplier: 1.10
-      discount_scale: 0.90
-      discount_noise_sigma: 0.10
+      months: 18
+      min_multiplier: 0.95
+      max_multiplier: 1.35
+      discount_scale: 0.60
+      discount_noise_sigma: 0.18
 
     inflation:
       annual_rate: 0.18
-      noise_sigma: 0.008
+      noise_sigma: 0.02
 
     seasonality:
       enabled: true
-      amplitude: 0.012
-      sharpness: 1.0
+      amplitude: 0.06
+      sharpness: 1.2
       phase_shift_months: -1
 
     discount:
-      max_pct_of_price: 0.60
+      max_pct_of_price: 0.40
 
     floors:
       min_net_price: 0.01
@@ -211,3 +211,4 @@ models:
       cost_ratio_min: 0.62
       cost_ratio_max: 0.84
       min_margin_pct: 0.06
+
