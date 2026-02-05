@@ -65,9 +65,13 @@ products:
   pricing:
     base:
       value_scale: 0.11
-      min_unit_price: 10
-      max_unit_price: 8315
+      min_unit_price: 0
+      max_unit_price: null
 
+      # optional tuning:
+      stretch_to_range: false
+      stretch_low_quantile: 0.01
+      stretch_high_quantile: 0.99
     cost:
       min_margin_pct: 0.2
       max_margin_pct: 0.45

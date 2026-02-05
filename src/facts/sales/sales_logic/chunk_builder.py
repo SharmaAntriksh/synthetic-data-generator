@@ -52,6 +52,12 @@ def _build_month_slices(date_pool: np.ndarray) -> dict:
     return month_slices
 
 
+def _empty_table(schema: pa.Schema) -> pa.Table:
+    """Return a zero-row table with the exact schema types."""
+    arrays = [pa.array([], type=f.type, safe=False) for f in schema]
+    return pa.Table.from_arrays(arrays, schema=schema)
+
+
 # ------------------------------------------------------------
 # Main
 # ------------------------------------------------------------
@@ -63,7 +69,8 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     - Customer lifecycle controls eligibility (IsActiveInSales + Start/End month)
     - Month loop actually generates orders within that month (date_pool sliced)
     - Optional discovery forcing (persistable across chunks via State.seen_customers)
-    - All per-order arrays remain perfectly aligned
+      - IMPORTANT: discovery is OFF if customer_discovery block is absent
+    - All per-order arrays remain aligned
     """
     if not PA_AVAILABLE:
         raise RuntimeError("pyarrow is required")
@@ -84,7 +91,6 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     customer_keys = _get_state_attr("customer_keys", "customers")
     if customer_keys is None:
         raise RuntimeError("State must provide customer_keys/customers")
-
     customer_keys = np.asarray(customer_keys)
 
     is_active_in_sales = _get_state_attr("customer_is_active_in_sales", "is_active_in_sales")
@@ -94,7 +100,9 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         if active_keys is not None:
             # Build mask by assuming customer keys are 1..N
             is_active_in_sales = np.zeros(customer_keys.shape[0], dtype="int64")
-            is_active_in_sales[(np.asarray(active_keys, dtype="int64") - 1)] = 1
+            idx = (np.asarray(active_keys, dtype="int64") - 1)
+            idx = idx[(idx >= 0) & (idx < customer_keys.shape[0])]
+            is_active_in_sales[idx] = 1
         else:
             # assume all active
             is_active_in_sales = np.ones(customer_keys.shape[0], dtype="int64")
@@ -140,7 +148,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     # ------------------------------------------------------------
     # ROW BUDGET PER MONTH (BASE DEMAND NORMALIZATION)
     # ------------------------------------------------------------
-    macro_cfg = State.models_cfg.get("macro_demand", {})
+    macro_cfg = State.models_cfg.get("macro_demand", {}) or {}
 
     eligible_counts = np.empty(T, dtype="float64")
     eligible_masks = []
@@ -156,32 +164,39 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         eligible_counts[m] = float(mask.sum())
 
     if eligible_counts.sum() == 0:
-        return pa.Table.from_arrays([], schema=schema)
+        return _empty_table(schema)
 
     rows_per_month = build_rows_per_month(
         rng=rng,
-        total_rows=n,
+        total_rows=int(n),
         eligible_counts=eligible_counts,
         macro_cfg=macro_cfg,
     )
 
     # ------------------------------------------------------------
-    # DISCOVERY STATE (persist across chunks if State provides it)
+    # DISCOVERY / PARTICIPATION CONFIG (EXPLICIT PRESENCE SEMANTICS)
     # ------------------------------------------------------------
-    seen_customers = getattr(State, "seen_customers", None)
-    if seen_customers is None:
-        seen_customers = set()
+    # Discovery is OFF if customer_discovery is absent.
+    disc_cfg = State.models_cfg.get("customer_discovery", None)
+    use_discovery = bool(disc_cfg) and bool(disc_cfg.get("enabled", True))
+    disc_cfg = disc_cfg or {}
+
+    # Participation is OFF if block absent. If present without enabled, default-on (backward compatible).
+    participation_cfg = State.models_cfg.get("customer_participation", None)
+    use_participation = bool(participation_cfg) and bool(participation_cfg.get("enabled", True))
+    participation_cfg = participation_cfg or {}
+
+    # Discovery state only matters if discovery is enabled
+    if use_discovery:
+        seen_customers = getattr(State, "seen_customers", None)
+        if seen_customers is None:
+            seen_customers = set()
+        else:
+            if not isinstance(seen_customers, set):
+                seen_customers = set(seen_customers)
+                State.seen_customers = seen_customers
     else:
-        # ensure it's a set-like
-        if not isinstance(seen_customers, set):
-            seen_customers = set(seen_customers)
-            State.seen_customers = seen_customers
-
-    disc_cfg = State.models_cfg.get("customer_discovery", {})
-    use_discovery = bool(disc_cfg.get("enabled", True))
-
-    participation_cfg = State.models_cfg.get("customer_participation", {})
-    use_participation = bool(participation_cfg)
+        seen_customers = set()
 
     # ------------------------------------------------------------
     # BUILD MONTHLY TABLES
@@ -189,6 +204,10 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     tables = []
 
     for m_offset, m_rows in enumerate(rows_per_month):
+        m_rows = int(m_rows)
+        if m_rows <= 0:
+            continue
+
         eligible_mask = eligible_masks[m_offset]
         if not eligible_mask.any():
             continue
@@ -202,7 +221,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
 
         if date_prob is not None:
             month_date_prob = date_prob[date_idx].astype("float64", copy=False)
-            s = month_date_prob.sum()
+            s = float(month_date_prob.sum())
             if s > 0:
                 month_date_prob = month_date_prob / s
             else:
@@ -210,54 +229,55 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         else:
             month_date_prob = None
 
-        # Discovery config (copied per-month so we can inject per-month targets)
-        disc_cfg_local = dict(disc_cfg)
+        # --------------------------------------------------------
+        # DISCOVERY TARGET (ONLY IF DISCOVERY ENABLED)
+        # --------------------------------------------------------
+        disc_cfg_local = {}
+        if use_discovery:
+            disc_cfg_local = dict(disc_cfg)
 
-        opc = float(disc_cfg_local.get("orders_per_new_customer", 20.0))
-        min_month = int(disc_cfg_local.get("min_new_customers_per_month", 0) or 0)
+            opc = float(disc_cfg_local.get("orders_per_new_customer", 20.0))
+            min_month = int(disc_cfg_local.get("min_new_customers_per_month", 0) or 0)
 
-        # demand-driven discovery
-        target_new = int(max(1, round(int(m_rows) / max(opc, 1e-9))))
+            # demand-driven discovery
+            target_new = int(max(1, round(m_rows / max(opc, 1e-9))))
+
+            # Discovery rate / seasonality (rate knobs)
+            base_rate = float(disc_cfg_local.get("base_discovery_rate", 0.06))
+            seasonal_amp = float(disc_cfg_local.get("seasonal_amplitude", 0.0))
+            seasonal_period = int(disc_cfg_local.get("seasonal_period_months", 24))
+            min_p = float(disc_cfg_local.get("min_discovery_rate", base_rate))
+            max_p = float(disc_cfg_local.get("max_discovery_rate", base_rate))
+
+            if base_rate > 0.0 and (seasonal_amp != 0.0 or min_p != base_rate or max_p != base_rate):
+                cyc = math.sin(2.0 * math.pi * float(m_offset) / max(seasonal_period, 1))
+                p = base_rate * (1.0 + seasonal_amp * cyc)
+                p = float(np.clip(p, min_p, max_p))
+                target_new = int(max(0, round(target_new * (p / base_rate))))
+
+            # Hard floor (helps prevent weak early years if desired)
+            if min_month > 0:
+                ramp_months = int(disc_cfg_local.get("floor_ramp_months", 12) or 0)
+                if ramp_months > 0:
+                    t = min(1.0, max(0.0, m_offset / float(ramp_months)))
+                    floor0 = float(min_month)
+                    floor1 = float(disc_cfg_local.get("min_new_customers_steady", min_month))
+                    floor = int(round(floor0 + t * (floor1 - floor0)))
+                else:
+                    floor = int(min_month)
+                target_new = max(target_new, floor)
+
+            # Bootstrap suppression (optional)
+            bootstrap_months = int(disc_cfg_local.get("bootstrap_suppression_months", 12) or 0)
+            if bootstrap_months > 0 and m_offset < bootstrap_months:
+                scale = (m_offset + 1) / float(bootstrap_months)
+                target_new = int(round(target_new * scale))
+
+            disc_cfg_local["_target_new_customers"] = int(max(0, target_new))
 
         # --------------------------------------------------------
-        # DISCOVERY RATE / SEASONALITY (rate knobs)
-        # Multiplies the demand-driven target_new; floors run after this.
+        # PARTICIPATION DISTINCT TARGET (OPTIONAL)
         # --------------------------------------------------------
-        base_rate = float(disc_cfg_local.get("base_discovery_rate", 0.06))
-        seasonal_amp = float(disc_cfg_local.get("seasonal_amplitude", 0.0))
-        seasonal_period = int(disc_cfg_local.get("seasonal_period_months", 24))
-        min_p = float(disc_cfg_local.get("min_discovery_rate", base_rate))
-        max_p = float(disc_cfg_local.get("max_discovery_rate", base_rate))
-
-        if base_rate > 0.0 and (seasonal_amp != 0.0 or min_p != base_rate or max_p != base_rate):
-            cyc = math.sin(2.0 * math.pi * float(m_offset) / max(seasonal_period, 1))
-            p = base_rate * (1.0 + seasonal_amp * cyc)
-            p = float(np.clip(p, min_p, max_p))
-            target_new = int(max(0, round(target_new * (p / base_rate))))
-
-        # HARD FLOOR (prevents year-2 collapse)
-        if min_month > 0:
-            ramp_months = int(disc_cfg_local.get("floor_ramp_months", 12) or 0)
-            if ramp_months > 0:
-                # ramp floor up over first N months
-                t = min(1.0, max(0.0, m_offset / float(ramp_months)))
-                floor0 = float(min_month)
-                floor1 = float(disc_cfg_local.get("min_new_customers_steady", min_month))
-                floor = int(round(floor0 + t * (floor1 - floor0)))
-            else:
-                floor = int(min_month)
-            target_new = max(target_new, floor)
-
-        # --------------------------------------------------------
-        # BOOTSTRAP SUPPRESSION (removes Year-1 privilege)
-        # --------------------------------------------------------
-        bootstrap_months = int(disc_cfg_local.get("bootstrap_suppression_months", 12) or 0)
-        if bootstrap_months > 0 and m_offset < bootstrap_months:
-            scale = (m_offset + 1) / float(bootstrap_months)
-            target_new = int(round(target_new * scale))
-
-        disc_cfg_local["_target_new_customers"] = target_new
-
         target_distinct = None
         if use_participation:
             target_distinct = _participation_distinct_target(
@@ -383,8 +403,9 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------
         # IMPORTANT: use post-thinning keys so "seen" means "actually appeared"
-        seen_customers.update(customer_keys_out.tolist())
-        State.seen_customers = seen_customers
+        if use_discovery:
+            seen_customers.update(customer_keys_out.tolist())
+            State.seen_customers = seen_customers
 
         # --------------------------------------------------------
         # QUANTITY + PRICING
@@ -445,6 +466,6 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         tables.append(pa.Table.from_arrays(arrays, schema=schema))
 
     if not tables:
-        return pa.Table.from_arrays([], schema=schema)
+        return _empty_table(schema)
 
     return pa.concat_tables(tables)
