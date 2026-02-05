@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
+
 import pyodbc
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_GO_SPLIT_RE = re.compile(r"^\s*GO\s*$", flags=re.MULTILINE | re.IGNORECASE)
 
 
 class SqlServerImportError(RuntimeError):
@@ -26,17 +29,10 @@ def _read_sql_text(sql_file: Path) -> str:
 
 def execute_sql_batches(cursor, sql_file: Path) -> None:
     """
-    Execute a .sql file split on GO statements (case-insensitive, line-only GO).
+    Execute a .sql file split on line-only GO statements (case-insensitive).
     """
-    import re
-
     sql_text = _read_sql_text(sql_file)
-
-    batches = re.split(
-        r"^\s*GO\s*$",
-        sql_text,
-        flags=re.MULTILINE | re.IGNORECASE,
-    )
+    batches = _GO_SPLIT_RE.split(sql_text)
 
     for idx, batch in enumerate(batches, start=1):
         batch = batch.strip()
@@ -45,7 +41,7 @@ def execute_sql_batches(cursor, sql_file: Path) -> None:
         try:
             cursor.execute(batch)
         except pyodbc.Error as exc:
-            # Bubble up the *real* SQL Server error text for fast debugging
+            # Include driver payload for immediate diagnosis
             raise SqlServerImportError(
                 f"Error executing batch {idx} in file '{sql_file.name}'. Details: {exc.args}"
             ) from exc
@@ -56,35 +52,22 @@ def execute_sql_files(cursor, files: Iterable[Path]) -> None:
         execute_sql_batches(cursor, f)
 
 
-def execute_sql_folder(cursor, folder: Path) -> List[Path]:
-    """
-    Execute all .sql files in a folder in sorted order.
-    Returns the files executed (for logging).
-    """
-    sql_files = sorted(folder.glob("*.sql"))
-    if not sql_files:
+def list_sql_files(folder: Path) -> List[Path]:
+    if not folder.is_dir():
         return []
-    execute_sql_files(cursor, sql_files)
-    return sql_files
+    return sorted(folder.glob("*.sql"))
 
 
 # -------------------------
 # DB helpers
 # -------------------------
 def database_exists(cursor, database: str) -> bool:
-    cursor.execute(
-        """
-        SELECT 1
-        FROM sys.databases
-        WHERE name = ?
-        """,
-        database,
-    )
+    cursor.execute("SELECT 1 FROM sys.databases WHERE name = ?", database)
     return cursor.fetchone() is not None
 
 
 def _quote_db_name(database: str) -> str:
-    # Safe bracket quoting for SQL Server identifiers (handles closing bracket)
+    # Safe bracket quoting for SQL Server identifiers
     return f"[{database.replace(']', ']]')}]"
 
 
@@ -134,62 +117,86 @@ def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[
     Collect scripts for phases:
       tables, views, constraints, cci_apply
 
-    Preferred layout (most deterministic):
+    Supported layouts:
+
+    A) Preferred layout:
       sql/schema/tables/*.sql
       sql/schema/views/*.sql
       sql/schema/constraints/*.sql
-      sql/cci/*.sql                      (optional apply scripts)
+      sql/cci/*.sql                   (optional apply scripts)
 
-    Back-compat layout:
-      sql/schema/*.sql (flat)
-        - views inferred by filename containing "view"/"views"
-        - constraints inferred by filename containing "constraint"/fk/pk patterns
-        - CCI apply inferred by filename containing "cci"/"columnstore" (treated as optional apply)
-        - everything else treated as tables/other schema
+    B) Alternate layout:
+      sql/schema/*.sql                (flat)
+      sql/views/*.sql (optional)
+      sql/constraints/*.sql (optional)
+      sql/cci/*.sql (optional)
+
+    Notes:
+    - Any file inferred as CCI (name contains 'cci'/'columnstore') is treated as OPTIONAL apply
+      and is excluded from the always-run phases.
     """
     schema_dir = sql_dir / "schema"
+    if not schema_dir.is_dir():
+        return [], [], [], []
 
-    # Structured folders (preferred)
-    tables_dir = schema_dir / "tables"
-    views_dir = schema_dir / "views"
-    constraints_dir = schema_dir / "constraints"
+    # Preferred subfolders under schema/
+    schema_tables_dir = schema_dir / "tables"
+    schema_views_dir = schema_dir / "views"
+    schema_constraints_dir = schema_dir / "constraints"
 
-    tables: List[Path] = []
-    views: List[Path] = []
-    constraints: List[Path] = []
-    cci_apply: List[Path] = []
+    # Optional top-level folders under sql/
+    top_views_dir = sql_dir / "views"
+    top_constraints_dir = sql_dir / "constraints"
 
-    if tables_dir.is_dir() or views_dir.is_dir() or constraints_dir.is_dir():
-        if tables_dir.is_dir():
-            tables = sorted(tables_dir.glob("*.sql"))
-        if views_dir.is_dir():
-            views = sorted(views_dir.glob("*.sql"))
-        if constraints_dir.is_dir():
-            constraints = sorted(constraints_dir.glob("*.sql"))
-        # CCI apply scripts live outside schema/
-        cci_dir = sql_dir / "cci"
-        if cci_dir.is_dir():
-            cci_apply = sorted(cci_dir.glob("*.sql"))
+    cci_dir = sql_dir / "cci"
+    indexes_dir = sql_dir / "indexes"
+
+    # 1) If schema subfolders exist, use them deterministically
+    if schema_tables_dir.is_dir() or schema_views_dir.is_dir() or schema_constraints_dir.is_dir():
+        tables = list_sql_files(schema_tables_dir)
+        views = list_sql_files(schema_views_dir)
+        constraints = list_sql_files(schema_constraints_dir)
+
+        cci_apply = list_sql_files(cci_dir)
+        # Allow CCI apply scripts in sql/indexes, but only if explicitly CCI/columnstore
+        cci_apply += [p for p in list_sql_files(indexes_dir) if _is_cci_file(p)]
+
         return tables, views, constraints, cci_apply
 
-    # Flat folder back-compat
-    flat = sorted(schema_dir.glob("*.sql"))
-    for f in flat:
-        if _is_cci_file(f):
-            cci_apply.append(f)
-        elif _is_view_file(f):
-            views.append(f)
-        elif _is_constraint_file(f):
-            constraints.append(f)
-        else:
-            tables.append(f)
+    # 2) Otherwise: tables from schema/*.sql (minus inferred view/constraint/cci)
+    schema_files = list_sql_files(schema_dir)
 
-    # Optional dedicated cci folder wins/extends
-    cci_dir = sql_dir / "cci"
-    if cci_dir.is_dir():
-        cci_apply.extend(sorted(cci_dir.glob("*.sql")))
+    # Views: prefer sql/views if present, else infer from schema
+    views = list_sql_files(top_views_dir)
+    if not views:
+        views = [p for p in schema_files if _is_view_file(p)]
 
-    return tables, views, constraints, cci_apply
+    # Constraints: prefer sql/constraints if present, else infer from schema
+    constraints = list_sql_files(top_constraints_dir)
+    if not constraints:
+        constraints = [p for p in schema_files if _is_constraint_file(p)]
+
+    # CCI apply: prefer sql/cci, plus CCI-named scripts in sql/indexes, plus inferred CCI from schema
+    cci_apply = list_sql_files(cci_dir)
+    cci_apply += [p for p in list_sql_files(indexes_dir) if _is_cci_file(p)]
+    inferred_cci_from_schema = [p for p in schema_files if _is_cci_file(p)]
+
+    # Tables: whatever remains in schema after excluding views/constraints/cci
+    excluded = set(views) | set(constraints) | set(inferred_cci_from_schema)
+    tables = [p for p in schema_files if p not in excluded]
+
+    # Include inferred schema CCI as optional apply scripts (NOT always-run)
+    cci_apply += inferred_cci_from_schema
+
+    # Deduplicate while preserving order
+    seen = set()
+    cci_apply_unique: List[Path] = []
+    for p in cci_apply:
+        if p not in seen:
+            seen.add(p)
+            cci_apply_unique.append(p)
+
+    return tables, views, constraints, cci_apply_unique
 
 
 # -------------------------
@@ -205,17 +212,20 @@ def import_sql_server(
 ) -> None:
     """
     Flow:
-      1) Create tables (and other base schema)
-      2) Create views
-      3) Insert data (BULK INSERT)
-      4) Constraints
+      1) Create tables (always)
+      2) Create views (always)
+      3) Insert data (always)
+      4) Apply constraints (always)
       5) Create CCI table type + stored proc (always)
-      6) Optional: run CCI apply scripts (e.g., call proc) if apply_cci=True
+      6) Optional: run CCI apply scripts if apply_cci=True
 
     Expected structure in run_dir (CSV mode):
       sql/schema/...
       sql/load/...
+      (optional) sql/views/...
+      (optional) sql/constraints/...
       (optional) sql/cci/...
+      (optional) sql/indexes/...   (only CCI/columnstore-named files are considered, and only if apply_cci=True)
     """
     run_dir = Path(run_dir)
     sql_dir = run_dir / "sql"
@@ -235,12 +245,19 @@ def import_sql_server(
 
     tables_files, view_files, constraint_files, cci_apply_files = _collect_phase_scripts(sql_dir)
 
+    if not tables_files:
+        raise SqlServerImportError(
+            f"No table scripts found. Expected files under '{schema_dir}' "
+            "or under 'sql/schema/tables/'."
+        )
+
     # -------------------------
     # Step 1: ensure DB exists
     # -------------------------
     try:
         with pyodbc.connect(connection_string, autocommit=True) as conn:
             cursor = conn.cursor()
+            cursor.timeout = 0
             if not database_exists(cursor, database):
                 create_database_if_not_exists(cursor, database)
     except pyodbc.Error as exc:
@@ -256,25 +273,23 @@ def import_sql_server(
     try:
         with pyodbc.connect(db_conn_str, autocommit=False) as conn:
             cursor = conn.cursor()
+            cursor.timeout = 0
 
             # 2.1 Tables
-            if tables_files:
-                execute_sql_files(cursor, tables_files)
-            else:
-                # If schema exists but no *.sql matched (unexpected), fall back to folder run
-                execute_sql_folder(cursor, schema_dir)
+            execute_sql_files(cursor, tables_files)
 
             # 2.2 Views
             if view_files:
                 execute_sql_files(cursor, view_files)
 
             # 2.3 Insert data
-            execute_sql_folder(cursor, load_dir)
+            load_files = list_sql_files(load_dir)
+            execute_sql_files(cursor, load_files)
+            conn.commit()  # commit data before constraints
 
             # 2.4 Constraints
             if constraint_files:
                 execute_sql_files(cursor, constraint_files)
-
             conn.commit()
 
         print(f"[INFO] Core import completed (tables/views/load/constraints) for '{database}'.")
@@ -290,6 +305,7 @@ def import_sql_server(
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             cursor = conn.cursor()
+            cursor.timeout = 0
 
             if types_file.is_file():
                 execute_sql_batches(cursor, types_file)
@@ -322,6 +338,7 @@ def import_sql_server(
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             cursor = conn.cursor()
+            cursor.timeout = 0
             execute_sql_files(cursor, cci_apply_files)
 
         print("[INFO] CCI apply scripts executed.")

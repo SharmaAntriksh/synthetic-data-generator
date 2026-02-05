@@ -1,6 +1,6 @@
 # NOTE:
 # This script is intended for CSV-based runs only.
-# The run path must contain 'schema/' and 'load/' folders.
+# The run path must contain 'sql/schema/' and 'sql/load/' folders.
 
 param (
     [Parameter(Mandatory = $true)]
@@ -15,11 +15,14 @@ param (
     [string]$User,
     [string]$Password,
 
-    [switch]$TrustedConnection
+    [switch]$TrustedConnection,
+
+    # Optional: only runs CCI scripts when present + flagged
+    [switch]$ApplyCCI
 )
 
 # Resolve run path to avoid relative path confusion
-$ResolvedRunPath = Resolve-Path $RunPath
+$ResolvedRunPath = (Resolve-Path $RunPath).Path
 
 # CSV-only guard (early, user-friendly failure)
 if (-not (Test-Path (Join-Path $ResolvedRunPath "sql\schema")) -or
@@ -40,12 +43,18 @@ else {
     $AuthArgs = @("--user", $User, "--password", $Password)
 }
 
-# Execute SQL Server import
+# Optional flags
+$OptArgs = @()
+if ($ApplyCCI) {
+    $OptArgs += "--apply-cci"
+}
+
 python -m scripts.sql.run_sql_server_import `
     --server $Server `
     --database $Database `
     --run-path $ResolvedRunPath `
-    @AuthArgs
+    @AuthArgs `
+    @OptArgs
 
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
