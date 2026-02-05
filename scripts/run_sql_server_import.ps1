@@ -1,8 +1,5 @@
-# NOTE:
-# This script is intended for CSV-based runs only.
-# The run path must contain 'sql/schema/' and 'sql/load/' folders.
-
-param (
+[CmdletBinding(DefaultParameterSetName = "Trusted")]
+param(
     [Parameter(Mandatory = $true)]
     [string]$RunPath,
 
@@ -12,50 +9,55 @@ param (
     [Parameter(Mandatory = $true)]
     [string]$Database,
 
-    [string]$User,
-    [string]$Password,
-
+    [Parameter(ParameterSetName = "Trusted")]
     [switch]$TrustedConnection,
 
-    # Optional: only runs CCI scripts when present + flagged
-    [switch]$ApplyCCI
+    [Parameter(Mandatory = $true, ParameterSetName = "SqlAuth")]
+    [string]$User,
+
+    [Parameter(Mandatory = $true, ParameterSetName = "SqlAuth")]
+    [string]$Password,
+
+    [switch]$ApplyCCI,
+
+    [string]$OdbcDriver,
+
+    [string]$PythonExe = "python"
 )
 
-# Resolve run path to avoid relative path confusion
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot   = (Resolve-Path (Join-Path $ScriptRoot "..")).Path
+
+# ✅ Correct entrypoint
+$PyEntrypoint = Join-Path $RepoRoot "scripts\sql\run_sql_server_import.py"
+
 $ResolvedRunPath = (Resolve-Path $RunPath).Path
 
-# CSV-only guard (early, user-friendly failure)
-if (-not (Test-Path (Join-Path $ResolvedRunPath "sql\schema")) -or
-    -not (Test-Path (Join-Path $ResolvedRunPath "sql\load"))) {
-    Write-Error "CSV run required. Expected 'sql/schema/' and 'sql/load/' folders in run path."
-    exit 1
+$argsList = @(
+    $PyEntrypoint,
+    "--server",   $Server,
+    "--database", $Database,
+    "--run-path", $ResolvedRunPath
+)
+
+if ($PSCmdlet.ParameterSetName -eq "Trusted") {
+    $argsList += "--trusted"
+} else {
+    $argsList += @("--user", $User, "--password", $Password)
 }
 
-# Build authentication arguments (safe array form)
-if ($TrustedConnection) {
-    $AuthArgs = @("--trusted")
-}
-else {
-    if (-not $User -or -not $Password) {
-        Write-Error "User and Password must be provided when not using -TrustedConnection"
-        exit 1
-    }
-    $AuthArgs = @("--user", $User, "--password", $Password)
-}
-
-# Optional flags
-$OptArgs = @()
 if ($ApplyCCI) {
-    $OptArgs += "--apply-cci"
+    $argsList += "--apply-cci"
 }
 
-python -m scripts.sql.run_sql_server_import `
-    --server $Server `
-    --database $Database `
-    --run-path $ResolvedRunPath `
-    @AuthArgs `
-    @OptArgs
-
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+if ($OdbcDriver) {
+    $argsList += @("--odbc-driver", $OdbcDriver)
 }
+
+Write-Host ("Running: {0} {1}" -f $PythonExe, ($argsList -join " "))
+
+& $PythonExe @argsList
+exit $LASTEXITCODE

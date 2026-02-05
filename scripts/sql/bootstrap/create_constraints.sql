@@ -38,7 +38,7 @@ AND NOT EXISTS (
 )
 BEGIN
     ALTER TABLE dbo.ProductSubcategory
-    ADD CONSTRAINT PK_ProductSubcategory PRIMARY KEY NONCLUSTERED ([ProductSubcategoryKey]);
+    ADD CONSTRAINT PK_ProductSubcategory PRIMARY KEY NONCLUSTERED ([SubcategoryKey]);
 END;
 
 IF OBJECT_ID(N'dbo.ProductCategory', N'U') IS NOT NULL
@@ -50,7 +50,7 @@ AND NOT EXISTS (
 )
 BEGIN
     ALTER TABLE dbo.ProductCategory
-    ADD CONSTRAINT PK_ProductCategory PRIMARY KEY NONCLUSTERED ([ProductCategoryKey]);
+    ADD CONSTRAINT PK_ProductCategory PRIMARY KEY NONCLUSTERED ([CategoryKey]);
 END;
 
 IF OBJECT_ID(N'dbo.Geography', N'U') IS NOT NULL
@@ -132,8 +132,8 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.Products WITH CHECK
     ADD CONSTRAINT FK_Products_ProductSubcategory
-        FOREIGN KEY ([ProductSubcategoryKey])
-        REFERENCES dbo.ProductSubcategory ([ProductSubcategoryKey]);
+        FOREIGN KEY ([SubcategoryKey])
+        REFERENCES dbo.ProductSubcategory ([SubcategoryKey]);
 
     ALTER TABLE dbo.Products CHECK CONSTRAINT FK_Products_ProductSubcategory;
 END;
@@ -148,8 +148,8 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.ProductSubcategory WITH CHECK
     ADD CONSTRAINT FK_ProductSubcategory_ProductCategory
-        FOREIGN KEY ([ProductCategoryKey])
-        REFERENCES dbo.ProductCategory ([ProductCategoryKey]);
+        FOREIGN KEY ([CategoryKey])
+        REFERENCES dbo.ProductCategory ([CategoryKey]);
 
     ALTER TABLE dbo.ProductSubcategory CHECK CONSTRAINT FK_ProductSubcategory_ProductCategory;
 END;
@@ -230,7 +230,7 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.Sales WITH CHECK
     ADD CONSTRAINT FK_Sales_Dates
-        FOREIGN KEY ([Date])
+        FOREIGN KEY ([OrderDate])
         REFERENCES dbo.Dates ([Date]);
 
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Dates;
@@ -248,7 +248,7 @@ BEGIN
     ALTER TABLE dbo.ExchangeRates WITH CHECK
     ADD CONSTRAINT FK_ExchangeRates_FromCurrency
         FOREIGN KEY ([FromCurrency])
-        REFERENCES dbo.Currency ([FromCurrency]);
+        REFERENCES dbo.Currency ([ToCurrency]);
 
     ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_FromCurrency;
 END;

@@ -2,6 +2,10 @@ import argparse
 import sys
 from pathlib import Path
 
+# Ensure repo root is importable so "import src...." works when running this file directly
+REPO_ROOT = Path(__file__).resolve().parents[2]  # scripts/sql/ -> scripts -> repo root
+sys.path.insert(0, str(REPO_ROOT))
+
 from src.tools.sql.sql_server_import import (
     import_sql_server,
     SqlServerImportError,
@@ -106,7 +110,7 @@ def main() -> int:
             database=args.database,
             run_dir=run_dir,
             connection_string=connection_string,
-            apply_cci=args.apply_cci,
+            apply_cci=bool(args.apply_cci),
         )
 
     except (SqlServerImportError, ValueError) as exc:
