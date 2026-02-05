@@ -111,7 +111,7 @@ models:
 
     noise_sd: 0.12
     min_qty: 1
-    max_qty: 6
+    max_qty: 4
 
   # ============================================================
   # CUSTOMER DISCOVERY (first-time appearance)
@@ -155,14 +155,16 @@ models:
     # Smooth month-to-month factor changes (0 = independent months; 0.8+ = smoother)
     month_inertia: 0.85
 
-    # Keep DiscountAmount “clean” (computed in compute_prices and quantized there)
-    # If your pricing pipeline scales prices by time factor, set this false unless
-    # your pipeline re-quantizes discounts after scaling.
+    # NOTE: pricing_pipeline.py does NOT read this key. It reads inflation.scale_discount instead.
     apply_base_factor_to_discount: false
 
+    # pricing_pipeline.py reads these keys:
     inflation:
       annual_rate: 0.06
-      noise_sigma: 0.00
+      month_volatility_sigma: 0.0
+      factor_clip: [0.90, 1.15]
+      scale_discount: false
+      volatility_seed: 123
 
     seasonality:
       enabled: true
@@ -170,7 +172,6 @@ models:
       sharpness: 1.2
       phase_shift_months: -1
 
-    # Disable ramp by default (keeps it simple)
     ramp:
       months: 0
       min_multiplier: 1.0
@@ -178,7 +179,6 @@ models:
       discount_scale: 1.0
       discount_noise_sigma: 0.0
 
-    # Safety bounds
     discount:
       max_pct_of_price: 0.50
 
@@ -193,19 +193,64 @@ models:
       allow_negative_margin: false
 
       ladder:
-        - { kind: none, value: 0.0,  weight: 0.55 }
-        - { kind: pct,  value: 0.05, weight: 0.18 }
-        - { kind: pct,  value: 0.10, weight: 0.12 }
-        - { kind: pct,  value: 0.15, weight: 0.08 }
-        - { kind: amt,  value: 25.0, weight: 0.04 }
-        - { kind: amt,  value: 50.0, weight: 0.03 }
+        - { kind: none, value: 0.0,  weight: 0.40 }
 
+        # percent markdowns (more variety)
+        - { kind: pct,  value: 0.02, weight: 0.08 }
+        - { kind: pct,  value: 0.05, weight: 0.15 }
+        - { kind: pct,  value: 0.08, weight: 0.10 }
+        - { kind: pct,  value: 0.10, weight: 0.10 }
+        - { kind: pct,  value: 0.12, weight: 0.07 }
+        - { kind: pct,  value: 0.15, weight: 0.06 }
+        - { kind: pct,  value: 0.20, weight: 0.04 }
+
+        # fixed coupons (more variety)
+        - { kind: amt,  value: 5.0,  weight: 0.04 }
+        - { kind: amt,  value: 10.0, weight: 0.03 }
+        - { kind: amt,  value: 15.0, weight: 0.02 }
+        - { kind: amt,  value: 25.0, weight: 0.01 }
+
+      # This appearance is ONLY for discount quantization inside compute_prices()
       appearance:
         quantize_discount: true
-        discount_rounding: floor   # floor | nearest
+        discount_rounding: floor
         discount_bands:
           - { max: 50,    step: 0.50 }
           - { max: 200,   step: 1 }
           - { max: 1000,  step: 5 }
           - { max: 5000,  step: 10 }
           - { max: 1e18,  step: 25 }
+
+    # This appearance is for snapping final Sales prices AFTER time-scaling
+    appearance:
+      enabled: true
+
+      unit_price:
+        rounding: nearest
+        endings:
+          - { value: 0.99, weight: 0.70 }
+          - { value: 0.50, weight: 0.25 }
+          - { value: 0.00, weight: 0.05 }
+        bands:
+          - { max: 200,   step: 1 }
+          - { max: 1000,  step: 5 }
+          - { max: 10000, step: 5 }
+          - { max: 1e18,  step: 10 }
+
+      unit_cost:
+        rounding: nearest
+        bands:
+          - { max: 200,   step: 0.05 }
+          - { max: 1000,  step: 0.10 }
+          - { max: 10000, step: 1 }
+          - { max: 1e18,  step: 5 }
+
+      discount:
+        rounding: floor
+        bands:
+          - { max: 50,    step: 0.50 }
+          - { max: 200,   step: 1 }
+          - { max: 1000,  step: 5 }
+          - { max: 5000,  step: 10 }
+          - { max: 20000, step: 10 }   # NEW: keep 10s for most high prices
+          - { max: 1e18,  step: 25 }   # only ultra-high prices go to 25s
