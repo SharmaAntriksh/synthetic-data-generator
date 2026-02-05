@@ -2,10 +2,6 @@ import numpy as np
 import pandas as pd
 
 
-def _f(x, default=None):
-    return default if x is None else x
-
-
 def _to_float(x, default=None):
     try:
         return float(x)
@@ -45,6 +41,87 @@ def _stretch_to_range(series: pd.Series, target_min: float, target_max: float, q
     return pd.Series(arr, index=series.index)
 
 
+def _parse_bands(bands, default_bands):
+    """
+    bands: list of dicts with keys: max, step
+    Example:
+      - {max: 100, step: 1}
+      - {max: 1000, step: 10}
+      - {max: 1e18, step: 100}
+    """
+    if not isinstance(bands, list) or len(bands) == 0:
+        return default_bands
+
+    out = []
+    for b in bands:
+        if not isinstance(b, dict):
+            continue
+        mx = _to_float(b.get("max"), None)
+        st = _to_float(b.get("step"), None)
+        if mx is None or st is None or mx <= 0 or st <= 0:
+            continue
+        out.append((mx, st))
+
+    if not out:
+        return default_bands
+
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def _step_for_value(x: np.ndarray, bands):
+    """
+    Vectorized step assignment by bands.
+    """
+    step = np.empty_like(x, dtype=np.float64)
+    step.fill(bands[-1][1])
+    for mx, st in bands:
+        step = np.where(x <= mx, st, step)
+    return step
+
+
+def _snap_unit_price_to_points(unit_price: np.ndarray, bands, ending: float) -> np.ndarray:
+    """
+    Snap prices to magnitude-based steps with a psychological ending (e.g., .99).
+    Works regardless of absolute max price because bands are per-value.
+    """
+    p = np.asarray(unit_price, dtype=np.float64)
+    p = np.where(np.isfinite(p), p, 0.0)
+    p = np.maximum(p, 0.0)
+
+    ending = float(ending)
+    # Keep ending in [0, 0.99]; 0 means "no ending"
+    ending = float(np.clip(ending, 0.0, 0.99))
+
+    step = _step_for_value(p, bands)
+
+    # round to nearest step
+    base = np.round(p / step) * step
+
+    if ending <= 0.0:
+        snapped = base
+    else:
+        # Example: ending=0.99 => subtract 0.01 from base (e.g., 250 -> 249.99)
+        snapped = base - (1.0 - ending)
+
+    snapped = np.maximum(snapped, 0.0)
+    return snapped
+
+
+def _round_to_step(x: np.ndarray, bands) -> np.ndarray:
+    """
+    Round values to clean increments (no psychological endings).
+    """
+    a = np.asarray(x, dtype=np.float64)
+    a = np.where(np.isfinite(a), a, 0.0)
+    a = np.maximum(a, 0.0)
+
+    step = _step_for_value(a, bands)
+    rounded = np.round(a / step) * step
+    rounded = np.maximum(rounded, 0.0)
+    return rounded
+
+
 def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None = None) -> pd.DataFrame:
     """
     Products are the economic source of truth.
@@ -73,6 +150,12 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     cost_cfg = pricing_cfg.get("cost", {}) or {}
     jitter_cfg = pricing_cfg.get("jitter", {}) or {}
 
+    # appearance config (preferred location: products.pricing.appearance)
+    # backward compatible: products.pricing.base.appearance
+    appearance_cfg = pricing_cfg.get("appearance", None)
+    if not isinstance(appearance_cfg, dict):
+        appearance_cfg = base_cfg.get("appearance", {}) or {}
+
     # ----------------------------
     # Base price: scale / (optional) stretch / clamp
     # ----------------------------
@@ -90,13 +173,13 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     # Apply scale
     out["UnitPrice"] = out["UnitPrice"] * value_scale
 
-    # Optional stretch-to-range (use only when you want the bounds to be “design targets”)
+    # Optional stretch-to-range (use only when you want bounds to be design targets)
     if stretch and (min_price is not None) and (max_price is not None):
         if max_price <= min_price:
             raise ValueError("products.pricing.base.max_unit_price must be > min_unit_price when stretching")
         out["UnitPrice"] = _stretch_to_range(out["UnitPrice"], min_price, max_price, qlo, qhi)
 
-    # Hard clamp
+    # Hard clamp (pre-cost-model)
     if min_price is not None:
         out["UnitPrice"] = out["UnitPrice"].clip(lower=min_price)
     if max_price is not None:
@@ -116,7 +199,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     # Choose a default mode:
     # - If margins provided -> margin mode
     # - Else if UnitCost exists -> keep
-    # - Else -> margin with a conservative default
+    # - Else -> margin (but require margins to be provided)
     if mode == "":
         if (min_margin is not None) or (max_margin is not None):
             mode = "margin"
@@ -130,9 +213,10 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
             mm_hi = 0.45 if max_margin is None else float(max_margin)
             margin = rng.uniform(mm_lo, mm_hi, size=len(out))
             fill_cost = out["UnitPrice"].to_numpy(dtype="float64") * (1.0 - margin)
-            out["UnitCost"] = out["UnitCost"].to_numpy(dtype="float64")
-            mask = ~np.isfinite(out["UnitCost"])
-            out.loc[mask, "UnitCost"] = fill_cost[mask]
+            out_cost = out["UnitCost"].to_numpy(dtype="float64")
+            mask = ~np.isfinite(out_cost)
+            out_cost[mask] = fill_cost[mask]
+            out["UnitCost"] = out_cost
     else:
         # margin mode
         if min_margin is None or max_margin is None:
@@ -144,7 +228,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
         out["UnitCost"] = out["UnitPrice"].to_numpy(dtype="float64") * (1.0 - margin)
 
     # ----------------------------
-    # Jitter
+    # Jitter (small noise)
     # ----------------------------
     price_pct = float(jitter_cfg.get("price_pct", 0.0) or 0.0)
     cost_pct = float(jitter_cfg.get("cost_pct", 0.0) or 0.0)
@@ -157,16 +241,53 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
         mult = rng.uniform(1.0 - cost_pct, 1.0 + cost_pct, size=len(out))
         out["UnitCost"] = out["UnitCost"].to_numpy(dtype="float64") * mult
 
-    # Reapply hard bounds after jitter
+    # Reapply hard bounds after jitter (still raw cents)
     if min_price is not None:
         out["UnitPrice"] = out["UnitPrice"].clip(lower=min_price)
     if max_price is not None:
         out["UnitPrice"] = out["UnitPrice"].clip(upper=max_price)
 
+    # ----------------------------
+    # Appearance: snap UnitPrice, round UnitCost
+    # ----------------------------
+    snap_unit_price = _to_bool(appearance_cfg.get("snap_unit_price"), False)
+    round_unit_cost = _to_bool(appearance_cfg.get("round_unit_cost"), False)
+
+    # Defaults chosen to be broadly retail-like across 2k..10k..etc
+    default_price_bands = [(100.0, 1.0), (1000.0, 10.0), (10000.0, 50.0), (1e18, 100.0)]
+    default_cost_bands = [(100.0, 0.05), (1000.0, 0.10), (10000.0, 1.0), (1e18, 5.0)]
+
+    price_bands = _parse_bands(appearance_cfg.get("price_bands"), default_price_bands)
+    cost_bands = _parse_bands(appearance_cfg.get("cost_bands"), default_cost_bands)
+
+    price_ending = _to_float(appearance_cfg.get("price_ending"), 0.99)
+
+    if snap_unit_price:
+        up = out["UnitPrice"].to_numpy(dtype=np.float64, copy=False)
+        up = _snap_unit_price_to_points(up, price_bands, price_ending)
+        out["UnitPrice"] = up
+
+        # Snapping can drift slightly; enforce bounds again
+        if min_price is not None:
+            out["UnitPrice"] = out["UnitPrice"].clip(lower=min_price)
+        if max_price is not None:
+            out["UnitPrice"] = out["UnitPrice"].clip(upper=max_price)
+
+    if round_unit_cost:
+        uc = out["UnitCost"].to_numpy(dtype=np.float64, copy=False)
+        uc = _round_to_step(uc, cost_bands)
+        out["UnitCost"] = uc
+
+    # ----------------------------
     # Invariants
+    # ----------------------------
     out["UnitPrice"] = out["UnitPrice"].clip(lower=0.0)
     out["UnitCost"] = pd.to_numeric(out["UnitCost"], errors="coerce").astype("float64").clip(lower=0.0)
-    out["UnitCost"] = np.minimum(out["UnitCost"].to_numpy(dtype="float64"), out["UnitPrice"].to_numpy(dtype="float64"))
+
+    # Ensure cost <= price (and re-enforce after rounding)
+    up_arr = out["UnitPrice"].to_numpy(dtype="float64", copy=False)
+    uc_arr = out["UnitCost"].to_numpy(dtype="float64", copy=False)
+    out["UnitCost"] = np.minimum(uc_arr, up_arr)
 
     # Store format
     out["UnitPrice"] = out["UnitPrice"].round(2)
