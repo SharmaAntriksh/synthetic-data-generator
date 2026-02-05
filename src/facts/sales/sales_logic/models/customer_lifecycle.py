@@ -98,7 +98,7 @@ def build_eligibility_by_month(
     Eligibility rule:
       - IsActiveInSales == 1 (if provided, else assume all eligible globally)
       - CustomerStartMonth <= m
-      - CustomerEndMonth < 0 => no end
+      - CustomerEndMonth < 0 or missing => no end
         else m <= CustomerEndMonth
 
     All arrays are expected aligned to customers dimension row order.
@@ -111,11 +111,37 @@ def build_eligibility_by_month(
     else:
         active_gate = (np.asarray(is_active_in_sales_arr, dtype=np.int64) == 1)
 
+    # --- robust end-month normalization (matches new chunk_builder behavior) ---
     if end_month_arr is None:
         end_month_norm = np.full(n, -1, dtype=np.int64)
     else:
-        end_month_norm = np.asarray(end_month_arr, dtype=np.int64)
-        end_month_norm = np.where(end_month_norm < 0, -1, end_month_norm)
+        a = np.asarray(end_month_arr)
+
+        # object arrays may contain pd.NA / None
+        if a.dtype == object:
+            out = np.empty(n, dtype=np.int64)
+            for i in range(n):
+                v = a[i]
+                if v is None or v is np.nan:
+                    out[i] = -1
+                else:
+                    try:
+                        out[i] = int(v)
+                    except Exception:
+                        out[i] = -1
+            out[out < 0] = -1
+            end_month_norm = out
+
+        # nullable ints can come through as float w/ NaN depending on parquet/pandas path
+        elif np.issubdtype(a.dtype, np.floating):
+            out = np.where(np.isnan(a), -1, a).astype(np.int64)
+            out[out < 0] = -1
+            end_month_norm = out
+
+        else:
+            out = a.astype(np.int64, copy=False)
+            out[out < 0] = -1
+            end_month_norm = out
 
     out: Dict[int, np.ndarray] = {}
 
@@ -126,7 +152,6 @@ def build_eligibility_by_month(
         out[m] = mask
 
     return out
-
 
 # -------------------------------------------------------------------
 # Optional: Activity overlay (temporary inactivity)

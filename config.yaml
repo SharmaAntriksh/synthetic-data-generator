@@ -21,10 +21,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 10052
+  total_rows: 200230
   chunk_size: 1000000
 
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -57,30 +57,53 @@ sales:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: true
-  num_products: 18021
+  use_contoso_products: false
+  num_products: 6021
   active_ratio: 0.94
   seed: 42
 
   pricing:
     base:
-      value_scale: 0.11
+      value_scale: 0.10
       min_unit_price: 10
-      max_unit_price: 3315
+      max_unit_price: 5000
+
+      # optional tuning:
+      stretch_to_range: false
+      stretch_low_quantile: 0.01
+      stretch_high_quantile: 0.99
 
     cost:
-      min_margin_pct: 0.2
+      mode: margin          # add this (or "keep" if you want to preserve Contoso UnitCost when use_contoso_products: true)
+      min_margin_pct: 0.20
       max_margin_pct: 0.45
 
     jitter:
       price_pct: 0.03
       cost_pct: 0.02
 
+    # NEW: controls how prices *look* (works for max 2000 / 10000 / etc.)
+    appearance:
+      snap_unit_price: true
+      price_ending: 0.99
+      price_bands:
+        - {max: 100,   step: 1}
+        - {max: 1000,  step: 10}
+        - {max: 10000, step: 50}
+        - {max: 1e18,  step: 100}
+
+      round_unit_cost: true
+      cost_bands:
+        - {max: 100,   step: 0.05}
+        - {max: 1000,  step: 0.10}
+        - {max: 10000, step: 1}
+        - {max: 1e18,  step: 5}
+
 # ---------------------------------------------------------------------
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 5413
+  total_customers: 38413
   active_ratio: 0.90
 
   pct_india: 10
@@ -92,10 +115,10 @@ customers:
 
   lifecycle:
     enable_churn: true
-    base_monthly_churn: 0.025
-    min_tenure_months: 5
-    initial_active_customers: 200        # or 1000
-    initial_spread_months: 36            # customers started in the 24 months before start_date
+    base_monthly_churn: 0.52
+    min_tenure_months: 22
+    initial_active_customers: 3000        # or 1000
+    initial_spread_months: 24            # customers started in the 24 months before start_date
 
   override:
     seed: null

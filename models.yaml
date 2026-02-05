@@ -1,29 +1,29 @@
 # ============================================================
 # HIGH-LEVEL TUNING (preferred)
-# Edit ONLY these 3 knobs. config_loader.apply_acquisition_tuning()
-# will derive detailed customer discovery + participation settings.
+# config_loader.apply_acquisition_tuning() can use these
 # ============================================================
 tuning:
   acquisition_intensity: 0.55      # 0..1 (higher => more new customers)
   acquisition_smoothness: 0.90     # 0..1 (higher => flatter spread)
-  acquisition_cycles: 0.2         # 0..1 (higher => bigger multi-year waves)
+  acquisition_cycles: 0.35         # 0..1 (higher => bigger multi-year waves)
 
 models:
 
   # ============================================================
   # ACTIVITY / TRANSACTION THINNING
-  # Controls WHEN orders occur and how dense each month is
+  # Shapes month-to-month order density (keeps rowcount if preserve_row_count=true)
   # ============================================================
   activity:
+    enabled: true
     size_scale_threshold: 200000
 
-    # Keep false for realistic variability in month-by-month generation.
-    preserve_row_count: false  # allow thinning to reduce month volume; set true only if you MUST hit an exact row total.
+    # Keep TRUE if you must hit an exact row total (recommended for your pipeline)
+    preserve_row_count: true
 
     # Higher = smoother month-to-month continuity
     month_inertia: 0.73
 
-    # Monthly transaction intensity pattern (retail: Nov/Dec peak, Feb dip)
+    # Retail-like year seasonality (12 values)
     monthly_baseline:
       - 0.92  # Jan
       - 0.86  # Feb
@@ -39,86 +39,67 @@ models:
       - 1.16  # Dec
 
     volatility:
-      # Higher => more spiky months (use 0.06–0.10)
-      sigma: 0.006
+      # Higher => spikier months (try 0.02–0.08)
+      sigma: 0.01
 
     row_noise:
-      # Small dataset: keep lower noise so early months don’t collapse
+      # Adds within-month variability; keep smaller for small datasets
       sigma_small_dataset: 0.10
       sigma_large_dataset: 0.30
 
     bounds:
       dataset_split_threshold: 300000
-
-      # Tight bounds for smaller datasets to avoid extremes
-      small_dataset:
-        low: 0.82
-        high: 1.22
-
-      # Larger datasets tolerate more natural variance
-      large_dataset:
-        low: 0.82
-        high: 1.18
-
+      small_dataset: { low: 0.82, high: 1.22 }
+      large_dataset: { low: 0.82, high: 1.18 }
 
   # ============================================================
-  # BASE DEMAND NORMALIZATION (macro volume shape)
-  # Drives overall row allocation per month BEFORE customer sampling
+  # MACRO DEMAND (row allocation shape per month)
   # ============================================================
   macro_demand:
     base_level: 1.0
-
-    # Mild long-run growth (keep low if you want stable totals across years)
-    yearly_growth: 0.23
-
-    # Additional smooth seasonality (use alongside activity.monthly_baseline)
-    seasonality_amplitude: 0.16
+    yearly_growth: 0.00            # keep low for stable yearly totals
+    seasonality_amplitude: 0.08
     seasonality_phase: 0.0
-
-    # Small random drift month-to-month
-    noise_std: 0.05
-
+    noise_std: 0.06
+    
+    yoy_growth_schedule:
+      mode: "repeat"
+      values: [-0.06, -0.22, -0.18, 0.37, 0.14]
+      # pattern: inc inc dec inc dec dec inc inc (then repeats)
+      
     # Rare demand shocks to create “decline then recovery” windows
-    shock_probability: 0.18
-    shock_impact: [-0.25, 0.23]   # multiplicative hit range
+    shock_probability: 0.10
+    shock_impact: [-0.25, 0.20]    # multiplicative range
 
     # Prevent early months from concentrating too many rows on too few customers
     early_month_cap:
       enabled: true
-      max_rows_per_customer: 8
+      max_rows_per_customer: 12
       redistribute_excess: true
 
   # ============================================================
-  # CUSTOMER PARTICIPATION (distinct customers per month)
-  # This is the knob set that creates multi-year "incline/decline" in #customers.
-  # (Requires chunk_builder logic to use it; safe to keep even if unused.)
+  # DISTINCT CUSTOMER PARTICIPATION (per month)
+  # This is the main knob for “some years down, next year up”
   # ============================================================
   customer_participation:
-    # target distinct customers ≈ base_distinct_ratio * eligible_customers (then modulated by cycles)
-    base_distinct_ratio: 0.50
-
-    # hard floors/caps (prevents “month has 1 customer” and “everyone buys every month”)
+    base_distinct_ratio: 0.35
     min_distinct_customers: 250
-    max_distinct_ratio: 0.62
+    max_distinct_ratio: 0.70
 
-    # multi-year waves: incline -> decline -> incline ...
     cycles:
       enabled: true
-      period_months: 12       # 2-year waves
-      amplitude: 0.10         # +/-35% swing
+      period_months: 36     # 3-year waves (24 = 2-year; 48 = 4-year)
+      amplitude: 0.35       # +/- swing in distinct customers
       phase: 0.0
-      noise_std: 0.06         # irregularity around the wave
-
+      noise_std: 0.06
 
   # ============================================================
   # QUANTITY / BASKET SIZE
-  # Controls HOW MANY units per order line
   # ============================================================
   quantity:
-    base_poisson_lambda: 2.1
+    base_poisson_lambda: 3.2
     month_inertia: 0.82
 
-    # Retail: slightly larger baskets in Nov/Dec
     monthly_factors:
       - 0.99
       - 0.98
@@ -133,81 +114,141 @@ models:
       - 1.06
       - 1.05
 
-    noise_sd: 0.07
+    noise_sd: 0.12
     min_qty: 1
-    max_qty: 6
-
-
-  # ============================================================
-  # CUSTOMER LIFECYCLE (macro pool evolution)
-  # Controls WHICH customers are active over time
-  # (Keep conservative; customer start distribution + warm-start handles early base.)
-  # ============================================================
-  customers:
-    base_active_rate: 0.78
-    annual_growth_rate: 0.22
-    annual_churn_rate: 0.14
-    monthly_noise: 0.04
-
-    # Optional waves in active pool (separate from participation waves)
-    seasonal_growth_amplitude: 0.12
-    seasonal_period_months: 24
-
-    # Safety floor (used only if your lifecycle model enforces it)
-    min_monthly_new_customers: 80
-    even_start_months: false
+    max_qty: 4
 
   # ============================================================
   # CUSTOMER DISCOVERY (first-time appearance)
-  # Controls how quickly undiscovered-but-eligible customers get their first order.
   # ============================================================
   customer_discovery:
-    # Rate knobs (keep mild; they should not dominate if you're using target_new)
-    base_discovery_rate: 0.06
+    base_discovery_rate: 0.08
     min_discovery_rate: 0.05
     max_discovery_rate: 0.20
-    seasonal_amplitude: 0.0
+    seasonal_amplitude: 0.30
     seasonal_period_months: 24
 
-    # Shape knobs (these are the important ones)
-    max_fraction_per_month: 0.01
-    orders_per_new_customer: 28
+    # discovery shape
+    max_fraction_per_month: 0.015
+    orders_per_new_customer: 30
 
-    min_new_customers_per_month: 160
-    min_new_customers_steady: 240
-    floor_ramp_months: 18
-    bootstrap_suppression_months: 12
+    # floors (prevents “month has 1 new customer”)
+    min_new_customers_per_month: 80
+    min_new_customers_steady: 160
+    floor_ramp_months: 60
+    bootstrap_suppression_months: 6
+
   # ============================================================
-  # PRICING PIPELINE
-  # Controls HOW MUCH revenue is generated per unit (inflation + discounts)
+  # OPTIONAL: Customer activity overlay (usually keep OFF)
+  # Uses CustomerStartMonth/EndMonth as base, then adds dormancy/reactivation.
+  # ============================================================
+  customer_activity_overlay:
+    enabled: false
+    base_monthly_activity_rate: 0.85
+    month_inertia: 0.75
+    monthly_reactivation_rate: 0.08
+    seasonal_amplitude: 0.10
+    seasonal_period_months: 12
+    per_customer_sigma: 0.20
+    seed: 1234
+
+  # ============================================================
+  # SALES-TIME PRICE DRIFT (uses Product UnitPrice/UnitCost as base)
+  # Promotions do NOT affect pricing here (analysis-time only via PromotionKey).
   # ============================================================
   pricing:
-    month_inertia: 0.78
-
-    ramp:
-      months: 30
-      min_multiplier: 0.90
-      max_multiplier: 1.10
-      discount_scale: 0.90
-      discount_noise_sigma: 0.10
+    month_inertia: 0.85
 
     inflation:
-      annual_rate: 0.18
-      noise_sigma: 0.008
+      annual_rate: 0.03
+      month_volatility_sigma: 0.0
+      factor_clip: [0.90, 1.25]
+      scale_discount: false         # keep DiscountAmount stable; promo is analysis-time anyway
+      volatility_seed: 123
 
     seasonality:
       enabled: true
-      amplitude: 0.012
-      sharpness: 1.0
+      amplitude: 0.03
+      sharpness: 1.2
       phase_shift_months: -1
 
-    discount:
-      max_pct_of_price: 0.60
+    ramp:
+      months: 0
+      min_multiplier: 1.0
+      max_multiplier: 1.0
+      discount_scale: 1.0
+      discount_noise_sigma: 0.0
 
+    discount:
+      max_pct_of_price: 0.30        # lower than 0.50 to avoid huge pct markdowns on 5000 items
     floors:
       min_net_price: 0.01
 
-    cost:
-      cost_ratio_min: 0.62
-      cost_ratio_max: 0.84
-      min_margin_pct: 0.06
+    # ------------------------------------------------------------
+    # Sales.DiscountAmount (independent from Promotions)
+    # ------------------------------------------------------------
+    markdown:
+      enabled: true
+      max_pct_of_price: 0.30
+      min_net_price: 0.01
+      allow_negative_margin: false
+
+      # Target: lots of clean 5/10/15/.../35 discounts
+      ladder:
+        - { kind: none, value: 0.0,  weight: 0.35 }
+
+        # small % markdowns (kept light so you don't get huge discounts on high prices)
+        - { kind: pct,  value: 0.02, weight: 0.08 }
+        - { kind: pct,  value: 0.03, weight: 0.06 }
+        - { kind: pct,  value: 0.05, weight: 0.06 }
+        - { kind: pct,  value: 0.08, weight: 0.04 }
+
+        # fixed markdowns (main variety driver)
+        - { kind: amt,  value: 5.0,  weight: 0.09 }
+        - { kind: amt,  value: 10.0, weight: 0.08 }
+        - { kind: amt,  value: 15.0, weight: 0.07 }
+        - { kind: amt,  value: 20.0, weight: 0.06 }
+        - { kind: amt,  value: 25.0, weight: 0.04 }
+        - { kind: amt,  value: 30.0, weight: 0.03 }
+        - { kind: amt,  value: 35.0, weight: 0.02 }
+
+      # Quantization inside compute_prices()
+      appearance:
+        quantize_discount: true
+        discount_rounding: nearest     # critical: avoids % discounts turning into 0 too often
+        discount_bands:
+          - { max: 5000,  step: 5 }    # your product max
+          - { max: 1e18,  step: 10 }   # for rare larger prices if you ever raise max
+
+    # ------------------------------------------------------------
+    # FINAL snapping AFTER time-scaling (pricing_pipeline)
+    # ------------------------------------------------------------
+    appearance:
+      enabled: true
+
+      unit_price:
+        rounding: nearest
+        endings:
+          - { value: 0.99, weight: 0.75 }
+          - { value: 0.50, weight: 0.20 }
+          - { value: 0.00, weight: 0.05 }
+        bands:
+          - { max: 200,   step: 1 }
+          - { max: 1000,  step: 5 }
+          - { max: 5000,  step: 5 }
+          - { max: 1e18,  step: 10 }
+
+      unit_cost:
+        rounding: nearest
+        bands:
+          - { max: 200,   step: 0.05 }
+          - { max: 1000,  step: 0.10 }
+          - { max: 5000,  step: 1 }
+          - { max: 1e18,  step: 5 }
+
+      # Re-quantize DiscountAmount after scaling/snapping so it stays 5/10/15/...
+      discount:
+        rounding: nearest
+        bands:
+          - { max: 5000,  step: 5 }
+          - { max: 1e18,  step: 10 }

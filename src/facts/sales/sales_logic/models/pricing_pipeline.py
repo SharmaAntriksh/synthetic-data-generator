@@ -2,229 +2,312 @@ import numpy as np
 from src.facts.sales.sales_logic.globals import State
 
 
-def _default_cfg():
-    """
-    Safe defaults so pipeline can run even if models.pricing block is missing.
-    These defaults are mild to avoid extreme values.
-    """
-    return {
-        "month_inertia": 0.0,
-        "apply_base_factor_to_discount": True,  # keep legacy behavior by default :contentReference[oaicite:1]{index=1}
-        "inflation": {
-            "annual_rate": 0.03,
-            "noise_sigma": 0.02,
-        },
-        "seasonality": {
-            "enabled": True,
-            "amplitude": 0.06,
-            "sharpness": 1.6,
-            "phase_shift_months": 0,
-        },
-        "ramp": {
-            "months": 18,
-            "min_multiplier": 0.85,
-            "max_multiplier": 1.05,
-            "discount_scale": 1.0,
-            "discount_noise_sigma": 0.15,
-        },
-        "discount": {
-            "max_pct_of_price": 0.85,
-        },
-        "floors": {
-            "min_net_price": 0.10,
-        },
-        "cost": {
-            "cost_ratio_min": 0.55,
-            "cost_ratio_max": 0.85,
-            "min_margin_pct": 0.05,
-        },
-    }
+def _parse_bands(bands, default):
+    out = []
+    if isinstance(bands, list):
+        for b in bands:
+            if not isinstance(b, dict):
+                continue
+            mx = b.get("max", None)
+            st = b.get("step", None)
+            try:
+                mx = float(mx)
+                st = float(st)
+            except Exception:
+                continue
+            if mx <= 0 or st <= 0:
+                continue
+            out.append((mx, st))
+    if not out:
+        return default
+    out.sort(key=lambda t: t[0])
+    return out
 
 
-def _get_cfg():
+def _choose_steps(x, bands):
+    # vectorized step selection based on magnitude of x
+    step = np.empty_like(x, dtype=np.float64)
+    step.fill(float(bands[-1][1]))
+    for mx, st in bands:
+        step = np.where(x <= mx, float(st), step)
+    step = np.where(step > 0, step, 0.01)
+    return step
+
+
+def _quantize(x, step, rounding: str):
+    if rounding == "floor":
+        return np.floor(x / step) * step
+    return np.round(x / step) * step
+
+
+def _snap_unit_price(rng, up, cfg):
+    """
+    Snap to nice retail price-points:
+      anchor to band-step (e.g. 5s or 10s),
+      then apply ending (.99/.50/.00) with weights.
+    """
+    enabled = bool(cfg.get("enabled", False))
+    if not enabled:
+        return up
+
+    unit_cfg = cfg.get("unit_price", {}) or {}
+
+    rounding = str(unit_cfg.get("rounding", "nearest")).strip().lower()
+    if rounding not in ("nearest", "floor"):
+        rounding = "nearest"
+
+    bands = _parse_bands(
+        unit_cfg.get("bands", None),
+        default=[(200.0, 1.0), (1000.0, 5.0), (10000.0, 5.0), (1e18, 10.0)],
+    )
+
+    endings = unit_cfg.get("endings", None)
+    if not isinstance(endings, list) or len(endings) == 0:
+        endings = [{"value": 0.99, "weight": 0.70}, {"value": 0.50, "weight": 0.25}, {"value": 0.00, "weight": 0.05}]
+
+    end_vals = []
+    end_w = []
+    for e in endings:
+        if not isinstance(e, dict):
+            continue
+        try:
+            v = float(e.get("value", 0.0))
+            w = float(e.get("weight", 0.0))
+        except Exception:
+            continue
+        if w <= 0:
+            continue
+        # endings should be [0, 0.99]-ish
+        v = float(np.clip(v, 0.0, 0.99))
+        end_vals.append(v)
+        end_w.append(w)
+
+    if not end_vals:
+        end_vals = [0.99]
+        end_w = [1.0]
+
+    end_w = np.asarray(end_w, dtype=np.float64)
+    end_w = end_w / end_w.sum()
+
+    up = np.asarray(up, dtype=np.float64)
+    up = np.where(np.isfinite(up), up, 0.0)
+    up = np.maximum(up, 0.0)
+
+    step = _choose_steps(up, bands)
+    anchor = _quantize(up, step, rounding=rounding)
+
+    # choose ending per-row
+    idx = rng.choice(len(end_vals), size=up.shape[0], p=end_w)
+    ending = np.asarray(end_vals, dtype=np.float64)[idx]
+
+    snapped = anchor + ending
+
+    # Ensure snapped stays within [anchor, anchor + step)
+    # If rounding=floor, anchor is already <= up; snapped might exceed up slightly but still realistic.
+    # Clamp non-negative.
+    snapped = np.maximum(snapped, 0.01)
+    return snapped
+
+
+def _snap_cost(uc, cfg):
+    enabled = bool(cfg.get("enabled", False))
+    if not enabled:
+        return uc
+
+    unit_cfg = cfg.get("unit_cost", {}) or {}
+    rounding = str(unit_cfg.get("rounding", "nearest")).strip().lower()
+    if rounding not in ("nearest", "floor"):
+        rounding = "nearest"
+
+    bands = _parse_bands(
+        unit_cfg.get("bands", None),
+        default=[(200.0, 0.05), (1000.0, 0.10), (10000.0, 1.0), (1e18, 5.0)],
+    )
+
+    uc = np.asarray(uc, dtype=np.float64)
+    uc = np.where(np.isfinite(uc), uc, 0.0)
+    uc = np.maximum(uc, 0.0)
+
+    step = _choose_steps(uc, bands)
+    snapped = _quantize(uc, step, rounding=rounding)
+    snapped = np.maximum(snapped, 0.0)
+    return snapped
+
+
+def _snap_discount(rng, disc, up, cfg):
+    enabled = bool(cfg.get("enabled", False))
+    if not enabled:
+        return disc
+
+    dcfg = cfg.get("discount", {}) or {}
+    rounding = str(dcfg.get("rounding", "floor")).strip().lower()
+    if rounding not in ("nearest", "floor"):
+        rounding = "floor"
+
+    bands = _parse_bands(
+        dcfg.get("bands", None),
+        default=[(50.0, 0.50), (200.0, 1.0), (1000.0, 5.0), (5000.0, 10.0), (1e18, 25.0)],
+    )
+
+    disc = np.asarray(disc, dtype=np.float64)
+    disc = np.where(np.isfinite(disc), disc, 0.0)
+    disc = np.maximum(disc, 0.0)
+
+    step = _choose_steps(np.maximum(up, 0.0), bands)
+    snapped = _quantize(disc, step, rounding=rounding)
+    snapped = np.maximum(snapped, 0.0)
+    return snapped
+
+
+def _cfg():
+    """
+    Minimal sales-time drift. Keep this small.
+
+    models:
+      pricing:
+        inflation:
+          annual_rate: 0.04
+          month_volatility_sigma: 0.01
+          factor_clip: [0.90, 1.15]
+          scale_discount: true
+          volatility_seed: 123
+        appearance:
+          enabled: true
+          ...
+    """
     models = getattr(State, "models_cfg", None) or {}
-    cfg = models.get("pricing", None)
-    if cfg is None:
-        return _default_cfg()
+    p = models.get("pricing", {}) or {}
+    infl = p.get("inflation", {}) or {}
 
-    # Shallow merge with defaults so missing keys don't crash
-    d = _default_cfg()
-    for k, v in cfg.items():
-        d[k] = v
-    # merge nested dicts if present
-    for k in ("inflation", "seasonality", "ramp", "discount", "floors", "cost"):
-        if k in cfg and isinstance(cfg[k], dict):
-            dd = d.get(k, {}).copy()
-            dd.update(cfg[k])
-            d[k] = dd
-    return d
+    annual_rate = float(infl.get("annual_rate", 0.0))
+    month_sigma = float(infl.get("month_volatility_sigma", 0.0))
+    scale_discount = bool(infl.get("scale_discount", True))
+
+    clip = infl.get("factor_clip", [0.0, 10.0])
+    if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
+        clip = [0.0, 10.0]
+    lo, hi = float(clip[0]), float(clip[1])
+    if hi < lo:
+        lo, hi = hi, lo
+
+    vol_seed = int(infl.get("volatility_seed", 0))
+
+    annual_rate = float(np.clip(annual_rate, -0.50, 2.0))
+    month_sigma = float(np.clip(month_sigma, 0.0, 0.25))
+    lo = float(max(lo, 0.0))
+    hi = float(max(hi, lo))
+
+    appearance = p.get("appearance", {}) or {}
+    return annual_rate, month_sigma, lo, hi, scale_discount, vol_seed, appearance
+
+
+def _global_start_month_int(order_dates: np.ndarray) -> int:
+    dp = getattr(State, "date_pool", None)
+    if dp is not None:
+        try:
+            if len(dp) > 0:
+                d0 = np.min(dp.astype("datetime64[D]"))
+                return d0.astype("datetime64[M]").astype("int64")
+        except Exception:
+            pass
+
+    d0 = np.min(order_dates.astype("datetime64[D]"))
+    return d0.astype("datetime64[M]").astype("int64")
+
+
+def _month_noise(month_int: int, seed: int, sigma: float) -> float:
+    if sigma <= 0.0:
+        return 1.0
+    s = (int(seed) ^ (int(month_int) * 1000003)) & 0xFFFFFFFF
+    rng = np.random.default_rng(s)
+
+    mu = -0.5 * (float(sigma) ** 2)  # unbiased: expected multiplier = 1
+    return float(rng.lognormal(mean=mu, sigma=float(sigma), size=1)[0])
+
 
 
 def build_prices(rng, order_dates, qty, price):
     """
-    Applies:
-      - inflation (macro trend)
-      - mild seasonality
-      - month-level inertia smoothing over the *base* price signal
-      - early ramp (business maturity)
-      - discount noise
-      - cost anchoring with margin safety
-      - rounding and invariants
+    Apply only mild time drift to the prices computed from Products,
+    then snap to nice retail-looking price points.
 
-    Compatible with month-sliced generation: works with single-month batches.
+    Expects price dict from compute_prices():
+      final_unit_price, final_unit_cost, discount_amt, final_net_price
     """
-    cfg = _get_cfg()
+    annual_rate, month_sigma, clip_lo, clip_hi, scale_discount, vol_seed, appearance = _cfg()
 
-    n = len(order_dates)
-    if n == 0:
+    order_dates = np.asarray(order_dates)
+    n = int(order_dates.shape[0])
+    if n <= 0:
         return price
 
-    # ------------------------------------------------------------
-    # MONTH INDEXING
-    # ------------------------------------------------------------
-    order_months = order_dates.astype("datetime64[M]")
-    unique_months, inv = np.unique(order_months, return_inverse=True)
+    order_month_i = order_dates.astype("datetime64[M]").astype("int64")
+    uniq_months, inv = np.unique(order_month_i, return_inverse=True)
 
-    month_inertia = float(cfg.get("month_inertia", 0.0))
-    month_inertia = float(np.clip(month_inertia, 0.0, 0.98))
+    start_m = _global_start_month_int(order_dates)
+    months_since = (uniq_months - start_m).astype(np.float64)
 
-    infl_cfg = cfg["inflation"]
-    seas_cfg = cfg["seasonality"]
+    infl = (1.0 + annual_rate) ** (months_since / 12.0)
+    infl = np.where(np.isfinite(infl), infl, 1.0)
 
-    # base_year index for inflation
-    base_year = order_dates.astype("datetime64[Y]").min().astype("int64")
-    month_year_idx = unique_months.astype("datetime64[Y]").astype("int64") - base_year
-
-    month_numbers = (unique_months.astype("int64") % 12).astype("int64")
-
-    prev_price_factor = None
-    month_price_factor = np.empty(len(unique_months), dtype=np.float64)
-
-    # ------------------------------------------------------------
-    # MONTH-LEVEL BASE PRICE FACTOR (INFLATION + SEASONALITY + INERTIA)
-    # ------------------------------------------------------------
-    annual_rate = float(infl_cfg.get("annual_rate", 0.03))
-    noise_sigma = float(infl_cfg.get("noise_sigma", 0.02))
-
-    seas_enabled = bool(seas_cfg.get("enabled", True))
-    seas_amp = float(seas_cfg.get("amplitude", 0.06))
-    seas_sharp = float(seas_cfg.get("sharpness", 1.6))
-    seas_phase = int(seas_cfg.get("phase_shift_months", 0))
-
-    for i, m in enumerate(month_numbers):
-        # inflation
-        inflation = (1.0 + annual_rate) ** float(month_year_idx[i])
-        if noise_sigma > 0:
-            inflation *= rng.lognormal(mean=0.0, sigma=noise_sigma)
-
-        # seasonality
-        if seas_enabled:
-            angle = 2 * np.pi * (float(m + seas_phase) / 12.0)
-            seasonal = 1.0 + seas_amp * np.tanh(seas_sharp * np.sin(angle))
-        else:
-            seasonal = 1.0
-
-        raw_factor = float(inflation * seasonal)
-
-        # inertia smoothing
-        if prev_price_factor is None or month_inertia <= 0.0:
-            factor = raw_factor
-        else:
-            factor = month_inertia * prev_price_factor + (1.0 - month_inertia) * raw_factor
-
-        prev_price_factor = factor
-        month_price_factor[i] = factor
-
-    base_price_factor = month_price_factor[inv]
-
-    # ------------------------------------------------------------
-    # APPLY BASE PRICE FACTOR
-    # ------------------------------------------------------------
-    # NOTE: legacy behavior multiplied discount_amt too :contentReference[oaicite:2]{index=2}
-    apply_discount = bool(cfg.get("apply_base_factor_to_discount", True))
-
-    price["final_unit_price"] *= base_price_factor
-    price["final_unit_cost"] *= base_price_factor
-    if apply_discount:
-        price["discount_amt"] *= base_price_factor
-
-    # ------------------------------------------------------------
-    # EARLY RAMP (BUSINESS MATURITY)
-    # ------------------------------------------------------------
-    ramp_cfg = cfg["ramp"]
-    ramp_months = max(1.0, float(ramp_cfg.get("months", 18)))
-
-    months_since_start = (order_months.astype("int64") - order_months.min().astype("int64")).astype("float64")
-
-    ramp = np.clip(
-        months_since_start / ramp_months,
-        float(ramp_cfg.get("min_multiplier", 0.85)),
-        float(ramp_cfg.get("max_multiplier", 1.05)),
-    )
-
-    price["final_unit_price"] *= ramp
-    price["final_unit_cost"] *= ramp
-
-    discount_scale = float(ramp_cfg.get("discount_scale", 1.0))
-    disc_noise_sigma = float(ramp_cfg.get("discount_noise_sigma", 0.15))
-
-    if disc_noise_sigma > 0:
-        disc_noise = rng.lognormal(mean=0.0, sigma=disc_noise_sigma, size=n)
+    if month_sigma > 0.0:
+        noises = np.array([_month_noise(int(m), vol_seed, month_sigma) for m in uniq_months], dtype=np.float64)
     else:
-        disc_noise = 1.0
+        noises = np.ones_like(infl, dtype=np.float64)
 
-    price["discount_amt"] *= (ramp * discount_scale * disc_noise)
+    factor_u = infl * noises
+    factor_u = np.clip(factor_u, clip_lo, clip_hi)
+    factor = factor_u[inv]
 
-    # Guard: discount cannot exceed price
-    max_discount_pct = float(cfg["discount"].get("max_pct_of_price", 0.85))
-    max_discount_pct = float(np.clip(max_discount_pct, 0.0, 1.0))
+    up = np.asarray(price["final_unit_price"], dtype=np.float64) * factor
+    uc = np.asarray(price["final_unit_cost"], dtype=np.float64) * factor
 
-    price["discount_amt"] = np.clip(
-        price["discount_amt"],
-        0.0,
-        price["final_unit_price"] * max_discount_pct,
-    )
+    disc = np.asarray(price["discount_amt"], dtype=np.float64)
+    if scale_discount:
+        disc = disc * factor
 
-    price["final_net_price"] = price["final_unit_price"] - price["discount_amt"]
+    # Invariants
+    up = np.where(np.isfinite(up), up, 0.0)
+    uc = np.where(np.isfinite(uc), uc, 0.0)
+    disc = np.where(np.isfinite(disc), disc, 0.0)
 
-    # ------------------------------------------------------------
-    # ABSOLUTE PRICE FLOOR
-    # ------------------------------------------------------------
-    min_net = float(cfg["floors"].get("min_net_price", 0.10))
-    price["final_net_price"] = np.maximum(price["final_net_price"], min_net)
+    up = np.maximum(up, 0.0)
+    uc = np.maximum(uc, 0.0)
+    disc = np.maximum(disc, 0.0)
 
-    # ------------------------------------------------------------
-    # FINAL COST ANCHOR + MARGIN FLOOR (NON-CIRCULAR)
-    # ------------------------------------------------------------
-    cost_cfg = cfg["cost"]
+    disc = np.minimum(disc, up)
+    net = np.clip(up - disc, 0.0, up)
 
-    cost_ratio_min = float(cost_cfg.get("cost_ratio_min", 0.55))
-    cost_ratio_max = float(cost_cfg.get("cost_ratio_max", 0.85))
-    if cost_ratio_max < cost_ratio_min:
-        cost_ratio_min, cost_ratio_max = cost_ratio_max, cost_ratio_min
-
-    min_margin_pct = float(cost_cfg.get("min_margin_pct", 0.05))
-    min_margin_pct = float(np.clip(min_margin_pct, 0.0, 0.95))
-
-    cost_ratio = rng.uniform(cost_ratio_min, cost_ratio_max, size=n)
-
-    price["final_unit_cost"] = price["final_net_price"] * cost_ratio
-
-    max_allowed_cost = price["final_net_price"] * (1.0 - min_margin_pct)
-    price["final_unit_cost"] = np.minimum(price["final_unit_cost"], max_allowed_cost)
-
-    # ------------------------------------------------------------
-    # ROUNDING + CONSISTENCY
-    # ------------------------------------------------------------
-    price["final_unit_price"] = np.round(price["final_unit_price"], 2)
-    price["discount_amt"] = np.round(price["discount_amt"], 2)
-    price["final_net_price"] = np.round(price["final_unit_price"] - price["discount_amt"], 2)
-    price["final_unit_cost"] = np.round(price["final_unit_cost"], 2)
-
-    # Invariant: cost <= net
-    # Avoid hard assert in production runs; use a guard clamp.
-    bad = price["final_unit_cost"] > price["final_net_price"]
+    # keep cost <= net (avoid negative margin after scaling)
+    bad = uc > net
     if np.any(bad):
-        price["final_unit_cost"][bad] = price["final_net_price"][bad]
+        uc[bad] = net[bad]
 
+    # ---------------------------------------------------------
+    # SNAP / APPEARANCE (THIS IS THE IMPORTANT NEW BIT)
+    # ---------------------------------------------------------
+    up = _snap_unit_price(rng, up, appearance)
+
+    # Re-quantize discount AFTER snapping price, so it looks clean too
+    disc = np.minimum(disc, up)
+    disc = _snap_discount(rng, disc, up, appearance)
+
+    # recompute net after snapping
+    disc = np.minimum(disc, up)
+    net = np.clip(up - disc, 0.0, up)
+
+    # snap cost and re-enforce invariants
+    uc = _snap_cost(uc, appearance)
+    uc = np.minimum(uc, net)
+
+    # cents
+    up = np.round(up, 2)
+    uc = np.round(uc, 2)
+    disc = np.round(np.maximum(up - net, 0.0), 2)
+    net = np.round(up - disc, 2)
+
+    price["final_unit_price"] = up
+    price["final_unit_cost"] = uc
+    price["discount_amt"] = disc
+    price["final_net_price"] = net
     return price
