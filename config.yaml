@@ -103,7 +103,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 18413
+  total_customers: 38413
   active_ratio: 0.90
 
   pct_india: 10

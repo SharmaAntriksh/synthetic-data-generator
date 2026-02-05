@@ -57,11 +57,16 @@ models:
   # ============================================================
   macro_demand:
     base_level: 1.0
-    yearly_growth: 0.03            # keep low for stable yearly totals
+    yearly_growth: 0.00            # keep low for stable yearly totals
     seasonality_amplitude: 0.08
     seasonality_phase: 0.0
     noise_std: 0.06
-
+    
+    yoy_growth_schedule:
+      mode: "repeat"
+      values: [-0.06, -0.22, -0.18, 0.37, 0.14]
+      # pattern: inc inc dec inc dec dec inc inc (then repeats)
+      
     # Rare demand shocks to create “decline then recovery” windows
     shock_probability: 0.10
     shock_impact: [-0.25, 0.20]    # multiplicative range
@@ -155,9 +160,9 @@ models:
     month_inertia: 0.85
 
     inflation:
-      annual_rate: 0.06
+      annual_rate: 0.03
       month_volatility_sigma: 0.0
-      factor_clip: [0.90, 1.15]
+      factor_clip: [0.90, 1.25]
       scale_discount: false         # keep DiscountAmount stable; promo is analysis-time anyway
       volatility_seed: 123
 

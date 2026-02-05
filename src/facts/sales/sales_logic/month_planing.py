@@ -3,6 +3,26 @@
 import numpy as np
 
 
+def _sched_mode_and_values(node: dict, name: str) -> tuple[str, list[float]]:
+    if not isinstance(node, dict):
+        raise ValueError(f"{name} must be a mapping with keys: mode, values")
+
+    mode = str(node.get("mode", "repeat")).strip().lower()
+    if mode not in ("repeat", "once"):
+        raise ValueError(f"{name}.mode must be 'repeat' or 'once'")
+
+    values = node.get("values")
+    if not isinstance(values, list) or len(values) == 0:
+        raise ValueError(f"{name}.values must be a non-empty list")
+
+    try:
+        vals = [float(v) for v in values]
+    except Exception as e:
+        raise ValueError(f"{name}.values must be numeric") from e
+
+    return mode, vals
+
+
 def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarray:
     """
     Create base demand weights per month, independent of eligible customer count.
@@ -34,11 +54,54 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
 
     m = np.arange(T, dtype="float64")
 
-    # gentle growth: per-month multiplier derived from yearly_growth
+    # ---- yearly drift (baseline) + optional year-pattern schedule ----
+    yoy_node = cfg.get("yoy_growth_schedule")
+    lvl_node = cfg.get("year_level_factors")
+    if yoy_node and lvl_node:
+        raise ValueError("Use only one of: yoy_growth_schedule OR year_level_factors")
+
+    year_idx = (m // 12).astype("int64")  # year index per month, relative to dataset start
+
+    # baseline smooth drift: per-month multiplier derived from yearly_growth
     if yearly_growth != 0.0:
         g = (1.0 + yearly_growth) ** (m / 12.0)
     else:
         g = 1.0
+
+    # year-level factors (pin exact per-year levels)
+    if lvl_node:
+        mode, vals = _sched_mode_and_values(lvl_node, "year_level_factors")
+        if any(v <= 0.0 for v in vals):
+            raise ValueError("year_level_factors.values must be > 0")
+
+        levels = np.asarray(vals, dtype="float64")
+        if mode == "repeat":
+            yfac = levels[year_idx % len(levels)]
+        else:  # once
+            yfac = levels[np.minimum(year_idx, len(levels) - 1)]
+
+        g = g * yfac
+
+    # yoy growth schedule (compounding)
+    elif yoy_node:
+        mode, vals = _sched_mode_and_values(yoy_node, "yoy_growth_schedule")
+        if any(v <= -0.99 for v in vals):
+            raise ValueError("yoy_growth_schedule.values must be > -0.99")
+
+        yoy = np.asarray(vals, dtype="float64")
+        n_years = int((T + 11) // 12)
+
+        year_factor = np.ones(n_years, dtype="float64")
+        for y in range(1, n_years):
+            step = y - 1  # transition into year y
+            if mode == "repeat":
+                r = yoy[step % len(yoy)]
+            else:  # once
+                r = yoy[step] if step < len(yoy) else 0.0
+            year_factor[y] = year_factor[y - 1] * (1.0 + r)
+
+        g = g * year_factor[np.minimum(year_idx, n_years - 1)]
+
 
     # seasonality: sin wave (12-month cycle)
     if amp != 0.0:
@@ -58,8 +121,11 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
         shock = np.ones(T, dtype="float64")
         hit = rng.random(T) < shock_p
         if hit.any():
+            if shock_lo > shock_hi:
+                raise ValueError("shock_impact must be [low, high] with low <= high")
             shock[hit] = 1.0 + rng.uniform(shock_lo, shock_hi, size=int(hit.sum()))
-            shock = np.clip(shock, 0.1, 1.0)
+            upper = max(1.0, 1.0 + shock_hi)   # allow positive shocks
+            shock = np.clip(shock, 0.1, upper)
     else:
         shock = 1.0
 
@@ -146,9 +212,6 @@ def build_rows_per_month(
 
         return rows_per_month
 
-    # legacy behavior (backward compatibility)
-    month_weights = eligible_counts / eligible_counts.sum()
-    
     # legacy behavior (backward compatibility) but preserve total_rows exactly
     month_weights = eligible_counts / eligible_counts.sum()
     rows = np.floor(month_weights * int(total_rows)).astype("int64")
