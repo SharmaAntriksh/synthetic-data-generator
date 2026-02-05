@@ -1,227 +1,178 @@
 import numpy as np
-from src.facts.sales.sales_logic.globals import State
+from .globals import State
 
 
-# Allow discounts to eat into margin up to this factor
-# net_price >= cost * multiplier
-MAX_DISCOUNT_COST_MULTIPLIER = 0.90
-
-# -------------------------------------------------
-# Discount ladder (intentional, weighted)
-# Values are in USD (pre any higher-level scaling)
-# -------------------------------------------------
-DISCOUNT_LADDER = [
-    ("none", 0.00, 60),
-
-    # percentage discounts (most common)
-    ("pct",  0.05, 12),
-    ("pct",  0.10, 10),
-    ("pct",  0.15, 8),
-    ("pct",  0.20, 6),
-    ("pct",  0.30, 4),
-
-    # absolute USD discounts (rare, high impact)
-    ("abs",  5,    6),
-    ("abs",  10,   5),
-    ("abs",  25,   3),
-    ("abs",  50,   2),
-    ("abs",  75,   1),
-    ("abs",  100,  1),
-]
-
-
-# -------------------------------------------------
-# Helpers
-# -------------------------------------------------
-def _quantize(values, decimals=2):
-    return np.round(values.astype(np.float64, copy=False), decimals)
-
-
-def _get_cfg():
+def _cfg_markdown():
     """
-    Optional config block.
-
     models:
-      pricing_logic:
-        price_pressure_bounds: [0.90, 1.20]
-        cost_pressure_follow: 0.05      # how much cost follows price pressure
-        enable_row_jitter: false
-        row_jitter_sigma: 0.01          # lognormal sigma
-        promo_clip: [0.0, 1.0]
+      pricing:
+        markdown:
+          enabled: true
+          # ladder items: each is {kind: pct|amt|none, value: float, weight: float}
+          ladder:
+            - {kind: none, value: 0.0,  weight: 0.55}
+            - {kind: pct,  value: 0.05, weight: 0.20}
+            - {kind: pct,  value: 0.10, weight: 0.12}
+            - {kind: pct,  value: 0.15, weight: 0.08}
+            - {kind: amt,  value: 25.0, weight: 0.05}
+          max_pct_of_price: 0.50
+          min_net_price: 0.01
+          allow_negative_margin: false
     """
     models = getattr(State, "models_cfg", None) or {}
-    cfg = models.get("pricing_logic", {}) or {}
+    pricing = models.get("pricing", {}) or {}
+    md = pricing.get("markdown", {}) or {}
 
-    out = {
-        "price_pressure_bounds": cfg.get("price_pressure_bounds", [0.90, 1.20]),
-        "cost_pressure_follow": float(cfg.get("cost_pressure_follow", 0.05)),
-        "enable_row_jitter": bool(cfg.get("enable_row_jitter", False)),
-        "row_jitter_sigma": float(cfg.get("row_jitter_sigma", 0.01)),
-        "promo_clip": cfg.get("promo_clip", [0.0, 1.0]),
-    }
+    enabled = bool(md.get("enabled", True))
 
-    # Validate bounds
-    pp = out["price_pressure_bounds"]
-    if not (isinstance(pp, (list, tuple)) and len(pp) == 2):
-        raise ValueError("models.pricing_logic.price_pressure_bounds must be a 2-item list")
-    lo, hi = float(pp[0]), float(pp[1])
-    if hi < lo:
-        lo, hi = hi, lo
-    out["price_pressure_bounds"] = [lo, hi]
+    ladder = md.get("ladder")
+    if not isinstance(ladder, list) or len(ladder) == 0:
+        ladder = [
+            {"kind": "none", "value": 0.0,  "weight": 0.55},
+            {"kind": "pct",  "value": 0.05, "weight": 0.20},
+            {"kind": "pct",  "value": 0.10, "weight": 0.12},
+            {"kind": "pct",  "value": 0.15, "weight": 0.08},
+            {"kind": "amt",  "value": 25.0, "weight": 0.05},
+        ]
 
-    pc = out["promo_clip"]
-    if not (isinstance(pc, (list, tuple)) and len(pc) == 2):
-        raise ValueError("models.pricing_logic.promo_clip must be a 2-item list")
-    plo, phi = float(pc[0]), float(pc[1])
-    if phi < plo:
-        plo, phi = phi, plo
-    out["promo_clip"] = [plo, phi]
+    max_pct = float(md.get("max_pct_of_price", 0.50))
+    max_pct = float(np.clip(max_pct, 0.0, 1.0))
 
-    out["cost_pressure_follow"] = float(np.clip(out["cost_pressure_follow"], 0.0, 0.50))
-    out["row_jitter_sigma"] = float(np.clip(out["row_jitter_sigma"], 0.0, 0.20))
-    return out
+    min_net = float(md.get("min_net_price", 0.01))
+    min_net = max(0.0, min_net)
+
+    allow_neg_margin = bool(md.get("allow_negative_margin", False))
+
+    # sanitize ladder
+    kinds, values, weights = [], [], []
+    for item in ladder:
+        if not isinstance(item, dict):
+            continue
+        k = str(item.get("kind", "none")).strip().lower()
+        v = float(item.get("value", 0.0) or 0.0)
+        w = float(item.get("weight", 0.0) or 0.0)
+        if w <= 0:
+            continue
+        if k not in ("pct", "amt", "none"):
+            continue
+        if k == "pct":
+            v = float(np.clip(v, 0.0, 1.0))
+        else:
+            v = max(0.0, v)
+        kinds.append(k)
+        values.append(v)
+        weights.append(w)
+
+    if not kinds:
+        kinds = ["none"]
+        values = [0.0]
+        weights = [1.0]
+
+    w = np.array(weights, dtype=np.float64)
+    w = w / w.sum()
+
+    return enabled, kinds, np.array(values, dtype=np.float64), w, max_pct, min_net, allow_neg_margin
+
+
+def _as_f64(x, n):
+    a = np.asarray(x, dtype=np.float64)
+    if a.shape[0] != int(n):
+        raise ValueError("Array length mismatch")
+    a = np.where(np.isfinite(a), a, 0.0)
+    return a
 
 
 def compute_prices(
     rng,
-    n: int,
+    n,
     unit_price,
     unit_cost,
-    promo_pct=0.0,
-    price_pressure=1.0,
+    promo_pct=None,  # accepted for backward compatibility; intentionally ignored
+    *,
+    price_pressure: float = 1.0,
+    row_price_jitter_pct: float = 0.0,
 ):
     """
-    Deterministic, vectorized price realization.
+    Sales pricing rule:
+      - UnitPrice/UnitCost come from Products (source of truth).
+      - Sales.DiscountAmount is an independent markdown (NOT from Promotions).
+      - Promotions affect ONLY PromotionKey; promo discounts are applied at analysis-time.
 
-    Preserves:
-    - discount ladder semantics
-    - promo_pct application (multiplicative to net)
-    - loss-leader protection (net >= cost * MAX_DISCOUNT_COST_MULTIPLIER)
-    - rounding rules
-
-    Notes aligned with the new pipeline:
-    - Month-level inflation/seasonality/ramp is now handled in pricing_pipeline.build_prices().
-      This function should remain a "micro" realization step per row.
+    Output columns represent "after markdown, before promo".
     """
+    _ = promo_pct  # ignored by design
+
+    n = int(n)
     if n <= 0:
-        return {
-            "final_unit_price": np.empty(0, dtype=np.float64),
-            "final_net_price": np.empty(0, dtype=np.float64),
-            "final_unit_cost": np.empty(0, dtype=np.float64),
-            "discount_amt": np.empty(0, dtype=np.float64),
-        }
+        z = np.zeros(0, dtype=np.float64)
+        return {"final_unit_price": z, "final_unit_cost": z, "discount_amt": z, "final_net_price": z}
 
-    cfg = _get_cfg()
+    up = _as_f64(unit_price, n)
+    uc = _as_f64(unit_cost, n)
 
-    # -------------------------------------------------
-    # 1) Base values + guardrails
-    # -------------------------------------------------
-    base_price = np.asarray(unit_price, dtype=np.float64).copy()
-    cost = np.asarray(unit_cost, dtype=np.float64).copy()
+    # Optional tiny per-row perturbations (keep defaults off)
+    pp = float(price_pressure) if price_pressure is not None else 1.0
+    if not np.isfinite(pp) or pp <= 0:
+        pp = 1.0
+    up = up * pp
+    uc = uc * pp
 
-    # Replace non-finite with safe fallbacks
-    base_price = np.where(np.isfinite(base_price), base_price, 0.0)
-    cost = np.where(np.isfinite(cost), cost, 0.0)
+    if row_price_jitter_pct:
+        j = float(row_price_jitter_pct)
+        if np.isfinite(j) and j > 0:
+            mult = rng.uniform(1.0 - j, 1.0 + j, size=n).astype(np.float64, copy=False)
+            up = up * mult
+            uc = uc * mult
 
-    # Ensure non-negative
-    base_price = np.maximum(base_price, 0.0)
-    cost = np.maximum(cost, 0.0)
+    up = np.maximum(up, 0.0)
+    uc = np.maximum(uc, 0.0)
 
-    # price_pressure can be scalar or array
-    pp_lo, pp_hi = cfg["price_pressure_bounds"]
-    pp = np.asarray(price_pressure, dtype=np.float64)
-    pp = np.where(np.isfinite(pp), pp, 1.0)
-    pp = np.clip(pp, pp_lo, pp_hi)
+    enabled, kinds, values, probs, max_pct, min_net, allow_neg_margin = _cfg_markdown()
 
-    base_price *= pp
+    disc = np.zeros(n, dtype=np.float64)
 
-    # Cost follows price pressure slightly (not 1:1)
-    follow = cfg["cost_pressure_follow"]
-    cost *= (1.0 + (pp - 1.0) * follow)
+    if enabled:
+        idx = rng.choice(len(kinds), size=n, replace=True, p=probs)
 
-    # Hard sanity: cost cannot exceed base_price
-    cost = np.minimum(cost, base_price)
+        # Vectorized application by kind
+        for i, k in enumerate(kinds):
+            m = (idx == i)
+            if not np.any(m):
+                continue
+            v = float(values[i])
+            if k == "pct":
+                disc[m] = up[m] * v
+            elif k == "amt":
+                disc[m] = v
+            else:
+                disc[m] = 0.0
 
-    # Optional row-level jitter (very small realism)
-    if cfg["enable_row_jitter"] and cfg["row_jitter_sigma"] > 0:
-        jitter = rng.lognormal(mean=0.0, sigma=cfg["row_jitter_sigma"], size=n)
-        base_price *= jitter
-        cost *= (1.0 + (jitter - 1.0) * 0.25)  # damped jitter for cost
+    # Hard constraints: discount cannot exceed price, and preserve min_net if requested
+    disc = np.maximum(disc, 0.0)
+    disc = np.minimum(disc, up * max_pct)
+    if min_net > 0.0:
+        disc = np.minimum(disc, np.maximum(up - min_net, 0.0))
+    disc = np.minimum(disc, up)
 
-    # -------------------------------------------------
-    # 2) Discount ladder (vectorized)
-    # -------------------------------------------------
-    types, values, weights = zip(*DISCOUNT_LADDER)
-    weights = np.asarray(weights, dtype=np.float64)
-    weights /= weights.sum()
+    net = up - disc
+    net = np.maximum(net, 0.0)
+    if min_net > 0.0:
+        net = np.maximum(net, np.minimum(up, min_net) if min_net > 0 else 0.0) if False else net  # no-op; net already ok
 
-    values = np.asarray(values, dtype=np.float64)
-    is_pct = np.array([t == "pct" for t in types], dtype=bool)
-    is_abs = np.array([t == "abs" for t in types], dtype=bool)
+    # Invariants
+    uc = np.minimum(uc, up)
+    if not allow_neg_margin:
+        uc = np.minimum(uc, net)
 
-    choices = rng.choice(len(values), size=n, p=weights)
-
-    discount_amt = np.zeros(n, dtype=np.float64)
-
-    pct_mask = is_pct[choices]
-    if pct_mask.any():
-        discount_amt[pct_mask] = base_price[pct_mask] * values[choices[pct_mask]]
-
-    abs_mask = is_abs[choices]
-    if abs_mask.any():
-        discount_amt[abs_mask] = values[choices[abs_mask]]
-
-    # Guard: discount cannot exceed base price
-    discount_amt = np.clip(discount_amt, 0.0, base_price)
-
-    # -------------------------------------------------
-    # 3) Net price + promo
-    # -------------------------------------------------
-    net_price = base_price - discount_amt
-
-    # promo_pct can be scalar or vector; clip safely
-    promo = np.asarray(promo_pct, dtype=np.float64)
-    promo = np.where(np.isfinite(promo), promo, 0.0)
-    plo, phi = cfg["promo_clip"]
-    promo = np.clip(promo, plo, phi)
-
-    # apply promo as a multiplicative net discount
-    net_price *= (1.0 - promo)
-
-    # -------------------------------------------------
-    # 4) Loss-leader protection + consistency
-    # -------------------------------------------------
-    min_allowed = cost * MAX_DISCOUNT_COST_MULTIPLIER
-    net_price = np.maximum(net_price, min_allowed)
-
-    # net cannot exceed base
-    net_price = np.minimum(net_price, base_price)
-
-    # recompute discount from protected net price
-    discount_amt = base_price - net_price
-
-    # final safety: cost cannot exceed net
-    cost = np.minimum(cost, net_price)
-
-    # -------------------------------------------------
-    # 5) Final rounding (authoritative)
-    # -------------------------------------------------
-    final_unit_price = _quantize(base_price, decimals=2)
-    final_net_price = _quantize(net_price, decimals=2)
-    final_unit_cost = _quantize(cost, decimals=2)
-
-    # single source of truth for discount after rounding
-    discount_amt = _quantize(final_unit_price - final_net_price, decimals=2)
-
-    # Ensure finiteness post-rounding
-    final_unit_price = np.where(np.isfinite(final_unit_price), final_unit_price, 0.0)
-    final_net_price = np.where(np.isfinite(final_net_price), final_net_price, 0.0)
-    final_unit_cost = np.where(np.isfinite(final_unit_cost), final_unit_cost, 0.0)
-    discount_amt = np.where(np.isfinite(discount_amt), discount_amt, 0.0)
+    # Round to cents
+    up = np.round(up, 2)
+    uc = np.round(uc, 2)
+    disc = np.round(disc, 2)
+    net = np.round(up - disc, 2)
 
     return {
-        "final_unit_price": final_unit_price,
-        "final_net_price": final_net_price,
-        "final_unit_cost": final_unit_cost,
-        "discount_amt": discount_amt,
+        "final_unit_price": up,
+        "final_unit_cost": uc,
+        "discount_amt": disc,
+        "final_net_price": net,
     }

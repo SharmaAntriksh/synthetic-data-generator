@@ -362,7 +362,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # --------------------------------------------------------
         # PROMOTIONS
         # --------------------------------------------------------
-        promo_keys, promo_pct = apply_promotions(
+        promo_keys, _promo_pct = apply_promotions(
             rng=rng,
             n=n_orders,
             order_dates=order_dates,
@@ -372,6 +372,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             promo_end_all=promo_end_all,
             no_discount_key=no_discount_key,
         )
+        promo_keys = np.asarray(promo_keys, dtype=np.int64)  # ensure boolean slicing works
 
         # --------------------------------------------------------
         # ACTIVITY THINNING
@@ -381,6 +382,10 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             continue
 
         def _f(x):
+            if x is None:
+                return None
+            if not isinstance(x, np.ndarray):
+                x = np.asarray(x)
             return x[keep_mask]
 
         customer_keys_out = _f(customer_keys_out)
@@ -393,7 +398,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         order_dates = _f(order_dates)
 
         promo_keys = _f(promo_keys)
-        promo_pct = _f(promo_pct)
+        # promo_pct = _f(promo_pct)
 
         if not skip_cols:
             order_ids_int = _f(order_ids_int)
@@ -417,7 +422,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             n=len(customer_keys_out),
             unit_price=unit_price,
             unit_cost=unit_cost,
-            promo_pct=promo_pct,
+            # promo_pct intentionally NOT passed: promo discount must be applied in analysis via PromotionKey join
         )
 
         price = build_prices(
