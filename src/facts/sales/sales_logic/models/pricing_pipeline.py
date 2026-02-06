@@ -2,7 +2,28 @@ import numpy as np
 from src.facts.sales.sales_logic.globals import State
 
 
-def _parse_bands(bands, default):
+# ---------------------------------------------------------------------
+# Module caches (process-local; safe with multiprocessing)
+# ---------------------------------------------------------------------
+_APPEAR_CACHE_KEY = None
+_APPEAR_CACHE_VAL = None
+
+_MONTH_NOISE_CACHE = {}  # (vol_seed, sigma, month_int) -> multiplier
+
+
+# ---------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------
+def _as_f64(x):
+    a = np.asarray(x, dtype=np.float64)
+    a = np.where(np.isfinite(a), a, 0.0)
+    return a
+
+
+def _parse_bands_to_arrays(bands, default):
+    """
+    bands: list[dict] -> arrays (maxs, steps) sorted by max
+    """
     out = []
     if isinstance(bands, list):
         for b in bands:
@@ -18,55 +39,50 @@ def _parse_bands(bands, default):
             if mx <= 0 or st <= 0:
                 continue
             out.append((mx, st))
+
     if not out:
-        return default
+        out = list(default)
+
     out.sort(key=lambda t: t[0])
-    return out
+    maxs = np.asarray([m for m, _ in out], dtype=np.float64)
+    steps = np.asarray([s for _, s in out], dtype=np.float64)
+    if maxs.size == 0:
+        maxs = np.asarray([1e18], dtype=np.float64)
+        steps = np.asarray([0.01], dtype=np.float64)
+    return maxs, steps
 
 
-def _choose_steps(x, bands):
-    # vectorized step selection based on magnitude of x
-    step = np.empty_like(x, dtype=np.float64)
-    step.fill(float(bands[-1][1]))
-    for mx, st in bands:
-        step = np.where(x <= mx, float(st), step)
-    step = np.where(step > 0, step, 0.01)
-    return step
+def _choose_step_by_magnitude(x: np.ndarray, band_max: np.ndarray, band_step: np.ndarray) -> np.ndarray:
+    """
+    Vectorized: choose first band where x <= band_max. Uses searchsorted.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    idx = np.searchsorted(band_max, x, side="left")
+    idx = np.minimum(idx, band_step.size - 1)
+    step = band_step[idx]
+    return np.where(step > 0.0, step, 0.01)
 
 
-def _quantize(x, step, rounding: str):
+def _quantize(x: np.ndarray, step: np.ndarray, rounding: str) -> np.ndarray:
     if rounding == "floor":
         return np.floor(x / step) * step
+    # nearest
     return np.round(x / step) * step
 
 
-def _snap_unit_price(rng, up, cfg):
-    """
-    Snap to nice retail price-points:
-      anchor to band-step (e.g. 5s or 10s),
-      then apply ending (.99/.50/.00) with weights.
-    """
-    enabled = bool(cfg.get("enabled", False))
-    if not enabled:
-        return up
-
-    unit_cfg = cfg.get("unit_price", {}) or {}
-
-    rounding = str(unit_cfg.get("rounding", "nearest")).strip().lower()
-    if rounding not in ("nearest", "floor"):
-        rounding = "nearest"
-
-    bands = _parse_bands(
-        unit_cfg.get("bands", None),
-        default=[(200.0, 1.0), (1000.0, 5.0), (10000.0, 5.0), (1e18, 10.0)],
-    )
-
-    endings = unit_cfg.get("endings", None)
+# ---------------------------------------------------------------------
+# Appearance config parsing (cached)
+# ---------------------------------------------------------------------
+def _parse_endings(endings):
     if not isinstance(endings, list) or len(endings) == 0:
-        endings = [{"value": 0.99, "weight": 0.70}, {"value": 0.50, "weight": 0.25}, {"value": 0.00, "weight": 0.05}]
+        endings = [
+            {"value": 0.99, "weight": 0.70},
+            {"value": 0.50, "weight": 0.25},
+            {"value": 0.00, "weight": 0.05},
+        ]
 
-    end_vals = []
-    end_w = []
+    vals = []
+    wts = []
     for e in endings:
         if not isinstance(e, dict):
             continue
@@ -77,92 +93,144 @@ def _snap_unit_price(rng, up, cfg):
             continue
         if w <= 0:
             continue
-        # endings should be [0, 0.99]-ish
         v = float(np.clip(v, 0.0, 0.99))
-        end_vals.append(v)
-        end_w.append(w)
+        vals.append(v)
+        wts.append(w)
 
-    if not end_vals:
-        end_vals = [0.99]
-        end_w = [1.0]
+    if not vals:
+        vals = [0.99]
+        wts = [1.0]
 
-    end_w = np.asarray(end_w, dtype=np.float64)
-    end_w = end_w / end_w.sum()
-
-    up = np.asarray(up, dtype=np.float64)
-    up = np.where(np.isfinite(up), up, 0.0)
-    up = np.maximum(up, 0.0)
-
-    step = _choose_steps(up, bands)
-    anchor = _quantize(up, step, rounding=rounding)
-
-    # choose ending per-row
-    idx = rng.choice(len(end_vals), size=up.shape[0], p=end_w)
-    ending = np.asarray(end_vals, dtype=np.float64)[idx]
-
-    snapped = anchor + ending
-
-    # Ensure snapped stays within [anchor, anchor + step)
-    # If rounding=floor, anchor is already <= up; snapped might exceed up slightly but still realistic.
-    # Clamp non-negative.
-    snapped = np.maximum(snapped, 0.01)
-    return snapped
+    w = np.asarray(wts, dtype=np.float64)
+    s = float(w.sum())
+    w = w / s if s > 0 else np.asarray([1.0], dtype=np.float64)
+    return np.asarray(vals, dtype=np.float64), w
 
 
-def _snap_cost(uc, cfg):
-    enabled = bool(cfg.get("enabled", False))
-    if not enabled:
-        return uc
+def _appearance_cfg():
+    """
+    Cache parse of models_cfg.pricing.appearance.
+    """
+    global _APPEAR_CACHE_KEY, _APPEAR_CACHE_VAL
 
-    unit_cfg = cfg.get("unit_cost", {}) or {}
-    rounding = str(unit_cfg.get("rounding", "nearest")).strip().lower()
-    if rounding not in ("nearest", "floor"):
-        rounding = "nearest"
+    models = getattr(State, "models_cfg", None) or {}
+    key = id(models)
+    if _APPEAR_CACHE_KEY == key and _APPEAR_CACHE_VAL is not None:
+        return _APPEAR_CACHE_VAL
 
-    bands = _parse_bands(
+    p = models.get("pricing", {}) or {}
+    appearance = p.get("appearance", {}) or {}
+
+    enabled = bool(appearance.get("enabled", False))
+
+    # Unit price snapping
+    unit_cfg = appearance.get("unit_price", {}) or {}
+    up_round = str(unit_cfg.get("rounding", "nearest")).strip().lower()
+    if up_round not in ("nearest", "floor"):
+        up_round = "nearest"
+
+    up_max, up_step = _parse_bands_to_arrays(
         unit_cfg.get("bands", None),
+        default=[(200.0, 1.0), (1000.0, 5.0), (10000.0, 5.0), (1e18, 10.0)],
+    )
+    end_vals, end_w = _parse_endings(unit_cfg.get("endings", None))
+
+    # Unit cost snapping
+    cost_cfg = appearance.get("unit_cost", {}) or {}
+    uc_round = str(cost_cfg.get("rounding", "nearest")).strip().lower()
+    if uc_round not in ("nearest", "floor"):
+        uc_round = "nearest"
+
+    uc_max, uc_step = _parse_bands_to_arrays(
+        cost_cfg.get("bands", None),
         default=[(200.0, 0.05), (1000.0, 0.10), (10000.0, 1.0), (1e18, 5.0)],
     )
 
-    uc = np.asarray(uc, dtype=np.float64)
-    uc = np.where(np.isfinite(uc), uc, 0.0)
-    uc = np.maximum(uc, 0.0)
+    # Discount snapping
+    disc_cfg = appearance.get("discount", {}) or {}
+    d_round = str(disc_cfg.get("rounding", "floor")).strip().lower()
+    if d_round not in ("nearest", "floor"):
+        d_round = "floor"
 
-    step = _choose_steps(uc, bands)
-    snapped = _quantize(uc, step, rounding=rounding)
-    snapped = np.maximum(snapped, 0.0)
-    return snapped
-
-
-def _snap_discount(rng, disc, up, cfg):
-    enabled = bool(cfg.get("enabled", False))
-    if not enabled:
-        return disc
-
-    dcfg = cfg.get("discount", {}) or {}
-    rounding = str(dcfg.get("rounding", "floor")).strip().lower()
-    if rounding not in ("nearest", "floor"):
-        rounding = "floor"
-
-    bands = _parse_bands(
-        dcfg.get("bands", None),
+    d_max, d_step = _parse_bands_to_arrays(
+        disc_cfg.get("bands", None),
         default=[(50.0, 0.50), (200.0, 1.0), (1000.0, 5.0), (5000.0, 10.0), (1e18, 25.0)],
     )
 
-    disc = np.asarray(disc, dtype=np.float64)
-    disc = np.where(np.isfinite(disc), disc, 0.0)
+    out = {
+        "enabled": enabled,
+        "up_round": up_round,
+        "up_band_max": up_max,
+        "up_band_step": up_step,
+        "end_vals": end_vals,
+        "end_w": end_w,
+        "uc_round": uc_round,
+        "uc_band_max": uc_max,
+        "uc_band_step": uc_step,
+        "d_round": d_round,
+        "d_band_max": d_max,
+        "d_band_step": d_step,
+    }
+
+    _APPEAR_CACHE_KEY = key
+    _APPEAR_CACHE_VAL = out
+    return out
+
+
+# ---------------------------------------------------------------------
+# Snap / appearance
+# ---------------------------------------------------------------------
+def _snap_unit_price(rng, up: np.ndarray, appearance_cfg: dict) -> np.ndarray:
+    if not appearance_cfg.get("enabled", False):
+        return up
+
+    up = _as_f64(up)
+    up = np.maximum(up, 0.0)
+
+    step = _choose_step_by_magnitude(up, appearance_cfg["up_band_max"], appearance_cfg["up_band_step"])
+    anchor = _quantize(up, step, rounding=appearance_cfg["up_round"])
+
+    # Choose endings per row
+    end_vals = appearance_cfg["end_vals"]
+    end_w = appearance_cfg["end_w"]
+    idx = rng.choice(end_vals.size, size=up.shape[0], p=end_w)
+    ending = end_vals[idx]
+
+    snapped = anchor + ending
+    return np.maximum(snapped, 0.01)
+
+
+def _snap_cost(uc: np.ndarray, appearance_cfg: dict) -> np.ndarray:
+    if not appearance_cfg.get("enabled", False):
+        return uc
+
+    uc = _as_f64(uc)
+    uc = np.maximum(uc, 0.0)
+
+    step = _choose_step_by_magnitude(uc, appearance_cfg["uc_band_max"], appearance_cfg["uc_band_step"])
+    snapped = _quantize(uc, step, rounding=appearance_cfg["uc_round"])
+    return np.maximum(snapped, 0.0)
+
+
+def _snap_discount(disc: np.ndarray, up: np.ndarray, appearance_cfg: dict) -> np.ndarray:
+    if not appearance_cfg.get("enabled", False):
+        return disc
+
+    disc = _as_f64(disc)
     disc = np.maximum(disc, 0.0)
 
-    step = _choose_steps(np.maximum(up, 0.0), bands)
-    snapped = _quantize(disc, step, rounding=rounding)
-    snapped = np.maximum(snapped, 0.0)
-    return snapped
+    # discount step determined by UnitPrice magnitude
+    up = _as_f64(up)
+    step = _choose_step_by_magnitude(np.maximum(up, 0.0), appearance_cfg["d_band_max"], appearance_cfg["d_band_step"])
+    snapped = _quantize(disc, step, rounding=appearance_cfg["d_round"])
+    return np.maximum(snapped, 0.0)
 
 
+# ---------------------------------------------------------------------
+# Inflation / drift config (kept same keys)
+# ---------------------------------------------------------------------
 def _cfg():
     """
-    Minimal sales-time drift. Keep this small.
-
     models:
       pricing:
         inflation:
@@ -197,8 +265,7 @@ def _cfg():
     lo = float(max(lo, 0.0))
     hi = float(max(hi, lo))
 
-    appearance = p.get("appearance", {}) or {}
-    return annual_rate, month_sigma, lo, hi, scale_discount, vol_seed, appearance
+    return annual_rate, month_sigma, lo, hi, scale_discount, vol_seed
 
 
 def _global_start_month_int(order_dates: np.ndarray) -> int:
@@ -206,71 +273,94 @@ def _global_start_month_int(order_dates: np.ndarray) -> int:
     if dp is not None:
         try:
             if len(dp) > 0:
-                d0 = np.min(dp.astype("datetime64[D]"))
-                return d0.astype("datetime64[M]").astype("int64")
+                d0 = np.min(np.asarray(dp).astype("datetime64[D]"))
+                return int(d0.astype("datetime64[M]").astype("int64"))
         except Exception:
             pass
 
-    d0 = np.min(order_dates.astype("datetime64[D]"))
-    return d0.astype("datetime64[M]").astype("int64")
+    d0 = np.min(np.asarray(order_dates).astype("datetime64[D]"))
+    return int(d0.astype("datetime64[M]").astype("int64"))
 
 
 def _month_noise(month_int: int, seed: int, sigma: float) -> float:
+    """
+    Deterministic per-month multiplicative noise using lognormal with mean adjusted
+    so E[multiplier] = 1.
+
+    Cached because uniq months repeat across chunks.
+    """
     if sigma <= 0.0:
         return 1.0
+
+    key = (int(seed), float(sigma), int(month_int))
+    v = _MONTH_NOISE_CACHE.get(key)
+    if v is not None:
+        return float(v)
+
     s = (int(seed) ^ (int(month_int) * 1000003)) & 0xFFFFFFFF
     rng = np.random.default_rng(s)
 
-    mu = -0.5 * (float(sigma) ** 2)  # unbiased: expected multiplier = 1
-    return float(rng.lognormal(mean=mu, sigma=float(sigma), size=1)[0])
+    mu = -0.5 * (float(sigma) ** 2)
+    v = float(rng.lognormal(mean=mu, sigma=float(sigma), size=1)[0])
+
+    _MONTH_NOISE_CACHE[key] = v
+    return v
 
 
-
+# ---------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------
 def build_prices(rng, order_dates, qty, price):
     """
     Apply only mild time drift to the prices computed from Products,
     then snap to nice retail-looking price points.
 
-    Expects price dict from compute_prices():
+    Expects `price` dict from compute_prices():
       final_unit_price, final_unit_cost, discount_amt, final_net_price
+
+    qty is accepted for signature compatibility (not used here).
     """
-    annual_rate, month_sigma, clip_lo, clip_hi, scale_discount, vol_seed, appearance = _cfg()
+    _ = qty  # intentionally unused
+
+    annual_rate, month_sigma, clip_lo, clip_hi, scale_discount, vol_seed = _cfg()
 
     order_dates = np.asarray(order_dates)
     n = int(order_dates.shape[0])
     if n <= 0:
         return price
 
+    # Month index per row
     order_month_i = order_dates.astype("datetime64[M]").astype("int64")
     uniq_months, inv = np.unique(order_month_i, return_inverse=True)
 
     start_m = _global_start_month_int(order_dates)
-    months_since = (uniq_months - start_m).astype(np.float64)
+    months_since = (uniq_months.astype(np.int64) - int(start_m)).astype(np.float64)
 
+    # Deterministic inflation curve
     infl = (1.0 + annual_rate) ** (months_since / 12.0)
     infl = np.where(np.isfinite(infl), infl, 1.0)
 
+    # Deterministic per-month noise
     if month_sigma > 0.0:
-        noises = np.array([_month_noise(int(m), vol_seed, month_sigma) for m in uniq_months], dtype=np.float64)
+        noises = np.fromiter(
+            (_month_noise(int(m), vol_seed, month_sigma) for m in uniq_months),
+            dtype=np.float64,
+            count=uniq_months.size,
+        )
     else:
         noises = np.ones_like(infl, dtype=np.float64)
 
-    factor_u = infl * noises
-    factor_u = np.clip(factor_u, clip_lo, clip_hi)
+    factor_u = np.clip(infl * noises, clip_lo, clip_hi)
     factor = factor_u[inv]
 
-    up = np.asarray(price["final_unit_price"], dtype=np.float64) * factor
-    uc = np.asarray(price["final_unit_cost"], dtype=np.float64) * factor
+    up = _as_f64(price["final_unit_price"]) * factor
+    uc = _as_f64(price["final_unit_cost"]) * factor
 
-    disc = np.asarray(price["discount_amt"], dtype=np.float64)
+    disc = _as_f64(price["discount_amt"])
     if scale_discount:
         disc = disc * factor
 
-    # Invariants
-    up = np.where(np.isfinite(up), up, 0.0)
-    uc = np.where(np.isfinite(uc), uc, 0.0)
-    disc = np.where(np.isfinite(disc), disc, 0.0)
-
+    # Invariants pre-snap
     up = np.maximum(up, 0.0)
     uc = np.maximum(uc, 0.0)
     disc = np.maximum(disc, 0.0)
@@ -280,31 +370,32 @@ def build_prices(rng, order_dates, qty, price):
 
     # keep cost <= net (avoid negative margin after scaling)
     bad = uc > net
-    if np.any(bad):
+    if bad.any():
         uc[bad] = net[bad]
 
     # ---------------------------------------------------------
-    # SNAP / APPEARANCE (THIS IS THE IMPORTANT NEW BIT)
+    # SNAP / APPEARANCE
     # ---------------------------------------------------------
+    appearance = _appearance_cfg()
+
     up = _snap_unit_price(rng, up, appearance)
 
-    # Re-quantize discount AFTER snapping price, so it looks clean too
+    # Discount should be snapped after unit price snap
     disc = np.minimum(disc, up)
-    disc = _snap_discount(rng, disc, up, appearance)
+    disc = _snap_discount(disc, up, appearance)
 
-    # recompute net after snapping
     disc = np.minimum(disc, up)
     net = np.clip(up - disc, 0.0, up)
 
-    # snap cost and re-enforce invariants
     uc = _snap_cost(uc, appearance)
     uc = np.minimum(uc, net)
 
-    # cents
+    # cents + post-round safety
     up = np.round(up, 2)
     uc = np.round(uc, 2)
-    disc = np.round(np.maximum(up - net, 0.0), 2)
-    net = np.round(up - disc, 2)
+    disc = np.round(np.minimum(np.maximum(disc, 0.0), up), 2)
+    net = np.round(np.maximum(up - disc, 0.0), 2)
+    uc = np.round(np.minimum(uc, net), 2)
 
     price["final_unit_price"] = up
     price["final_unit_cost"] = uc

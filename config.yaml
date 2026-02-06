@@ -24,7 +24,7 @@ sales:
   total_rows: 5002300
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
