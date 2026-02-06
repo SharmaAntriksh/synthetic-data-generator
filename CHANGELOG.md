@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
 ---
+## v0.6.0 – Pipeline overhaul, SQL tooling, and models.yaml support
+- Added SQL Server scripts (bootstrap, constraints, procs, types, views) and import helpers
+- Added PowerShell tooling for venv setup/sync plus generator/UI/SQL-import run scripts
+- Major refactor and performance optimizations across the pipeline (faster sales generation, improved determinism)
+- Introduced models.yaml and implemented model components under src/facts/sales/sales_logic/models/* for config-driven sales behavior
+---
 ## v0.5.0 – Realistic data generation and improved SQL/Power BI compatibility
 
 ### Added

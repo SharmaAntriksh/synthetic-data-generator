@@ -85,10 +85,11 @@ Run the commands below **from the project root** with `scripts\run_sql_server_im
 
 ```powershell
 .\scripts\run_sql_server_import.ps1 `
-  -RunPath ".\generated_datasets\2026-01-11 08_10_25 PM Customers 12K Sales 10K CSV" `
+  -RunPath ".\generated_datasets\2026-02-06 12_50_26 PM Customers 38K Sales 2M CSV" `
   -Server "SUMMER\SQL2022" `
-  -Database SyntheticSales `
-  -TrustedConnection
+  -Database Sales_10M `
+  -TrustedConnection `
+  -ApplyCCI $false
 ```
 
 ### ▶️ SQL Authentication (Username / Password)
@@ -123,43 +124,47 @@ You can also generate data using the web UI:
 
 <img src="docs/assets/web-pipeline-run.png" alt="Pipeline run status" width="700" />
 
-## Output Structure
+---
 
-### Output Folder
+## Outputs
 
+### Output folder structure
 <img src="docs/assets/output.png" alt="Output folder structure" width="700" />
 
+<details>
+  <summary><strong>CSV output</strong></summary>
 
-### CSV Output
+  <img src="docs/assets/csv-with-sql.png" alt="CSV with SQL scripts" width="600" />
+  <img src="docs/assets/csv.png" alt="CSV files" width="600" />
+</details>
 
-<img src="docs/assets/csv-with-sql.png" alt="CSV with SQL scripts" width="600" />
+<details>
+  <summary><strong>Parquet output</strong></summary>
 
+  <img src="docs/assets/parquet.png" alt="Parquet files" width="600" />
+</details>
 
-<img src="docs/assets/csv.png" alt="CSV files" width="600" />
+<details>
+  <summary><strong>DeltaParquet output</strong></summary>
 
----
-
-### Parquet Output
-
-<img src="docs/assets/parquet.png" alt="Parquet files" width="600" />
-
----
-
-### DeltaParquet Output
-
-<img src="docs/assets/deltaparquet.png" alt="Delta Parquet partitions" width="600" />
+  <img src="docs/assets/deltaparquet.png" alt="Delta Parquet partitions" width="600" />
+</details>
 
 ---
 
 ## Power BI Data Model
 
-### Collapsed View
+<details>
+  <summary><strong>Collapsed view</strong></summary>
 
-<img src="docs/assets/data-model-collapsed.png" alt="Power BI model collapsed" width="600" />
+  <img src="docs/assets/data-model-collapsed.png" alt="Power BI model collapsed" width="600" />
+</details>
 
-### Expanded View
+<details>
+  <summary><strong>Expanded view</strong></summary>
 
-<img src="docs/assets/data-model-expanded.png" alt="Power BI model expanded" width="600" />
+  <img src="docs/assets/data-model-expanded.png" alt="Power BI model expanded" width="600" />
+</details>
 
 ---
 
