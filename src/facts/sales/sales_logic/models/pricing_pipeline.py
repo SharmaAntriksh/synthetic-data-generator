@@ -16,8 +16,7 @@ _MONTH_NOISE_CACHE = {}  # (vol_seed, sigma, month_int) -> multiplier
 # ---------------------------------------------------------------------
 def _as_f64(x):
     a = np.asarray(x, dtype=np.float64)
-    a = np.where(np.isfinite(a), a, 0.0)
-    return a
+    return np.where(np.isfinite(a), a, 0.0)
 
 
 def _parse_bands_to_arrays(bands, default):
@@ -70,11 +69,27 @@ def _quantize(x: np.ndarray, step: np.ndarray, rounding: str) -> np.ndarray:
     return np.round(x / step) * step
 
 
+def _safe_prob(w: np.ndarray) -> np.ndarray:
+    w = np.asarray(w, dtype=np.float64)
+    w = np.where(np.isfinite(w), w, 0.0)
+    w = np.clip(w, 0.0, None)
+    s = float(w.sum())
+    if s <= 0.0:
+        return np.full(w.shape[0], 1.0 / max(1, w.shape[0]), dtype=np.float64)
+    return w / s
+
+
 # ---------------------------------------------------------------------
 # Appearance config parsing (cached)
 # ---------------------------------------------------------------------
-def _parse_endings(endings):
+def _parse_endings(endings, *, default_if_missing: bool):
+    """
+    Returns (vals, probs) or (None, None) if missing and default_if_missing=False.
+    vals are cents endings in [0.0, 0.99].
+    """
     if not isinstance(endings, list) or len(endings) == 0:
+        if not default_if_missing:
+            return None, None
         endings = [
             {"value": 0.99, "weight": 0.70},
             {"value": 0.50, "weight": 0.25},
@@ -98,12 +113,12 @@ def _parse_endings(endings):
         wts.append(w)
 
     if not vals:
+        if not default_if_missing:
+            return None, None
         vals = [0.99]
         wts = [1.0]
 
-    w = np.asarray(wts, dtype=np.float64)
-    s = float(w.sum())
-    w = w / s if s > 0 else np.asarray([1.0], dtype=np.float64)
+    w = _safe_prob(np.asarray(wts, dtype=np.float64))
     return np.asarray(vals, dtype=np.float64), w
 
 
@@ -133,7 +148,7 @@ def _appearance_cfg():
         unit_cfg.get("bands", None),
         default=[(200.0, 1.0), (1000.0, 5.0), (10000.0, 5.0), (1e18, 10.0)],
     )
-    end_vals, end_w = _parse_endings(unit_cfg.get("endings", None))
+    up_end_vals, up_end_w = _parse_endings(unit_cfg.get("endings", None), default_if_missing=True)
 
     # Unit cost snapping
     cost_cfg = appearance.get("unit_cost", {}) or {}
@@ -145,6 +160,8 @@ def _appearance_cfg():
         cost_cfg.get("bands", None),
         default=[(200.0, 0.05), (1000.0, 0.10), (10000.0, 1.0), (1e18, 5.0)],
     )
+    # IMPORTANT: unit_cost endings are OPTIONAL; default is None (preserves old behavior)
+    uc_end_vals, uc_end_w = _parse_endings(cost_cfg.get("endings", None), default_if_missing=False)
 
     # Discount snapping
     disc_cfg = appearance.get("discount", {}) or {}
@@ -162,11 +179,13 @@ def _appearance_cfg():
         "up_round": up_round,
         "up_band_max": up_max,
         "up_band_step": up_step,
-        "end_vals": end_vals,
-        "end_w": end_w,
+        "up_end_vals": up_end_vals,
+        "up_end_w": up_end_w,
         "uc_round": uc_round,
         "uc_band_max": uc_max,
         "uc_band_step": uc_step,
+        "uc_end_vals": uc_end_vals,
+        "uc_end_w": uc_end_w,
         "d_round": d_round,
         "d_band_max": d_max,
         "d_band_step": d_step,
@@ -190,17 +209,18 @@ def _snap_unit_price(rng, up: np.ndarray, appearance_cfg: dict) -> np.ndarray:
     step = _choose_step_by_magnitude(up, appearance_cfg["up_band_max"], appearance_cfg["up_band_step"])
     anchor = _quantize(up, step, rounding=appearance_cfg["up_round"])
 
-    # Choose endings per row
-    end_vals = appearance_cfg["end_vals"]
-    end_w = appearance_cfg["end_w"]
+    end_vals = appearance_cfg["up_end_vals"]
+    end_w = appearance_cfg["up_end_w"]
+
     idx = rng.choice(end_vals.size, size=up.shape[0], p=end_w)
     ending = end_vals[idx]
 
+    # Price ending as cents: anchor is typically integer-dollar already due to steps
     snapped = anchor + ending
     return np.maximum(snapped, 0.01)
 
 
-def _snap_cost(uc: np.ndarray, appearance_cfg: dict) -> np.ndarray:
+def _snap_cost(rng, uc: np.ndarray, appearance_cfg: dict) -> np.ndarray:
     if not appearance_cfg.get("enabled", False):
         return uc
 
@@ -208,7 +228,18 @@ def _snap_cost(uc: np.ndarray, appearance_cfg: dict) -> np.ndarray:
     uc = np.maximum(uc, 0.0)
 
     step = _choose_step_by_magnitude(uc, appearance_cfg["uc_band_max"], appearance_cfg["uc_band_step"])
-    snapped = _quantize(uc, step, rounding=appearance_cfg["uc_round"])
+    anchor = _quantize(uc, step, rounding=appearance_cfg["uc_round"])
+
+    # Optional endings for cost: force cents via floor(anchor) + ending
+    end_vals = appearance_cfg.get("uc_end_vals", None)
+    end_w = appearance_cfg.get("uc_end_w", None)
+    if end_vals is not None and end_w is not None and end_vals.size > 0:
+        idx = rng.choice(end_vals.size, size=uc.shape[0], p=end_w)
+        ending = end_vals[idx]
+        snapped = np.floor(anchor) + ending
+    else:
+        snapped = anchor
+
     return np.maximum(snapped, 0.0)
 
 
@@ -387,7 +418,7 @@ def build_prices(rng, order_dates, qty, price):
     disc = np.minimum(disc, up)
     net = np.clip(up - disc, 0.0, up)
 
-    uc = _snap_cost(uc, appearance)
+    uc = _snap_cost(rng, uc, appearance)
     uc = np.minimum(uc, net)
 
     # cents + post-round safety

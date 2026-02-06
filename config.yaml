@@ -58,7 +58,7 @@ sales:
 # ---------------------------------------------------------------------
 products:
   use_contoso_products: false
-  num_products: 6021
+  num_products: 6022
   active_ratio: 0.94
   seed: 42
 
