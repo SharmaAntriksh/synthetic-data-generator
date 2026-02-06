@@ -214,5 +214,5 @@ WITH (
         lines.append("")  # spacing between statements
 
     target_sql.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    work(f"Wrote BULK INSERT script: {target_sql}")
+    work(f"Wrote BULK INSERT script: {target_sql.name}")
     return str(target_sql)
