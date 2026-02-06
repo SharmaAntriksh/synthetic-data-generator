@@ -2,18 +2,23 @@
 #  GEOGRAPHY DIMENSION (PIPELINE READY)
 # ---------------------------------------------------------
 
-import pandas as pd
-import numpy as np
-from pathlib import Path
+from __future__ import annotations
 
-from src.utils.logging_utils import info, fail, skip, stage
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
+import numpy as np
+import pandas as pd
+
+from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
 
 
 # =============================================================
 # CURATED GEOGRAPHY ROWS  (unchanged)
 # =============================================================
-CURATED_ROWS = [
+
+CURATED_ROWS: List[Tuple[str, str, str, str, str]] = [
     ("New York", "NY", "United States", "North America", "USD"),
     ("Los Angeles", "CA", "United States", "North America", "USD"),
     ("Chicago", "IL", "United States", "North America", "USD"),
@@ -42,80 +47,144 @@ CURATED_ROWS = [
 ]
 
 
+OUTPUT_COLS = ["GeographyKey", "City", "State", "Country", "Continent", "ISOCode"]
+
+
 # =============================================================
-# ORIGINAL GENERATOR (unchanged, except no disk write)
+# INTERNALS
 # =============================================================
 
-def build_dim_geography(cfg):
+def _validate_cfg(cfg: Dict) -> Dict:
+    if not isinstance(cfg, dict):
+        raise TypeError("cfg must be a dict")
+
+    if "geography" not in cfg or not isinstance(cfg["geography"], dict):
+        raise KeyError("Missing required config section: 'geography'")
+
+    if "exchange_rates" not in cfg or not isinstance(cfg["exchange_rates"], dict):
+        raise KeyError("Missing required config section: 'exchange_rates'")
+
+    currencies = cfg["exchange_rates"].get("currencies")
+    if not isinstance(currencies, (list, tuple)) or not currencies:
+        raise ValueError("exchange_rates.currencies must be a non-empty list of currency ISO codes")
+
+    return cfg["geography"]
+
+
+def _curated_signature() -> Dict:
+    """
+    Small signature to ensure changes to CURATED_ROWS trigger regeneration,
+    without storing the whole list in version cfg.
+    """
+    # stable-ish signature: count + a lightweight checksum-like value
+    # (sum of string lengths is cheap and deterministic)
+    total_len = sum(len(x) for row in CURATED_ROWS for x in row)
+    return {"rows": len(CURATED_ROWS), "total_len": total_len}
+
+
+def _normalize_country_weights(country_weights: Dict) -> Dict[str, float]:
+    """
+    Returns a normalized copy of weights (sums to 1 when total > 0).
+    Allows a "Rest" key as fallback.
+    """
+    if not country_weights:
+        return {}
+
+    if not isinstance(country_weights, dict):
+        raise TypeError("geography.country_weights must be a dict")
+
+    cw: Dict[str, float] = {}
+    for k, v in country_weights.items():
+        try:
+            fv = float(v)
+        except Exception as e:
+            raise ValueError(f"Invalid country weight for '{k}': {v!r}") from e
+        if fv < 0:
+            raise ValueError(f"Country weight cannot be negative: {k}={fv}")
+        cw[str(k)] = fv
+
+    total = float(sum(cw.values()))
+    if total > 0:
+        cw = {k: (v / total) for k, v in cw.items()}  # normalize to sum=1
+    return cw
+
+
+def _row_weights(df: pd.DataFrame, country_weights_norm: Dict[str, float]) -> np.ndarray:
+    """
+    Build per-row weights based on Country mapping (vectorized).
+    Unmapped countries use 'Rest' if present, else 0.
+    """
+    if not country_weights_norm:
+        # If no weights provided, uniform distribution
+        return np.ones(len(df), dtype=np.float64)
+
+    rest = float(country_weights_norm.get("Rest", 0.0))
+    w = df["Country"].map(country_weights_norm).astype("float64")
+    w = w.fillna(rest).to_numpy(dtype=np.float64)
+
+    s = float(w.sum())
+    if s <= 0:
+        raise ValueError("All country weights resolved to zero. Check geography.country_weights (including 'Rest').")
+
+    return w / s
+
+
+# =============================================================
+# GENERATOR
+# =============================================================
+
+def build_dim_geography(cfg: Dict) -> pd.DataFrame:
     """
     Build curated + weighted geography dimension.
-    Filtering based on allowed currencies from exchange_rates config.
+    Filters rows based on allowed currencies from exchange_rates.currencies.
     """
+    geo_cfg = _validate_cfg(cfg)
 
-    allowed_iso = set(cfg["exchange_rates"]["currencies"])
-    gcfg = cfg["geography"]
-    target_rows = gcfg.get("target_rows", 200)
+    allowed_iso = set(map(str, cfg["exchange_rates"]["currencies"]))
+    target_rows = int(geo_cfg.get("target_rows", 200))
+    if target_rows <= 0:
+        raise ValueError(f"geography.target_rows must be > 0, got {target_rows}")
 
-    # ----------------------------------------------
-    # Convert curated rows → DataFrame
-    # ----------------------------------------------
+    seed = int(geo_cfg.get("seed", 42))
+
+    sampling_cfg = geo_cfg.get("sampling", {}) or {}
+    replace_cfg = sampling_cfg.get("replace", True)
+    replace = bool(replace_cfg)
+
+    # Base curated DF
     df = pd.DataFrame(
         CURATED_ROWS,
         columns=["City", "State", "Country", "Continent", "ISOCode"],
     )
 
-    # ----------------------------------------------
     # Filter by allowed currency codes
-    # ----------------------------------------------
-    before = len(df)
     df = df[df["ISOCode"].isin(allowed_iso)].reset_index(drop=True)
-    after = len(df)
-
-    if after == 0:
+    if df.empty:
         raise ValueError(
             f"No geography rows remain after filtering by allowed currencies: {sorted(allowed_iso)}"
         )
 
-    # ----------------------------------------------
-    # Country weights
-    # ----------------------------------------------
-    country_weights = gcfg.get("country_weights", {})
+    # If replace is disabled but we need more rows than available, force replace
+    if not replace and target_rows > len(df):
+        replace = True
 
-    total_w = sum(country_weights.values())
-    if total_w > 0 and total_w != 1.0:
-        for k in country_weights:
-            country_weights[k] /= total_w
+    country_weights_norm = _normalize_country_weights(geo_cfg.get("country_weights", {}) or {})
+    w = _row_weights(df, country_weights_norm)
 
-    df["Weight"] = df["Country"].apply(
-        lambda c: country_weights.get(c, country_weights.get("Rest", 0))
-    )
+    # Weighted sampling via numpy (fast + deterministic)
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(df), size=target_rows, replace=replace, p=w)
 
-    wsum = df["Weight"].sum()
-    if wsum == 0:
-        raise ValueError("All country weights resolved to zero. Check config.")
-    df["Weight"] = df["Weight"] / wsum
-
-    # ----------------------------------------------
-    # Weighted sampling
-    # ----------------------------------------------
-    sampled = df.sample(
-        n=target_rows,
-        replace=True,
-        weights=df["Weight"],
-        random_state=42,
-    ).reset_index(drop=True)
-
-    # Assign deterministic keys
-    sampled.insert(0, "GeographyKey", np.arange(1, target_rows + 1))
-
-    return sampled
+    out = df.iloc[idx].reset_index(drop=True)
+    out.insert(0, "GeographyKey", np.arange(1, target_rows + 1, dtype=np.int64))
+    return out
 
 
 # =============================================================
 # PIPELINE WRAPPER
 # =============================================================
 
-def run_geography(cfg, parquet_folder: Path):
+def run_geography(cfg: Dict, parquet_folder: Path) -> None:
     """
     Pipeline wrapper for geography dimension.
     Handles:
@@ -124,32 +193,27 @@ def run_geography(cfg, parquet_folder: Path):
     - writing parquet
     - saving version
     """
+    geo_cfg = _validate_cfg(cfg)
     out_path = parquet_folder / "geography.parquet"
 
-    geo_cfg = cfg["geography"]
-    force = geo_cfg.get("_force_regenerate", False)
+    force = bool(geo_cfg.get("_force_regenerate", False))
 
-    if not force and not should_regenerate("geography", geo_cfg, out_path):
+    # IMPORTANT: include exchange_rates currencies + curated signature in version cfg
+    # so changing currencies or curated list triggers regeneration.
+    version_cfg = {
+        **geo_cfg,
+        "exchange_rates": {"currencies": list(map(str, cfg["exchange_rates"]["currencies"]))},
+        "_curated_sig": _curated_signature(),
+    }
+
+    if not force and not should_regenerate("geography", version_cfg, out_path):
         skip("Geography up-to-date; skipping.")
         return
 
     with stage("Generating Geography"):
         df = build_dim_geography(cfg)
-
-        # Explicit domain column order (no SQL dependency)
-        output_cols = [
-            "GeographyKey",
-            "City",
-            "State",
-            "Country",
-            "Continent",
-            "ISOCode",
-        ]
-
-        # Drop internal columns like Weight
-        df = df[output_cols]
+        df = df[OUTPUT_COLS]  # ensure stable output schema/order
         df.to_parquet(out_path, index=False)
 
-    save_version("geography", geo_cfg, out_path)
-
+    save_version("geography", version_cfg, out_path)
     info(f"Geography dimension written: {out_path}")
