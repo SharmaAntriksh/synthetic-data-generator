@@ -61,7 +61,14 @@ models:
     seasonality_amplitude: 0.08
     seasonality_phase: 0.0
     noise_std: 0.06
-    
+    eligible_blend: 0.20   # 20% eligibility, 80% macro
+      # eligible_blend is a slider that decides how much your "sales per month" should follow:
+      # the business demand curve you generated (trend/seasonality/noise), vs
+      # how many customers are available that month (eligible customers).
+      # eligible_blend: 0.0 → ignore customer availability. Months get rows mainly from the demand curve.
+      # eligible_blend: 0.2 → mostly demand, but a little influenced by how many customers exist that month.
+      # eligible_blend: 1.0 → ignore demand curve. Months get rows mainly because more customers exist in those months.
+
     yoy_growth_schedule:
       mode: "repeat"
       values: [-0.06, -0.22, -0.18, 0.37, 0.14]
@@ -227,24 +234,25 @@ models:
       enabled: true
 
       unit_price:
-        rounding: nearest
+        rounding: floor
         endings:
           - { value: 0.99, weight: 0.75 }
-          - { value: 0.50, weight: 0.20 }
-          - { value: 0.00, weight: 0.05 }
+          # - { value: 0.50, weight: 0.20 }
+          # - { value: 0.00, weight: 0.05 }
         bands:
-          - { max: 200,   step: 1 }
+          - { max: 200,   step: 5 }
           - { max: 1000,  step: 5 }
           - { max: 5000,  step: 5 }
           - { max: 1e18,  step: 10 }
 
       unit_cost:
-        rounding: nearest
+        rounding: floor
+        endings:
+          - { value: 0.99, weight: 1.0 }
         bands:
-          - { max: 200,   step: 0.05 }
-          - { max: 1000,  step: 0.10 }
-          - { max: 5000,  step: 1 }
-          - { max: 1e18,  step: 5 }
+          - { max: 200, step: 1.0 }
+          - { max: 1000, step: 5.0 }
+          - { max: 1e18, step: 10.0 }
 
       # Re-quantize DiscountAmount after scaling/snapping so it stays 5/10/15/...
       discount:

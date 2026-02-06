@@ -24,7 +24,7 @@ sales:
   total_rows: 200230
   chunk_size: 1000000
 
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -42,11 +42,11 @@ sales:
   write_pyarrow: true
   tune_chunk: false
 
-  skip_order_cols: false
+  skip_order_cols: true
 
   override:
     dates:
-      end: "2025-10-31"
+      end: null
     seed: null
 
   partitioning:
@@ -58,7 +58,7 @@ sales:
 # ---------------------------------------------------------------------
 products:
   use_contoso_products: false
-  num_products: 6021
+  num_products: 6022
   active_ratio: 0.94
   seed: 42
 
@@ -103,7 +103,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 38413
+  total_customers: 18413
   active_ratio: 0.90
 
   pct_india: 10
@@ -117,8 +117,8 @@ customers:
     enable_churn: true
     base_monthly_churn: 0.52
     min_tenure_months: 22
-    initial_active_customers: 3000        # or 1000
-    initial_spread_months: 24            # customers started in the 24 months before start_date
+    initial_active_customers: 2000        # or 1000
+    initial_spread_months: 36            # customers started in the 24 months before start_date
 
   override:
     seed: null

@@ -1,46 +1,61 @@
 # src/facts/sales/sales_logic/customer_sampling.py
 
+from __future__ import annotations
+
 import math
+from typing import Optional
+
 import numpy as np
 
 
 def _normalize_end_month(end_month_arr, n_customers: int) -> np.ndarray:
     """
     Convert nullable end-month representations into an int64 array with -1 meaning "no end inside window".
-    Accepts:
-      - None -> all -1
-      - numpy array of ints -> returned as int64 (negative treated as -1)
-      - pandas Int64 series/object array with pd.NA -> converted to -1
     """
+    n_customers = int(n_customers)
     if end_month_arr is None:
         return np.full(n_customers, -1, dtype="int64")
 
     a = np.asarray(end_month_arr)
 
-    # object arrays may contain pd.NA
-    if a.dtype == object:
-        out = np.empty(n_customers, dtype="int64")
-        for i in range(n_customers):
-            v = a[i]
-            if v is None or v is np.nan:
-                out[i] = -1
-            else:
-                try:
-                    out[i] = int(v)
-                except Exception:
-                    out[i] = -1
-        out[out < 0] = -1
+    if np.issubdtype(a.dtype, np.integer):
+        out = a.astype("int64", copy=False)
+        out = np.where(out < 0, -1, out)
         return out
 
-    # pandas nullable ints often come through as float with nans depending on upstream
     if np.issubdtype(a.dtype, np.floating):
         out = np.where(np.isnan(a), -1, a).astype("int64")
         out[out < 0] = -1
         return out
 
-    out = a.astype("int64", copy=False)
-    out[out < 0] = -1
-    return out
+    if a.dtype == object:
+        try:
+            import pandas as pd
+
+            s = pd.Series(a, copy=False)
+            num = pd.to_numeric(s, errors="coerce")
+            out = num.fillna(-1).astype("int64").to_numpy()
+            out[out < 0] = -1
+            return out
+        except Exception:
+            out = np.full(n_customers, -1, dtype="int64")
+            for i in range(min(n_customers, a.shape[0])):
+                v = a[i]
+                if v is None:
+                    continue
+                try:
+                    iv = int(v)
+                    out[i] = iv if iv >= 0 else -1
+                except Exception:
+                    pass
+            return out
+
+    try:
+        out = a.astype("int64", copy=False)
+        out[out < 0] = -1
+        return out
+    except Exception:
+        return np.full(n_customers, -1, dtype="int64")
 
 
 def _eligible_customer_mask_for_month(
@@ -50,19 +65,21 @@ def _eligible_customer_mask_for_month(
     end_month_norm: np.ndarray,
 ) -> np.ndarray:
     """
-    Returns boolean mask over customers dimension rows, true if eligible in this month.
+    Eligibility:
+      active == 1
+      start_month <= m_offset
+      end_month == -1 OR m_offset <= end_month
     """
-    # global gate
-    mask = (is_active_in_sales == 1)
+    m = int(m_offset)
+    is_active_in_sales = np.asarray(is_active_in_sales, dtype="int64", order="C")
+    start_month = np.asarray(start_month, dtype="int64", order="C")
+    end_month_norm = np.asarray(end_month_norm, dtype="int64", order="C")
 
-    # lifecycle start
-    mask &= (start_month <= m_offset)
-
-    # lifecycle end: -1 means no end
-    has_end = (end_month_norm >= 0)
-    mask &= (~has_end) | (m_offset <= end_month_norm)
-
-    return mask
+    return (
+        (is_active_in_sales == 1)
+        & (start_month <= m)
+        & ((end_month_norm < 0) | (m <= end_month_norm))
+    )
 
 
 def _participation_distinct_target(
@@ -73,24 +90,10 @@ def _participation_distinct_target(
     cfg: dict,
 ) -> int:
     """
-    Compute the target number of distinct customers to appear in a given month.
-
-    models.yaml -> models.customer_participation
-      base_distinct_ratio: 0.26
-      min_distinct_customers: 250
-      max_distinct_ratio: 0.55
-      cycles:
-        enabled: true
-        period_months: 24
-        amplitude: 0.35
-        phase: 0.0
-        noise_std: 0.08
-
-    Notes:
-      - Returns 0 if eligible_count == 0 or n_orders == 0.
-      - Always capped by eligible_count and n_orders.
-      - Intended to shape *distinct-customer participation* independently from macro_demand row allocation.
+    Target number of distinct customers to appear in the month.
     """
+    eligible_count = int(eligible_count)
+    n_orders = int(n_orders)
     if eligible_count <= 0 or n_orders <= 0:
         return 0
 
@@ -109,22 +112,79 @@ def _participation_distinct_target(
 
         cyc = math.sin((2.0 * math.pi * float(m_offset) / max(period, 1)) + phase)
         mult = 1.0 + (amp * cyc)
-
         if noise_std > 0:
             mult += float(rng.normal(loc=0.0, scale=noise_std))
-
-        # Keep sane bounds so we don't get negative/huge distinct targets
         mult = float(np.clip(mult, 0.05, 3.0))
         k *= mult
 
-    # hard floor / cap (ratio cap applies to eligible population)
     k = max(k, float(min_k))
     k = min(k, eligible_count * max_ratio)
-
-    # final caps
     k = min(k, float(eligible_count), float(n_orders))
 
     return int(max(1, round(k)))
+
+
+# ------------------------------------------------------------
+# Sampling helpers
+# ------------------------------------------------------------
+
+def _weights_for_indices(indices: np.ndarray, base_weight: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    """
+    Build probability vector p aligned with a subset of dimension indices.
+    This path is correct even if CustomerKey isn't dense/sequential.
+    """
+    if base_weight is None:
+        return None
+    try:
+        w = base_weight[np.asarray(indices, dtype="int64")].astype("float64", copy=False)
+        w = np.where(np.isfinite(w), w, 0.0)
+        w = np.clip(w, 1e-12, None)
+        s = float(w.sum())
+        if s <= 0.0:
+            return None
+        return w / s
+    except Exception:
+        return None
+
+
+def _weights_for_keys(keys: np.ndarray, base_weight: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    """
+    Assumes CustomerKey is 1..N aligned to base_weight.
+    If mapping fails, returns None (uniform sampling).
+    """
+    if base_weight is None:
+        return None
+    try:
+        keys_i64 = np.asarray(keys).astype("int64", copy=False)
+        idx = keys_i64 - 1
+        if idx.size == 0:
+            return None
+        if idx.min() < 0 or idx.max() >= base_weight.shape[0]:
+            return None
+        w = base_weight[idx].astype("float64", copy=False)
+        w = np.where(np.isfinite(w), w, 0.0)
+        w = np.clip(w, 1e-12, None)
+        s = float(w.sum())
+        if s <= 0.0:
+            return None
+        return w / s
+    except Exception:
+        return None
+
+
+def _choice(
+    rng: np.random.Generator,
+    keys: np.ndarray,
+    size: int,
+    *,
+    replace: bool,
+    p: Optional[np.ndarray],
+) -> np.ndarray:
+    if size <= 0:
+        return np.empty(0, dtype=keys.dtype)
+    if p is None:
+        return rng.choice(keys, size=size, replace=replace)
+    return rng.choice(keys, size=size, replace=replace, p=p)
 
 
 def _sample_customers(
@@ -139,87 +199,55 @@ def _sample_customers(
     target_distinct: int | None = None,
 ) -> np.ndarray:
     """
-    Returns an array of CustomerKeys of length n, sampling from eligible customers.
+    Returns array of CustomerKeys of length n, sampled from eligible customers.
 
-    Features:
-      - Optional discovery forcing (bring in newly-eligible-but-unseen customers).
-      - Optional weighted repeat sampling (customer_base_weight).
-      - Optional participation control: target_distinct enforces a target number of distinct customers
-        to appear in the month, then fills remaining orders with repeats from that distinct pool.
-
-    If use_discovery is True:
-      - forces a slice of newly-eligible-but-unseen customers to appear
-      - (then) fills the remainder with repeat customers from seen_set (or from eligible if empty)
-        unless target_distinct is provided, in which case repeats are drawn from the month distinct pool.
+    - If use_discovery: forces a slice of newly-eligible-but-unseen customers to appear.
+    - If target_distinct is provided: builds a distinct pool then repeats from it.
     """
-    eligible_keys = customer_keys[eligible_mask]
-    if eligible_keys.size == 0 or n <= 0:
+    n = int(n)
+    if n <= 0:
+        return np.empty(0, dtype=np.asarray(customer_keys).dtype)
+
+    customer_keys = np.asarray(customer_keys)
+    eligible_mask = np.asarray(eligible_mask, dtype=bool)
+
+    eligible_idx = np.flatnonzero(eligible_mask)
+    if eligible_idx.size == 0:
+        return np.empty(0, dtype=customer_keys.dtype)
+
+    eligible_keys = customer_keys[eligible_idx]
+    if eligible_keys.size == 0:
         return np.empty(0, dtype=customer_keys.dtype)
 
     # Normalize target distinct
+    k = None
     if target_distinct is not None:
         try:
-            k = int(target_distinct)
+            k0 = int(target_distinct)
+            k = max(1, min(k0, int(eligible_keys.size), n))
         except Exception:
             k = None
-        else:
-            k = max(1, min(k, int(eligible_keys.size), int(n)))
-    else:
-        k = None
 
-    # Helper: weighted choice without replacement
-    def _choice_unique(keys: np.ndarray, size: int) -> np.ndarray:
-        if size <= 0:
-            return np.empty(0, dtype=keys.dtype)
-        if base_weight is None:
-            return rng.choice(keys, size=size, replace=False)
-        try:
-            # assumes CustomerKey 1..N
-            idx = (keys.astype("int64") - 1)
-            ww = base_weight[idx].astype("float64", copy=False)
-            ww = np.clip(ww, 1e-12, None)
-            p = ww / ww.sum()
-            return rng.choice(keys, size=size, replace=False, p=p)
-        except Exception:
-            return rng.choice(keys, size=size, replace=False)
-
-    # Helper: sample repeats (with replacement) from a pool, optionally weighted by base_weight
-    def _choice_repeat(keys: np.ndarray, size: int) -> np.ndarray:
-        if size <= 0:
-            return np.empty(0, dtype=keys.dtype)
-        if base_weight is None:
-            return rng.choice(keys, size=size, replace=True)
-        try:
-            idx = (keys.astype("int64") - 1)
-            ww = base_weight[idx].astype("float64", copy=False)
-            ww = np.clip(ww, 1e-12, None)
-            p = ww / ww.sum()
-            return rng.choice(keys, size=size, replace=True, p=p)
-        except Exception:
-            return rng.choice(keys, size=size, replace=True)
+    # Precompute eligible weights (dimension-aligned)
+    p_eligible = _weights_for_indices(eligible_idx, base_weight)
 
     # -----------------------------
-    # No discovery: simple sampling
+    # No discovery
     # -----------------------------
     if not use_discovery:
         if k is None:
-            # legacy behavior
-            if base_weight is not None:
-                w = base_weight[eligible_mask].astype("float64", copy=False)
-                w = np.clip(w, 1e-12, None)
-                p = w / w.sum()
-                return rng.choice(eligible_keys, size=n, replace=True, p=p)
-            return rng.choice(eligible_keys, size=n, replace=True)
+            return _choice(rng, eligible_keys, n, replace=True, p=p_eligible)
 
-        # participation-controlled: build a distinct pool then repeat from it
-        distinct_pool = _choice_unique(eligible_keys, size=k)
-        remaining = int(n - distinct_pool.size)
+        distinct_pool = _choice(rng, eligible_keys, k, replace=False, p=p_eligible)
+        remaining = n - distinct_pool.size
         if remaining <= 0:
             out = distinct_pool
             rng.shuffle(out)
             return out
 
-        repeats = _choice_repeat(distinct_pool, size=remaining)
+        p_distinct = _weights_for_keys(distinct_pool, base_weight)
+        repeats = _choice(rng, distinct_pool, remaining, replace=True, p=p_distinct)
+
         out = np.concatenate([distinct_pool, repeats])
         rng.shuffle(out)
         return out
@@ -227,110 +255,106 @@ def _sample_customers(
     # -----------------------------
     # Discovery mode
     # -----------------------------
-    # Determine undiscovered among eligible
     if seen_set:
-        seen_eligible_mask = np.fromiter((k in seen_set for k in eligible_keys), dtype=bool, count=eligible_keys.size)
-        undiscovered = eligible_keys[~seen_eligible_mask]
-        seen_eligible = eligible_keys[seen_eligible_mask]
+        # Faster + memory-light than np.isin(seen_arr) for large seen_set
+        seen_mask = np.fromiter((k in seen_set for k in eligible_keys), dtype=bool, count=eligible_keys.size)
+        seen_eligible = eligible_keys[seen_mask]
+        seen_eligible_idx = eligible_idx[seen_mask]
+
+        undiscovered = eligible_keys[~seen_mask]
+        undiscovered_idx = eligible_idx[~seen_mask]
     else:
-        undiscovered = eligible_keys
         seen_eligible = np.empty(0, dtype=eligible_keys.dtype)
+        seen_eligible_idx = np.empty(0, dtype="int64")
+        undiscovered = eligible_keys
+        undiscovered_idx = eligible_idx
 
-    forced = np.empty(0, dtype=customer_keys.dtype)
-
+    forced = np.empty(0, dtype=eligible_keys.dtype)
     if undiscovered.size > 0:
-        # NOTE: discover_n is driven by chunk_builder via discovery_cfg["_target_new_customers"]
         discover_n = int(discovery_cfg.get("_target_new_customers", 1))
 
-        # --- HARD CAP: prevent early discovery spike ---
+        # Add variance around the target (seed-deterministic but not “flat”).
+        # Default True: restores the older jaggedness without requiring config edits.
+        if bool(discovery_cfg.get("stochastic_discovery", True)) and discover_n > 0:
+            discover_n = int(rng.poisson(lam=float(discover_n)))
+
+        # Cap (apply to eligible pool so it behaves consistently with lifecycle eligibility)
         max_frac = discovery_cfg.get("max_fraction_per_month")
         if max_frac is not None:
-            max_new = int(max_frac * customer_keys.size)
-            discover_n = min(discover_n, max_new)
+            try:
+                max_new = int(float(max_frac) * int(eligible_keys.size))
+                discover_n = min(discover_n, max_new)
+            except Exception:
+                pass
 
-        forced = rng.choice(
-            undiscovered,
-            size=min(discover_n, undiscovered.size),
-            replace=False,
-        )
+        discover_n = max(0, min(discover_n, int(undiscovered.size)))
+        if discover_n > 0:
+            # Keep forced uniform (fast and keeps “new customer” mix broad)
+            forced = rng.choice(undiscovered, size=discover_n, replace=False)
 
-    # If no participation target: keep legacy discovery behavior
+    # ------------------------------------------------------------
+    # Discovery without participation target
+    # ------------------------------------------------------------
     if k is None:
-        remaining = max(0, n - forced.size)
+        remaining = n - forced.size
         if remaining <= 0:
             out = forced
             rng.shuffle(out)
             return out
 
-        # Repeat sampling: prefer seen customers if any, else eligible
-        if seen_set:
-            repeat_pool = np.fromiter(seen_set, dtype=customer_keys.dtype)
+        # Repeat from seen *eligible this month* (NOT global seen)
+        if seen_eligible.size > 0:
+            repeat_pool = seen_eligible
+            p_repeat = _weights_for_indices(seen_eligible_idx, base_weight)
         else:
             repeat_pool = eligible_keys
+            p_repeat = p_eligible
 
-        if repeat_pool.size == 0:
-            out = forced
-            rng.shuffle(out)
-            return out
-
-        # weighted repeats if possible
-        if base_weight is not None and seen_set:
-            try:
-                idx = (repeat_pool.astype("int64") - 1)
-                ww = base_weight[idx].astype("float64", copy=False)
-                ww = np.clip(ww, 1e-12, None)
-                pp = ww / ww.sum()
-                repeat = rng.choice(repeat_pool, size=remaining, replace=True, p=pp)
-            except Exception:
-                repeat = rng.choice(repeat_pool, size=remaining, replace=True)
-        else:
-            repeat = rng.choice(repeat_pool, size=remaining, replace=True)
+        repeat = _choice(rng, repeat_pool, remaining, replace=True, p=p_repeat)
 
         out = np.concatenate([forced, repeat])
         rng.shuffle(out)
         return out
 
-    # Participation-controlled discovery:
-    # Build the month distinct pool of size k, seeded with forced undiscovered customers.
+    # ------------------------------------------------------------
+    # Participation-controlled discovery
+    # ------------------------------------------------------------
     if forced.size > k:
         forced = rng.choice(forced, size=k, replace=False)
 
     distinct_pool = forced
+    need = k - distinct_pool.size
 
-    need = int(k - distinct_pool.size)
     if need > 0:
-        # fill remaining distinct slots: prefer seen eligible first, then undiscovered
-        fill_candidates = []
-        if seen_eligible.size > 0:
-            fill_candidates.append(seen_eligible)
-        if undiscovered.size > 0:
-            # exclude those already forced
-            if distinct_pool.size > 0:
-                u = undiscovered[~np.isin(undiscovered, distinct_pool, assume_unique=False)]
-            else:
-                u = undiscovered
-            if u.size > 0:
-                fill_candidates.append(u)
+        # Fill with seen eligible first, then other undiscovered excluding already forced
+        other = undiscovered
+        if distinct_pool.size > 0 and other.size > 0:
+            other = other[~np.isin(other, distinct_pool, assume_unique=False)]
 
-        if fill_candidates:
-            pool = np.unique(np.concatenate(fill_candidates))
-            if pool.size > 0:
-                add_n = min(need, int(pool.size))
-                extra = rng.choice(pool, size=add_n, replace=False)
-                distinct_pool = np.concatenate([distinct_pool, extra])
+        if seen_eligible.size > 0 and other.size > 0:
+            candidates = np.concatenate([seen_eligible, other])
+        elif seen_eligible.size > 0:
+            candidates = seen_eligible
+        else:
+            candidates = other
 
-    # If we still don't have enough distinct customers (tiny eligible), just use what we have.
+        if candidates.size > 0:
+            add_n = min(need, int(candidates.size))
+            extra = rng.choice(candidates, size=add_n, replace=False)
+            distinct_pool = np.concatenate([distinct_pool, extra])
+
     if distinct_pool.size == 0:
-        return rng.choice(eligible_keys, size=n, replace=True)
+        return _choice(rng, eligible_keys, n, replace=True, p=p_eligible)
 
-    # Guarantee at least one order per distinct customer, then repeat from distinct pool
-    remaining = int(n - distinct_pool.size)
+    remaining = n - distinct_pool.size
     if remaining <= 0:
         out = distinct_pool
         rng.shuffle(out)
         return out
 
-    repeats = _choice_repeat(distinct_pool, size=remaining)
+    p_distinct = _weights_for_keys(distinct_pool, base_weight)
+    repeats = _choice(rng, distinct_pool, remaining, replace=True, p=p_distinct)
+
     out = np.concatenate([distinct_pool, repeats])
     rng.shuffle(out)
     return out
