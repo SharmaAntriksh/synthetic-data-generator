@@ -15,6 +15,21 @@ class SqlServerImportError(RuntimeError):
 
 
 # -------------------------
+# Formatting helpers
+# -------------------------
+def _short_path(p: Path, *, base: Path | None = None) -> str:
+    """
+    Prefer printing paths relative to `base` (if possible), otherwise just the filename.
+    """
+    try:
+        if base is not None:
+            return p.resolve().relative_to(base.resolve()).as_posix()
+    except Exception:
+        pass
+    return p.name
+
+
+# -------------------------
 # SQL file execution helpers
 # -------------------------
 def _read_sql_text(sql_file: Path) -> str:
@@ -291,12 +306,12 @@ def import_sql_server(
             if types_file.is_file():
                 execute_sql_batches(cursor, types_file)
             else:
-                print(f"[WARN] Missing bootstrap types file: {types_file}")
+                print(f"[WARN] Missing bootstrap types file: {_short_path(types_file, base=PROJECT_ROOT)}")
 
             if procs_file.is_file():
                 execute_sql_batches(cursor, procs_file)
             else:
-                print(f"[WARN] Missing bootstrap procs file: {procs_file}")
+                print(f"[WARN] Missing bootstrap procs file: {_short_path(procs_file, base=PROJECT_ROOT)}")
 
         print("[INFO] CCI bootstrap completed (TYPE + PROC).")
 
@@ -312,10 +327,9 @@ def import_sql_server(
         print("[INFO] Skipping CCI apply scripts (apply_cci=False).")
         return
 
-    # Log what we discovered (should include run_dir/sql/indexes/create_drop_cci.sql)
     print("[INFO] CCI apply scripts discovered:")
     for f in cci_apply_files:
-        print(f"  - {f}")
+        print(f"  - {_short_path(f, base=run_dir)}")
 
     if not cci_apply_files:
         print("[INFO] No CCI apply scripts found; nothing to do.")
@@ -328,21 +342,20 @@ def import_sql_server(
 
             execute_sql_files(cursor, cci_apply_files)
 
-            # -------------------------
-            # Verification (fail fast if no CCI got created)
-            # -------------------------
+            # Verification: total CCIs
             cursor.execute(
                 "SELECT COUNT(*) FROM sys.indexes WHERE type_desc = 'CLUSTERED COLUMNSTORE';"
             )
             total_ccis = int(cursor.fetchone()[0])
 
-            # Optional: check Sales specifically (adjust schema/table if needed)
+            # Verification: Sales CCI (schema-agnostic)
             cursor.execute(
                 """
                 SELECT COUNT(*)
-                FROM sys.indexes
-                WHERE object_id = OBJECT_ID(N'dbo.Sales')
-                  AND type_desc = 'CLUSTERED COLUMNSTORE';
+                FROM sys.indexes i
+                JOIN sys.tables  t ON t.object_id = i.object_id
+                WHERE t.name = N'Sales'
+                  AND i.type_desc = 'CLUSTERED COLUMNSTORE';
                 """
             )
             sales_cci = int(cursor.fetchone()[0])
