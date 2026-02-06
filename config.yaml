@@ -117,8 +117,8 @@ customers:
     enable_churn: true
     base_monthly_churn: 0.52
     min_tenure_months: 22
-    initial_active_customers: 3000        # or 1000
-    initial_spread_months: 24            # customers started in the 24 months before start_date
+    initial_active_customers: 2000        # or 1000
+    initial_spread_months: 36            # customers started in the 24 months before start_date
 
   override:
     seed: null
