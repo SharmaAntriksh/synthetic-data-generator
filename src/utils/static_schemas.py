@@ -1,9 +1,22 @@
-STATIC_SCHEMAS = {
+# src/utils/static_schemas.py
 
+from __future__ import annotations
+
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+
+# Type aliases (lightweight, no runtime overhead)
+SchemaCol = Tuple[str, str]
+Schema = Tuple[SchemaCol, ...]
+
+
+# ============================================================================
+# STATIC SCHEMAS (immutable)
+# ============================================================================
+STATIC_SCHEMAS: Dict[str, Schema] = {
     # -----------------------
     # DIMENSIONS
     # -----------------------
-    "Customers": [
+    "Customers": (
         ("CustomerKey",        "INT NOT NULL"),
         ("CustomerName",       "VARCHAR(100) NOT NULL"),
         ("DOB",                "DATE"),
@@ -27,19 +40,19 @@ STATIC_SCHEMAS = {
         ("CustomerWeight",      "FLOAT NOT NULL"),  # lognormal > 0
         ("CustomerTemperature", "FLOAT NOT NULL"),  # typically 0..1
         ("CustomerSegment",     "VARCHAR(30) NOT NULL"),
-        ("CustomerChurnBias",   "FLOAT NOT NULL")  # lognormal > 0
-    ],
+        ("CustomerChurnBias",   "FLOAT NOT NULL"),  # lognormal > 0
+    ),
 
-    "Geography": [
+    "Geography": (
         ("GeographyKey", "INT NOT NULL"),
         ("City",         "VARCHAR(100) NOT NULL"),
         ("State",        "VARCHAR(100) NOT NULL"),
         ("Country",      "VARCHAR(100) NOT NULL"),
         ("Continent",    "VARCHAR(100) NOT NULL"),
-        ("ISOCode",      "VARCHAR(10) NOT NULL")
-    ],
+        ("ISOCode",      "VARCHAR(10) NOT NULL"),
+    ),
 
-    "Products": [
+    "Products": (
         ("ProductKey",              "INT NOT NULL"),
         ("ProductCode",             "VARCHAR(200) NOT NULL"),
         ("ProductName",             "VARCHAR(200) NOT NULL"),
@@ -54,23 +67,23 @@ STATIC_SCHEMAS = {
         ("UnitPrice",               "DECIMAL(10,2) NOT NULL"),
         ("BaseProductKey",          "INT NOT NULL"),
         ("VariantIndex",            "INT NOT NULL"),
-        ("IsActiveInSales",         "INT NOT NULL")
-    ],
+        ("IsActiveInSales",         "INT NOT NULL"),
+    ),
 
-    "ProductCategory": [
+    "ProductCategory": (
         ("CategoryKey",             "INT NOT NULL"),
         ("Category",                "VARCHAR(100) NOT NULL"),
-        ("CategoryLabel",           "VARCHAR(10) NOT NULL")
-    ],
+        ("CategoryLabel",           "VARCHAR(10) NOT NULL"),
+    ),
 
-    "ProductSubcategory": [
+    "ProductSubcategory": (
         ("SubcategoryKey",          "INT NOT NULL"),
         ("SubcategoryLabel",        "VARCHAR(10) NOT NULL"),
         ("Subcategory",             "VARCHAR(100) NOT NULL"),
-        ("CategoryKey",             "INT")
-    ],
+        ("CategoryKey",             "INT"),
+    ),
 
-    "Promotions": [
+    "Promotions": (
         ("PromotionKey",            "INT NOT NULL"),
         ("PromotionLabel",          "VARCHAR(20) NOT NULL"),
         ("PromotionName",           "VARCHAR(50) NOT NULL"),
@@ -79,10 +92,10 @@ STATIC_SCHEMAS = {
         ("PromotionType",           "VARCHAR(20) NOT NULL"),
         ("PromotionCategory",       "VARCHAR(20) NOT NULL"),
         ("StartDate",               "DATE"),
-        ("EndDate",                 "DATE")
-    ],
+        ("EndDate",                 "DATE"),
+    ),
 
-    "Stores": [
+    "Stores": (
         ("StoreKey",         "INT NOT NULL"),
         ("StoreName",        "VARCHAR(100) NOT NULL"),
         ("StoreType",        "VARCHAR(20) NOT NULL"),
@@ -97,9 +110,9 @@ STATIC_SCHEMAS = {
         ("Phone",            "VARCHAR(20)"),
         ("StoreDescription", "VARCHAR(MAX)"),
         ("CloseReason",      "VARCHAR(MAX)"),
-    ],
+    ),
 
-    "Dates": [
+    "Dates": (
         ("Date",                     "DATE NOT NULL"),
         ("DateKey",                  "INT NOT NULL"),
 
@@ -169,18 +182,18 @@ STATIC_SCHEMAS = {
         ("IsCurrentQuarter",         "BIT NOT NULL"),
 
         ("CurrentDayOffset",         "INT NOT NULL"),
-    ],
+    ),
 
-    "Currency": [
+    "Currency": (
         ("CurrencyKey",     "INT NOT NULL"),
         ("ToCurrency",      "VARCHAR(10) NOT NULL"),
-        ("CurrencyName",    "VARCHAR(50) NOT NULL")
-    ],
+        ("CurrencyName",    "VARCHAR(50) NOT NULL"),
+    ),
 
     # -----------------------
     # FACTS
     # -----------------------
-    "Sales": [
+    "Sales": (
         ("SalesOrderNumber",     "BIGINT NOT NULL"),
         ("SalesOrderLineNumber", "INT NOT NULL"),
 
@@ -201,99 +214,121 @@ STATIC_SCHEMAS = {
         ("DiscountAmount",       "DECIMAL(8, 2) NOT NULL"),
 
         ("DeliveryStatus",       "VARCHAR(20) NOT NULL"),
-        ("IsOrderDelayed",       "INT NOT NULL")
-    ],
+        ("IsOrderDelayed",       "INT NOT NULL"),
+    ),
 
-    "ExchangeRates": [
+    "ExchangeRates": (
         ("Date",         "DATE NOT NULL"),
         ("FromCurrency", "VARCHAR(10) NOT NULL"),
         ("ToCurrency",   "VARCHAR(10) NOT NULL"),
-        ("Rate",         "DECIMAL(10, 6) NOT NULL")
-    ]
+        ("Rate",         "DECIMAL(10, 6) NOT NULL"),
+    ),
 }
 
-# ---------------------------------------------------------
-# DATE COLUMN GROUPS (logical, superset)
-# ---------------------------------------------------------
 
+# ============================================================================
+# DATE COLUMN GROUPS (logical, superset)
+# ============================================================================
 DATE_COLUMN_GROUPS = {
-    "calendar": {
-        "Date","DateKey",
-        "Year","IsYearStart","IsYearEnd",
-        "Quarter","QuarterStartDate","QuarterEndDate",
-        "IsQuarterStart","IsQuarterEnd",
+    "calendar": frozenset({
+        "Date", "DateKey",
+        "Year", "IsYearStart", "IsYearEnd",
+        "Quarter", "QuarterStartDate", "QuarterEndDate",
+        "IsQuarterStart", "IsQuarterEnd",
         "QuarterYear",
-        "Month","MonthName","MonthShort",
-        "MonthStartDate","MonthEndDate",
-        "MonthYear","MonthYearNumber",
-        "CalendarMonthIndex","CalendarQuarterIndex",
-        "IsMonthStart","IsMonthEnd",
+        "Month", "MonthName", "MonthShort",
+        "MonthStartDate", "MonthEndDate",
+        "MonthYear", "MonthYearNumber",
+        "CalendarMonthIndex", "CalendarQuarterIndex",
+        "IsMonthStart", "IsMonthEnd",
         "WeekOfMonth",
-        "Day","DayName","DayShort","DayOfYear","DayOfWeek",
-        "IsWeekend","IsBusinessDay",
-        "NextBusinessDay","PreviousBusinessDay",
-        "IsToday","IsCurrentYear","IsCurrentMonth",
-        "IsCurrentQuarter","CurrentDayOffset",
-    },
-    "iso": {
+        "Day", "DayName", "DayShort", "DayOfYear", "DayOfWeek",
+        "IsWeekend", "IsBusinessDay",
+        "NextBusinessDay", "PreviousBusinessDay",
+        "IsToday", "IsCurrentYear", "IsCurrentMonth",
+        "IsCurrentQuarter", "CurrentDayOffset",
+    }),
+    "iso": frozenset({
         "WeekOfYearISO",
         "ISOYear",
         "WeekStartDate",
         "WeekEndDate",
-    },
-    "fiscal": {
-        "FiscalYearStartYear","FiscalMonthNumber","FiscalQuarterNumber",
-        "FiscalMonthIndex","FiscalQuarterIndex",
-        "FiscalQuarterName","FiscalYearBin",
-        "FiscalYearMonthNumber","FiscalYearQuarterNumber",
-        "FiscalYearStartDate","FiscalYearEndDate",
-        "FiscalQuarterStartDate","FiscalQuarterEndDate",
-        "IsFiscalYearStart","IsFiscalYearEnd",
-        "IsFiscalQuarterStart","IsFiscalQuarterEnd",
-        "FiscalYear","FiscalYearLabel",
-    }
+    }),
+    "fiscal": frozenset({
+        "FiscalYearStartYear", "FiscalMonthNumber", "FiscalQuarterNumber",
+        "FiscalMonthIndex", "FiscalQuarterIndex",
+        "FiscalQuarterName", "FiscalYearBin",
+        "FiscalYearMonthNumber", "FiscalYearQuarterNumber",
+        "FiscalYearStartDate", "FiscalYearEndDate",
+        "FiscalQuarterStartDate", "FiscalQuarterEndDate",
+        "IsFiscalYearStart", "IsFiscalYearEnd",
+        "IsFiscalQuarterStart", "IsFiscalQuarterEnd",
+        "FiscalYear", "FiscalYearLabel",
+    }),
 }
+
+
+# ============================================================================
+# Precomputed schemas / caches
+# ============================================================================
+_SALES_SCHEMA: Schema = STATIC_SCHEMAS["Sales"]
+_SALES_SCHEMA_NO_ORDER: Schema = tuple(
+    (col, dtype)
+    for col, dtype in _SALES_SCHEMA
+    if col not in ("SalesOrderNumber", "SalesOrderLineNumber")
+)
+
+# Cache for get_dates_schema keyed by (calendar, iso, fiscal)
+_DATES_SCHEMA_CACHE: Dict[Tuple[bool, bool, bool], List[SchemaCol]] = {}
 
 
 def get_sales_schema(skip_order_cols: bool):
     """Return the Sales schema with or without order number columns."""
-    base_schema = STATIC_SCHEMAS["Sales"]
-
-    if not skip_order_cols:
-        return base_schema
-
-    # remove order columns
-    return [
-        (col, dtype)
-        for col, dtype in base_schema
-        if col not in ("SalesOrderNumber", "SalesOrderLineNumber")
-    ]
+    return list(_SALES_SCHEMA_NO_ORDER if skip_order_cols else _SALES_SCHEMA)
 
 
-def get_dates_schema(dates_cfg: dict):
+def get_dates_schema(dates_cfg: Mapping):
     """
     Return Dates schema filtered by config include flags.
     Defaults to calendar-only (backward compatible).
+
+    dates_cfg expected shape:
+      dates:
+        include:
+          calendar: true
+          iso: false
+          fiscal: false
     """
+    include_cfg = (dates_cfg.get("include", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
 
-    include_cfg = dates_cfg.get("include", {})
+    include_calendar = bool(include_cfg.get("calendar", True))
+    include_iso = bool(include_cfg.get("iso", False))
+    include_fiscal = bool(include_cfg.get("fiscal", False))
 
-    include_calendar = include_cfg.get("calendar", True)
-    include_iso = include_cfg.get("iso", False)
-    include_fiscal = include_cfg.get("fiscal", False)
+    cache_key = (include_calendar, include_iso, include_fiscal)
+    cached = _DATES_SCHEMA_CACHE.get(cache_key)
+    if cached is not None:
+        # Return a shallow copy to prevent accidental mutation by callers
+        return list(cached)
 
     allowed_cols = set()
-
     if include_calendar:
-        allowed_cols |= DATE_COLUMN_GROUPS["calendar"]
+        allowed_cols.update(DATE_COLUMN_GROUPS["calendar"])
     if include_iso:
-        allowed_cols |= DATE_COLUMN_GROUPS["iso"]
+        allowed_cols.update(DATE_COLUMN_GROUPS["iso"])
     if include_fiscal:
-        allowed_cols |= DATE_COLUMN_GROUPS["fiscal"]
+        allowed_cols.update(DATE_COLUMN_GROUPS["fiscal"])
 
-    # Preserve original STATIC_SCHEMAS order
-    return [
-        (col, dtype)
-        for col, dtype in STATIC_SCHEMAS["Dates"]
-        if col in allowed_cols
-    ]
+    # Preserve original order from STATIC_SCHEMAS["Dates"]
+    out = [(col, dtype) for col, dtype in STATIC_SCHEMAS["Dates"] if col in allowed_cols]
+
+    _DATES_SCHEMA_CACHE[cache_key] = out
+    return list(out)
+
+
+__all__ = [
+    "STATIC_SCHEMAS",
+    "DATE_COLUMN_GROUPS",
+    "get_sales_schema",
+    "get_dates_schema",
+]

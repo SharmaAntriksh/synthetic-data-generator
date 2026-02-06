@@ -1,23 +1,34 @@
 import numpy as np
 
 
+_C1 = np.uint64(0x9E3779B97F4A7C15)
+_C2 = np.uint64(0xBF58476D1CE4E5B9)
+_C3 = np.uint64(0x94D049BB133111EB)
+_MASK63 = np.uint64(0x7FFFFFFFFFFFFFFF)
+
+def _mix_u64(x: np.ndarray) -> np.ndarray:
+    # SplitMix64-style mixing (vectorized)
+    x ^= (x >> np.uint64(30))
+    x *= _C2
+    x ^= (x >> np.uint64(27))
+    x *= _C3
+    x ^= (x >> np.uint64(31))
+    return x
+
 def _stable_row_hash(order_dates: np.ndarray, product_keys: np.ndarray) -> np.ndarray:
     """
-    Deterministic, vectorized hash for row-level mode (skip_order_cols=True).
-    Avoids consuming RNG so results are stable even if pipeline call order changes.
+    Deterministic row hash used when skip_order_cols=True (order_ids_int is None).
+    IMPORTANT: uses uint64 ops to avoid numpy float/object promotion and overflows.
     """
-    # Convert dates to int days since epoch
-    d = order_dates.astype("datetime64[D]").astype("int64", copy=False)
-    p = product_keys.astype("int64", copy=False)
+    d = np.asarray(order_dates).astype("datetime64[D]").astype("int64", copy=False).astype(np.uint64, copy=False)
+    p = np.asarray(product_keys).astype("int64", copy=False).astype(np.uint64, copy=False)
 
-    # A simple mix (xorshift-like) to spread bits
-    x = d * 0x9E3779B97F4A7C15
-    x ^= (p + 0xBF58476D1CE4E5B9)
-    x ^= (x >> 30)
-    x *= 0x94D049BB133111EB
-    x ^= (x >> 31)
+    x = d * _C1
+    x ^= (p + _C2)
+    x = _mix_u64(x)
 
-    return (x & 0x7FFFFFFFFFFFFFFF).astype(np.int64, copy=False)
+    # Return signed int64 in [0, 2^63-1]
+    return (x & _MASK63).astype(np.int64, copy=False)
 
 
 def compute_dates(rng, n, product_keys, order_ids_int, order_dates):

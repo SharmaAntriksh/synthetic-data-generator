@@ -21,10 +21,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 5002300
+  total_rows: 200230
   chunk_size: 1000000
 
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -42,7 +42,7 @@ sales:
   write_pyarrow: true
   tune_chunk: false
 
-  skip_order_cols: false
+  skip_order_cols: true
 
   override:
     dates:
@@ -103,7 +103,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 38413
+  total_customers: 18413
   active_ratio: 0.90
 
   pct_india: 10
