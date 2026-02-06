@@ -1,15 +1,17 @@
-from datetime import date
+# ui/presets.py
 import re
 from collections import defaultdict
-
 import hashlib
 import random
+from typing import Dict, Any
 
 
 _SALES_RE = re.compile(r"Sales\s+([\d\.]+[KMB]?)", re.IGNORECASE)
 
-START = date(2021, 1, 1)
-END = date(2025, 12, 31)
+# Use ISO strings (YAML- and downstream-friendly)
+START = "2021-01-01"
+END = "2025-12-31"
+
 
 def _stable_rng(key: str) -> random.Random:
     """
@@ -33,9 +35,10 @@ def _jitter(value: int, pct: float, rng: random.Random) -> int:
 # Presets are explicit and authoritative.
 # If a preset name mentions Customers X, Products Y, or Sales Z,
 # the preset MUST actually apply those values.
+# NOTE: We keep jitter enabled for realism; values are approximate.
 # ------------------------------------------------------------------
 
-PRESETS = {
+PRESETS: Dict[str, Dict[str, Any]] = {
     # --------------------------------------------------------------
     # 100K Sales
     # --------------------------------------------------------------
@@ -280,15 +283,21 @@ PRESETS = {
 }
 
 
-def apply_preset(cfg, base_loader, preset_name: str):
+def apply_preset(cfg, base_loader, preset_name: str) -> None:
     preset = PRESETS[preset_name]
 
     cfg.clear()
     cfg.update(base_loader())
 
+    # Ensure nested keys exist (future-proof against base config changes)
+    cfg.setdefault("defaults", {}).setdefault("dates", {})
+    cfg.setdefault("sales", {})
+    cfg.setdefault("customers", {})
+    cfg.setdefault("products", {})
+
     rng = _stable_rng(preset_name)
 
-    # Dates stay exact
+    # Dates stay exact (as ISO strings)
     cfg["defaults"]["dates"]["start"] = preset["start"]
     cfg["defaults"]["dates"]["end"] = preset["end"]
 
@@ -322,15 +331,34 @@ def _extract_sales_bucket(name: str) -> str:
     return f"{match.group(1)} Sales"
 
 
+def _sales_key(label: str) -> float:
+    """
+    Sort buckets like: 100K Sales < 1M Sales < 2M Sales < ... < Other
+    """
+    if label == "Other":
+        return float("inf")
+
+    token = label.split()[0]  # e.g. "100K"
+    if not token:
+        return float("inf")
+
+    suffix = token[-1]
+    number_part = token[:-1]
+
+    try:
+        n = float(number_part) if number_part else float(token)
+    except ValueError:
+        return float("inf")
+
+    mult = {"K": 1e3, "M": 1e6, "B": 1e9}.get(suffix, 1.0)
+    return n * mult
+
+
 def build_presets_by_sales():
     grouped = defaultdict(dict)
 
     for preset_name in PRESETS:
         bucket = _extract_sales_bucket(preset_name)
         grouped[bucket][preset_name] = preset_name
-
-    def _sales_key(label):
-        num = label.split()[0]
-        return float(num[:-1]) * {"K": 1e3, "M": 1e6, "B": 1e9}.get(num[-1], 1)
 
     return dict(sorted(grouped.items(), key=lambda x: _sales_key(x[0])))
