@@ -25,6 +25,7 @@ from .customer_sampling import (
 # Helpers
 # ------------------------------------------------------------
 def _get_state_attr(*names, default=None):
+    """Return the first non-None attribute from State among names."""
     for n in names:
         if hasattr(State, n):
             v = getattr(State, n)
@@ -33,23 +34,104 @@ def _get_state_attr(*names, default=None):
     return default
 
 
-def _build_month_slices(date_pool: np.ndarray) -> dict:
+def _build_month_slices(date_pool: np.ndarray):
     """
-    Build a mapping: month_offset -> indices in date_pool belonging to that month.
-    month_offset is 0..T-1 where 0 is min month in date_pool.
+    Build a list mapping month_offset -> slice/indices in date_pool belonging to that month.
+    month_offset is 0..T-1 where 0 is min month in date_pool (datetime64[M] int).
+
+    Optimized fast-path for sorted date_pool:
+      - returns `slice(start, end)` per month (view slicing; low alloc)
+    Fallback for unsorted pools:
+      - returns index arrays per month
     """
+    if not isinstance(date_pool, np.ndarray):
+        date_pool = np.asarray(date_pool)
+
+    if date_pool.size == 0:
+        return []
+
     months_int = date_pool.astype("datetime64[M]").astype("int64")
     min_m = int(months_int.min())
     max_m = int(months_int.max())
-    T = (max_m - min_m) + 1
+    T = int(max_m - min_m + 1)
 
-    month_slices = {}
-    for m in range(T):
-        m_int = min_m + m
+    # Fast-path: non-decreasing months (typical for date_range-derived pools)
+    if months_int.size <= 1 or np.all(months_int[:-1] <= months_int[1:]):
+        cuts = np.flatnonzero(months_int[1:] != months_int[:-1]) + 1
+        starts = np.concatenate(([0], cuts))
+        ends = np.concatenate((cuts, [months_int.size]))
+
+        out = [slice(0, 0)] * T
+        for s, e in zip(starts, ends):
+            mo = int(months_int[int(s)] - min_m)
+            out[mo] = slice(int(s), int(e))
+        return out
+
+    # Fallback: non-sorted pools
+    out = [slice(0, 0)] * T
+    for m_int in range(min_m, max_m + 1):
         idx = np.nonzero(months_int == m_int)[0]
-        month_slices[m] = idx
+        out[int(m_int - min_m)] = idx
+    return out
 
-    return month_slices
+
+def _eligible_counts_fast(
+    T: int,
+    is_active_in_sales: np.ndarray,
+    start_month: np.ndarray,
+    end_month_norm: np.ndarray,
+) -> np.ndarray:
+    """
+    Compute eligible customer counts per month in O(N + T) using a delta/cumsum approach.
+
+    Eligibility rule matches _eligible_customer_mask_for_month:
+      active == 1 AND start_month <= m AND (end_month == -1 OR end_month >= m)
+    """
+    if T <= 0:
+        return np.zeros(0, dtype="float64")
+
+    is_active_in_sales = np.asarray(is_active_in_sales, dtype="int64", order="C")
+    start_month = np.asarray(start_month, dtype="int64", order="C")
+    end_month_norm = np.asarray(end_month_norm, dtype="int64", order="C")
+
+    if start_month.size == 0:
+        return np.zeros(T, dtype="float64")
+
+    active = is_active_in_sales == 1
+    if not active.any():
+        return np.zeros(T, dtype="float64")
+
+    s = start_month[active]
+    e = end_month_norm[active]
+
+    # keep only sane starts
+    valid_start = (s >= 0) & (s < T)
+    s = s[valid_start]
+    e = e[valid_start]
+    if s.size == 0:
+        return np.zeros(T, dtype="float64")
+
+    # discard invalid ranges where end < start (and end != -1)
+    valid_range = (e < 0) | (e >= s)
+    s = s[valid_range]
+    e = e[valid_range]
+    if s.size == 0:
+        return np.zeros(T, dtype="float64")
+
+    delta = np.zeros(T + 1, dtype="int64")
+    np.add.at(delta, s, 1)
+
+    finite = e >= 0
+    if finite.any():
+        endp1 = e[finite] + 1
+        # endp1==T doesn't affect delta[:-1] cumsum; skip
+        endp1 = endp1[(endp1 > 0) & (endp1 < T)]
+        if endp1.size:
+            np.add.at(delta, endp1, -1)
+
+    counts = np.cumsum(delta[:-1])
+    counts = np.maximum(counts, 0)
+    return counts.astype("float64", copy=False)
 
 
 def _empty_table(schema: pa.Schema) -> pa.Table:
@@ -67,7 +149,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
 
     Guarantees:
     - Customer lifecycle controls eligibility (IsActiveInSales + Start/End month)
-    - Month loop actually generates orders within that month (date_pool sliced)
+    - Month loop generates orders within that month (date_pool sliced)
     - Optional discovery forcing (persistable across chunks via State.seen_customers)
       - IMPORTANT: discovery is OFF if customer_discovery block is absent
     - All per-order arrays remain aligned
@@ -75,8 +157,8 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     if not PA_AVAILABLE:
         raise RuntimeError("pyarrow is required")
 
-    rng = np.random.default_rng(seed)
-    skip_cols = State.skip_order_cols
+    rng = np.random.default_rng(int(seed))
+    skip_cols = bool(State.skip_order_cols)
 
     # ------------------------------------------------------------
     # STATIC STATE
@@ -91,14 +173,14 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     customer_keys = _get_state_attr("customer_keys", "customers")
     if customer_keys is None:
         raise RuntimeError("State must provide customer_keys/customers")
-    customer_keys = np.asarray(customer_keys)
+    customer_keys = np.asarray(customer_keys, dtype="int64")
 
+    # is_active_in_sales (new contract)
     is_active_in_sales = _get_state_attr("customer_is_active_in_sales", "is_active_in_sales")
     if is_active_in_sales is None:
         # backward compat: if State.active_customer_keys exists, treat those as active
         active_keys = getattr(State, "active_customer_keys", None)
         if active_keys is not None:
-            # Build mask by assuming customer keys are 1..N
             is_active_in_sales = np.zeros(customer_keys.shape[0], dtype="int64")
             idx = (np.asarray(active_keys, dtype="int64") - 1)
             idx = idx[(idx >= 0) & (idx < customer_keys.shape[0])]
@@ -134,6 +216,8 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
 
     st2g_arr = State.store_to_geo_arr
     g2c_arr = State.geo_to_currency_arr
+    if st2g_arr is None or g2c_arr is None:
+        raise RuntimeError("State must provide store_to_geo_arr and geo_to_currency_arr")
 
     schema = State.sales_schema
     schema_types = {f.name: f.type for f in schema}
@@ -144,26 +228,21 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     # ------------------------------------------------------------
     month_slices = _build_month_slices(date_pool)
     T = len(month_slices)
+    if T == 0:
+        return _empty_table(schema)
 
     # ------------------------------------------------------------
     # ROW BUDGET PER MONTH (BASE DEMAND NORMALIZATION)
     # ------------------------------------------------------------
     macro_cfg = State.models_cfg.get("macro_demand", {}) or {}
 
-    eligible_counts = np.empty(T, dtype="float64")
-    eligible_masks = []
-
-    for m in range(T):
-        mask = _eligible_customer_mask_for_month(
-            m_offset=m,
-            is_active_in_sales=is_active_in_sales,
-            start_month=start_month,
-            end_month_norm=end_month_norm,
-        )
-        eligible_masks.append(mask)
-        eligible_counts[m] = float(mask.sum())
-
-    if eligible_counts.sum() == 0:
+    eligible_counts = _eligible_counts_fast(
+        T=T,
+        is_active_in_sales=is_active_in_sales,
+        start_month=start_month,
+        end_month_norm=end_month_norm,
+    )
+    if eligible_counts.sum() <= 0:
         return _empty_table(schema)
 
     rows_per_month = build_rows_per_month(
@@ -181,7 +260,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     use_discovery = bool(disc_cfg) and bool(disc_cfg.get("enabled", True))
     disc_cfg = disc_cfg or {}
 
-    # Participation is OFF if block absent. If present without enabled, default-on (backward compatible).
+    # Participation is OFF if block absent. If present without enabled, default-on.
     participation_cfg = State.models_cfg.get("customer_participation", None)
     use_participation = bool(participation_cfg) and bool(participation_cfg.get("enabled", True))
     participation_cfg = participation_cfg or {}
@@ -191,46 +270,51 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         seen_customers = getattr(State, "seen_customers", None)
         if seen_customers is None:
             seen_customers = set()
-        else:
-            if not isinstance(seen_customers, set):
-                seen_customers = set(seen_customers)
-                State.seen_customers = seen_customers
+        elif not isinstance(seen_customers, set):
+            seen_customers = set(seen_customers)
     else:
-        seen_customers = set()
+        seen_customers = None
 
     # ------------------------------------------------------------
-    # BUILD MONTHLY TABLES
+    # Generate month-by-month
     # ------------------------------------------------------------
     tables = []
 
-    for m_offset, m_rows in enumerate(rows_per_month):
-        m_rows = int(m_rows)
+    for m_offset in range(T):
+        m_rows = int(rows_per_month[m_offset])
         if m_rows <= 0:
             continue
 
-        eligible_mask = eligible_masks[m_offset]
-        if not eligible_mask.any():
-            continue
-
-        date_idx = month_slices.get(m_offset)
-        if date_idx is None or len(date_idx) == 0:
-            continue
-
-        # month-specific date pool / probabilities
+        date_idx = month_slices[m_offset]
         month_date_pool = date_pool[date_idx]
+        if month_date_pool.size == 0:
+            continue
 
         if date_prob is not None:
-            month_date_prob = date_prob[date_idx].astype("float64", copy=False)
+            # copy before normalization (slice can be a view)
+            month_date_prob = np.asarray(date_prob[date_idx], dtype="float64").copy()
             s = float(month_date_prob.sum())
-            if s > 0:
-                month_date_prob = month_date_prob / s
+            if s > 1e-12:
+                month_date_prob /= s
             else:
                 month_date_prob = None
         else:
             month_date_prob = None
 
         # --------------------------------------------------------
-        # DISCOVERY TARGET (ONLY IF DISCOVERY ENABLED)
+        # Eligibility mask (compute only for months that generate rows)
+        # --------------------------------------------------------
+        eligible_mask = _eligible_customer_mask_for_month(
+            m_offset=int(m_offset),
+            is_active_in_sales=is_active_in_sales,
+            start_month=start_month,
+            end_month_norm=end_month_norm,
+        )
+        if not eligible_mask.any():
+            continue
+
+        # --------------------------------------------------------
+        # DISCOVERY TARGET (ONLY IF DISCOVERY ENABLED) - preserved semantics
         # --------------------------------------------------------
         disc_cfg_local = {}
         if use_discovery:
@@ -288,6 +372,9 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
                 cfg=participation_cfg,
             )
 
+        # --------------------------------------------------------
+        # CUSTOMER SAMPLING (discovery/participation aware)
+        # --------------------------------------------------------
         customer_keys_for_orders = _sample_customers(
             rng=rng,
             customer_keys=customer_keys,
@@ -306,21 +393,23 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         n_orders = int(customer_keys_for_orders.size)
 
         # --------------------------------------------------------
-        # PRODUCTS (PER ORDER)
+        # PRODUCTS (PER ORDER) - avoid temporary prods array
         # --------------------------------------------------------
         prod_idx = rng.integers(0, len(product_np), size=n_orders)
-        prods = product_np[prod_idx]
-
-        product_keys = prods[:, 0]
-        unit_price = prods[:, 1].astype(np.float64, copy=False)
-        unit_cost = prods[:, 2].astype(np.float64, copy=False)
+        product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
+        unit_price = product_np[prod_idx, 1].astype(np.float64, copy=False)
+        unit_cost = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
         # --------------------------------------------------------
-        # STORE → GEO → CURRENCY
+        # STORE → GEO → CURRENCY (guard missing mappings)
         # --------------------------------------------------------
         store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n_orders)]
         geo_arr = st2g_arr[store_key_arr]
+        if np.any(geo_arr < 0):
+            raise RuntimeError("store_to_geo_arr missing mapping for sampled StoreKey(s)")
         currency_arr = g2c_arr[geo_arr]
+        if np.any(currency_arr < 0):
+            raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
 
         # --------------------------------------------------------
         # ORDERS (use month-specific date pool so month loop is real)
@@ -348,6 +437,9 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             order_ids_int = None
             line_num = None
 
+        customer_keys_out = np.asarray(customer_keys_out, dtype=np.int64)
+        order_dates = np.asarray(order_dates, dtype="datetime64[D]")
+
         # --------------------------------------------------------
         # DATE LOGIC
         # --------------------------------------------------------
@@ -372,7 +464,7 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
             promo_end_all=promo_end_all,
             no_discount_key=no_discount_key,
         )
-        promo_keys = np.asarray(promo_keys, dtype=np.int64)  # ensure boolean slicing works
+        promo_keys = np.asarray(promo_keys, dtype=np.int64)
 
         # --------------------------------------------------------
         # ACTIVITY THINNING
@@ -381,35 +473,30 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         if not keep_mask.any():
             continue
 
-        def _f(x):
-            if x is None:
-                return None
+        def _take(x):
             if not isinstance(x, np.ndarray):
                 x = np.asarray(x)
             return x[keep_mask]
 
-        customer_keys_out = _f(customer_keys_out)
-        product_keys = _f(product_keys)
-        unit_price = _f(unit_price)
-        unit_cost = _f(unit_cost)
-        store_key_arr = _f(store_key_arr)
-        geo_arr = _f(geo_arr)
-        currency_arr = _f(currency_arr)
-        order_dates = _f(order_dates)
-
-        promo_keys = _f(promo_keys)
-        # promo_pct = _f(promo_pct)
+        customer_keys_out = _take(customer_keys_out)
+        product_keys = _take(product_keys)
+        unit_price = _take(unit_price)
+        unit_cost = _take(unit_cost)
+        store_key_arr = _take(store_key_arr)
+        currency_arr = _take(currency_arr)
+        order_dates = _take(order_dates)
+        promo_keys = _take(promo_keys)
 
         if not skip_cols:
-            order_ids_int = _f(order_ids_int)
-            line_num = _f(line_num)
+            order_ids_int = _take(order_ids_int)
+            line_num = _take(line_num)
 
         # --------------------------------------------------------
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------
-        # IMPORTANT: use post-thinning keys so "seen" means "actually appeared"
         if use_discovery:
-            seen_customers.update(customer_keys_out.tolist())
+            # use post-thinning keys so "seen" means "actually appeared"
+            seen_customers.update(map(int, np.unique(customer_keys_out)))
             State.seen_customers = seen_customers
 
         # --------------------------------------------------------
