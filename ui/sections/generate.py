@@ -29,6 +29,156 @@ DIMENSIONS = [
     "exchange_rates",
 ]
 
+def _find_pbip_output_dir(run_folder: Path, fmt: str) -> Path | None:
+    """
+    PBIP outputs are written under a nested subfolder like:
+      <run_folder>/PBIP CSV
+      <run_folder>/PBIP Parquet
+
+    If found, we use that as the artifacts root and DO NOT recurse past its first level.
+    """
+    if not run_folder.exists() or not run_folder.is_dir():
+        return None
+
+    want = None
+    if fmt == "csv":
+        want = "pbip csv"
+    elif fmt in ("parquet", "deltaparquet"):
+        want = "pbip parquet"
+
+    # Prefer the format-matching PBIP folder if present
+    if want:
+        for p in run_folder.iterdir():
+            if p.is_dir() and p.name.lower() == want:
+                return p
+
+    # Fallback: if either PBIP folder exists, return it
+    for p in run_folder.iterdir():
+        if p.is_dir() and p.name.lower() in ("pbip csv", "pbip parquet"):
+            return p
+
+    return None
+
+
+def _format_bytes(n: int) -> str:
+    n = int(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} PB"
+
+
+def _looks_like_pbip(folder: Path) -> bool:
+    """
+    Heuristic: treat as PBIP if:
+      - folder itself endswith .pbip (rare), OR
+      - contains any *.pbip file at top-level (common), OR
+      - contains typical PBIP folders at top-level.
+    """
+    if folder.name.lower().endswith(".pbip"):
+        return True
+    try:
+        top = list(folder.iterdir())
+    except Exception:
+        return False
+
+    if any(p.is_file() and p.suffix.lower() == ".pbip" for p in top):
+        return True
+
+    typical_dirs = {"dataset", "report"}
+    top_dirnames = {p.name.lower() for p in top if p.is_dir()}
+    return bool(typical_dirs & top_dirnames)
+
+
+def _normalize_format(v: str) -> str:
+    v = str(v or "").strip().lower()
+    if v == "delta":
+        return "deltaparquet"
+    return v
+
+def _collect_artifacts(folder: Path, *, recursive: bool, limit: int = 250) -> list[dict]:
+    """
+    Returns list of dict rows suitable for st.dataframe.
+
+    - If recursive=False: only top-level entries (files + dirs), no recursion.
+    - If recursive=True: list files recursively, BUT do not descend into huge dataset folders
+      like generated_datasets / generate_datasets (show the folder entry only).
+    """
+    if not folder or not folder.exists() or not folder.is_dir():
+        return []
+
+    STOP_DIRS = {"generated_datasets", "generate_datasets"}
+
+    # If the artifacts root itself is a stop-folder, force top-level only.
+    if recursive and folder.name.lower() in STOP_DIRS:
+        recursive = False
+
+    rows: list[dict] = []
+
+    if not recursive:
+        for p in sorted(folder.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            try:
+                stt = p.stat()
+                rows.append({
+                    "path": p.name,
+                    "type": "dir" if p.is_dir() else "file",
+                    "size": "" if p.is_dir() else _format_bytes(stt.st_size),
+                    "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stt.st_mtime)),
+                })
+            except OSError:
+                continue
+            if len(rows) >= limit:
+                break
+        return rows
+
+    # Recursive mode: list files, but prune STOP_DIRS so we don't explode the UI
+    seen_stop_dirs: set[str] = set()
+
+    for root, dirnames, filenames in os.walk(folder, topdown=True):
+        root_path = Path(root)
+
+        # If a stop-dir is present here, add it as a single dir row (so user sees it),
+        # then prune it from traversal so we don't list its contents.
+        for d in list(dirnames):
+            if d.lower() in STOP_DIRS:
+                stop_path = root_path / d
+                rel = stop_path.relative_to(folder).as_posix()
+                if rel not in seen_stop_dirs:
+                    try:
+                        stt = stop_path.stat()
+                        rows.append({
+                            "path": f"{rel}/",
+                            "type": "dir",
+                            "size": "",
+                            "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stt.st_mtime)),
+                        })
+                        seen_stop_dirs.add(rel)
+                    except OSError:
+                        pass
+
+        # Prune traversal into stop dirs
+        dirnames[:] = [d for d in dirnames if d.lower() not in STOP_DIRS]
+
+        # Collect files
+        for fn in filenames:
+            p = root_path / fn
+            try:
+                stt = p.stat()
+                rows.append({
+                    "path": p.relative_to(folder).as_posix(),
+                    "type": "file",
+                    "size": _format_bytes(stt.st_size),
+                    "modified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stt.st_mtime)),
+                })
+            except OSError:
+                continue
+
+            if len(rows) >= limit:
+                return rows
+
+    return rows
+
 
 def _find_project_root() -> Path:
     """
@@ -223,7 +373,39 @@ def render_generate(cfg: dict, errors: list[str]):
 
         if rc == 0:
             st.success("Data generation completed successfully.")
-            # Optional one-shot reset for regen UI (safe if regen section uses it)
             st.session_state["_clear_regen_ui"] = True
+
+            # --- Artifacts panel (post-run only) ---
+            final_out_cfg = cfg.get("final_output_folder")
+            if final_out_cfg:
+                final_out_path = _resolve_path(project_root, final_out_cfg)
+
+                fmt = _normalize_format((cfg.get("sales", {}) or {}).get("file_format", "csv"))
+
+                # If PBIP output is nested, stop at the PBIP folder itself (first-level only)
+                pbip_dir = _find_pbip_output_dir(final_out_path, fmt)
+
+                if pbip_dir is not None:
+                    scan_root = pbip_dir
+                    recursive = False
+                    st.info(f"PBIP output detected. Showing top-level only: {pbip_dir}")
+                else:
+                    scan_root = final_out_path
+                    # keep your existing behavior for non-PBIP folders
+                    is_pbip = _looks_like_pbip(final_out_path)
+                    recursive = not (is_pbip and fmt in ("csv", "parquet", "deltaparquet"))
+
+                st.subheader("Artifacts")
+                st.caption(f"Artifacts root: {scan_root}")
+
+                rows = _collect_artifacts(scan_root, recursive=recursive, limit=250 if recursive else 200)
+
+                if rows:
+                    st.dataframe(rows, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No files found (or output folder does not exist yet).")
+            else:
+                st.info("final_output_folder not set in config; skipping artifacts list.")
+
         else:
             st.error("Generation failed. See logs above.")

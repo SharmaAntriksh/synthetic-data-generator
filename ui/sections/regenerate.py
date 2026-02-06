@@ -34,49 +34,21 @@ def get_regen_dimensions() -> set[str]:
 
 def render_regeneration() -> set[str]:
     st.subheader("🔄 Regenerate dimensions")
-
     st.caption("Applies to the next Generate run only.")
 
-    # --------------------------------------------------
     # One-shot UI reset after Generate
     # (Generate section should set: st.session_state["_clear_regen_ui"] = True)
-    # --------------------------------------------------
     if st.session_state.pop("_clear_regen_ui", False):
         _clear_dim_flags()
 
-    # --------------------------------------------------
-    # Detect regen_all toggle OFF → clear stale flags
-    # --------------------------------------------------
-    prev_all = st.session_state.get("_prev_regen_all_dims", False)
-    current_all = st.session_state.get("regen_all_dims", False)
+    # NOTE: Keep the checkbox simple; no Clear button.
 
-    if prev_all and not current_all:
-        # Clear individual flags when turning "all" off, to avoid stale selections
-        for dim in DIMENSIONS:
-            st.session_state.pop(f"regen_dim_{dim}", None)
+    regen_all = st.checkbox(
+        "Regenerate all dimensions",
+        key="regen_all_dims",
+        help="When enabled, individual selections are disabled.",
+    )
 
-    st.session_state["_prev_regen_all_dims"] = current_all
-
-    # --------------------------------------------------
-    # Top-row actions
-    # --------------------------------------------------
-    left, right = st.columns([3, 1])
-
-    with left:
-        regen_all = st.checkbox(
-            "Regenerate all dimensions",
-            key="regen_all_dims",
-            help="When enabled, individual selections are disabled.",
-        )
-
-    with right:
-        if st.button("Clear", use_container_width=True, help="Clear all regeneration selections."):
-            _clear_dim_flags()
-            st.rerun()
-
-    # --------------------------------------------------
-    # Individual dimension checkboxes
-    # --------------------------------------------------
     cols = st.columns(3)
     for i, dim in enumerate(DIMENSIONS):
         with cols[i % 3]:
@@ -86,5 +58,4 @@ def render_regeneration() -> set[str]:
                 disabled=regen_all,
             )
 
-    # Return selection for the caller (render_generate / app.py)
     return get_regen_dimensions()

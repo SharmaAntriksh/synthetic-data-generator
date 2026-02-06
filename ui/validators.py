@@ -40,7 +40,7 @@ def _parse_date(v: Any) -> Optional[date]:
 
 
 def _as_int(v: Any) -> Optional[int]:
-    if v is None:
+    if v is None or isinstance(v, bool):
         return None
     try:
         return int(v)
@@ -141,13 +141,14 @@ def validate(cfg: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     row_group_size_raw = sales.get("row_group_size")
     row_group_size = _as_int(row_group_size_raw)
 
-    if row_group_size_raw is not None:
-        if row_group_size is None or row_group_size <= 0:
-            errors.append("sales.row_group_size must be a positive integer.")
-        elif file_format not in ("parquet", "deltaparquet"):
-            errors.append("row_group_size is only valid for parquet or deltaparquet output.")
-        elif chunk_size is not None and row_group_size > chunk_size:
-            warnings.append("row_group_size exceeds chunk_size (may reduce write efficiency).")
+    # Only validate row_group_size when the format can actually use it.
+    if file_format in ("parquet", "deltaparquet"):
+        if row_group_size_raw is not None:
+            if row_group_size is None or row_group_size <= 0:
+                errors.append("sales.row_group_size must be a positive integer.")
+            elif chunk_size is not None and row_group_size > chunk_size:
+                warnings.append("row_group_size exceeds chunk_size (may reduce write efficiency).")
+    # CSV mode: ignore row_group_size entirely (config may still carry it)
 
     # -----------------------------
     # Required output paths (quick sanity)
