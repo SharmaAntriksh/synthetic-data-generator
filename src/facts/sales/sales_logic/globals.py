@@ -1,52 +1,82 @@
+# src/facts/sales/sales_logic/globals.py
+
+from __future__ import annotations
+
 import numpy as np
-import pyarrow as pa
+
+try:
+    import pyarrow as pa  # type: ignore
+except Exception:  # pragma: no cover
+    pa = None
 
 from src.utils.static_schemas import get_sales_schema
 
 PA_AVAILABLE = pa is not None
 
 
+# ===============================================================
+# Schema helpers
+# ===============================================================
+
+def _sql_to_pa_type(sql_type: str):
+    """
+    Map SQL-ish type strings (from static_schemas) to PyArrow types.
+
+    Must remain aligned with chunk_builder output dtypes.
+    """
+    t = str(sql_type).upper()
+
+    # Order matters: BIGINT must be checked before INT, etc.
+    if "BIGINT" in t:
+        return pa.int64()
+
+    # Prefer tighter mapping than the old "SMALLINT or TINYINT => int16"
+    # because some flags/month columns are intentionally int8 downstream.
+    if "TINYINT" in t:
+        return pa.int8()
+    if "SMALLINT" in t:
+        return pa.int16()
+
+    if "INT" in t:
+        return pa.int32()
+
+    # Keep numeric types as float64 for stability (DECIMAL varies in real systems)
+    if "DECIMAL" in t or "NUMERIC" in t or "FLOAT" in t or "REAL" in t or "DOUBLE" in t:
+        return pa.float64()
+
+    if "DATE" in t:
+        return pa.date32()
+
+    # Default: string
+    return pa.string()
+
+
 def _logical_to_arrow_schema(logical_schema):
     """
-    Convert logical (name, sql_type) schema from static_schemas
-    into a PyArrow schema.
-
-    Must stay aligned with chunk_builder output dtypes.
+    Convert logical (name, sql_type) schema from static_schemas into a PyArrow schema.
     """
+    if not PA_AVAILABLE:
+        raise RuntimeError("pyarrow is required to build Arrow schema")
+
     fields = []
-
     for name, sql_type in logical_schema:
-        t = str(sql_type).upper()
-
-        if "BIGINT" in t:
-            pa_type = pa.int64()
-        elif "SMALLINT" in t or "TINYINT" in t:
-            # NOTE: your pipeline may use int8 for some flags; keep schema source-of-truth in static_schemas
-            pa_type = pa.int16()
-        elif "INT" in t:
-            pa_type = pa.int32()
-        elif "DECIMAL" in t or "FLOAT" in t:
-            pa_type = pa.float64()
-        elif "DATE" in t:
-            pa_type = pa.date32()
-        else:
-            pa_type = pa.string()
-
-        fields.append(pa.field(name, pa_type))
-
+        fields.append(pa.field(str(name), _sql_to_pa_type(sql_type)))
     return pa.schema(fields)
 
+
+# ===============================================================
+# Global Sales runtime state (process-local)
+# ===============================================================
 
 class State:
     """
     Shared global state for Sales runtime only.
 
-    Holds cached dimension data, promotion context,
-    and output configuration.
+    Holds cached dimension data, promotion context, and output configuration.
 
-    NOTE:
+    Notes:
     - Process-local (safe with multiprocessing)
-    - Sealed after initialization
+    - Sealed after initialization (bind_globals refuses mutation once sealed)
     """
 
     # --------------------------------------------------------------
@@ -128,6 +158,12 @@ class State:
     # --------------------------------------------------------------
     sales_schema = None
 
+    # These may be injected by worker init for debugging/inspection.
+    schema_no_order = None
+    schema_with_order = None
+    schema_no_order_delta = None
+    schema_with_order_delta = None
+
     # --------------------------------------------------------------
     # Lifecycle helpers
     # --------------------------------------------------------------
@@ -140,7 +176,6 @@ class State:
         for key in list(vars(State).keys()):
             if key.startswith("__"):
                 continue
-            # keep methods / functions / descriptors intact
             attr = getattr(State, key)
             if callable(attr):
                 continue
@@ -159,7 +194,7 @@ class State:
     @staticmethod
     def seal():
         """
-        Prevent further mutation of State.
+        Prevent further mutation of State via bind_globals().
         Called once during worker initialization.
         """
         if PA_AVAILABLE and State.sales_schema is None:
@@ -167,42 +202,72 @@ class State:
         State._sealed = True
 
 
+# ===============================================================
+# Binding
+# ===============================================================
+
 def bind_globals(gdict: dict):
     """
     Bind values into State and finalize the Sales Arrow schema.
 
-    This must be called exactly once per process
-    before workers start.
+    Must be called before workers start (per-process).
     """
     if State._sealed:
         raise RuntimeError("State is sealed and cannot be modified")
 
-    # Bind raw values
+    if not isinstance(gdict, dict):
+        raise TypeError("bind_globals expects a dict")
+
+    # Bind raw values (allow injecting additional attrs for debugging)
     for k, v in gdict.items():
         setattr(State, k, v)
 
-    # Ensure seen_customers is initialized if discovery is enabled
-    if getattr(State, "seen_customers", None) is None:
+    # Ensure seen_customers exists (chunk_builder will only use it if discovery enabled)
+    sc = getattr(State, "seen_customers", None)
+    if sc is None:
         State.seen_customers = set()
+    elif not isinstance(sc, set):
+        # tolerate list/tuple/np arrays being passed by caller
+        try:
+            State.seen_customers = set(sc)
+        except Exception:
+            State.seen_customers = set()
 
     # --------------------------------------------------------------
     # Bind Sales schema ONCE, respecting skip_order_cols
+    # (worker may pass an explicit sales_schema; if so, don't override)
     # --------------------------------------------------------------
     if PA_AVAILABLE and State.sales_schema is None:
         if State.skip_order_cols is None:
-            raise RuntimeError(
-                "skip_order_cols must be bound before Sales schema initialization"
-            )
+            raise RuntimeError("skip_order_cols must be bound before Sales schema initialization")
 
-        logical_schema = get_sales_schema(State.skip_order_cols)
+        logical_schema = get_sales_schema(bool(State.skip_order_cols))
         State.sales_schema = _logical_to_arrow_schema(logical_schema)
 
 
+# ===============================================================
+# Date formatting
+# ===============================================================
+
 def fmt(dt):
     """
-    Format datetime64[D] as YYYYMMDD string array.
+    Format datetime64[D] as YYYYMMDD string array (fast path).
+
+    Accepts scalar or array-like.
     """
-    return np.char.replace(np.datetime_as_string(dt, unit="D"), "-", "")
+    d = np.asarray(dt).astype("datetime64[D]", copy=False)
+
+    # Extract Y/M/D in a vectorized way
+    y = d.astype("datetime64[Y]").astype("int64") + 1970
+    m = (
+        d.astype("datetime64[M]").astype("int64")
+        - d.astype("datetime64[Y]").astype("datetime64[M]").astype("int64")
+        + 1
+    )
+    day = (d - d.astype("datetime64[M]")).astype("timedelta64[D]").astype("int64") + 1
+
+    yyyymmdd = (y * 10000 + m * 100 + day).astype("int64")
+    return yyyymmdd.astype(str)
 
 
 __all__ = [
