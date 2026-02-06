@@ -6,7 +6,7 @@ EXCLUDE_DIRS = {
     ".mypy_cache", ".pytest_cache",
     "data", "generated_datasets",
     "logs", "output", "fact_out", "parquet_dims", 
-    "PBIP Parquet", "PBIP CSV", "ui", "samples", "scripts", "docs"
+    "PBIP Parquet", "PBIP CSV", "ui", "samples", "docs"
 }
 
 EXCLUDE_EXT = {".pyc", ".pyo", ".pyd", ".so"}
