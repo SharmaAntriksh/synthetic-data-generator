@@ -4,7 +4,7 @@ import csv
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional, Sequence, Union
+from typing import Optional, Sequence, Union
 
 from src.utils.logging_utils import stage, done, info
 
@@ -32,8 +32,6 @@ def _guess_date_cols(df) -> list[str]:
       - and name matches common date-like patterns
     This avoids accidentally truncating true timestamps.
     """
-    import pandas as pd
-
     dt_cols = _datetime_cols(df)
     if not dt_cols:
         return []
@@ -41,7 +39,6 @@ def _guess_date_cols(df) -> list[str]:
     picks: list[str] = []
     for c in dt_cols:
         cl = c.lower()
-        # common patterns in your project: Date, StartDate, EndDate, OpeningDate, ClosingDate, DOB, etc.
         if cl == "date" or cl.endswith("date") or "date" in cl or cl in {"dob", "birthdate"}:
             picks.append(c)
     return picks
@@ -87,12 +84,10 @@ def write_parquet_with_date32(
     else:
         target = _guess_date_cols(df)
 
-    # Nothing selected -> default parquet write
     if not target:
         df.to_parquet(out_path, index=False)
         return
 
-    # Normalize selected cols (drop any time component deterministically)
     df2 = df.copy()
     for c in target:
         df2[c] = pd.to_datetime(df2[c]).dt.normalize()
@@ -102,12 +97,9 @@ def write_parquet_with_date32(
         import pyarrow.parquet as pq
     except Exception:
         if force_date32:
-            # Fallback: python date objects for selected cols
             for c in target:
                 df2[c] = pd.to_datetime(df2[c]).dt.date
-            df2.to_parquet(out_path, index=False)
-        else:
-            df2.to_parquet(out_path, index=False)
+        df2.to_parquet(out_path, index=False)
         return
 
     table = pa.Table.from_pandas(df2, preserve_index=False)
@@ -115,10 +107,7 @@ def write_parquet_with_date32(
     target_set = set(target)
     fields = []
     for f in table.schema:
-        if f.name in target_set:
-            fields.append(pa.field(f.name, pa.date32()))
-        else:
-            fields.append(f)
+        fields.append(pa.field(f.name, pa.date32()) if f.name in target_set else f)
 
     table = table.cast(pa.schema(fields), safe=False)
 
@@ -188,13 +177,6 @@ def _copy_config_files_into_run_folder(
     config_yaml_path: Optional[Union[str, Path]] = None,
     model_yaml_path: Optional[Union[str, Path]] = None,
 ) -> None:
-    """
-    Copies the exact YAML files used for the run into:
-      <final_folder>/config/config.yaml
-      <final_folder>/config/model.yaml
-
-    Non-fatal: missing paths are skipped.
-    """
     config_dir = final_folder / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -214,6 +196,24 @@ def _ensure_clean_dir(p: Path) -> None:
     if p.exists():
         shutil.rmtree(p, ignore_errors=True)
     p.mkdir(parents=True, exist_ok=True)
+
+
+def _find_merged_sales_parquet(fact_folder: Path, sales_cfg: dict) -> Optional[Path]:
+    """
+    Prefer the merged sales parquet file if present.
+    Common locations:
+      - <fact_folder>/parquet/<merged_name>
+      - <fact_folder>/<merged_name>
+    """
+    merged_name = str(sales_cfg.get("merged_file", "sales.parquet"))
+    candidates = [
+        fact_folder / "parquet" / merged_name,
+        fact_folder / merged_name,
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
 
 
 # ============================================================
@@ -252,12 +252,7 @@ def create_final_output_folder(
     sales_short = format_number_short(int(sales_total))
 
     ff = file_format.lower()
-    fmt_label = {
-        "deltaparquet": "DeltaParquet",
-        "parquet": "Parquet",
-        "csv": "CSV",
-    }.get(ff, file_format)
-
+    fmt_label = {"deltaparquet": "DeltaParquet", "parquet": "Parquet", "csv": "CSV"}.get(ff, file_format)
     dataset_name = f"{timestamp} Customers {cust_short} Sales {sales_short} {fmt_label}"
 
     final_folder = final_folder_root / dataset_name
@@ -274,7 +269,6 @@ def create_final_output_folder(
         model_yaml_path=model_yaml_path,
     )
 
-    # Optional packaging controls (safe defaults)
     packaging_cfg = cfg.get("packaging", {}) if isinstance(cfg, dict) else {}
     dim_parquet_compression = packaging_cfg.get("dim_parquet_compression", "snappy")
     dim_parquet_compression_level = packaging_cfg.get("dim_parquet_compression_level", None)
@@ -284,7 +278,6 @@ def create_final_output_folder(
     # DIMENSIONS
     # --------------------------------------------------------
     if ff == "parquet":
-        # Rewrite dims to enforce Arrow date32 for date-like columns (Power Query friendly)
         import pandas as pd
 
         for f in parquet_dims.glob("*.parquet"):
@@ -293,7 +286,6 @@ def create_final_output_folder(
             write_parquet_with_date32(
                 df,
                 out_f,
-                # conservative default: only date-like columns
                 cast_all_datetime=False,
                 compression=dim_parquet_compression,
                 compression_level=dim_parquet_compression_level,
@@ -307,17 +299,10 @@ def create_final_output_folder(
             df = pd.read_parquet(f)
             out_csv = dims_out / f"{f.stem}.csv"
             out_csv.parent.mkdir(parents=True, exist_ok=True)
-            df.to_csv(
-                out_csv,
-                index=False,
-                encoding="utf-8",
-                quoting=csv.QUOTE_MINIMAL,
-            )
+            df.to_csv(out_csv, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
 
     elif ff == "deltaparquet":
-        # Keep behavior, but we can still enforce date32 by casting date-like timestamp fields in Arrow table.
         from deltalake import write_deltalake
-
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -328,13 +313,11 @@ def create_final_output_folder(
 
             table = pq.read_table(f)
 
-            # Cast date-like timestamp columns to date32 for better Power BI behavior
             schema = table.schema
             fields = []
             for field in schema:
                 name = field.name
                 nl = name.lower()
-                # only cast if it's timestamp AND name looks date-like
                 if pa.types.is_timestamp(field.type) and (nl == "date" or nl.endswith("date") or "date" in nl or nl in {"dob", "birthdate"}):
                     fields.append(pa.field(name, pa.date32()))
                 else:
@@ -343,7 +326,6 @@ def create_final_output_folder(
             try:
                 table = table.cast(pa.schema(fields), safe=False)
             except Exception:
-                # If cast fails, just keep original (non-fatal)
                 pass
 
             write_deltalake(str(delta_out), table, mode="overwrite")
@@ -354,11 +336,11 @@ def create_final_output_folder(
     # --------------------------------------------------------
     # FACTS (sales)
     # --------------------------------------------------------
-    sales_target = facts_out / "sales"
-    if sales_target.exists():
-        shutil.rmtree(sales_target, ignore_errors=True)
+    sales_target_dir = facts_out / "sales"
+    if sales_target_dir.exists():
+        shutil.rmtree(sales_target_dir, ignore_errors=True)
 
-    # DeltaParquet
+    # DeltaParquet: copy folder
     if ff == "deltaparquet":
         delta_src: Optional[Path] = None
 
@@ -376,54 +358,53 @@ def create_final_output_folder(
         if delta_src is None:
             raise RuntimeError("DeltaParquet output folder not found!")
 
-        shutil.copytree(
-            delta_src,
-            sales_target,
-            ignore=_IGNORE_PATTERNS,
-        )
-
+        shutil.copytree(delta_src, sales_target_dir, ignore=_IGNORE_PATTERNS)
         done("Creating Final Output Folder")
         return final_folder
 
-    # Parquet (partitioned folder copy)
+    # Parquet: prefer merged file, else partitioned folder
     if ff == "parquet":
-        partitioned_sales = fact_folder / "sales"
-        if partitioned_sales.exists():
-            shutil.copytree(
-                partitioned_sales,
-                sales_target,
-                ignore=_IGNORE_PATTERNS,
-            )
+        merged_src = _find_merged_sales_parquet(fact_folder, sales_cfg)
+        if merged_src is not None:
+            merged_name = merged_src.name
+            dst = facts_out / merged_name
+            shutil.copy2(merged_src, dst)
+            # IMPORTANT: do not log "empty" when merged file exists.
         else:
-            info("No sales parquet folder found to copy; facts/sales will be empty.")
+            partitioned_sales = fact_folder / "sales"
+            if partitioned_sales.exists():
+                shutil.copytree(partitioned_sales, sales_target_dir, ignore=_IGNORE_PATTERNS)
+            else:
+                info("No sales parquet output found to copy; facts/sales will be empty.")
 
         done("Creating Final Output Folder")
         return final_folder
 
-    # CSV (convert sales parquet partitions -> csv + include sql helpers)
+    # CSV: convert partitioned sales folder; fallback to merged parquet -> single csv
     if ff == "csv":
         import pandas as pd
 
         partitioned_sales = fact_folder / "sales"
-
         sql_root = final_folder / "sql"
         sql_root.mkdir(parents=True, exist_ok=True)
 
         if partitioned_sales.exists():
             for file in partitioned_sales.rglob("*.parquet"):
                 rel = file.relative_to(partitioned_sales)
-                out_file = sales_target / rel.with_suffix(".csv")
+                out_file = sales_target_dir / rel.with_suffix(".csv")
                 out_file.parent.mkdir(parents=True, exist_ok=True)
 
                 df = pd.read_parquet(file)
-                df.to_csv(
-                    out_file,
-                    index=False,
-                    encoding="utf-8",
-                    quoting=csv.QUOTE_MINIMAL,
-                )
+                df.to_csv(out_file, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
         else:
-            info("No sales parquet folder found to convert; facts/sales will be empty.")
+            merged_src = _find_merged_sales_parquet(fact_folder, sales_cfg)
+            if merged_src is not None:
+                # single-file fallback
+                df = pd.read_parquet(merged_src)
+                out_file = facts_out / "sales.csv"
+                df.to_csv(out_file, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
+            else:
+                info("No sales parquet output found to convert; facts/sales will be empty.")
 
         copy_sql_indexes(sql_root)
         copy_sql_constraints(sql_root)

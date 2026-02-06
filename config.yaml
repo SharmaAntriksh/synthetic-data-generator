@@ -46,7 +46,7 @@ sales:
 
   override:
     dates:
-      end: "2025-10-31"
+      end: null
     seed: null
 
   partitioning:

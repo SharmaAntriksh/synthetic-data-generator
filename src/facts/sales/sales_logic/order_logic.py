@@ -18,14 +18,10 @@ def build_month_demand(
     - q4_boost: extra holiday uplift (Oct–Dec)
     - phase_shift: moves peak earlier/later in year
     """
-    months = np.arange(12)
-
-    seasonal = base + amplitude * np.sin(2 * np.pi * (months + phase_shift) / 12)
-
-    # Q4 uplift (Oct-Dec => 9,10,11)
-    seasonal[9:12] *= (1.0 + q4_boost)
-
-    return seasonal.astype(np.float64)
+    months = np.arange(12, dtype=np.float64)
+    seasonal = base + amplitude * np.sin(2.0 * np.pi * (months + phase_shift) / 12.0)
+    seasonal[9:12] *= (1.0 + q4_boost)  # Oct-Dec uplift
+    return seasonal.astype(np.float64, copy=False)
 
 
 def _safe_normalized_prob(p):
@@ -38,16 +34,27 @@ def _safe_normalized_prob(p):
     p = np.asarray(p, dtype=np.float64)
     if p.size == 0:
         return None
-    s = p.sum()
-    if not np.isfinite(s) or s <= 0:
+    s = float(p.sum())
+    if not np.isfinite(s) or s <= 0.0:
         return None
     p = p / s
-    # Avoid tiny negatives from numeric issues
     p = np.clip(p, 0.0, 1.0)
-    s2 = p.sum()
-    if s2 <= 0:
+    s2 = float(p.sum())
+    if s2 <= 0.0:
         return None
     return p / s2
+
+
+def _yyyymmdd_from_days(days: np.ndarray) -> np.ndarray:
+    """
+    Convert days-since-epoch (int64) to YYYYMMDD (int64) WITHOUT string ops.
+    Uses numpy datetime64 conversions (fast, vectorized).
+    """
+    d = days.astype("datetime64[D]")
+    y = d.astype("datetime64[Y]").astype(np.int64) + 1970  # years since 1970
+    m = (d.astype("datetime64[M]").astype(np.int64) % 12) + 1
+    day = (d - d.astype("datetime64[M]")).astype(np.int64) + 1
+    return (y * 10000 + m * 100 + day).astype(np.int64, copy=False)
 
 
 def build_orders(
@@ -59,26 +66,25 @@ def build_orders(
     customers,
     product_keys,          # kept for API stability (not used here)
     _len_date_pool: int,
-    _len_customers: int,
+    _len_customers: int,   # kept for API compatibility (ignored)
 ):
     """
     Generate order-level structure and expand to line-level rows.
 
-    IMPORTANT NEW ASSUMPTIONS:
-    - `date_pool` is typically month-sliced upstream (chunk_builder).
+    Assumptions:
+    - `date_pool` is typically month-sliced upstream.
     - `customers` is typically a per-row sampled CustomerKey array produced upstream.
-      We do NOT apply lifecycle logic here.
-    - `_len_customers` is ignored for sampling range (kept for API compatibility).
+      Lifecycle logic is handled upstream.
 
-    Returns:
-      dict with:
-        - customer_keys (len n)
-        - order_dates (len n, datetime64[D])
-        - optionally order_ids_int, line_num, order_ids_str when skip_cols=False
+    Returns dict:
+      - customer_keys (len n)
+      - order_dates (len n, datetime64[D])
+      - if skip_cols=False: order_ids_int, line_num, order_ids_str
     """
     if skip_cols not in (True, False):
         raise RuntimeError("skip_cols must be a boolean")
 
+    n = int(n)
     if n <= 0:
         return {
             "customer_keys": np.empty(0, dtype=np.int64),
@@ -96,75 +102,82 @@ def build_orders(
     # ------------------------------------------------------------
     # Order count heuristic (avg lines/order)
     # ------------------------------------------------------------
-    # This drives order_ids and line structure only. It does not affect total rows.
     avg_lines = 2.0
     order_count = max(1, int(n / avg_lines))
 
     # ------------------------------------------------------------
-    # Order-level date sampling (use provided date_prob if valid)
+    # Order-level date sampling
     # ------------------------------------------------------------
     demand = _safe_normalized_prob(date_prob)
     if demand is None:
-        od_idx = rng.integers(0, _len_date_pool, size=order_count)
+        od_idx = rng.integers(0, _len_date_pool, size=order_count, dtype=np.int64)
     else:
+        # rng.choice returns int64 indices
         od_idx = rng.choice(_len_date_pool, size=order_count, p=demand)
 
     order_dates = date_pool[od_idx].astype("datetime64[D]", copy=False)
 
     # ------------------------------------------------------------
     # Order IDs: YYYYMMDD * 1e9 + random suffix
+    # (no string formatting; faster)
     # ------------------------------------------------------------
-    # Keep stable format + high uniqueness; month-sliced still fine.
-    date_str = np.datetime_as_string(order_dates, unit="D")
-    date_int = np.char.replace(date_str, "-", "").astype(np.int64)
+    days = order_dates.astype("datetime64[D]").astype(np.int64, copy=False)
+    date_int = _yyyymmdd_from_days(days)
 
     suffix_int = rng.integers(0, 1_000_000_000, size=order_count, dtype=np.int64)
     order_ids_int = date_int * 1_000_000_000 + suffix_int
 
     # ------------------------------------------------------------
-    # Assign a customer per order
+    # Assign a customer per order (preserve upstream distribution)
     # ------------------------------------------------------------
-    # Upstream already sampled a per-row customer distribution; we preserve it by:
-    # - sampling order customers from that distribution (with replacement),
-    #   rather than from a global universe.
     order_customers = rng.choice(customers, size=order_count, replace=True)
 
     # ------------------------------------------------------------
-    # Lines per order (holiday basket depth uplift)
+    # Lines per order (vectorized)
     # ------------------------------------------------------------
     month_demand = build_month_demand()
 
-    # month-of-year (0-11) from order_dates
-    months = order_dates.astype("datetime64[M]").astype("int64") % 12
+    # month-of-year (0-11)
+    months = (order_dates.astype("datetime64[M]").astype(np.int64) % 12).astype(np.int64, copy=False)
     month_factor = month_demand[months]
-
     holiday_boost = month_factor > 1.10
+
+    # Discrete outcomes
+    k = np.array([1, 2, 3, 4, 5], dtype=np.int8)
 
     base_p = np.array([0.55, 0.25, 0.10, 0.06, 0.04], dtype=np.float64)
     holiday_p = np.array([0.40, 0.30, 0.15, 0.10, 0.05], dtype=np.float64)
 
-    # choose p per order
-    # (vectorized build of per-order categorical distribution is awkward; loop is cheap at order_count scale)
-    lines_per_order = np.empty(order_count, dtype=np.int8)
-    for i in range(order_count):
-        pi = holiday_p if holiday_boost[i] else base_p
-        lines_per_order[i] = rng.choice([1, 2, 3, 4, 5], p=pi)
+    # Vectorized categorical sampling via inverse CDF:
+    # pick base/holiday cdf per order, then digitize U~[0,1)
+    cdf_base = np.cumsum(base_p)
+    cdf_hol = np.cumsum(holiday_p)
 
-    expanded_len = int(lines_per_order.sum())
+    u = rng.random(order_count)  # one uniform per order
+    lines_per_order = np.empty(order_count, dtype=np.int8)
+
+    # base orders
+    base_mask = ~holiday_boost
+    if base_mask.any():
+        lines_per_order[base_mask] = k[np.searchsorted(cdf_base, u[base_mask], side="right")]
+    if holiday_boost.any():
+        lines_per_order[holiday_boost] = k[np.searchsorted(cdf_hol, u[holiday_boost], side="right")]
+
+    repeats = lines_per_order.astype(np.int32, copy=False)
+    expanded_len = int(repeats.sum())
 
     # prefix sums for line numbering
-    order_starts = np.empty(order_count, dtype=np.int64)
-    np.cumsum(lines_per_order, out=order_starts)
-    order_starts -= lines_per_order
+    order_starts = np.cumsum(repeats, dtype=np.int64) - repeats
 
     # expand to line level
-    customer_keys = np.repeat(order_customers, lines_per_order)
-    order_dates_expanded = np.repeat(order_dates, lines_per_order)
-    sales_order_num_int = np.repeat(order_ids_int, lines_per_order)
+    customer_keys = np.repeat(order_customers, repeats)
+    order_dates_expanded = np.repeat(order_dates, repeats)
+    sales_order_num_int = np.repeat(order_ids_int, repeats)
 
+    # line number per order
     line_num = (
         np.arange(expanded_len, dtype=np.int64)
-        - np.repeat(order_starts, lines_per_order)
+        - np.repeat(order_starts, repeats)
         + 1
     )
 
@@ -186,7 +199,7 @@ def build_orders(
     line_num = line_num[:n]
 
     # ------------------------------------------------------------
-    # Output (strict skip semantics)
+    # Output
     # ------------------------------------------------------------
     result = {
         "customer_keys": customer_keys.astype(np.int64, copy=False),
@@ -196,6 +209,7 @@ def build_orders(
     if not skip_cols:
         result["order_ids_int"] = sales_order_num_int
         result["line_num"] = line_num
+        # Keep for downstream compatibility (string conversion can be expensive but optional)
         result["order_ids_str"] = sales_order_num_int.astype(str)
 
     return result
