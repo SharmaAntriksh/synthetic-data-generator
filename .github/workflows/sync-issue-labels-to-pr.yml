@@ -1,0 +1,57 @@
+name: Sync closing-issue labels to PR
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  issues: read
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy labels from closing issues
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = context.payload.pull_request.number;
+
+            // Fetch PR + its closing issues via GraphQL
+            const query = `
+              query($owner:String!, $repo:String!, $pr:Int!) {
+                repository(owner:$owner, name:$repo) {
+                  pullRequest(number:$pr) {
+                    closingIssuesReferences(first: 20) {
+                      nodes {
+                        number
+                        labels(first: 50) { nodes { name } }
+                      }
+                    }
+                  }
+                }
+              }`;
+
+            const data = await github.graphql(query, { owner, repo, pr: prNumber });
+            const issues = data.repository.pullRequest.closingIssuesReferences.nodes || [];
+
+            // Union of labels from all closing issues
+            const labels = [...new Set(issues.flatMap(i => i.labels.nodes.map(l => l.name)))];
+
+            if (labels.length === 0) {
+              core.info("No closing issues with labels found; nothing to apply.");
+              return;
+            }
+
+            // Apply labels to the PR (PRs are issues in the REST API)
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: prNumber,
+              labels
+            });
+
+            core.info(`Applied labels to PR #${prNumber}: ${labels.join(", ")}`);
