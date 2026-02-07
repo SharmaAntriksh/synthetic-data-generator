@@ -172,12 +172,21 @@ def _normalize_override_dates(promo_cfg: Dict) -> Dict:
     return override if isinstance(override, dict) else {}
 
 
-def _pick_seed(promo_cfg: Dict) -> int:
+def _pick_seed(promo_cfg: Dict, default_seed: int = 42) -> int:
     override = (promo_cfg or {}).get("override", {}) or {}
-    seed = promo_cfg.get("seed", None)
+    if not isinstance(override, dict):
+        override = {}
+
+    seed = (promo_cfg or {}).get("seed", None)
     if seed is None:
-        seed = override.get("seed", 42)
-    return int(seed)
+        seed = override.get("seed", None)
+    if seed is None:
+        seed = default_seed
+
+    try:
+        return int(seed)
+    except (TypeError, ValueError):
+        raise ValueError(f"Promotions: seed must be an integer, got {seed!r}")
 
 
 def _discount(rng: np.random.Generator, lo: float, hi: float) -> float:
