@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
 ---
+# v0.6.1 - Fix Promotion and Delta Lake
+Hotfix release improving pipeline reliability:
+- Promotions now treats null override values as defaults (prevents int(None) crashes).
+- Delta output writer now uses a resilient write_deltalake import path and preserves the underlying import error for easier debugging.
+---
 ## v0.6.0 – Pipeline overhaul, SQL tooling, and models.yaml support
 - Added SQL Server scripts (bootstrap, constraints, procs, types, views) and import helpers
 - Added PowerShell tooling for venv setup/sync plus generator/UI/SQL-import run scripts
