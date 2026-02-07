@@ -5,8 +5,8 @@ on:
     types: [opened, edited, reopened, synchronize]
 
 permissions:
-  issues: read
-  pull-requests: write
+  issues: write
+  pull-requests: read
 
 jobs:
   sync:
@@ -39,7 +39,7 @@ jobs:
             const issues = data.repository.pullRequest.closingIssuesReferences.nodes || [];
 
             // Union of labels from all closing issues
-            const labels = [...new Set(issues.flatMap(i => i.labels.nodes.map(l => l.name)))];
+            const labels = [...new Set(issues.flatMap(i => (i.labels.nodes || []).map(l => l.name)))];
 
             if (labels.length === 0) {
               core.info("No closing issues with labels found; nothing to apply.");

@@ -1,29 +1,14 @@
-# .github/release.yml
 changelog:
   categories:
     - title: Features
-      labels:
-        - feature
-        - enhancement
-
+      labels: ["feature", "enhancement", "feat", "chore"]
     - title: Fixes
-      labels:
-        - bug
-        - fix
-
+      labels: ["bug", "fix"]
     - title: Refactors / Performance
-      labels:
-        - refactor
-        - performance
-
+      labels: ["refactor", "performance", "refac", "perf"]
     - title: Docs
-      labels:
-        - docs
-
+      labels: ["docs"]
     - title: Other
-      labels:
-        - "*"
-
+      labels: ["*"]
   exclude:
-    labels:
-      - ignore-for-release
+    labels: ["ignore-for-release"]
