@@ -1,0 +1,13 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions / discussion (optional)
+    url: https://github.com/SharmaAntriksh/synthetic-data-generator/discussions
+    about: If Discussions are enabled later, use this for Q&A and open-ended ideas. For now, please use the Issue forms.
+
+  - name: Security policy
+    url: https://github.com/SharmaAntriksh/synthetic-data-generator/security/policy
+    about: Report security vulnerabilities privately.
+
+  - name: Documentation
+    url: https://github.com/SharmaAntriksh/synthetic-data-generator/blob/main/README.md
+    about: Setup, usage, and common workflows.

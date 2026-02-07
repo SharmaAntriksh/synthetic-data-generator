@@ -1,0 +1,134 @@
+name: Bug report
+description: Report a reproducible problem with the generator, UI, or SQL import.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to report a bug with clear reproduction steps.
+        If this is a security issue, do **not** file it here—use the Security Policy instead.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What’s broken? One or two sentences.
+      placeholder: "Example: UI crashes when selecting PBIP Parquet output with regenerate enabled."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps (include commands, UI selections, and inputs).
+      placeholder: |
+        1) Run ...
+        2) Set config ...
+        3) Click ...
+        4) Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: "What did you expect to happen?"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: "What actually happened?"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      description: Where are you seeing this?
+      options:
+        - CLI (src/cli.py)
+        - Streamlit UI (main.py / .streamlit)
+        - Generator core (src/engine / src/facts)
+        - SQL Server import (scripts/run_sql_server_import.ps1 / src/tools/sql)
+        - Packaging / Power BI (src/engine/powerbi_packaging.py)
+        - Other / Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command / invocation used
+      description: If you used CLI or scripts, paste the exact command.
+      placeholder: |
+        Example:
+        .\scripts\run_generator.ps1 -Config .\config.yaml -Models .\models.yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: config_snippet
+    attributes:
+      label: Relevant config/models snippet
+      description: Paste only the relevant parts (remove secrets). Include `sales_output`, file_format, seeds, etc.
+      render: yaml
+      placeholder: |
+        sales:
+          file_format: "parquet"
+          sales_output: "sales_order"
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Tag or commit SHA (or “local/unreleased”).
+      placeholder: "Example: v0.6.0 or 1a2b3c4"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "Example: 3.11.7"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / stack trace
+      description: Paste error output (PowerShell, Python tracebacks, Streamlit logs).
+      render: text
+      placeholder: "Paste logs here..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Any other details (dataset size, machine limits, expected performance, etc.).
+    validations:
+      required: false

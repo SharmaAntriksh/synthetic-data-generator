@@ -24,81 +24,96 @@ jobs:
         id: vars
         shell: bash
         run: |
+          set -euo pipefail
           TAG="${{ github.event.milestone.title }}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Validate tag format (vX.Y.Z)
         shell: bash
         run: |
+          set -euo pipefail
           TAG="${{ steps.vars.outputs.tag }}"
           if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Milestone title '$TAG' doesn't look like a release tag (vX.Y.Z). Skipping."
             exit 0
           fi
 
-      - name: Show gh version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh --version
-
       - name: Compute previous tag (best-effort)
         id: prev
         shell: bash
         run: |
+          set -euo pipefail
           git fetch --tags --force
           TAG="${{ steps.vars.outputs.tag }}"
 
-          # Next-most-recent semver-ish tag (vX.Y.Z) that isn't TAG
-          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -v "^${TAG}$" | head -n 1 || true)
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | grep -v "^${TAG}$" \
+            | head -n 1 || true)
 
           echo "prev_tag=$PREV_TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Build closed-issues section from milestone
+      - name: Build milestone sections (issues + merged PRs)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
+          set -euo pipefail
           TAG="${{ steps.vars.outputs.tag }}"
 
-          cat > CLOSED_ISSUES.md <<EOF
-          ## Closed issues (${TAG})
+          cat > MILESTONE.md <<EOF
+          ## Milestone (${TAG})
 
+          ### Closed issues
           EOF
 
-          # Closed issues in the milestone (best-effort; don't fail release if empty)
+          # Best-effort: don't fail if empty
           gh issue list \
             --milestone "$TAG" \
             --state closed \
             --limit 500 \
             --json number,title,url \
             --template '{{range .}}- #{{.number}} {{.title}} ({{.url}}){{"\n"}}{{end}}' \
-            >> CLOSED_ISSUES.md || true
+            >> MILESTONE.md || true
+
+          echo "" >> MILESTONE.md
+          echo "### Merged PRs" >> MILESTONE.md
+
+          gh pr list \
+            --search "milestone:${TAG} is:merged" \
+            --limit 500 \
+            --json number,title,url \
+            --template '{{range .}}- #{{.number}} {{.title}} ({{.url}}){{"\n"}}{{end}}' \
+            >> MILESTONE.md || true
 
       - name: Generate PR-based release notes (respects .github/release.yml)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
+          set -euo pipefail
           TAG="${{ steps.vars.outputs.tag }}"
           PREV="${{ steps.prev.outputs.prev_tag }}"
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
 
           if [ -n "$PREV" ]; then
             gh api "repos/${{ github.repository }}/releases/generate-notes" \
               -f tag_name="$TAG" \
               -f previous_tag_name="$PREV" \
-              -f target_commitish="main" \
+              -f target_commitish="$DEFAULT_BRANCH" \
               --jq .body > GENERATED_NOTES.md
           else
             gh api "repos/${{ github.repository }}/releases/generate-notes" \
               -f tag_name="$TAG" \
-              -f target_commitish="main" \
+              -f target_commitish="$DEFAULT_BRANCH" \
               --jq .body > GENERATED_NOTES.md
           fi
 
       - name: Combine notes
         shell: bash
         run: |
-          cat CLOSED_ISSUES.md > RELEASE.md
+          set -euo pipefail
+          cat MILESTONE.md > RELEASE.md
           echo "" >> RELEASE.md
           cat GENERATED_NOTES.md >> RELEASE.md
 
@@ -107,7 +122,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
+          set -euo pipefail
           TAG="${{ steps.vars.outputs.tag }}"
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" \
@@ -117,7 +134,6 @@ jobs:
             gh release create "$TAG" \
               --title "$TAG" \
               --notes-file RELEASE.md \
-              --target "main" \
+              --target "$DEFAULT_BRANCH" \
               --draft
-              # Add --verify-tag if you always create tags yourself before closing the milestone
           fi
