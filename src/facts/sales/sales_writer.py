@@ -281,9 +281,17 @@ def write_delta_partitioned(
     os.makedirs(delta_output_folder, exist_ok=True)
 
     try:
-        from deltalake import write_deltalake
-    except Exception as e:
-        raise RuntimeError("deltalake is required for Delta output") from e
+        # Preferred in many delta-rs versions
+        from deltalake import write_deltalake  # type: ignore
+    except Exception as e1:
+        try:
+            # Fallback for versions where top-level export differs
+            from deltalake.writer import write_deltalake  # type: ignore
+        except Exception as e2:
+            raise RuntimeError(
+                "deltalake is required for Delta output, but import failed. "
+                f"top-level error={e1!r}; fallback error={e2!r}"
+            ) from e2
 
     info(f"[DELTA] Writing {len(part_files)} parts (Arrow -> Delta)")
 
