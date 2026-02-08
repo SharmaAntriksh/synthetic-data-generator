@@ -1,54 +1,22 @@
 name: Bug report
-description: Report a reproducible problem with the generator, UI, or SQL import.
+description: Report a problem.
 title: "bug: "
 labels: ["bug"]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Minimal bug report. If this is security-related, use SECURITY.md instead.
-
   - type: textarea
     id: summary
     attributes:
-      label: Summary
-      description: What’s broken? One or two sentences.
-      placeholder: "Example: UI crashes when selecting PBIP Parquet output with regenerate enabled."
-    validations:
-      required: true
-
-  - type: textarea
-    id: repro
-    attributes:
-      label: Steps to reproduce
-      description: Exact steps (include commands/UI selections).
-      placeholder: |
-        1) Run ...
-        2) Set ...
-        3) Click ...
-        4) Observe ...
+      label: What happened?
+      description: Describe the issue. Add logs if you have them.
+      placeholder: "Example: Generator crashes when ..."
     validations:
       required: true
 
   - type: textarea
     id: logs
     attributes:
-      label: Logs / stack trace
-      description: Paste the error output (PowerShell, Python traceback, Streamlit logs).
+      label: Logs (optional)
       render: text
-      placeholder: "Paste logs here..."
-    validations:
-      required: false
-
-  - type: textarea
-    id: config_snippet
-    attributes:
-      label: Relevant config/models snippet (optional)
-      description: Paste only relevant parts (no secrets).
-      render: yaml
-      placeholder: |
-        sales:
-          file_format: "parquet"
-          skip_order_cols: true
+      placeholder: "Paste traceback/output here..."
     validations:
       required: false
