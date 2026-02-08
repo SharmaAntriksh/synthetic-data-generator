@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import warnings
 
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
@@ -408,7 +409,13 @@ def generate_promotions_catalog(
         ]
     )
 
-    final = pd.concat([df, no_discount], ignore_index=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=FutureWarning,
+            message=r".*DataFrame concatenation with empty or all-NA entries.*",
+        )
+        final = pd.concat([df, no_discount], ignore_index=True)
 
     # Final ordering + keys
     final = final.sort_values("StartDate").reset_index(drop=True)
