@@ -230,6 +230,7 @@ def create_final_output_folder(
     cfg: dict,
     config_yaml_path: Optional[Union[str, Path]] = None,
     model_yaml_path: Optional[Union[str, Path]] = None,
+    package_facts: bool = True,
 ) -> Path:
     """
     Packs cleaned dimension + fact data according to config rules.
@@ -332,6 +333,16 @@ def create_final_output_folder(
 
     else:
         raise ValueError(f"Unknown file_format: {file_format}")
+    
+    # --------------------------------------------------------
+    # DIMENSIONS
+    # --------------------------------------------------------
+    # (existing DIMENSIONS code stays as-is)
+
+    # If this function is being used by engine.packaging, facts are handled there.
+    if not package_facts:
+        done("Creating Final Output Folder")
+        return final_folder
 
     # --------------------------------------------------------
     # FACTS (sales)
@@ -340,27 +351,98 @@ def create_final_output_folder(
     if sales_target_dir.exists():
         shutil.rmtree(sales_target_dir, ignore_errors=True)
 
-    # DeltaParquet: copy folder
+    # DeltaParquet: copy delta tables (supports Sales OR SalesOrderHeader+SalesOrderDetail)
     if ff == "deltaparquet":
-        delta_src: Optional[Path] = None
+        import re
+
+        def _looks_like_delta_table_dir(p: Path) -> bool:
+            return p.is_dir() and (p / "_delta_log").exists()
+
+        def _table_name_variants(table: str) -> list[str]:
+            # SalesOrderDetail -> sales_order_detail, salesorderdetail, etc.
+            snake = re.sub(r"(?<!^)(?=[A-Z])", "_", table).lower()
+            return [
+                table,
+                table.lower(),
+                snake,
+                snake.replace("_", ""),
+                table.replace("_", ""),
+                table.replace(" ", ""),
+            ]
+
+        def _infer_tables_from_config(sales_cfg: dict) -> list[str]:
+            so = str(sales_cfg.get("sales_output") or "").strip().lower()
+            if so in {"sales_order", "salesorder", "order", "orders"}:
+                return ["SalesOrderDetail", "SalesOrderHeader"]
+            if so in {"both", "all", "sales_and_sales_order", "sales+sales_order"}:
+                return ["Sales", "SalesOrderDetail", "SalesOrderHeader"]
+            # default / backwards-compatible
+            return ["Sales"]
+
+        tables = _infer_tables_from_config(sales_cfg)
+
+        # Candidate roots to search for delta tables
+        delta_roots: list[Path] = []
+
+        def _add_root(p: Optional[Path]) -> None:
+            if not p:
+                return
+            try:
+                rp = p.expanduser().resolve()
+            except Exception:
+                return
+            if rp.exists() and rp.is_dir() and rp not in delta_roots:
+                delta_roots.append(rp)
 
         cfg_delta = sales_cfg.get("delta_output_folder")
         if cfg_delta:
-            d = Path(cfg_delta).expanduser().resolve()
-            if d.exists():
-                delta_src = d
+            _add_root(Path(str(cfg_delta)))
 
-        if delta_src is None:
-            fb = fact_folder / "sales"
-            if fb.exists():
-                delta_src = fb
+        # New layout (common): <fact_folder>/delta/<TableName>
+        _add_root(fact_folder / "delta")
 
-        if delta_src is None:
-            raise RuntimeError("DeltaParquet output folder not found!")
+        # Other plausible layouts (keep for resilience)
+        _add_root(fact_folder / "deltaparquet")
+        _add_root(fact_folder / "sales")  # legacy behavior in this file
 
-        shutil.copytree(delta_src, sales_target_dir, ignore=_IGNORE_PATTERNS)
+        def _find_delta_table_dir(table: str) -> Optional[Path]:
+            for root in delta_roots:
+                # root itself could be a table dir (edge case)
+                if _looks_like_delta_table_dir(root) and root.name.lower() in {table.lower()}:
+                    return root
+                for name in _table_name_variants(table):
+                    cand = root / name
+                    if _looks_like_delta_table_dir(cand):
+                        return cand
+            return None
+
+        found: dict[str, Path] = {}
+
+        for t in tables:
+            src = _find_delta_table_dir(t)
+            if src is None:
+                expected = fact_folder / "delta" / t
+                info(f"No delta output found for {t} at {expected}; skipping.")
+                continue
+            found[t] = src
+
+        if not found:
+            raise RuntimeError(
+                f"No delta fact outputs found for tables={tables!r}. "
+                "Checked sales.delta_output_folder, <fact_folder>/delta, <fact_folder>/deltaparquet, and legacy <fact_folder>/sales."
+            )
+
+        # Copy each delta table into final output
+        for t, src in found.items():
+            # keep legacy dest for Sales to avoid breaking consumers
+            dest = facts_out / ("sales" if t.lower() == "sales" else t)
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            shutil.copytree(src, dest, ignore=_IGNORE_PATTERNS)
+
         done("Creating Final Output Folder")
         return final_folder
+
 
     # Parquet: prefer merged file, else partitioned folder
     if ff == "parquet":

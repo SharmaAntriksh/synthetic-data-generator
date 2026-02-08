@@ -14,6 +14,10 @@ defaults:
   paths:
     geography: "./data/parquet_dims/geography.parquet"
 
+packaging:
+  reset_scratch_fact_out: true   # default current behavior
+  clean_scratch_fact_out: true   # default current behavior
+  
 # ---------------------------------------------------------------------
 # SALES FACT GENERATION
 # ---------------------------------------------------------------------
@@ -21,11 +25,11 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 100230
-  chunk_size: 2000000
+  total_rows: 600230
+  chunk_size: 1000000
 
-  file_format: "deltaparquet"          # csv | parquet | deltaparquet
-  sales_output: "sales"           # sales | sales_order | both
+  file_format: "parquet"          # csv | parquet | deltaparquet
+  sales_output: "sales_order"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 

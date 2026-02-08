@@ -9,7 +9,7 @@ import pyarrow as pa
 from ..sales_logic.globals import State, bind_globals
 from .schemas import schema_dict_cols
 from ..output_paths import OutputPaths
-from ..output_paths import TABLE_SALES
+from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
 
 # ===============================================================
 # Small utils (moved from sales_worker.py)
@@ -120,6 +120,16 @@ def init_sales_worker(worker_cfg: dict):
         write_delta = worker_cfg.get("write_delta", False)
 
         skip_order_cols = worker_cfg["skip_order_cols"]
+
+        sales_output = _str_or(worker_cfg.get("sales_output"), "sales").lower()
+        if sales_output not in {"sales", "sales_order", "both"}:
+            raise RuntimeError(f"Invalid sales_output: {sales_output}")
+
+        # Keep the user's intent, but override for normalized outputs (detail/header need order keys)
+        skip_order_cols_requested = skip_order_cols
+        if sales_output in {"sales_order", "both"}:
+            skip_order_cols = False
+
         partition_enabled = worker_cfg.get("partition_enabled", False)
         partition_cols = worker_cfg.get("partition_cols") or []
         models_cfg = worker_cfg.get("models_cfg")
@@ -190,7 +200,14 @@ def init_sales_worker(worker_cfg: dict):
     # -----------------------------------------------------------
     # Ensure output folders once
     # -----------------------------------------------------------
-    output_paths.ensure_dirs(TABLE_SALES)
+    tables = []
+    if sales_output in {"sales", "both"}:
+        tables.append(TABLE_SALES)
+    if sales_output in {"sales_order", "both"}:
+        tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
+
+    for t in tables:
+        output_paths.ensure_dirs(t)
 
     # -----------------------------------------------------------
     # Canonical schemas (NO inference, NO drift)
@@ -232,15 +249,59 @@ def init_sales_worker(worker_cfg: dict):
     schema_no_order_delta = pa.schema(base_fields + delta_fields)
     schema_with_order_delta = pa.schema(order_fields + base_fields + delta_fields)
 
-    # Canonical sales schema (single source of truth)
+    # Canonical schemas (by logical table; NO inference, NO drift)
+
+    # IMPORTANT:
+    # - skip_order_cols is the *effective* behavior used by chunk_builder
+    # - skip_order_cols_requested is what the user asked for on the Sales table
+    skip_order_cols_requested = bool(worker_cfg.get("skip_order_cols_requested", skip_order_cols))
+
+    # SalesOrderDetail always includes order cols (it’s the detail grain)
+    detail_schema = schema_with_order_delta if file_format == "deltaparquet" else schema_with_order
+
+    # Sales table respects requested skip_order_cols (can be dropped even when detail requires them)
     if file_format == "deltaparquet":
-        sales_schema = schema_with_order_delta if not skip_order_cols else schema_no_order_delta
+        sales_schema = schema_no_order_delta if skip_order_cols_requested else schema_with_order_delta
     else:
-        sales_schema = schema_with_order if not skip_order_cols else schema_no_order
+        sales_schema = schema_no_order if skip_order_cols_requested else schema_with_order
+
+    # SalesOrderHeader schema
+    header_fields = [
+        pa.field("SalesOrderNumber", pa.int64()),
+        pa.field("CustomerKey", pa.int64()),
+        pa.field("StoreKey", pa.int64()),
+        pa.field("PromotionKey", pa.int64()),
+        pa.field("CurrencyKey", pa.int64()),
+        pa.field("OrderDate", pa.date32()),
+        pa.field("DueDate", pa.date32()),
+        pa.field("DeliveryDate", pa.date32()),
+        pa.field("LineCount", pa.int64()),
+        pa.field("TotalQuantity", pa.int64()),
+        pa.field("GrossAmount", pa.float64()),
+        pa.field("NetAmount", pa.float64()),
+        pa.field("TotalCost", pa.float64()),
+        pa.field("TotalDiscount", pa.float64()),
+        pa.field("IsOrderDelayed", pa.int8()),
+    ]
+    if file_format == "deltaparquet":
+        header_schema = pa.schema(header_fields + delta_fields)
+    else:
+        header_schema = pa.schema(header_fields)
+
+    schema_by_table = {
+        TABLE_SALES: sales_schema,
+        TABLE_SALES_ORDER_DETAIL: detail_schema,
+        TABLE_SALES_ORDER_HEADER: header_schema,
+    }
 
     # Dictionary encoding: only for strings; keep exclusions consistent
     parquet_dict_exclude = {"SalesOrderNumber", "CustomerKey"}
-    parquet_dict_cols = schema_dict_cols(sales_schema, parquet_dict_exclude)
+    parquet_dict_cols_by_table = {
+        t: schema_dict_cols(s, parquet_dict_exclude) for t, s in schema_by_table.items()
+    }
+
+    # Back-compat (old code expects these names)
+    parquet_dict_cols = parquet_dict_cols_by_table[TABLE_SALES]
 
     # -----------------------------------------------------------
     # Bind immutable globals (ONCE)
@@ -280,6 +341,8 @@ def init_sales_worker(worker_cfg: dict):
         "row_group_size": int(max(1, row_group_size)),
         "compression": compression,
         "output_paths": output_paths,
+        "sales_output": sales_output,
+        "skip_order_cols_requested": skip_order_cols_requested,
 
         # delta
         "delta_output_folder": os.path.normpath(delta_output_folder) if delta_output_folder else None,
@@ -299,6 +362,9 @@ def init_sales_worker(worker_cfg: dict):
         "schema_no_order_delta": schema_no_order_delta,
         "schema_with_order_delta": schema_with_order_delta,
         "sales_schema": sales_schema,
+        "skip_order_cols_requested": skip_order_cols_requested,
+        "schema_by_table": schema_by_table,
+        "parquet_dict_cols_by_table": parquet_dict_cols_by_table,
 
         # parquet tuning
         "parquet_dict_exclude": parquet_dict_exclude,
