@@ -1,100 +1,46 @@
 name: Feature request
-description: Propose a change or new capability (generator, UI, SQL import, packaging).
+description: Propose a change or new capability.
 title: "feat: "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this form to propose a feature. Keep it scoped and testable.
+        Minimal feature request. Keep it testable and backward-compatible.
 
   - type: textarea
-    id: problem
+    id: request
     attributes:
-      label: Problem statement
-      description: What problem are you trying to solve? Who benefits?
-      placeholder: "Example: Need an option to generate SalesOrderHeader and SalesOrderDetail separately for SQL Server demos."
-    validations:
-      required: true
-
-  - type: textarea
-    id: proposal
-    attributes:
-      label: Proposed solution
-      description: Describe the approach and expected behavior.
-      placeholder: "Example: Add config key sales_output: sales|sales_order|both, update packaging and SQL import scripts accordingly."
-    validations:
-      required: true
-
-  - type: dropdown
-    id: area
-    attributes:
-      label: Area
-      options:
-        - Generator core (src/engine / src/facts)
-        - Dimensions (src/dimensions)
-        - Streamlit UI (main.py / .streamlit)
-        - Scripts (scripts/*.ps1)
-        - SQL tooling/import (scripts/sql / src/tools/sql)
-        - Packaging / Power BI
-        - Other
-    validations:
-      required: true
-
-  - type: textarea
-    id: config_impact
-    attributes:
-      label: Config / compatibility impact
-      description: What new keys/behavior? Any breaking changes? (Prefer config-first + backward-compatible.)
+      label: What do you want and why?
+      description: Problem + proposed solution (include expected behavior).
       placeholder: |
-        - New key: sales.sales_output
-        - Default: sales (no change)
-        - Backward compatible: yes
+        Problem:
+        - ...
+
+        Proposal:
+        - ...
     validations:
       required: true
 
   - type: textarea
     id: acceptance
     attributes:
-      label: Acceptance criteria
-      description: Concrete checklist of what “done” means.
+      label: Acceptance criteria (optional)
+      description: A short checklist of what “done” means.
       placeholder: |
-        - [ ] CLI supports the new option
-        - [ ] UI exposes the option safely
-        - [ ] Output files match schema
-        - [ ] SQL import handles new tables/views
-    validations:
-      required: true
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives considered
-      description: What else could we do? Why is this better?
+        - [ ] ...
+        - [ ] ...
     validations:
       required: false
 
-  - type: dropdown
-    id: priority
+  - type: textarea
+    id: notes
     attributes:
-      label: Priority
-      options:
-        - P0 (blocker)
-        - P1 (important)
-        - P2 (nice-to-have)
+      label: Notes / compatibility impact (optional)
+      description: Mention config keys, breaking changes, perf impact, etc.
+      placeholder: |
+        - New key(s): ...
+        - Default behavior unchanged: yes/no
+        - Risk: ...
     validations:
-      required: true
-
-  - type: checkboxes
-    id: risks
-    attributes:
-      label: Risk / rollout notes
-      options:
-        - label: This change might be breaking (schema/config behavior)
-          required: false
-        - label: This change affects performance or memory usage
-          required: false
-        - label: This change affects SQL Server import scripts
-          required: false
-        - label: This change affects Power BI packaging
-          required: false
+      required: false
