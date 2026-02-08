@@ -239,6 +239,7 @@ def init_sales_worker(worker_cfg: dict):
         pa.field("DiscountAmount", pa.float64()),
 
         pa.field("DeliveryStatus", pa.string()),
+        pa.field("IsOrderDelayed", pa.int8()),
     ]
 
     order_fields = [
@@ -296,7 +297,7 @@ def init_sales_worker(worker_cfg: dict):
         pa.field("OrderDate", pa.date32()),
         pa.field("DueDate", pa.date32()),
 
-        pa.field("IsOrderDelayed", pa.int8()),
+        # pa.field("IsOrderDelayed", pa.int8()),
     ]
     header_schema = pa.schema(header_fields + delta_fields) if file_format == "deltaparquet" else pa.schema(header_fields)
 

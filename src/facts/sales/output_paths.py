@@ -58,13 +58,13 @@ DEFAULT_TABLE_SPECS: Dict[str, TableSpec] = {
     # Future tables (not used until you enable sales_output modes)
     TABLE_SALES_ORDER_DETAIL: TableSpec(
         out_subdir=_to_snake(TABLE_SALES_ORDER_DETAIL),
-        chunk_prefix="sales_order_detail_chunk",
+        chunk_prefix=f"{TABLE_SALES_ORDER_DETAIL}_chunk",  # SalesOrderDetail_chunk0000.csv
         merged_filename=f"{TABLE_SALES_ORDER_DETAIL}.parquet",
         delta_subdir=_to_snake(TABLE_SALES_ORDER_DETAIL),
     ),
     TABLE_SALES_ORDER_HEADER: TableSpec(
         out_subdir=_to_snake(TABLE_SALES_ORDER_HEADER),
-        chunk_prefix="sales_order_header_chunk",
+        chunk_prefix=f"{TABLE_SALES_ORDER_HEADER}_chunk",  # SalesOrderHeader_chunk0000.csv
         merged_filename=f"{TABLE_SALES_ORDER_HEADER}.parquet",
         delta_subdir=_to_snake(TABLE_SALES_ORDER_HEADER),
     ),
@@ -173,7 +173,8 @@ class OutputPaths:
         spec = self.spec(table)
 
         # Backward-compat: Sales delta is rooted at delta_output_folder (no subdir)
-        if table == TABLE_SALES or not spec.delta_subdir:
+        # If delta_subdir is empty, table lives directly under delta_output_folder
+        if not spec.delta_subdir:
             return self.delta_output_folder
 
         return os.path.join(self.delta_output_folder, spec.delta_subdir)

@@ -121,7 +121,17 @@ def _resolve_merged_parquet(fact_out: Path, sales_cfg: dict, table: str) -> Opti
 
 
 def _looks_like_delta_table_dir(p: Path) -> bool:
-    return p.is_dir() and (p / "_delta_log").exists()
+    """
+    Correct signature for a Delta table root:
+      - it has a _delta_log directory
+
+    Do NOT require parquet files at the root because partitioned delta tables
+    store data under subfolders (e.g., Year=.../Month=...).
+    """
+    try:
+        return (p / "_delta_log").is_dir()
+    except Exception:
+        return False
 
 
 def _delta_name_variants(table: str) -> list[str]:
@@ -155,38 +165,74 @@ def _delta_name_variants(table: str) -> list[str]:
 
 def _find_delta_table_dir(fact_out: Path, sales_cfg: dict, table: str) -> Optional[Path]:
     """
-    Locate a delta table directory for `table` by searching multiple roots:
-      - sales_cfg.delta_output_folder (if provided)
-      - <fact_out>/delta
-      - <fact_out>/deltaparquet
-      - <fact_out>/sales (legacy)
+    Find the Delta table directory for `table` across known layouts.
+
+    Your current run writes delta tables under:
+      data/fact_out/sales/
+        _delta_log                      (Sales)
+        sales_order_detail/_delta_log   (SalesOrderDetail)
+        sales_order_header/_delta_log   (SalesOrderHeader)
+
+    But it may also be under:
+      data/fact_out/delta/<table_subdir>/_delta_log
+    depending on config / legacy behavior.
     """
+
+    def _to_snake(name: str) -> str:
+        s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+        return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
+
+    snake = _to_snake(table)
+
+    # Roots to probe (keep order; include legacy scratch roots)
     roots: list[Path] = []
 
-    def _add_root(p: Optional[Path]) -> None:
-        if not p:
-            return
-        try:
-            rp = p.expanduser().resolve()
-        except Exception:
-            return
-        if rp.exists() and rp.is_dir() and rp not in roots:
-            roots.append(rp)
+    cfg_root = sales_cfg.get("delta_output_folder")
+    if cfg_root:
+        roots.append(Path(cfg_root))
 
-    cfg_delta = sales_cfg.get("delta_output_folder")
-    if cfg_delta:
-        _add_root(Path(str(cfg_delta)))
+    roots += [
+        fact_out / "delta",
+        fact_out / "deltaparquet",
+        fact_out / "sales",  # <-- IMPORTANT: matches your observed layout
+    ]
 
-    _add_root(fact_out / "delta")
-    _add_root(fact_out / "deltaparquet")
-    _add_root(fact_out / "sales")
+    # De-dup roots (preserve order)
+    seen = set()
+    uniq_roots: list[Path] = []
+    for r in roots:
+        key = str(r)
+        if key not in seen:
+            seen.add(key)
+            uniq_roots.append(r)
 
-    # Search
-    for root in roots:
-        for name in _delta_name_variants(table):
-            cand = root / name
-            if _looks_like_delta_table_dir(cand):
-                return cand
+    # Candidate dirs per root.
+    # IMPORTANT: do NOT treat the root itself as the match for non-Sales tables,
+    # because fact_out/sales is the Sales delta table root.
+    candidates: list[Path] = []
+    for root in uniq_roots:
+        # root itself only if it *looks like* it was intended for this table
+        if root.name in {snake, table, table.lower()}:
+            candidates.append(root)
+
+        candidates += [
+            root / snake,          # sales_order_detail
+            root / table,          # SalesOrderDetail
+            root / table.lower(),  # salesorderdetail
+        ]
+
+    # De-dup candidates
+    seen_c = set()
+    uniq_candidates: list[Path] = []
+    for c in candidates:
+        key = str(c)
+        if key not in seen_c:
+            seen_c.add(key)
+            uniq_candidates.append(c)
+
+    for cand in uniq_candidates:
+        if _looks_like_delta_table_dir(cand):
+            return cand
 
     return None
 
@@ -341,7 +387,15 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                     continue
 
                 dst_dir = facts_out / _table_dir_name(t)
-                _copy_delta_table_dir(src_dir, dst_dir, skip_dirnames={"_tmp_parts"})
+                skip_dirs = {"_tmp_parts"}
+
+                # If we're packaging multiple tables (sales_output="both"),
+                # don't allow the Sales delta root to drag nested tables with it.
+                if t == TABLE_SALES and len(tables) > 1:
+                    skip_dirs |= {_table_dir_name(x) for x in tables if x != TABLE_SALES}
+
+                _copy_delta_table_dir(src_dir, dst_dir, skip_dirnames=skip_dirs)
+
                 copied += 1
 
             if missing:
@@ -380,7 +434,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                 info(f"No CSV folder found for {t}; expected under {fact_out / 'csv'}.")
                 continue
 
-            dst_dir = facts_out / _table_dir_name(t)
+            dst_dir = facts_out if t == TABLE_SALES else (facts_out / _table_dir_name(t))
             dst_dir.mkdir(parents=True, exist_ok=True)
 
             csv_files = sorted(src_dir.glob("*.csv"))
