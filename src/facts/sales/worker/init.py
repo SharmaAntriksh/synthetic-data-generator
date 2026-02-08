@@ -8,7 +8,8 @@ import pyarrow as pa
 
 from ..sales_logic.globals import State, bind_globals
 from .schemas import schema_dict_cols
-
+from ..output_paths import OutputPaths
+from ..output_paths import TABLE_SALES
 
 # ===============================================================
 # Small utils (moved from sales_worker.py)
@@ -104,14 +105,18 @@ def init_sales_worker(worker_cfg: dict):
         date_pool = worker_cfg["date_pool"]
         date_prob = worker_cfg["date_prob"]
 
-        out_folder = worker_cfg["out_folder"]
-        file_format = worker_cfg["file_format"]
+        op = worker_cfg.get("output_paths") or {}
+
+        file_format = worker_cfg.get("file_format") or op.get("file_format")
+        out_folder = worker_cfg.get("out_folder") or op.get("out_folder")
 
         row_group_size = _int_or(worker_cfg.get("row_group_size"), 2_000_000)
         compression = _str_or(worker_cfg.get("compression"), "snappy")
 
         no_discount_key = worker_cfg["no_discount_key"]
-        delta_output_folder = worker_cfg.get("delta_output_folder")
+        delta_output_folder = worker_cfg.get("delta_output_folder") or op.get("delta_output_folder")
+        merged_file = worker_cfg.get("merged_file") or op.get("merged_file")
+        
         write_delta = worker_cfg.get("write_delta", False)
 
         skip_order_cols = worker_cfg["skip_order_cols"]
@@ -124,12 +129,24 @@ def init_sales_worker(worker_cfg: dict):
 
     except KeyError as e:
         raise RuntimeError(f"Missing worker config key: {e}") from None
+    
+    if not file_format:
+        raise RuntimeError("Missing worker config key: 'file_format'")
+    if not out_folder:
+        raise RuntimeError("Missing worker config key: 'out_folder'")
 
     if skip_order_cols not in (True, False):
         raise RuntimeError("skip_order_cols must be a boolean")
 
     if customer_keys is None:
         raise RuntimeError("worker_cfg must include customer_keys or customers")
+
+    output_paths = OutputPaths(
+        file_format=file_format,
+        out_folder=out_folder,
+        merged_file=merged_file,
+        delta_output_folder=delta_output_folder,
+    )
 
     # -----------------------------------------------------------
     # Normalize arrays (dtype + shape checks)
@@ -173,12 +190,7 @@ def init_sales_worker(worker_cfg: dict):
     # -----------------------------------------------------------
     # Ensure output folders once
     # -----------------------------------------------------------
-    if file_format == "deltaparquet":
-        if not delta_output_folder:
-            raise RuntimeError("delta_output_folder is required when file_format=deltaparquet")
-        os.makedirs(os.path.join(delta_output_folder, "_tmp_parts"), exist_ok=True)
-    else:
-        os.makedirs(out_folder, exist_ok=True)
+    output_paths.ensure_dirs(TABLE_SALES)
 
     # -----------------------------------------------------------
     # Canonical schemas (NO inference, NO drift)
@@ -267,6 +279,7 @@ def init_sales_worker(worker_cfg: dict):
         "out_folder": out_folder,
         "row_group_size": int(max(1, row_group_size)),
         "compression": compression,
+        "output_paths": output_paths,
 
         # delta
         "delta_output_folder": os.path.normpath(delta_output_folder) if delta_output_folder else None,

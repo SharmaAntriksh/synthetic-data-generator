@@ -7,6 +7,7 @@ import pyarrow as pa
 
 from ..sales_logic import chunk_builder
 from ..sales_logic.globals import State
+from ..output_paths import TABLE_SALES
 from .chunk_io import _write_csv, _write_parquet_table
 
 
@@ -47,24 +48,22 @@ def _worker_task(args):
         if not isinstance(table, pa.Table):
             raise TypeError("chunk_builder must return pyarrow.Table")
 
-        # DELTA (write tmp parquet parts; merge later in sales_writer.write_delta_partitioned)
+        # DELTA (write tmp parquet parts; merge later)
         if State.file_format == "deltaparquet":
-            name = f"delta_part_{idx:04d}.parquet"
-            path = os.path.join(State.delta_output_folder, "_tmp_parts", name)
+            path = State.output_paths.delta_part_path(TABLE_SALES, int(idx))
             _write_parquet_table(table, path)
-            rows = table.num_rows
-            results.append({"part": name, "rows": rows})
+            results.append({"part": os.path.basename(path), "rows": table.num_rows})
             continue
 
         # CSV
         if State.file_format == "csv":
-            path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.csv")
+            path = State.output_paths.chunk_path(TABLE_SALES, int(idx), "csv")
             _write_csv(table, path)
             results.append(path)
             continue
 
-        # PARQUET
-        path = os.path.join(State.out_folder, f"sales_chunk{idx:04d}.parquet")
+        # PARQUET (default)
+        path = State.output_paths.chunk_path(TABLE_SALES, int(idx), "parquet")
         _write_parquet_table(table, path)
         results.append(path)
 

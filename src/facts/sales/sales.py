@@ -14,6 +14,7 @@ from src.utils.logging_utils import done, info, skip, work
 from .sales_logic.globals import State
 from .sales_worker import _worker_task, init_sales_worker
 from .sales_writer import merge_parquet_files
+from .output_paths import OutputPaths, TABLE_SALES
 
 
 # =====================================================================
@@ -355,15 +356,24 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     parquet_folder_p = Path(str(parquet_folder))
     out_folder_p = Path(str(out_folder))
-    ensure_dir(out_folder_p)
 
-    # Delta setup
+    # Resolve delta folder early (so OutputPaths is built with final values)
     if file_format == "deltaparquet":
         if delta_output_folder is None:
             delta_output_folder = str(out_folder_p / "delta")
         delta_output_folder = os.path.abspath(str(delta_output_folder))
-        ensure_dir(delta_output_folder)
-        ensure_dir(os.path.join(delta_output_folder, "_tmp_parts"))
+
+    output_paths = OutputPaths(
+        file_format=file_format,
+        out_folder=str(out_folder_p),
+        merged_file=str(merged_file),
+        delta_output_folder=(str(delta_output_folder) if file_format == "deltaparquet" else None),
+    )
+
+    output_paths.ensure_dirs(TABLE_SALES)
+
+    # Normalize delta_output_folder after OutputPaths decides defaults/abspath (if your class does that)
+    delta_output_folder = output_paths.delta_output_folder
 
     # ------------------------------------------------------------
     # Optional auto chunk sizing
@@ -521,8 +531,14 @@ def generate_sales_fact(
         date_pool=date_pool,
         date_prob=date_prob,
 
-        out_folder=str(out_folder_p),
+        output_paths=output_paths.to_dict() if hasattr(output_paths, "to_dict") else {
+            "file_format": output_paths.file_format,
+            "out_folder": output_paths.out_folder,
+            "merged_file": output_paths.merged_file,
+            "delta_output_folder": output_paths.delta_output_folder,
+        },
         file_format=file_format,
+        out_folder=str(out_folder_p),
         row_group_size=_int_or(row_group_size, 2_000_000),
         compression=_str_or(compression, "snappy"),
 
@@ -580,8 +596,8 @@ def generate_sales_fact(
         from .sales_writer import write_delta_partitioned
 
         write_delta_partitioned(
-            parts_folder=os.path.join(str(delta_output_folder), "_tmp_parts"),
-            delta_output_folder=str(delta_output_folder),
+            parts_folder=output_paths.delta_parts_dir(TABLE_SALES),
+            delta_output_folder=output_paths.delta_table_dir(TABLE_SALES),
             partition_cols=partition_cols,
         )
         return created_files
@@ -595,14 +611,14 @@ def generate_sales_fact(
         )
         if not parquet_chunks:
             parquet_chunks = sorted(
-                f for f in glob.glob(os.path.join(str(out_folder_p), "sales_chunk*.parquet"))
+                f for f in glob.glob(output_paths.chunk_glob(TABLE_SALES, "parquet"))
                 if os.path.isfile(f)
             )
 
         if parquet_chunks and merge_parquet:
             merge_parquet_files(
                 parquet_chunks,
-                os.path.join(str(out_folder_p), merged_file),
+                output_paths.merged_path(TABLE_SALES),
                 delete_after=bool(delete_chunks),
             )
 
