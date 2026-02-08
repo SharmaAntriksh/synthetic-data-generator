@@ -16,8 +16,23 @@ from src.facts.sales.output_paths import (
     TABLE_SALES_ORDER_HEADER,
 )
 
+# Canonical folder names for scratch + packaged outputs
+_TABLE_DIR_MAP = {
+    TABLE_SALES: "sales",
+    TABLE_SALES_ORDER_DETAIL: "sales_order_detail",
+    TABLE_SALES_ORDER_HEADER: "sales_order_header",
+}
+
 
 def _get_first_existing_path(cfg: dict, keys: list[str]) -> Optional[Path]:
+    """
+    Resolve config/model yaml paths from cfg keys.
+    Checks:
+      1) absolute path
+      2) cwd-relative
+      3) repo-root-relative
+    Returns first that exists, else None.
+    """
     project_root = Path(__file__).resolve().parents[2]  # repo root
 
     def _resolve_existing(v: str) -> Optional[Path]:
@@ -42,26 +57,17 @@ def _get_first_existing_path(cfg: dict, keys: list[str]) -> Optional[Path]:
         resolved = _resolve_existing(v)
         if resolved:
             return resolved
-
     return None
 
 
-_TABLE_DIR_MAP = {
-    TABLE_SALES: "sales",
-    TABLE_SALES_ORDER_DETAIL: "sales_order_detail",
-    TABLE_SALES_ORDER_HEADER: "sales_order_header",
-}
-
-
 def _to_snake(s: str) -> str:
-    # CamelCase -> snake_case fallback (only used if table not in map)
     s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", s)
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
     return s.lower()
 
 
 def _tables_from_sales_cfg(sales_cfg: dict) -> list[str]:
-    sales_output = str(sales_cfg.get("sales_output", "sales")).lower()
+    sales_output = str(sales_cfg.get("sales_output", "sales")).lower().strip()
     if sales_output not in {"sales", "sales_order", "both"}:
         raise ValueError(f"Invalid sales_output: {sales_output}")
 
@@ -70,7 +76,6 @@ def _tables_from_sales_cfg(sales_cfg: dict) -> list[str]:
         tables.append(TABLE_SALES)
     if sales_output in {"sales_order", "both"}:
         tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
-
     return tables
 
 
@@ -78,41 +83,119 @@ def _table_dir_name(table: str) -> str:
     return _TABLE_DIR_MAP.get(table, _to_snake(table))
 
 
-def _table_out_dir(base: Path, table: str) -> Path:
-    # OutputPaths keeps Sales in root, other tables under subfolder == table name
-    # (e.g., .../csv/SalesOrderHeader/*.csv)
-    return base if table == TABLE_SALES else (base / table)
-
-
 def _resolve_merged_parquet(fact_out: Path, sales_cfg: dict, table: str) -> Optional[Path]:
-    # fact_out is the root (e.g., data/fact_out)
+    """
+    Locate merged parquet output in scratch fact_out.
+
+    We intentionally search multiple layouts because scratch folders have evolved:
+      - <fact_out>/parquet/<snake_table>/<TableName>.parquet   (current order tables)
+      - <fact_out>/<snake_table>/<TableName>.parquet          (older)
+      - Sales merged file may sit at <fact_out>/parquet/sales.parquet or <fact_out>/sales.parquet
+    """
     parquet_root = fact_out / "parquet"
+    tdir = _table_dir_name(table)
 
     if table == TABLE_SALES:
-        merged_name = str(sales_cfg.get("merged_file", "sales.parquet"))
+        merged_name = str(sales_cfg.get("merged_file") or "sales.parquet")
         candidates = [
             parquet_root / merged_name,
-            parquet_root / table / merged_name,   # fallback
-            fact_out / merged_name,               # legacy fallback
-            fact_out / table / merged_name,       # fallback
+            parquet_root / tdir / merged_name,
+            fact_out / merged_name,
+            fact_out / tdir / merged_name,
         ]
     else:
         merged_name = f"{table}.parquet"
         candidates = [
-            parquet_root / table / merged_name,   # expected (per OutputPaths)
-            parquet_root / merged_name,           # fallback
-            fact_out / table / merged_name,       # fallback
-            fact_out / merged_name,               # fallback
+            parquet_root / tdir / merged_name,
+            parquet_root / table / merged_name,   # fallback if CamelCase dir used
+            parquet_root / merged_name,           # fallback if written to root
+            fact_out / tdir / merged_name,
+            fact_out / table / merged_name,
+            fact_out / merged_name,
         ]
 
     for p in candidates:
-        if p.exists():
+        if p.exists() and p.is_file():
             return p
+    return None
+
+
+def _looks_like_delta_table_dir(p: Path) -> bool:
+    return p.is_dir() and (p / "_delta_log").exists()
+
+
+def _delta_name_variants(table: str) -> list[str]:
+    """
+    Plausible directory names for delta tables.
+    Includes both snake_case and CamelCase variants.
+    """
+    snake = _to_snake(table)
+    canonical = _table_dir_name(table)
+
+    variants = [
+        table,
+        table.lower(),
+        snake,
+        snake.replace("_", ""),
+        canonical,
+        canonical.replace("_", ""),
+        table.replace("_", ""),
+        table.replace(" ", ""),
+    ]
+
+    # de-dup while preserving order
+    out: list[str] = []
+    seen = set()
+    for v in variants:
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _find_delta_table_dir(fact_out: Path, sales_cfg: dict, table: str) -> Optional[Path]:
+    """
+    Locate a delta table directory for `table` by searching multiple roots:
+      - sales_cfg.delta_output_folder (if provided)
+      - <fact_out>/delta
+      - <fact_out>/deltaparquet
+      - <fact_out>/sales (legacy)
+    """
+    roots: list[Path] = []
+
+    def _add_root(p: Optional[Path]) -> None:
+        if not p:
+            return
+        try:
+            rp = p.expanduser().resolve()
+        except Exception:
+            return
+        if rp.exists() and rp.is_dir() and rp not in roots:
+            roots.append(rp)
+
+    cfg_delta = sales_cfg.get("delta_output_folder")
+    if cfg_delta:
+        _add_root(Path(str(cfg_delta)))
+
+    _add_root(fact_out / "delta")
+    _add_root(fact_out / "deltaparquet")
+    _add_root(fact_out / "sales")
+
+    # Search
+    for root in roots:
+        for name in _delta_name_variants(table):
+            cand = root / name
+            if _looks_like_delta_table_dir(cand):
+                return cand
 
     return None
 
 
 def _copy_delta_table_dir(src: Path, dst: Path, skip_dirnames: set[str]) -> None:
+    """
+    Copy a delta table directory snapshot (keep _delta_log and data files),
+    but skip internal scratch dirs like _tmp_parts.
+    """
     if dst.exists():
         shutil.rmtree(dst, ignore_errors=True)
     dst.mkdir(parents=True, exist_ok=True)
@@ -127,13 +210,38 @@ def _copy_delta_table_dir(src: Path, dst: Path, skip_dirnames: set[str]) -> None
             shutil.copy2(item, target)
 
 
+def _resolve_csv_table_dir(fact_out: Path, table: str) -> Optional[Path]:
+    """
+    Locate CSV chunk folder for a table.
+    We accept both:
+      - <fact_out>/csv/<snake_table>/
+      - <fact_out>/csv/<TableName>/
+      - <fact_out>/csv/ (Sales may be rooted)
+    """
+    csv_root = fact_out / "csv"
+    if not csv_root.exists():
+        return None
+
+    tdir = _table_dir_name(table)
+    candidates: list[Path] = []
+
+    if table == TABLE_SALES:
+        candidates += [csv_root / tdir, csv_root / table, csv_root]
+    else:
+        candidates += [csv_root / tdir, csv_root / table, csv_root / table.lower()]
+
+    for p in candidates:
+        if p.exists() and p.is_dir():
+            return p
+    return None
+
+
 def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     """
     Handles:
-    - Creating final packaged folder (dims + facts)
+    - Creating final packaged folder (dims + config copied by output_utils)
     - Copying fact outputs (Sales / SalesOrderHeader / SalesOrderDetail)
     - Generating SQL scripts (CSV only)
-    - Cleaning stale output
     """
     file_format = str(sales_cfg["file_format"]).lower()
     is_csv = file_format == "csv"
@@ -151,7 +259,6 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         keys=["model_yaml_path", "model_path", "model_file", "model_yaml", "model"],
     )
 
-    # Create final output folder (dims packaged here)
     with stage("Creating Final Output Folder"):
         final_folder = create_final_output_folder(
             final_folder_root=final_root,
@@ -166,154 +273,92 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             package_facts=False,
         )
 
-        # HARD FIX: remove URL-encoded duplicate run folder (%20)
+        # Remove URL-encoded duplicate run folder (%20)
         parent = final_folder.parent
         real_name = final_folder.name
         for sibling in parent.iterdir():
             if sibling.is_dir() and "%20" in sibling.name and unquote(sibling.name) == real_name:
-                shutil.rmtree(sibling)
+                shutil.rmtree(sibling, ignore_errors=True)
 
         dims_out = final_folder / "dimensions"
         facts_out = final_folder / "facts"
+        facts_out.mkdir(parents=True, exist_ok=True)
 
         tables = _tables_from_sales_cfg(sales_cfg)
-
-        # Clean old packaged fact folders (idempotent)
-        for t in tables:
-            variants = {
-                _table_dir_name(t),  # canonical snake name
-                t,                   # CamelCase
-                t.lower(),           # lower CamelCase
-                _to_snake(t),         # snake fallback
-            }
-            for v in variants:
-                out_dir = facts_out / v
-                if out_dir.exists():
-                    shutil.rmtree(out_dir, ignore_errors=True)
 
         # ============================================================
         # PARQUET MODE — copy merged parquet(s), then exit
         # ============================================================
         if file_format == "parquet":
             copied = 0
+            missing: list[str] = []
+
             for t in tables:
-                merged = _resolve_merged_parquet(fact_out, sales_cfg, t)
-                if merged is None:
-                    info(f"No merged parquet found for {t}; skipping.")
+                src = _resolve_merged_parquet(fact_out, sales_cfg, t)
+                if src is None:
+                    missing.append(t)
+                    info(
+                        f"No merged parquet found for {t}. "
+                        f"Checked: {fact_out / 'parquet'} and {fact_out}."
+                    )
                     continue
 
-                facts_out.mkdir(parents=True, exist_ok=True)
+                # Keep Sales filename untouched; normalize others to <TableName>.parquet
+                dst_name = src.name if t == TABLE_SALES else f"{t}.parquet"
+                dst = facts_out / dst_name
 
-                # Normalize merged filename if needed (optional but nice)
-                # Prefer "<TableName>.parquet" for non-sales tables
-                if t != TABLE_SALES:
-                    dst_name = f"{t}.parquet"
-                else:
-                    dst_name = merged.name  # keep existing sales filename (e.g., sales.parquet)
+                if dst.exists():
+                    dst.unlink()
 
-                dst_file = facts_out / dst_name
-                if dst_file.exists():
-                    dst_file.unlink()
-
-                shutil.copy2(merged, dst_file)
+                shutil.copy2(src, dst)
                 copied += 1
 
-            done(f"Copied {copied} parquet fact file(s).")
+            if missing:
+                raise RuntimeError(
+                    "No merged parquet found for table(s): "
+                    + ", ".join(missing)
+                    + f". Scratch roots checked: {fact_out} and {fact_out / 'parquet'}."
+                )
 
-            # Parquet never generates SQL scripts
+            done(f"Copied {copied} parquet fact file(s).")
             return final_folder
 
         # ============================================================
         # DELTA MODE — copy delta tables (folder per table)
         # ============================================================
         if file_format == "deltaparquet":
-            import re
-            from src.facts.sales.output_paths import build_output_paths_from_sales_cfg
-
-            out_paths = build_output_paths_from_sales_cfg(sales_cfg)
-
-            def _looks_like_delta_table_dir(p: Path) -> bool:
-                return p.is_dir() and (p / "_delta_log").exists()
-
-            def _table_name_variants(table: str) -> list[str]:
-                # SalesOrderDetail -> sales_order_detail, salesorderdetail, etc.
-                snake = re.sub(r"(?<!^)(?=[A-Z])", "_", table).lower()
-                return [
-                    table,
-                    table.lower(),
-                    snake,
-                    snake.replace("_", ""),
-                    table.replace("_", ""),
-                    table.replace(" ", ""),
-                ]
-
-            delta_roots: list[Path] = []
-
-            def _add_root(p: Optional[Path]) -> None:
-                if not p:
-                    return
-                try:
-                    rp = p.expanduser().resolve()
-                except Exception:
-                    return
-                if rp.exists() and rp.is_dir() and rp not in delta_roots:
-                    delta_roots.append(rp)
-
-            # 1) explicit config root (if any)
-            cfg_delta = sales_cfg.get("delta_output_folder")
-            if cfg_delta:
-                _add_root(Path(str(cfg_delta)))
-
-            # 2) common new layout: <fact_out>/delta/<TableName or snake>
-            _add_root(fact_out / "delta")
-
-            # 3) legacy-ish / alternate layouts (resilience)
-            _add_root(fact_out / "deltaparquet")
-            _add_root(fact_out / "sales")  # some older flows
-
-            # 4) add parents of the “expected” per-table path from OutputPaths
-            expected_by_table: dict[str, Path] = {}
-            for t in tables:
-                exp = Path(out_paths.delta_table_dir(t)).resolve()
-                expected_by_table[t] = exp
-                _add_root(exp.parent)
-
-            def _find_delta_table_dir(table: str) -> Optional[Path]:
-                # First: accept the exact expected path if it’s already a delta table
-                exp = expected_by_table.get(table)
-                if exp and _looks_like_delta_table_dir(exp):
-                    return exp
-
-                # Then: try root/<variant> for each configured root
-                for root in delta_roots:
-                    # root itself could be a delta table dir (edge case)
-                    if _looks_like_delta_table_dir(root) and root.name.lower() in {table.lower(), _table_dir_name(table)}:
-                        return root
-
-                    for name in _table_name_variants(table) + [_table_dir_name(table)]:
-                        cand = root / name
-                        if _looks_like_delta_table_dir(cand):
-                            return cand
-
-                return None
-
             copied = 0
-            searched = [str(p) for p in delta_roots]
+            missing: list[str] = []
 
             for t in tables:
-                src_dir = _find_delta_table_dir(t)
+                src_dir = _find_delta_table_dir(fact_out, sales_cfg, t)
                 if src_dir is None:
-                    info(f"No delta output found for {t} at {expected_by_table[t]}; skipping.")
+                    missing.append(t)
+                    info(
+                        f"No delta output found for {t}. "
+                        f"Checked delta_output_folder plus: {fact_out / 'delta'}, {fact_out / 'deltaparquet'}, {fact_out / 'sales'}."
+                    )
                     continue
 
                 dst_dir = facts_out / _table_dir_name(t)
                 _copy_delta_table_dir(src_dir, dst_dir, skip_dirnames={"_tmp_parts"})
                 copied += 1
 
-            if copied == 0:
+            if missing:
                 raise RuntimeError(
-                    f"No delta fact outputs found for tables={tables}. "
-                    f"Checked delta roots: {searched}"
+                    "No delta fact outputs found for table(s): "
+                    + ", ".join(missing)
+                    + ". Checked delta_output_folder plus these scratch roots: "
+                    + ", ".join(
+                        [
+                            str(p)
+                            for p in [
+                                fact_out / "delta",
+                                fact_out / "deltaparquet",
+                                fact_out / "sales",
+                            ]
+                        ]
+                    )
                 )
 
             done(f"Copied {copied} delta table snapshot(s).")
@@ -325,15 +370,14 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         if file_format != "csv":
             raise ValueError(f"Unsupported file_format in packaging: {file_format!r}")
 
-        csv_root = fact_out / "csv"
-        if not csv_root.exists():
-            raise RuntimeError(f"Expected CSV output folder not found: {csv_root}")
-
         copied_files = 0
+        missing_dirs: list[str] = []
+
         for t in tables:
-            src_dir = _table_out_dir(csv_root, t)
-            if not src_dir.exists():
-                info(f"No CSV folder found for {t} at {src_dir}; skipping.")
+            src_dir = _resolve_csv_table_dir(fact_out, t)
+            if src_dir is None:
+                missing_dirs.append(t)
+                info(f"No CSV folder found for {t}; expected under {fact_out / 'csv'}.")
                 continue
 
             dst_dir = facts_out / _table_dir_name(t)
@@ -348,6 +392,13 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                     raise RuntimeError(f"Duplicate CSV filename during packaging: {target}")
                 shutil.copy2(f, target)
                 copied_files += 1
+
+        if missing_dirs:
+            raise RuntimeError(
+                "No CSV fact outputs found for table(s): "
+                + ", ".join(missing_dirs)
+                + f". Expected under: {fact_out / 'csv'}"
+            )
 
         done(f"Copied {copied_files} CSV fact file(s).")
 
@@ -399,14 +450,14 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
 
         with stage("Generating CREATE TABLE Scripts"):
             # Many SQL generators assume facts are in ONE flat folder.
-            # Create a temp flat folder via hardlinks (fallback to copy) so we don't change the generator yet.
+            # Create a temp flat folder via hardlinks (fallback to copy).
             tmp_flat = final_folder / "_facts_flat_for_sql"
             if tmp_flat.exists():
                 shutil.rmtree(tmp_flat, ignore_errors=True)
             tmp_flat.mkdir(parents=True, exist_ok=True)
 
             for f in facts_out.rglob("*.csv"):
-                # only facts; dims are elsewhere, but guard anyway
+                # guard: dims live elsewhere
                 if dims_out in f.parents:
                     continue
                 dst = tmp_flat / f.name
@@ -420,7 +471,6 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                 fact_folder=tmp_flat,
                 output_folder=sql_root,
                 cfg=cfg,
-                skip_order_cols=sales_cfg.get("skip_order_cols", False),
             )
 
             shutil.rmtree(tmp_flat, ignore_errors=True)

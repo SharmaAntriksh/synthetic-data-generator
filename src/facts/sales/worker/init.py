@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import numpy as np
 import pyarrow as pa
@@ -10,6 +10,7 @@ from ..sales_logic.globals import State, bind_globals
 from .schemas import schema_dict_cols
 from ..output_paths import OutputPaths
 from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
+
 
 # ===============================================================
 # Small utils (moved from sales_worker.py)
@@ -116,7 +117,7 @@ def init_sales_worker(worker_cfg: dict):
         no_discount_key = worker_cfg["no_discount_key"]
         delta_output_folder = worker_cfg.get("delta_output_folder") or op.get("delta_output_folder")
         merged_file = worker_cfg.get("merged_file") or op.get("merged_file")
-        
+
         write_delta = worker_cfg.get("write_delta", False)
 
         skip_order_cols = worker_cfg["skip_order_cols"]
@@ -125,8 +126,11 @@ def init_sales_worker(worker_cfg: dict):
         if sales_output not in {"sales", "sales_order", "both"}:
             raise RuntimeError(f"Invalid sales_output: {sales_output}")
 
-        # Keep the user's intent, but override for normalized outputs (detail/header need order keys)
-        skip_order_cols_requested = skip_order_cols
+        # Preserve user's intent for the Sales table, even if we force order cols on
+        # to generate Header/Detail.
+        skip_order_cols_requested = bool(skip_order_cols)
+
+        # Effective behavior: Order tables require order keys, so chunk_builder must output them.
         if sales_output in {"sales_order", "both"}:
             skip_order_cols = False
 
@@ -139,7 +143,7 @@ def init_sales_worker(worker_cfg: dict):
 
     except KeyError as e:
         raise RuntimeError(f"Missing worker config key: {e}") from None
-    
+
     if not file_format:
         raise RuntimeError("Missing worker config key: 'file_format'")
     if not out_folder:
@@ -210,8 +214,13 @@ def init_sales_worker(worker_cfg: dict):
         output_paths.ensure_dirs(t)
 
     # -----------------------------------------------------------
-    # Canonical schemas (NO inference, NO drift)
+    # Canonical schemas
+    #
+    # CRITICAL RULE:
+    # - Sales output must remain unchanged for sales_output="sales" and "both"
     # -----------------------------------------------------------
+
+    # --- Sales (unchanged) ---
     base_fields = [
         pa.field("CustomerKey", pa.int64()),
         pa.field("ProductKey", pa.int64()),
@@ -230,7 +239,6 @@ def init_sales_worker(worker_cfg: dict):
         pa.field("DiscountAmount", pa.float64()),
 
         pa.field("DeliveryStatus", pa.string()),
-        pa.field("IsOrderDelayed", pa.int8()),
     ]
 
     order_fields = [
@@ -249,44 +257,48 @@ def init_sales_worker(worker_cfg: dict):
     schema_no_order_delta = pa.schema(base_fields + delta_fields)
     schema_with_order_delta = pa.schema(order_fields + base_fields + delta_fields)
 
-    # Canonical schemas (by logical table; NO inference, NO drift)
-
-    # IMPORTANT:
-    # - skip_order_cols is the *effective* behavior used by chunk_builder
-    # - skip_order_cols_requested is what the user asked for on the Sales table
-    skip_order_cols_requested = bool(worker_cfg.get("skip_order_cols_requested", skip_order_cols))
-
-    # SalesOrderDetail always includes order cols (it’s the detail grain)
-    detail_schema = schema_with_order_delta if file_format == "deltaparquet" else schema_with_order
-
-    # Sales table respects requested skip_order_cols (can be dropped even when detail requires them)
     if file_format == "deltaparquet":
         sales_schema = schema_no_order_delta if skip_order_cols_requested else schema_with_order_delta
     else:
         sales_schema = schema_no_order if skip_order_cols_requested else schema_with_order
 
-    # SalesOrderHeader schema
+    # --- SalesOrderDetail (SLIM, conventional) ---
+    # Conventional: header-level foreign keys + order dates live in Header, not Detail.
+    # DeliveryDate can vary per line -> keep in Detail.
+    detail_fields = [
+        pa.field("SalesOrderNumber", pa.int64()),
+        pa.field("SalesOrderLineNumber", pa.int64()),
+
+        pa.field("ProductKey", pa.int64()),
+
+        pa.field("DeliveryDate", pa.date32()),
+
+        pa.field("Quantity", pa.int64()),
+        pa.field("NetPrice", pa.float64()),
+        pa.field("UnitCost", pa.float64()),
+        pa.field("UnitPrice", pa.float64()),
+        pa.field("DiscountAmount", pa.float64()),
+
+        pa.field("DeliveryStatus", pa.string()),
+        pa.field("IsOrderDelayed", pa.int8()),
+    ]
+    detail_schema = pa.schema(detail_fields + delta_fields) if file_format == "deltaparquet" else pa.schema(detail_fields)
+
+    # --- SalesOrderHeader (SLIM, NO aggregates, NO DeliveryDate) ---
     header_fields = [
         pa.field("SalesOrderNumber", pa.int64()),
+
         pa.field("CustomerKey", pa.int64()),
         pa.field("StoreKey", pa.int64()),
         pa.field("PromotionKey", pa.int64()),
         pa.field("CurrencyKey", pa.int64()),
+
         pa.field("OrderDate", pa.date32()),
         pa.field("DueDate", pa.date32()),
-        pa.field("DeliveryDate", pa.date32()),
-        pa.field("LineCount", pa.int64()),
-        pa.field("TotalQuantity", pa.int64()),
-        pa.field("GrossAmount", pa.float64()),
-        pa.field("NetAmount", pa.float64()),
-        pa.field("TotalCost", pa.float64()),
-        pa.field("TotalDiscount", pa.float64()),
+
         pa.field("IsOrderDelayed", pa.int8()),
     ]
-    if file_format == "deltaparquet":
-        header_schema = pa.schema(header_fields + delta_fields)
-    else:
-        header_schema = pa.schema(header_fields)
+    header_schema = pa.schema(header_fields + delta_fields) if file_format == "deltaparquet" else pa.schema(header_fields)
 
     schema_by_table = {
         TABLE_SALES: sales_schema,
@@ -342,7 +354,10 @@ def init_sales_worker(worker_cfg: dict):
         "compression": compression,
         "output_paths": output_paths,
         "sales_output": sales_output,
-        "skip_order_cols_requested": skip_order_cols_requested,
+
+        # preserve user intent for Sales, even if we force order cols for order tables
+        "skip_order_cols_requested": bool(skip_order_cols_requested),
+        "skip_order_cols": bool(skip_order_cols),
 
         # delta
         "delta_output_folder": os.path.normpath(delta_output_folder) if delta_output_folder else None,
@@ -350,7 +365,6 @@ def init_sales_worker(worker_cfg: dict):
 
         # behavior
         "no_discount_key": no_discount_key,
-        "skip_order_cols": skip_order_cols,
         "partition_enabled": bool(partition_enabled),
         "partition_cols": list(partition_cols),
         "models_cfg": models_cfg,
@@ -362,7 +376,6 @@ def init_sales_worker(worker_cfg: dict):
         "schema_no_order_delta": schema_no_order_delta,
         "schema_with_order_delta": schema_with_order_delta,
         "sales_schema": sales_schema,
-        "skip_order_cols_requested": skip_order_cols_requested,
         "schema_by_table": schema_by_table,
         "parquet_dict_cols_by_table": parquet_dict_cols_by_table,
 

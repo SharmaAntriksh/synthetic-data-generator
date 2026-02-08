@@ -22,7 +22,6 @@ def _pa_parquet():
 
 
 from ..sales_logic.globals import State
-from ..output_paths import TABLE_SALES_ORDER_HEADER
 
 
 def _expected_schema(table_name: Optional[str]) -> pa.Schema:
@@ -39,16 +38,22 @@ def _dict_cols(table_name: Optional[str]) -> list[str]:
     return list(getattr(State, "parquet_dict_cols", []))
 
 
-def _add_year_month_from_order_date(table: pa.Table) -> pa.Table:
+def _add_year_month(table: pa.Table) -> pa.Table:
     """
-    For deltaparquet header output: ensure Year/Month exist (derived from OrderDate).
+    For deltaparquet outputs: ensure Year/Month exist.
+    Prefer OrderDate; fallback to DeliveryDate.
     """
-    if "OrderDate" not in table.schema.names:
+    date_col = None
+    for c in ("OrderDate", "DeliveryDate"):
+        if c in table.schema.names:
+            date_col = c
+            break
+    if not date_col:
         return table
 
     pc = _pa_compute()
-    year = pc.cast(pc.year(table["OrderDate"]), pa.int16())
-    month = pc.cast(pc.month(table["OrderDate"]), pa.int8())
+    year = pc.cast(pc.year(table[date_col]), pa.int16())
+    month = pc.cast(pc.month(table[date_col]), pa.int8())
 
     if "Year" not in table.schema.names:
         table = table.append_column("Year", year)
@@ -60,9 +65,10 @@ def _add_year_month_from_order_date(table: pa.Table) -> pa.Table:
 def _normalize_to_schema(table: pa.Table, expected: pa.Schema, *, table_name: Optional[str]) -> pa.Table:
     expected = expected.remove_metadata()
 
-    # Special case: header delta wants Year/Month, but header_builder may not add them.
-    if getattr(State, "file_format", None) == "deltaparquet" and table_name == TABLE_SALES_ORDER_HEADER:
-        table = _add_year_month_from_order_date(table)
+    # If expected wants partition columns, add them automatically (delta convenience)
+    wants_year_month = "Year" in expected.names and "Month" in expected.names
+    if wants_year_month and ("Year" not in table.schema.names or "Month" not in table.schema.names):
+        table = _add_year_month(table)
 
     got_names = set(table.schema.names)
     exp_names = set(expected.names)

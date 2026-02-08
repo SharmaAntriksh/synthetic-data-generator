@@ -17,6 +17,26 @@ from .sales_writer import merge_parquet_files
 from .output_paths import OutputPaths, TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
 
 
+from dataclasses import dataclass
+from typing import Any, Optional
+
+@dataclass(frozen=True)
+class TableOutputs:
+    table: str
+    file_format: str
+    chunks: list[Any]                 # list[str] for csv/parquet; list[{"part":..,"rows":..}] for delta
+    merged_path: Optional[str] = None # parquet only
+    delta_table_dir: Optional[str] = None  # delta only
+    delta_parts_dir: Optional[str] = None  # delta only
+
+@dataclass(frozen=True)
+class SalesRunManifest:
+    sales_output: str
+    file_format: str
+    out_folder: str
+    tables: dict[str, TableOutputs]
+
+
 # =====================================================================
 # Helpers
 # =====================================================================
@@ -317,7 +337,8 @@ def generate_sales_fact(
     skip_order_cols=False,
     write_pyarrow=True,
     partition_enabled=False,
-    partition_cols=None
+    partition_cols=None,
+    return_manifest: bool = False,
 ):
     # ------------------------------------------------------------
     # Normalize cfg defaults (cfg is source-of-truth when call-site omits)
@@ -638,36 +659,66 @@ def generate_sales_fact(
     done("All chunks completed.")
 
     # ------------------------------------------------------------
+    # Manifest helper (defined BEFORE returns so it actually runs)
+    # ------------------------------------------------------------
+    def _build_sales_manifest() -> SalesRunManifest:
+        per_table: dict[str, TableOutputs] = {}
+
+        for t in tables:
+            per_table[t] = TableOutputs(
+                table=t,
+                file_format=file_format,
+                chunks=list(created_by_table.get(t, [])),
+                merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
+                delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
+                delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
+            )
+
+        return SalesRunManifest(
+            sales_output=sales_output,
+            file_format=file_format,
+            out_folder=str(out_folder_p),
+            tables=per_table,
+        )
+
+    # ------------------------------------------------------------
     # Final assembly (TABLE-AWARE)
     # ------------------------------------------------------------
     if file_format == "deltaparquet":
-        # IMPORTANT: use the table-aware delta writer (expects parts per table)
         from .writers.sales_delta import write_delta_partitioned
+
+        missing_parts = []
+        wrote = 0
 
         for t in tables:
             parts_dir = output_paths.delta_parts_dir(t)
             delta_dir = output_paths.delta_table_dir(t)
 
-            # If a table wasn't generated for some reason, skip cleanly
             if not os.path.exists(parts_dir):
-                info(f"No delta parts folder for {t}: {parts_dir} (skipping)")
+                missing_parts.append((t, parts_dir))
                 continue
 
             write_delta_partitioned(
                 parts_folder=parts_dir,
                 delta_output_folder=delta_dir,
                 partition_cols=partition_cols,
-                table_name=t,  # <-- key
+                table_name=t,
             )
+            wrote += 1
 
-        return created_files
+        if wrote == 0:
+            msg = " | ".join([f"{t} -> {p}" for t, p in missing_parts]) if missing_parts else "no parts found"
+            raise RuntimeError(f"No delta parts found for any table. {msg}")
+
+        manifest = _build_sales_manifest()
+        return (created_files, manifest) if return_manifest else created_files
 
     if file_format == "csv":
-        return created_files
+        manifest = _build_sales_manifest()
+        return (created_files, manifest) if return_manifest else created_files
 
     if file_format == "parquet":
         if merge_parquet:
-            # Prefer globbing per-table rather than filtering created_files
             from .writers.parquet_merge import merge_parquet_files
 
             for t in tables:
@@ -675,7 +726,6 @@ def generate_sales_fact(
                     f for f in glob.glob(output_paths.chunk_glob(t, "parquet"))
                     if os.path.isfile(f)
                 )
-
                 if not chunks:
                     info(f"No parquet chunks found for {t}; skipping merge")
                     continue
@@ -684,10 +734,11 @@ def generate_sales_fact(
                     chunks,
                     output_paths.merged_path(t),
                     delete_after=bool(delete_chunks),
-                    table_name=t,  # <-- key
+                    table_name=t,
                 )
 
-        return created_files
+        manifest = _build_sales_manifest()
+        return (created_files, manifest) if return_manifest else created_files
 
-    return created_files
+    raise ValueError(f"Unknown file_format: {file_format}")
 
