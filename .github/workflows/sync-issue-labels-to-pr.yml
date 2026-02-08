@@ -5,8 +5,9 @@ on:
     types: [opened, edited, reopened, synchronize]
 
 permissions:
+  contents: read
   issues: write
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   sync:
@@ -20,7 +21,6 @@ jobs:
             const repo = context.repo.repo;
             const prNumber = context.payload.pull_request.number;
 
-            // Fetch PR + its closing issues via GraphQL
             const query = `
               query($owner:String!, $repo:String!, $pr:Int!) {
                 repository(owner:$owner, name:$repo) {
@@ -34,11 +34,8 @@ jobs:
                   }
                 }
               }`;
-
             const data = await github.graphql(query, { owner, repo, pr: prNumber });
             const issues = data.repository.pullRequest.closingIssuesReferences.nodes || [];
-
-            // Union of labels from all closing issues
             const labels = [...new Set(issues.flatMap(i => (i.labels.nodes || []).map(l => l.name)))];
 
             if (labels.length === 0) {
@@ -46,12 +43,10 @@ jobs:
               return;
             }
 
-            // Apply labels to the PR (PRs are issues in the REST API)
             await github.rest.issues.addLabels({
               owner,
               repo,
               issue_number: prNumber,
               labels
             });
-
             core.info(`Applied labels to PR #${prNumber}: ${labels.join(", ")}`);
