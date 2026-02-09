@@ -8,40 +8,62 @@ from typing import Optional, Sequence, Union
 
 from src.utils.logging_utils import stage, done, info
 
-# ============================================================
-# Constants / shared
-# ============================================================
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_IGNORE_PATTERNS = shutil.ignore_patterns("_tmp_parts*", "tmp*", "*_tmp*")
-
 
 # ============================================================
-# Parquet helpers (Power Query Date typing)
+# Parquet helpers (Power BI / Power Query friendliness)
 # ============================================================
 
 def _datetime_cols(df) -> list[str]:
-    import pandas as pd
-    return [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
+    """Return columns that are pandas datetime64/tz-aware."""
+    try:
+        import pandas as pd
+    except Exception:
+        return []
+    cols: list[str] = []
+    for c in getattr(df, "columns", []):
+        try:
+            if pd.api.types.is_datetime64_any_dtype(df[c]):
+                cols.append(str(c))
+        except Exception:
+            continue
+    return cols
 
 
 def _guess_date_cols(df) -> list[str]:
     """
-    Heuristic: treat columns as "date columns" if:
-      - dtype is datetime64
-      - and name matches common date-like patterns
-    This avoids accidentally truncating true timestamps.
+    Heuristic for date-like columns. Used only when date_cols is not provided.
+
+    Conservative on purpose: only matches columns that both:
+      - look date-like by name, AND
+      - are datetime dtype.
     """
-    dt_cols = _datetime_cols(df)
+    dt_cols = set(_datetime_cols(df))
     if not dt_cols:
         return []
 
-    picks: list[str] = []
+    dateish_tokens = (
+        "date",
+        "day",
+        "month",
+        "year",
+        "start",
+        "end",
+        "open",
+        "close",
+        "birth",
+        "created",
+        "updated",
+        "effective",
+        "expiry",
+        "valid",
+    )
+
+    out: list[str] = []
     for c in dt_cols:
         cl = c.lower()
-        if cl == "date" or cl.endswith("date") or "date" in cl or cl in {"dob", "birthdate"}:
-            picks.append(c)
-    return picks
+        if any(tok in cl for tok in dateish_tokens):
+            out.append(c)
+    return out
 
 
 def write_parquet_with_date32(
@@ -60,7 +82,7 @@ def write_parquet_with_date32(
     Selection:
       - If date_cols is provided: cast only those columns (if they are datetime dtype)
       - Else if cast_all_datetime=True: cast all datetime64 columns
-      - Else: cast "date-like" datetime columns based on name heuristic
+      - Else: heuristic based on column names (see _guess_date_cols)
 
     Notes:
       - Casting timestamp -> date truncates time-of-day. We normalize selected cols to midnight before casting.
@@ -90,6 +112,7 @@ def write_parquet_with_date32(
 
     df2 = df.copy()
     for c in target:
+        # normalize to midnight to avoid "unexpected" day shifts after date cast
         df2[c] = pd.to_datetime(df2[c]).dt.normalize()
 
     try:
@@ -97,6 +120,7 @@ def write_parquet_with_date32(
         import pyarrow.parquet as pq
     except Exception:
         if force_date32:
+            # Fallback: write python date objects so parquet writer uses date logical type.
             for c in target:
                 df2[c] = pd.to_datetime(df2[c]).dt.date
         df2.to_parquet(out_path, index=False)
@@ -119,47 +143,7 @@ def write_parquet_with_date32(
 
 
 # ============================================================
-# SQL helper file copies
-# ============================================================
-
-def _copy_if_exists(src: Path, dst: Path, log_msg: str) -> None:
-    if not src.exists():
-        info(f"{src.name} not found; skipping")
-        return
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
-    info(log_msg)
-
-
-def copy_sql_constraints(sql_root: Path) -> None:
-    constraints_file = _PROJECT_ROOT / "scripts" / "sql" / "bootstrap" / "create_constraints.sql"
-    _copy_if_exists(
-        constraints_file,
-        sql_root / "schema" / "03_create_constraints.sql",
-        "Included create_constraints.sql in final output",
-    )
-
-
-def copy_sql_views(sql_root: Path) -> None:
-    views_file = _PROJECT_ROOT / "scripts" / "sql" / "views" / "create_views.sql"
-    _copy_if_exists(
-        views_file,
-        sql_root / "schema" / "04_create_views.sql",
-        "Included create_views.sql in final output",
-    )
-
-
-def copy_sql_indexes(sql_root: Path) -> None:
-    cci_file = _PROJECT_ROOT / "scripts" / "sql" / "columnstore" / "create_drop_cci.sql"
-    _copy_if_exists(
-        cci_file,
-        sql_root / "indexes" / "create_drop_cci.sql",
-        "Included create_drop_cci.sql in SQL indexes",
-    )
-
-
-# ============================================================
-# Misc helpers
+# Final output folder creation (dimensions only)
 # ============================================================
 
 def format_number_short(n: int) -> str:
@@ -177,6 +161,9 @@ def _copy_config_files_into_run_folder(
     config_yaml_path: Optional[Union[str, Path]] = None,
     model_yaml_path: Optional[Union[str, Path]] = None,
 ) -> None:
+    """
+    Copy config/model YAMLs into <final_folder>/config/ for traceability.
+    """
     config_dir = final_folder / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -189,7 +176,11 @@ def _copy_config_files_into_run_folder(
         shutil.copy2(p, config_dir / dest_name)
 
     _copy(config_yaml_path, "config.yaml")
-    _copy(model_yaml_path, "model.yaml")
+    _copy(model_yaml_path, "models.yaml")
+
+    # Backward-compat alias (some older scripts used model.yaml)
+    if model_yaml_path:
+        _copy(model_yaml_path, "model.yaml")
 
 
 def _ensure_clean_dir(p: Path) -> None:
@@ -197,28 +188,6 @@ def _ensure_clean_dir(p: Path) -> None:
         shutil.rmtree(p, ignore_errors=True)
     p.mkdir(parents=True, exist_ok=True)
 
-
-def _find_merged_sales_parquet(fact_folder: Path, sales_cfg: dict) -> Optional[Path]:
-    """
-    Prefer the merged sales parquet file if present.
-    Common locations:
-      - <fact_folder>/parquet/<merged_name>
-      - <fact_folder>/<merged_name>
-    """
-    merged_name = str(sales_cfg.get("merged_file", "sales.parquet"))
-    candidates = [
-        fact_folder / "parquet" / merged_name,
-        fact_folder / merged_name,
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
-
-
-# ============================================================
-# Final output packager
-# ============================================================
 
 def create_final_output_folder(
     final_folder_root: Path,
@@ -233,266 +202,122 @@ def create_final_output_folder(
     package_facts: bool = True,
 ) -> Path:
     """
-    Packs cleaned dimension + fact data according to config rules.
-    Also copies config/model YAML files into <final_folder>/config/ for traceability.
+    Create the final run folder and package DIMENSIONS into it.
 
-    Date logic:
-      - When file_format == "parquet", dimensions are rewritten so date-like datetime
-        columns are stored as Arrow date32 (Power Query imports as Date).
-      - Facts are NOT rewritten (too large); they are copied as produced.
+    Post modularization:
+      - Facts packaging is handled by src.engine.packaging.*
+      - SQL script packaging is handled by src.engine.packaging.sql_scripts
+
+    This function focuses on:
+      - naming + creating the run folder structure
+      - copying config/model YAML files into <final>/config/
+      - converting/copying DIMENSIONS based on file_format
+
+    Note: 'fact_folder' and 'package_facts' are retained for signature compatibility.
     """
-    stage("Creating Final Output Folder")
+    with stage("Creating Final Output Folder"):
+        ff = str(file_format).strip().lower()
 
-    now = datetime.now()
-    timestamp = now.strftime("%Y-%m-%d %I_%M_%S %p")  # windows-safe (kept)
+        now = datetime.now()
+        timestamp = now.strftime("%Y-%m-%d %I_%M_%S %p")  # windows-safe
 
-    customer_total = cfg["customers"]["total_customers"]
-    sales_total = sales_cfg["total_rows"]
+        customer_total = int(cfg.get("customers", {}).get("total_customers", 0) or 0)
+        sales_total = int(sales_cfg.get("total_rows") or sales_rows_expected or 0)
 
-    cust_short = format_number_short(int(customer_total))
-    sales_short = format_number_short(int(sales_total))
+        dataset_name = (
+            f"{timestamp} Customers {format_number_short(customer_total)} "
+            f"Sales {format_number_short(sales_total)} {ff.upper()}"
+        )
+        final_folder = Path(final_folder_root) / dataset_name
 
-    ff = file_format.lower()
-    fmt_label = {"deltaparquet": "DeltaParquet", "parquet": "Parquet", "csv": "CSV"}.get(ff, file_format)
-    dataset_name = f"{timestamp} Customers {cust_short} Sales {sales_short} {fmt_label}"
+        _ensure_clean_dir(final_folder)
 
-    final_folder = final_folder_root / dataset_name
-    dims_out = final_folder / "dimensions"
-    facts_out = final_folder / "facts"
-
-    _ensure_clean_dir(final_folder)
-    dims_out.mkdir(parents=True, exist_ok=True)
-    facts_out.mkdir(parents=True, exist_ok=True)
-
-    _copy_config_files_into_run_folder(
-        final_folder=final_folder,
-        config_yaml_path=config_yaml_path,
-        model_yaml_path=model_yaml_path,
-    )
-
-    packaging_cfg = cfg.get("packaging", {}) if isinstance(cfg, dict) else {}
-    dim_parquet_compression = packaging_cfg.get("dim_parquet_compression", "snappy")
-    dim_parquet_compression_level = packaging_cfg.get("dim_parquet_compression_level", None)
-    dim_force_date32 = bool(packaging_cfg.get("dim_force_date32", True))
-
-    # --------------------------------------------------------
-    # DIMENSIONS
-    # --------------------------------------------------------
-    if ff == "parquet":
-        import pandas as pd
-
-        for f in parquet_dims.glob("*.parquet"):
-            df = pd.read_parquet(f)
-            out_f = dims_out / f.name
-            write_parquet_with_date32(
-                df,
-                out_f,
-                cast_all_datetime=False,
-                compression=dim_parquet_compression,
-                compression_level=dim_parquet_compression_level,
-                force_date32=dim_force_date32,
-            )
-
-    elif ff == "csv":
-        import pandas as pd
-
-        for f in parquet_dims.glob("*.parquet"):
-            df = pd.read_parquet(f)
-            out_csv = dims_out / f"{f.stem}.csv"
-            out_csv.parent.mkdir(parents=True, exist_ok=True)
-            df.to_csv(out_csv, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
-
-    elif ff == "deltaparquet":
-        from deltalake import write_deltalake
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        for f in parquet_dims.glob("*.parquet"):
-            dim_name = f.stem
-            delta_out = dims_out / dim_name
-            delta_out.mkdir(parents=True, exist_ok=True)
-
-            table = pq.read_table(f)
-
-            schema = table.schema
-            fields = []
-            for field in schema:
-                name = field.name
-                nl = name.lower()
-                if pa.types.is_timestamp(field.type) and (nl == "date" or nl.endswith("date") or "date" in nl or nl in {"dob", "birthdate"}):
-                    fields.append(pa.field(name, pa.date32()))
-                else:
-                    fields.append(field)
-
-            try:
-                table = table.cast(pa.schema(fields), safe=False)
-            except Exception:
-                pass
-
-            write_deltalake(str(delta_out), table, mode="overwrite")
-
-    else:
-        raise ValueError(f"Unknown file_format: {file_format}")
-    
-    # --------------------------------------------------------
-    # DIMENSIONS
-    # --------------------------------------------------------
-    # (existing DIMENSIONS code stays as-is)
-
-    # If this function is being used by engine.packaging, facts are handled there.
-    if not package_facts:
-        done("Creating Final Output Folder")
-        return final_folder
-
-    # --------------------------------------------------------
-    # FACTS (sales)
-    # --------------------------------------------------------
-    sales_target_dir = facts_out / "sales"
-    if sales_target_dir.exists():
-        shutil.rmtree(sales_target_dir, ignore_errors=True)
-
-    # DeltaParquet: copy delta tables (supports Sales OR SalesOrderHeader+SalesOrderDetail)
-    if ff == "deltaparquet":
-        import re
-
-        def _looks_like_delta_table_dir(p: Path) -> bool:
-            return p.is_dir() and (p / "_delta_log").exists()
-
-        def _table_name_variants(table: str) -> list[str]:
-            # SalesOrderDetail -> sales_order_detail, salesorderdetail, etc.
-            snake = re.sub(r"(?<!^)(?=[A-Z])", "_", table).lower()
-            return [
-                table,
-                table.lower(),
-                snake,
-                snake.replace("_", ""),
-                table.replace("_", ""),
-                table.replace(" ", ""),
-            ]
-
-        def _infer_tables_from_config(sales_cfg: dict) -> list[str]:
-            so = str(sales_cfg.get("sales_output") or "").strip().lower()
-            if so in {"sales_order", "salesorder", "order", "orders"}:
-                return ["SalesOrderDetail", "SalesOrderHeader"]
-            if so in {"both", "all", "sales_and_sales_order", "sales+sales_order"}:
-                return ["Sales", "SalesOrderDetail", "SalesOrderHeader"]
-            # default / backwards-compatible
-            return ["Sales"]
-
-        tables = _infer_tables_from_config(sales_cfg)
-
-        # Candidate roots to search for delta tables
-        delta_roots: list[Path] = []
-
-        def _add_root(p: Optional[Path]) -> None:
-            if not p:
-                return
-            try:
-                rp = p.expanduser().resolve()
-            except Exception:
-                return
-            if rp.exists() and rp.is_dir() and rp not in delta_roots:
-                delta_roots.append(rp)
-
-        cfg_delta = sales_cfg.get("delta_output_folder")
-        if cfg_delta:
-            _add_root(Path(str(cfg_delta)))
-
-        # New layout (common): <fact_folder>/delta/<TableName>
-        _add_root(fact_folder / "delta")
-
-        # Other plausible layouts (keep for resilience)
-        _add_root(fact_folder / "deltaparquet")
-        _add_root(fact_folder / "sales")  # legacy behavior in this file
-
-        def _find_delta_table_dir(table: str) -> Optional[Path]:
-            for root in delta_roots:
-                # root itself could be a table dir (edge case)
-                if _looks_like_delta_table_dir(root) and root.name.lower() in {table.lower()}:
-                    return root
-                for name in _table_name_variants(table):
-                    cand = root / name
-                    if _looks_like_delta_table_dir(cand):
-                        return cand
-            return None
-
-        found: dict[str, Path] = {}
-
-        for t in tables:
-            src = _find_delta_table_dir(t)
-            if src is None:
-                expected = fact_folder / "delta" / t
-                info(f"No delta output found for {t} at {expected}; skipping.")
-                continue
-            found[t] = src
-
-        if not found:
-            raise RuntimeError(
-                f"No delta fact outputs found for tables={tables!r}. "
-                "Checked sales.delta_output_folder, <fact_folder>/delta, <fact_folder>/deltaparquet, and legacy <fact_folder>/sales."
-            )
-
-        # Copy each delta table into final output
-        for t, src in found.items():
-            # keep legacy dest for Sales to avoid breaking consumers
-            dest = facts_out / ("sales" if t.lower() == "sales" else t)
-            if dest.exists():
-                shutil.rmtree(dest, ignore_errors=True)
-            shutil.copytree(src, dest, ignore=_IGNORE_PATTERNS)
-
-        done("Creating Final Output Folder")
-        return final_folder
-
-
-    # Parquet: prefer merged file, else partitioned folder
-    if ff == "parquet":
-        merged_src = _find_merged_sales_parquet(fact_folder, sales_cfg)
-        if merged_src is not None:
-            merged_name = merged_src.name
-            dst = facts_out / merged_name
-            shutil.copy2(merged_src, dst)
-            # IMPORTANT: do not log "empty" when merged file exists.
-        else:
-            partitioned_sales = fact_folder / "sales"
-            if partitioned_sales.exists():
-                shutil.copytree(partitioned_sales, sales_target_dir, ignore=_IGNORE_PATTERNS)
-            else:
-                info("No sales parquet output found to copy; facts/sales will be empty.")
-
-        done("Creating Final Output Folder")
-        return final_folder
-
-    # CSV: convert partitioned sales folder; fallback to merged parquet -> single csv
-    if ff == "csv":
-        import pandas as pd
-
-        partitioned_sales = fact_folder / "sales"
+        dims_out = final_folder / "dimensions"
+        facts_out = final_folder / "facts"
         sql_root = final_folder / "sql"
+
+        dims_out.mkdir(parents=True, exist_ok=True)
+        facts_out.mkdir(parents=True, exist_ok=True)
         sql_root.mkdir(parents=True, exist_ok=True)
 
-        if partitioned_sales.exists():
-            for file in partitioned_sales.rglob("*.parquet"):
-                rel = file.relative_to(partitioned_sales)
-                out_file = sales_target_dir / rel.with_suffix(".csv")
-                out_file.parent.mkdir(parents=True, exist_ok=True)
+        _copy_config_files_into_run_folder(
+            final_folder,
+            config_yaml_path=config_yaml_path,
+            model_yaml_path=model_yaml_path,
+        )
 
-                df = pd.read_parquet(file)
-                df.to_csv(out_file, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
+        # --------------------------------------------------------
+        # DIMENSIONS
+        # --------------------------------------------------------
+        packaging_cfg = cfg.get("packaging", {}) if isinstance(cfg, dict) else {}
+        dim_parquet_compression = packaging_cfg.get("dim_parquet_compression", "snappy")
+        dim_parquet_compression_level = packaging_cfg.get("dim_parquet_compression_level", None)
+        dim_force_date32 = bool(packaging_cfg.get("dim_force_date32", True))
+
+        parquet_dims = Path(parquet_dims)
+
+        if ff == "parquet":
+            import pandas as pd
+
+            for f in parquet_dims.glob("*.parquet"):
+                df = pd.read_parquet(f)
+                out_f = dims_out / f.name
+                write_parquet_with_date32(
+                    df,
+                    out_f,
+                    cast_all_datetime=False,
+                    compression=dim_parquet_compression,
+                    compression_level=dim_parquet_compression_level,
+                    force_date32=dim_force_date32,
+                )
+
+        elif ff == "csv":
+            import pandas as pd
+
+            for f in parquet_dims.glob("*.parquet"):
+                df = pd.read_parquet(f)
+                out_csv = dims_out / f"{f.stem}.csv"
+                df.to_csv(out_csv, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
+
+        elif ff == "deltaparquet":
+            try:
+                from deltalake import write_deltalake
+            except Exception as e:
+                raise RuntimeError(
+                    "deltaparquet mode requested, but deltalake is not available. "
+                    "Install deltalake or switch to parquet/csv."
+                ) from e
+
+            import pandas as pd
+            import pyarrow as pa
+
+            for f in parquet_dims.glob("*.parquet"):
+                dim_name = f.stem
+                delta_out = dims_out / dim_name
+                delta_out.mkdir(parents=True, exist_ok=True)
+
+                df = pd.read_parquet(f)
+
+                # For Power BI, keep date-like datetime columns as date32-ish
+                if dim_force_date32:
+                    dt_cols = _datetime_cols(df)
+                    date_cols = _guess_date_cols(df)
+                    for c in date_cols:
+                        if c in dt_cols and c in df.columns:
+                            df[c] = pd.to_datetime(df[c]).dt.normalize().dt.date
+
+                table = pa.Table.from_pandas(df, preserve_index=False)
+                write_deltalake(str(delta_out), table, mode="overwrite")
+
         else:
-            merged_src = _find_merged_sales_parquet(fact_folder, sales_cfg)
-            if merged_src is not None:
-                # single-file fallback
-                df = pd.read_parquet(merged_src)
-                out_file = facts_out / "sales.csv"
-                df.to_csv(out_file, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
-            else:
-                info("No sales parquet output found to convert; facts/sales will be empty.")
+            raise ValueError(f"Unknown file_format: {file_format}")
 
-        copy_sql_indexes(sql_root)
-        copy_sql_constraints(sql_root)
-        copy_sql_views(sql_root)
+        # Facts are packaged by engine/packaging/* now.
+        if package_facts:
+            info(
+                "NOTE: create_final_output_folder no longer packages facts. "
+                "Facts + SQL are packaged by src.engine.packaging.package_output()."
+            )
 
-        done("Creating Final Output Folder")
+        done(f"Created final folder: {final_folder}")
         return final_folder
-
-    raise ValueError(f"Unknown file_format: {file_format}")

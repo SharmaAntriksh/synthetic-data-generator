@@ -8,6 +8,40 @@ from .projection import _project_table_to_schema
 from .utils import _arrow, _ensure_dir_for_file
 
 
+def _expected_cols_for_table(table_name: str | None) -> tuple[str, ...] | None:
+    if not table_name:
+        return None
+
+    # Normalize: remove underscores and case-fold
+    norm = table_name.replace("_", "").replace(" ", "").casefold()
+
+    try:
+        from src.utils.static_schemas import (
+            _SALES_ORDER_HEADER_COLS,
+            _SALES_ORDER_DETAIL_COLS,
+        )
+    except Exception:
+        return None
+
+    if norm == "salesorderheader":
+        return _SALES_ORDER_HEADER_COLS
+    if norm == "salesorderdetail":
+        return _SALES_ORDER_DETAIL_COLS
+    return None
+
+
+def _restrict_schema_to_expected(schema, expected_cols: tuple[str, ...], pa, *, table_name: str) :
+    fields = {f.name: f for f in schema}
+    missing = [c for c in expected_cols if c not in fields]
+    if missing:
+        raise RuntimeError(
+            f"[{table_name}] canonical schema missing expected columns {missing}. "
+            f"This usually means wrong chunk files were passed to the merge."
+        )
+    # Keep exactly the expected order; preserve metadata
+    return pa.schema([fields[c] for c in expected_cols], metadata=getattr(schema, "metadata", None))
+
+
 def _open_parquet(path: str, pa, pq):
     """
     Open a parquet file in a way that lets us explicitly close resources.
@@ -144,6 +178,13 @@ def merge_parquet_files(
     canonical_schema = _build_canonical_schema(
         parquet_files, schema_strategy=schema_strategy, pa=pa, pq=pq
     )
+    
+    expected_cols = _expected_cols_for_table(table_name)
+    if expected_cols:
+        # Force merged output schema to match static schema exactly
+        canonical_schema = _restrict_schema_to_expected(
+            canonical_schema, expected_cols, pa, table_name=table_name
+        )
 
     # Pricing-col validation: table-aware
     _validate_required(canonical_schema, table_name=table_name)
@@ -169,6 +210,25 @@ def merge_parquet_files(
         for path in parquet_files:
             src, reader = _open_parquet(path, pa, pq)
             try:
+                # Fail fast for derived order tables: chunk schema must match static schema exactly
+                if expected_cols:
+                    expected_set = set(expected_cols)
+                    chunk_cols = set(reader.schema_arrow.names)
+
+                    missing = sorted(expected_set - chunk_cols)
+                    if missing:
+                        raise RuntimeError(
+                            f"[{table_name}] Chunk missing expected columns {missing}: {path}. "
+                            f"Wrong chunk list or wrong projection upstream."
+                        )
+
+                    extra = sorted(chunk_cols - expected_set)
+                    if extra:
+                        raise RuntimeError(
+                            f"[{table_name}] Chunk has unexpected columns {extra}: {path}. "
+                            f"Schema bleed: header/detail chunks are being mixed or written with extra fields."
+                        )
+
                 schema_exact = _schema_equals(reader.schema_arrow, canonical_schema, check_metadata=True)
                 schema_same_fields = _schema_equals(reader.schema_arrow, canonical_schema, check_metadata=False)
 
@@ -176,7 +236,6 @@ def merge_parquet_files(
                     if schema_exact:
                         writer.write_table(reader.read_row_group(i))
                     elif schema_same_fields:
-                        # Same fields, different metadata: cheap normalize to canonical
                         t = reader.read_row_group(i, columns=canonical_schema.names)
                         writer.write_table(_project_table_to_schema(t, canonical_schema))
                     else:

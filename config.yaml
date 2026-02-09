@@ -17,7 +17,13 @@ defaults:
 packaging:
   reset_scratch_fact_out: true   # default current behavior
   clean_scratch_fact_out: true   # default current behavior
-  
+
+facts:
+  enabled: ["sales", "returns"]
+returns:
+  enabled: true
+  return_rate: 0.03
+
 # ---------------------------------------------------------------------
 # SALES FACT GENERATION
 # ---------------------------------------------------------------------
@@ -25,7 +31,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 600230
+  total_rows: 100230
   chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -47,7 +53,7 @@ sales:
   write_pyarrow: true
   tune_chunk: false
 
-  skip_order_cols: false
+  skip_order_cols: true
 
   override:
     dates:

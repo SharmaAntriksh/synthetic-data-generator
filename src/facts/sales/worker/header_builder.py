@@ -1,41 +1,50 @@
 from __future__ import annotations
 
-import pandas as pd
 import pyarrow as pa
 
 
 def build_header_from_detail(detail: pa.Table) -> pa.Table:
     """
-    Build SalesOrderHeader from SalesOrderDetail (detail).
-    Assumes detail includes SalesOrderNumber + SalesOrderLineNumber.
+    Build *slim* SalesOrderHeader from SalesOrderDetail (detail).
+
+    IMPORTANT:
+    - Do NOT use ordered aggregators like "first" in PyArrow group_by aggregate.
+      They are not supported with multi-thread execution and will throw:
+      "Using ordered aggregator in multiple threaded execution is not supported"
+
+    This uses unordered aggregators ("min"/"max") which are thread-safe.
+    Assumption: CustomerKey/StoreKey/PromotionKey/CurrencyKey/OrderDate/DueDate
+    are constant per SalesOrderNumber.
     """
-    df = detail.to_pandas(types_mapper=None)  # keep default dtypes
+    gb = detail.group_by(["SalesOrderNumber"])
 
-    # Compute line-level amounts (adjust names if your columns differ)
-    df["GrossAmount"] = df["UnitPrice"] * df["Quantity"]
-    df["NetAmount"] = df["NetPrice"] * df["Quantity"]
-    df["TotalCost"] = df["UnitCost"] * df["Quantity"]
+    out = gb.aggregate(
+        [
+            ("CustomerKey", "min"),
+            ("StoreKey", "min"),
+            ("PromotionKey", "min"),
+            ("CurrencyKey", "min"),
+            ("OrderDate", "min"),
+            ("DueDate", "min"),
+            ("IsOrderDelayed", "max"),
+        ]
+    )
 
-    grp = df.groupby("SalesOrderNumber", sort=False, dropna=False)
+    # group_by() returns names like "CustomerKey_min"
+    rename_map = {
+        "CustomerKey_min": "CustomerKey",
+        "StoreKey_min": "StoreKey",
+        "PromotionKey_min": "PromotionKey",
+        "CurrencyKey_min": "CurrencyKey",
+        "OrderDate_min": "OrderDate",
+        "DueDate_min": "DueDate",
+        "IsOrderDelayed_max": "IsOrderDelayed",
+    }
 
-    header = grp.agg(
-        CustomerKey=("CustomerKey", "first"),
-        StoreKey=("StoreKey", "first"),
-        PromotionKey=("PromotionKey", "first"),
-        CurrencyKey=("CurrencyKey", "first"),
-        OrderDate=("OrderDate", "first"),
-        DueDate=("DueDate", "first"),
-        DeliveryDate=("DeliveryDate", "first"),
+    cols = []
+    names = []
+    for name in out.schema.names:
+        cols.append(out[name])
+        names.append(rename_map.get(name, name))
 
-        LineCount=("SalesOrderLineNumber", "count"),
-        TotalQuantity=("Quantity", "sum"),
-        GrossAmount=("GrossAmount", "sum"),
-        NetAmount=("NetAmount", "sum"),
-        TotalCost=("TotalCost", "sum"),
-        TotalDiscount=("DiscountAmount", "sum"),
-
-        IsOrderDelayed=("IsOrderDelayed", "max"),
-    ).reset_index()
-
-    # Convert back to Arrow
-    return pa.Table.from_pandas(header, preserve_index=False)
+    return pa.Table.from_arrays(cols, names=names)

@@ -26,6 +26,25 @@ class TableSpec:
     # IMPORTANT: for Sales we keep this empty to preserve existing output layout.
     delta_subdir: str         # "" means root delta_output_folder
 
+def _norm(p: Optional[str]) -> Optional[str]:
+    if p is None:
+        return None
+    p = str(p)
+    return os.path.normpath(p)
+
+
+def _is_abs(p: str) -> bool:
+    return os.path.isabs(p)
+
+
+def _to_snake(name: str) -> str:
+    out = []
+    for i, ch in enumerate(name):
+        if ch.isupper() and i > 0:
+            out.append("_")
+        out.append(ch.lower())
+    return "".join(out)
+
 
 DEFAULT_TABLE_SPECS: Dict[str, TableSpec] = {
     # Backward-compatible: Sales stays exactly as-is (root folder naming)
@@ -38,30 +57,18 @@ DEFAULT_TABLE_SPECS: Dict[str, TableSpec] = {
 
     # Future tables (not used until you enable sales_output modes)
     TABLE_SALES_ORDER_DETAIL: TableSpec(
-        out_subdir=TABLE_SALES_ORDER_DETAIL,
-        chunk_prefix="sales_order_detail_chunk",
-        merged_filename=f"{TABLE_SALES_ORDER_DETAIL}.parquet",
-        delta_subdir=TABLE_SALES_ORDER_DETAIL,
+        out_subdir=_to_snake(TABLE_SALES_ORDER_DETAIL),
+        chunk_prefix=f"{_to_snake(TABLE_SALES_ORDER_DETAIL)}_chunk",     # sales_order_detail_chunk0001.csv
+        merged_filename=f"{_to_snake(TABLE_SALES_ORDER_DETAIL)}.parquet", # sales_order_detail.parquet
+        delta_subdir=_to_snake(TABLE_SALES_ORDER_DETAIL),
     ),
     TABLE_SALES_ORDER_HEADER: TableSpec(
-        out_subdir=TABLE_SALES_ORDER_HEADER,
-        chunk_prefix="sales_order_header_chunk",
-        merged_filename=f"{TABLE_SALES_ORDER_HEADER}.parquet",
-        delta_subdir=TABLE_SALES_ORDER_HEADER,
+        out_subdir=_to_snake(TABLE_SALES_ORDER_HEADER),
+        chunk_prefix=f"{_to_snake(TABLE_SALES_ORDER_HEADER)}_chunk",      # sales_order_header_chunk0001.csv
+        merged_filename=f"{_to_snake(TABLE_SALES_ORDER_HEADER)}.parquet",  # sales_order_header.parquet
+        delta_subdir=_to_snake(TABLE_SALES_ORDER_HEADER),
     ),
 }
-
-
-def _norm(p: Optional[str]) -> Optional[str]:
-    if p is None:
-        return None
-    p = str(p)
-    return os.path.normpath(p)
-
-
-def _is_abs(p: str) -> bool:
-    return os.path.isabs(p)
-
 
 @dataclass(frozen=True)
 class OutputPaths:
@@ -166,7 +173,8 @@ class OutputPaths:
         spec = self.spec(table)
 
         # Backward-compat: Sales delta is rooted at delta_output_folder (no subdir)
-        if table == TABLE_SALES or not spec.delta_subdir:
+        # If delta_subdir is empty, table lives directly under delta_output_folder
+        if not spec.delta_subdir:
             return self.delta_output_folder
 
         return os.path.join(self.delta_output_folder, spec.delta_subdir)
@@ -195,14 +203,14 @@ class OutputPaths:
 
 
 def build_output_paths_from_sales_cfg(sales_cfg: dict) -> OutputPaths:
-    """
-    Small helper to build OutputPaths from your config structure.
-    Preserves current keys and defaults.
-    """
-    file_format = sales_cfg.get("file_format", "parquet")
+    file_format = str(sales_cfg.get("file_format", "parquet")).lower()
     out_folder = _norm(sales_cfg.get("out_folder", "")) or ""
     merged_file = sales_cfg.get("merged_file")  # optional
     delta_output_folder = _norm(sales_cfg.get("delta_output_folder"))
+
+    # IMPORTANT: match sales.py defaulting behavior
+    if file_format == "deltaparquet" and not delta_output_folder:
+        delta_output_folder = os.path.normpath(os.path.join(out_folder, "delta"))
 
     return OutputPaths(
         file_format=file_format,
