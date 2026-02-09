@@ -5,39 +5,31 @@ import pyarrow as pa
 
 def build_header_from_detail(detail: pa.Table) -> pa.Table:
     """
-    Build *slim* SalesOrderHeader from SalesOrderDetail (detail).
+    Build SalesOrderHeader (ORDER-GRAIN) from SalesOrderDetail.
 
-    IMPORTANT:
-    - Do NOT use ordered aggregators like "first" in PyArrow group_by aggregate.
-      They are not supported with multi-thread execution and will throw:
-      "Using ordered aggregator in multiple threaded execution is not supported"
+    Output columns:
+      - SalesOrderNumber
+      - CustomerKey
+      - OrderDate
+      - IsOrderDelayed   (1 if any line is delayed)
 
-    This uses unordered aggregators ("min"/"max") which are thread-safe.
-    Assumption: CustomerKey/StoreKey/PromotionKey/CurrencyKey/OrderDate/DueDate
-    are constant per SalesOrderNumber.
+    NOTE:
+    StoreKey/PromotionKey/CurrencyKey/DueDate can vary per line, so they are not
+    included in the header.
     """
     gb = detail.group_by(["SalesOrderNumber"])
 
     out = gb.aggregate(
         [
             ("CustomerKey", "min"),
-            ("StoreKey", "min"),
-            ("PromotionKey", "min"),
-            ("CurrencyKey", "min"),
             ("OrderDate", "min"),
-            ("DueDate", "min"),
             ("IsOrderDelayed", "max"),
         ]
     )
 
-    # group_by() returns names like "CustomerKey_min"
     rename_map = {
         "CustomerKey_min": "CustomerKey",
-        "StoreKey_min": "StoreKey",
-        "PromotionKey_min": "PromotionKey",
-        "CurrencyKey_min": "CurrencyKey",
         "OrderDate_min": "OrderDate",
-        "DueDate_min": "DueDate",
         "IsOrderDelayed_max": "IsOrderDelayed",
     }
 
