@@ -101,6 +101,32 @@ BEGIN
     ADD CONSTRAINT PK_ExchangeRates PRIMARY KEY NONCLUSTERED ([Date], [FromCurrency], [ToCurrency]);
 END;
 
+IF OBJECT_ID(N'dbo.Stores', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Stores', N'StoreKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_Stores'
+      AND parent_object_id = OBJECT_ID(N'dbo.Stores')
+)
+BEGIN
+    ALTER TABLE dbo.Stores
+    ADD CONSTRAINT PK_Stores PRIMARY KEY NONCLUSTERED ([StoreKey]);
+END;
+
+IF OBJECT_ID(N'dbo.Promotions', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Promotions', N'PromotionKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_Promotions'
+      AND parent_object_id = OBJECT_ID(N'dbo.Promotions')
+)
+BEGIN
+    ALTER TABLE dbo.Promotions
+    ADD CONSTRAINT PK_Promotions PRIMARY KEY NONCLUSTERED ([PromotionKey]);
+END;
+
 -----------------------------------------------------------------------
 -- UNIQUE CONSTRAINTS
 -----------------------------------------------------------------------

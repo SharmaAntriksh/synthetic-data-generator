@@ -9,6 +9,10 @@ from src.utils.logging_utils import stage, skip, done
 from .paths import tables_from_sales_cfg
 
 
+# ------------------------------------------------------------
+# Repo utilities
+# ------------------------------------------------------------
+
 def _find_repo_root(start: Path) -> Path:
     """
     Find repo root by walking parents and looking for both 'src' and 'scripts'.
@@ -21,7 +25,37 @@ def _find_repo_root(start: Path) -> Path:
 
 
 def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    """
+    Robust SQL text reader:
+      - Handles UTF-8, UTF-8-BOM, UTF-16 (LE/BE)
+      - Heuristic-detects UTF-16 via NUL bytes
+      - Strips embedded NULs that break SQL Server parsing
+    """
+    raw = path.read_bytes()
+
+    # BOM detection
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        text = raw.decode("utf-16")
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        text = raw.decode("utf-8-sig")
+    else:
+        # Heuristic: lots of NULs early usually means UTF-16
+        if b"\x00" in raw[:4096]:
+            try:
+                text = raw.decode("utf-16")
+            except UnicodeDecodeError:
+                text = raw.decode("utf-8", errors="replace")
+        else:
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = raw.decode("utf-16")
+
+    # SQL Server will choke on NULs in identifiers (dbo -> d\0b\0o\0)
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+
+    return text
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -38,32 +72,39 @@ def _sales_mode(sales_cfg: dict) -> str:
     return mode or "sales"
 
 
+# ------------------------------------------------------------
+# Static SQL assets (non-conditional)
+# ------------------------------------------------------------
+
 def copy_static_sql_assets(*, sql_root: Path) -> None:
     """
-    Copy static SQL assets into the packaged output.
+    Copy only truly static SQL assets into the packaged output.
 
-    Restores the CCI script that lives in:
-      scripts/sql/columnstore/create_drop_cci.sql
+    Current scope:
+      - Indexes (CCI helper): scripts/sql/columnstore/create_drop_cci.sql
+        -> <final>/sql/indexes/create_drop_cci.sql
 
-    Packaged destination:
-      <final>/sql/indexes/create_drop_cci.sql
+    Constraints are mode-dependent and must be written by compose_constraints_sql().
+    Views are copied by copy_views_sql().
     """
     repo_root = _find_repo_root(Path(__file__).resolve())
-    src = repo_root / "scripts" / "sql" / "columnstore" / "create_drop_cci.sql"
 
-    if not src.exists():
-        skip(f"CCI script not found; skipping: {src}")
+    cci_src = repo_root / "scripts" / "sql" / "columnstore" / "create_drop_cci.sql"
+    if not cci_src.exists():
+        skip(f"CCI script not found; skipping: {cci_src}")
         return
 
-    dst = sql_root / "indexes" / "create_drop_cci.sql"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    dst_dir = sql_root / "indexes"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+
+    dst = dst_dir / "create_drop_cci.sql"
+    shutil.copy2(cci_src, dst)
     done(f"Copied CCI script: {dst.relative_to(sql_root)}")
 
 
 def copy_views_sql(*, sql_root: Path) -> None:
     """
-    Copy the static view script into the packaged output.
+    Copy the views script into the packaged output.
 
     Source:
       scripts/sql/views/create_views.sql
@@ -82,6 +123,10 @@ def copy_views_sql(*, sql_root: Path) -> None:
     done(f"Copied views script: {dst.relative_to(sql_root)}")
 
 
+# ------------------------------------------------------------
+# Constraints composition (conditional by sales_output)
+# ------------------------------------------------------------
+
 def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
     """
     Compose a single constraints script based on sales_output mode.
@@ -94,13 +139,15 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
 
     Destination:
       <final>/sql/schema/03_create_constraints.sql
+
+    Important: This function ONLY writes the composed single file.
+    It does NOT copy the constraints parts folder into the output.
     """
     repo_root = _find_repo_root(Path(__file__).resolve())
     modular_dir = repo_root / "scripts" / "sql" / "bootstrap" / "constraints"
     legacy_file = repo_root / "scripts" / "sql" / "bootstrap" / "create_constraints.sql"
 
     out_path = sql_root / "schema" / "03_create_constraints.sql"
-
     mode = _sales_mode(sales_cfg)
 
     if modular_dir.exists() and modular_dir.is_dir():
@@ -127,7 +174,6 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
             return
 
         if missing:
-            # Don’t fail packaging for missing optional parts; log and proceed with what exists.
             skip(f"Missing constraint parts: {', '.join(missing)} (mode={mode}); composing partial constraints.")
 
         chunks: list[str] = []
@@ -135,7 +181,11 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
         chunks.append(f"-- mode: {mode}\n")
 
         for p in existing:
-            chunks.append(f"\n\n-- ============================================================\n-- {p.name}\n-- ============================================================\n")
+            chunks.append(
+                "\n\n-- ============================================================\n"
+                f"-- {p.name}\n"
+                "-- ============================================================\n"
+            )
             chunks.append(_read_text(p).rstrip())
 
         _write_text(out_path, "\n".join(chunks).rstrip() + "\n")
@@ -150,6 +200,10 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
 
     skip(f"No constraints source found (modular or legacy). Skipping: {out_path}")
 
+
+# ------------------------------------------------------------
+# SQL generation from packaged CSVs
+# ------------------------------------------------------------
 
 def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, sales_cfg: dict) -> None:
     load_root = sql_root / "load"

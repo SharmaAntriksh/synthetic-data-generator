@@ -62,21 +62,21 @@ _SALES_ORDER_HEADER_COLS: Tuple[str, ...] = (
     "PromotionKey",
     "CurrencyKey",
     "OrderDate",
-    "DueDate",
-    "DeliveryDate",
-    "DeliveryStatus",
-    "IsOrderDelayed",
+    "DueDate"
 )
 
 _SALES_ORDER_DETAIL_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
     "SalesOrderLineNumber",
     "ProductKey",
+    "DeliveryDate",
     "Quantity",
     "NetPrice",
     "UnitCost",
     "UnitPrice",
     "DiscountAmount",
+    "DeliveryStatus",
+    "IsOrderDelayed",
 )
 
 _SALES_ORDER_HEADER_SCHEMA: Schema = _derive_schema_from_base(
@@ -176,15 +176,15 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
     "Stores": (
         ("StoreKey",         "INT NOT NULL"),
         ("StoreName",        "VARCHAR(100) NOT NULL"),
+        ("StoreManager",     "VARCHAR(20)"),
         ("StoreType",        "VARCHAR(20) NOT NULL"),
         ("Status",           "VARCHAR(10)"),
         ("GeographyKey",     "INT NOT NULL"),
-        ("OpenDate",         "DATETIME"),
-        ("CloseDate",        "DATETIME"),
+        ("OpenningDate",         "DATETIME"),
+        ("ClosingDate",        "DATETIME"),
         ("OpenFlag",         "BIT"),
         ("SquarFootage",     "INT"),
         ("EmployeeCount",    "INT"),
-        ("StoreManager",     "VARCHAR(20)"),
         ("Phone",            "VARCHAR(20)"),
         ("StoreDescription", "VARCHAR(MAX)"),
         ("CloseReason",      "VARCHAR(MAX)"),
