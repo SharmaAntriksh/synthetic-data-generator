@@ -2,15 +2,93 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Dict, List, Mapping, Sequence, Tuple
+
 
 # Type aliases (lightweight, no runtime overhead)
 SchemaCol = Tuple[str, str]
 Schema = Tuple[SchemaCol, ...]
 
 
+def _derive_schema_from_base(base: Schema, cols: Sequence[str], *, name: str) -> Schema:
+    """
+    Build a schema by selecting columns from a base schema, preserving the provided column order.
+
+    This keeps datatypes consistent across derived tables (e.g., SalesOrderHeader/Detail)
+    while making the column list explicit and easy to review.
+    """
+    base_map = {c: t for c, t in base}
+    missing = [c for c in cols if c not in base_map]
+    if missing:
+        raise KeyError(
+            f"{name}: missing columns not found in base schema: {missing}. "
+            f"Update {name} column list or base schema."
+        )
+    return tuple((c, base_map[c]) for c in cols)
+
+
 # ============================================================================
-# STATIC SCHEMAS (immutable)
+# FACT BASE SCHEMAS (single source of truth for derivations)
+# ============================================================================
+_SALES_SCHEMA: Schema = (
+    ("SalesOrderNumber",     "BIGINT NOT NULL"),
+    ("SalesOrderLineNumber", "INT NOT NULL"),
+
+    ("CustomerKey",          "INT NOT NULL"),
+    ("ProductKey",           "INT NOT NULL"),
+    ("StoreKey",             "INT NOT NULL"),
+    ("PromotionKey",         "INT NOT NULL"),
+    ("CurrencyKey",          "INT NOT NULL"),
+
+    ("OrderDate",            "DATE NOT NULL"),
+    ("DueDate",              "DATE NOT NULL"),
+    ("DeliveryDate",         "DATE NOT NULL"),
+
+    ("Quantity",             "INT NOT NULL"),
+    ("NetPrice",             "DECIMAL(8, 2) NOT NULL"),
+    ("UnitCost",             "DECIMAL(8, 2) NOT NULL"),
+    ("UnitPrice",            "DECIMAL(8, 2) NOT NULL"),
+    ("DiscountAmount",       "DECIMAL(8, 2) NOT NULL"),
+
+    ("DeliveryStatus",       "VARCHAR(20) NOT NULL"),
+    ("IsOrderDelayed",       "INT NOT NULL"),
+)
+
+# Derived fact tables (PascalCase table names for SQL)
+_SALES_ORDER_HEADER_COLS: Tuple[str, ...] = (
+    "SalesOrderNumber",
+    "CustomerKey",
+    "StoreKey",
+    "PromotionKey",
+    "CurrencyKey",
+    "OrderDate",
+    "DueDate",
+    "DeliveryDate",
+    "DeliveryStatus",
+    "IsOrderDelayed",
+)
+
+_SALES_ORDER_DETAIL_COLS: Tuple[str, ...] = (
+    "SalesOrderNumber",
+    "SalesOrderLineNumber",
+    "ProductKey",
+    "Quantity",
+    "NetPrice",
+    "UnitCost",
+    "UnitPrice",
+    "DiscountAmount",
+)
+
+_SALES_ORDER_HEADER_SCHEMA: Schema = _derive_schema_from_base(
+    _SALES_SCHEMA, _SALES_ORDER_HEADER_COLS, name="SalesOrderHeader"
+)
+_SALES_ORDER_DETAIL_SCHEMA: Schema = _derive_schema_from_base(
+    _SALES_SCHEMA, _SALES_ORDER_DETAIL_COLS, name="SalesOrderDetail"
+)
+
+
+# ============================================================================
+# STATIC SCHEMAS (immutable intent)
 # ============================================================================
 STATIC_SCHEMAS: Dict[str, Schema] = {
     # -----------------------
@@ -193,29 +271,11 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
     # -----------------------
     # FACTS
     # -----------------------
-    "Sales": (
-        ("SalesOrderNumber",     "BIGINT NOT NULL"),
-        ("SalesOrderLineNumber", "INT NOT NULL"),
+    "Sales": _SALES_SCHEMA,
 
-        ("CustomerKey",          "INT NOT NULL"),
-        ("ProductKey",           "INT NOT NULL"),
-        ("StoreKey",             "INT NOT NULL"),
-        ("PromotionKey",         "INT NOT NULL"),
-        ("CurrencyKey",          "INT NOT NULL"),
-
-        ("OrderDate",            "DATE NOT NULL"),
-        ("DueDate",              "DATE NOT NULL"),
-        ("DeliveryDate",         "DATE NOT NULL"),
-
-        ("Quantity",             "INT NOT NULL"),
-        ("NetPrice",             "DECIMAL(8, 2) NOT NULL"),
-        ("UnitCost",             "DECIMAL(8, 2) NOT NULL"),
-        ("UnitPrice",            "DECIMAL(8, 2) NOT NULL"),
-        ("DiscountAmount",       "DECIMAL(8, 2) NOT NULL"),
-
-        ("DeliveryStatus",       "VARCHAR(20) NOT NULL"),
-        ("IsOrderDelayed",       "INT NOT NULL"),
-    ),
+    # New fact tables (SQL table names stay PascalCase)
+    "SalesOrderHeader": _SALES_ORDER_HEADER_SCHEMA,
+    "SalesOrderDetail": _SALES_ORDER_DETAIL_SCHEMA,
 
     "ExchangeRates": (
         ("Date",         "DATE NOT NULL"),
@@ -271,7 +331,6 @@ DATE_COLUMN_GROUPS = {
 # ============================================================================
 # Precomputed schemas / caches
 # ============================================================================
-_SALES_SCHEMA: Schema = STATIC_SCHEMAS["Sales"]
 _SALES_SCHEMA_NO_ORDER: Schema = tuple(
     (col, dtype)
     for col, dtype in _SALES_SCHEMA
@@ -285,6 +344,16 @@ _DATES_SCHEMA_CACHE: Dict[Tuple[bool, bool, bool], List[SchemaCol]] = {}
 def get_sales_schema(skip_order_cols: bool):
     """Return the Sales schema with or without order number columns."""
     return list(_SALES_SCHEMA_NO_ORDER if skip_order_cols else _SALES_SCHEMA)
+
+
+def get_sales_order_header_schema() -> List[SchemaCol]:
+    """Return the SalesOrderHeader schema."""
+    return list(_SALES_ORDER_HEADER_SCHEMA)
+
+
+def get_sales_order_detail_schema() -> List[SchemaCol]:
+    """Return the SalesOrderDetail schema."""
+    return list(_SALES_ORDER_DETAIL_SCHEMA)
 
 
 def get_dates_schema(dates_cfg: Mapping):
@@ -330,5 +399,7 @@ __all__ = [
     "STATIC_SCHEMAS",
     "DATE_COLUMN_GROUPS",
     "get_sales_schema",
+    "get_sales_order_header_schema",
+    "get_sales_order_detail_schema",
     "get_dates_schema",
 ]
