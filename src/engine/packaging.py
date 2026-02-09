@@ -487,27 +487,17 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                     mode="csv",
                 )
 
-                # facts: one script per fact table folder
-                any_fact = False
-                for t in _tables_from_sales_cfg(sales_cfg):
-                    folder = facts_out / _table_dir_name(t)
-                    if not folder.exists():
-                        continue
-                    if not list(folder.glob("*.csv")):
-                        continue
-
-                    any_fact = True
-                    out_sql = load_root / f"02_bulk_insert_{_table_dir_name(t)}.sql"
-                    generate_bulk_insert_script(
-                        csv_folder=str(folder),
-                        table_name=str(t),
-                        output_sql_file=str(out_sql),
-                        mode="legacy",
-                        row_terminator="0x0a",
-                    )
-
-                if not any_fact:
-                    skip("No fact CSV files found — skipping fact BULK INSERT scripts.")
+                # facts: single script for all enabled fact tables (conditional via sales_output)
+                out_sql = load_root / "02_bulk_insert_facts.sql"
+                generate_bulk_insert_script(
+                    csv_folder=str(facts_out),
+                    table_name=None,
+                    output_sql_file=str(out_sql),
+                    mode="legacy",
+                    row_terminator="0x0a",
+                    recursive=True,
+                    allowed_tables=set(_tables_from_sales_cfg(sales_cfg)),
+                )
 
         with stage("Generating CREATE TABLE Scripts"):
             # Many SQL generators assume facts are in ONE flat folder.
