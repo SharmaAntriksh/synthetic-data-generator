@@ -266,12 +266,19 @@ def init_sales_worker(worker_cfg: dict):
     # --- SalesOrderDetail (SLIM, conventional) ---
     # Conventional: header-level foreign keys + order dates live in Header, not Detail.
     # DeliveryDate can vary per line -> keep in Detail.
+    # --- SalesOrderDetail (LINE-GRAIN; matches static_schemas) ---
+    # StoreKey/PromotionKey/CurrencyKey/DueDate can vary per line -> keep in Detail.
     detail_fields = [
         pa.field("SalesOrderNumber", pa.int64()),
         pa.field("SalesOrderLineNumber", pa.int64()),
 
         pa.field("ProductKey", pa.int64()),
 
+        pa.field("StoreKey", pa.int64()),
+        pa.field("PromotionKey", pa.int64()),
+        pa.field("CurrencyKey", pa.int64()),
+
+        pa.field("DueDate", pa.date32()),
         pa.field("DeliveryDate", pa.date32()),
 
         pa.field("Quantity", pa.int64()),
@@ -281,25 +288,25 @@ def init_sales_worker(worker_cfg: dict):
         pa.field("DiscountAmount", pa.float64()),
 
         pa.field("DeliveryStatus", pa.string()),
-        pa.field("IsOrderDelayed", pa.int8()),
     ]
-    detail_schema = pa.schema(detail_fields + delta_fields) if file_format == "deltaparquet" else pa.schema(detail_fields)
+    detail_schema = (
+        pa.schema(detail_fields + delta_fields)
+        if file_format == "deltaparquet"
+        else pa.schema(detail_fields)
+    )
 
-    # --- SalesOrderHeader (SLIM, NO aggregates, NO DeliveryDate) ---
+    # --- SalesOrderHeader (ORDER-GRAIN; minimal) ---
     header_fields = [
         pa.field("SalesOrderNumber", pa.int64()),
-
         pa.field("CustomerKey", pa.int64()),
-        pa.field("StoreKey", pa.int64()),
-        pa.field("PromotionKey", pa.int64()),
-        pa.field("CurrencyKey", pa.int64()),
-
         pa.field("OrderDate", pa.date32()),
-        pa.field("DueDate", pa.date32()),
-
-        # pa.field("IsOrderDelayed", pa.int8()),
+        pa.field("IsOrderDelayed", pa.int8()),
     ]
-    header_schema = pa.schema(header_fields + delta_fields) if file_format == "deltaparquet" else pa.schema(header_fields)
+    header_schema = (
+        pa.schema(header_fields + delta_fields)
+        if file_format == "deltaparquet"
+        else pa.schema(header_fields)
+    )
 
     schema_by_table = {
         TABLE_SALES: sales_schema,

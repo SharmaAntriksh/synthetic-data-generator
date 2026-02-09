@@ -58,25 +58,25 @@ _SALES_SCHEMA: Schema = (
 _SALES_ORDER_HEADER_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
     "CustomerKey",
-    "StoreKey",
-    "PromotionKey",
-    "CurrencyKey",
     "OrderDate",
-    "DueDate"
+    "IsOrderDelayed",
 )
 
 _SALES_ORDER_DETAIL_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
     "SalesOrderLineNumber",
     "ProductKey",
+    "StoreKey",
+    "PromotionKey",
+    "CurrencyKey",
     "DeliveryDate",
+    "DueDate",
     "Quantity",
     "NetPrice",
     "UnitCost",
     "UnitPrice",
     "DiscountAmount",
     "DeliveryStatus",
-    "IsOrderDelayed",
 )
 
 _SALES_ORDER_HEADER_SCHEMA: Schema = _derive_schema_from_base(

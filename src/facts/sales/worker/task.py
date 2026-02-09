@@ -127,16 +127,7 @@ def _worker_task(args):
                 )
 
             # Header builder needs these to exist on the raw detail table
-            header_needs = {
-                "SalesOrderNumber",
-                "CustomerKey",
-                "StoreKey",
-                "PromotionKey",
-                "CurrencyKey",
-                "OrderDate",
-                "DueDate",
-                "IsOrderDelayed",
-            }
+            header_needs = {"SalesOrderNumber", "CustomerKey", "OrderDate", "IsOrderDelayed"}
             missing_h = sorted(header_needs.difference(detail_table.schema.names))
             if missing_h:
                 raise RuntimeError(
