@@ -104,14 +104,17 @@ def _resolve_merged_parquet(fact_out: Path, sales_cfg: dict, table: str) -> Opti
             fact_out / tdir / merged_name,
         ]
     else:
-        merged_name = f"{table}.parquet"
+        merged_name = f"{_table_dir_name(table)}.parquet"  # snake_case file
         candidates = [
             parquet_root / tdir / merged_name,
-            parquet_root / table / merged_name,   # fallback if CamelCase dir used
-            parquet_root / merged_name,           # fallback if written to root
+            parquet_root / table / merged_name,     # fallback if CamelCase dir
+            parquet_root / merged_name,             # fallback if written to root
             fact_out / tdir / merged_name,
             fact_out / table / merged_name,
             fact_out / merged_name,
+            # legacy fallback: older runs may still have CamelCase filename
+            parquet_root / tdir / f"{table}.parquet",
+            fact_out / tdir / f"{table}.parquet",
         ]
 
     for p in candidates:
@@ -349,8 +352,8 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                     )
                     continue
 
-                # Keep Sales filename untouched; normalize others to <TableName>.parquet
-                dst_name = src.name if t == TABLE_SALES else f"{t}.parquet"
+                # Keep Sales filename untouched; normalize others to <snake_table>.parquet
+                dst_name = src.name if t == TABLE_SALES else f"{_table_dir_name(t)}.parquet"
                 dst = facts_out / dst_name
 
                 if dst.exists():
@@ -434,9 +437,13 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
                 info(f"No CSV folder found for {t}; expected under {fact_out / 'csv'}.")
                 continue
 
-            dst_dir = facts_out if t == TABLE_SALES else (facts_out / _table_dir_name(t))
-            dst_dir.mkdir(parents=True, exist_ok=True)
+            multi_table = len(tables) > 1
+            if t == TABLE_SALES:
+                dst_dir = (facts_out / _table_dir_name(t)) if multi_table else facts_out
+            else:
+                dst_dir = facts_out / _table_dir_name(t)
 
+            dst_dir.mkdir(parents=True, exist_ok=True)
             csv_files = sorted(src_dir.glob("*.csv"))
             info(f"Copying {len(csv_files)} CSV file(s) for {t} from: {src_dir}")
 

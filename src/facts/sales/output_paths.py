@@ -58,14 +58,14 @@ DEFAULT_TABLE_SPECS: Dict[str, TableSpec] = {
     # Future tables (not used until you enable sales_output modes)
     TABLE_SALES_ORDER_DETAIL: TableSpec(
         out_subdir=_to_snake(TABLE_SALES_ORDER_DETAIL),
-        chunk_prefix=f"{TABLE_SALES_ORDER_DETAIL}_chunk",  # SalesOrderDetail_chunk0000.csv
-        merged_filename=f"{TABLE_SALES_ORDER_DETAIL}.parquet",
+        chunk_prefix=f"{_to_snake(TABLE_SALES_ORDER_DETAIL)}_chunk",     # sales_order_detail_chunk0001.csv
+        merged_filename=f"{_to_snake(TABLE_SALES_ORDER_DETAIL)}.parquet", # sales_order_detail.parquet
         delta_subdir=_to_snake(TABLE_SALES_ORDER_DETAIL),
     ),
     TABLE_SALES_ORDER_HEADER: TableSpec(
         out_subdir=_to_snake(TABLE_SALES_ORDER_HEADER),
-        chunk_prefix=f"{TABLE_SALES_ORDER_HEADER}_chunk",  # SalesOrderHeader_chunk0000.csv
-        merged_filename=f"{TABLE_SALES_ORDER_HEADER}.parquet",
+        chunk_prefix=f"{_to_snake(TABLE_SALES_ORDER_HEADER)}_chunk",      # sales_order_header_chunk0001.csv
+        merged_filename=f"{_to_snake(TABLE_SALES_ORDER_HEADER)}.parquet",  # sales_order_header.parquet
         delta_subdir=_to_snake(TABLE_SALES_ORDER_HEADER),
     ),
 }
