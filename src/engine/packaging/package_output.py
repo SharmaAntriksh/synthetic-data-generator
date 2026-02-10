@@ -27,6 +27,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     """
     file_format = str(sales_cfg["file_format"]).lower()
     is_csv = file_format == "csv"
+    # info(f"[DEBUG] package_output file_format={file_format!r} is_csv={is_csv}")
 
     final_root = Path(unquote(str(cfg["final_output_folder"]))).resolve()
 
@@ -78,7 +79,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             raise ValueError(f"Unsupported file_format in packaging: {file_format!r}")
 
         copy_csv_facts(fact_out=fact_out, facts_out=facts_out, tables=tables)
-
+    
     # SQL SCRIPT GENERATION — CSV ONLY
     if is_csv:
         sql_root = final_folder / "sql"

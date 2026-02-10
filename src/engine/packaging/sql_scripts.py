@@ -206,10 +206,6 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
 # ------------------------------------------------------------
 
 def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, sales_cfg: dict) -> None:
-    load_root = sql_root / "load"
-    sql_root.mkdir(parents=True, exist_ok=True)
-    load_root.mkdir(parents=True, exist_ok=True)
-
     with stage("Generating BULK INSERT Scripts"):
         dims_csv = sorted(dims_out.glob("*.csv"))
         facts_csv = sorted(facts_out.rglob("*.csv"))
@@ -217,6 +213,10 @@ def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path
         if not dims_csv and not facts_csv:
             skip("No CSV files found — skipping BULK INSERT scripts.")
             return
+
+        load_root = sql_root / "load"
+        sql_root.mkdir(parents=True, exist_ok=True)
+        load_root.mkdir(parents=True, exist_ok=True)
 
         # dims
         generate_bulk_insert_script(
@@ -241,10 +241,14 @@ def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path
 
 def write_create_table_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, cfg: dict) -> None:
     with stage("Generating CREATE TABLE Scripts"):
-        # Many SQL generators assume facts are in ONE flat folder.
-        # Create a temp flat folder via hardlinks (fallback to copy).
-        tmp_flat = sql_root / "_tmp_facts_flat_for_sql"
+        facts_csv = sorted(facts_out.rglob("*.csv"))
+        dims_csv = sorted(dims_out.glob("*.csv"))
 
+        if not dims_csv and not facts_csv:
+            skip("No CSV files found — skipping CREATE TABLE scripts.")
+            return
+
+        tmp_flat = sql_root / "_tmp_facts_flat_for_sql"
         if tmp_flat.exists():
             shutil.rmtree(tmp_flat, ignore_errors=True)
         tmp_flat.mkdir(parents=True, exist_ok=True)

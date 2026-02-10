@@ -178,11 +178,6 @@ def _copy_config_files_into_run_folder(
     _copy(config_yaml_path, "config.yaml")
     _copy(model_yaml_path, "models.yaml")
 
-    # Backward-compat alias (some older scripts used model.yaml)
-    if model_yaml_path:
-        _copy(model_yaml_path, "model.yaml")
-
-
 def _ensure_clean_dir(p: Path) -> None:
     if p.exists():
         shutil.rmtree(p, ignore_errors=True)
@@ -217,6 +212,7 @@ def create_final_output_folder(
     """
     with stage("Creating Final Output Folder"):
         ff = str(file_format).strip().lower()
+        # info(f"[DEBUG] create_final_output_folder file_format={file_format!r} ff={ff!r}")
 
         now = datetime.now()
         timestamp = now.strftime("%Y-%m-%d %I_%M_%S %p")  # windows-safe
@@ -234,11 +230,9 @@ def create_final_output_folder(
 
         dims_out = final_folder / "dimensions"
         facts_out = final_folder / "facts"
-        sql_root = final_folder / "sql"
 
         dims_out.mkdir(parents=True, exist_ok=True)
         facts_out.mkdir(parents=True, exist_ok=True)
-        sql_root.mkdir(parents=True, exist_ok=True)
 
         _copy_config_files_into_run_folder(
             final_folder,
