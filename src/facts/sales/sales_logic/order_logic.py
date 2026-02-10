@@ -64,10 +64,13 @@ def build_orders(
     date_pool,
     date_prob,
     customers,
-    product_keys,          # kept for API stability (not used here)
+    product_keys,
     _len_date_pool: int,
-    _len_customers: int,   # kept for API compatibility (ignored)
+    _len_customers: int,
+    *,
+    order_id_start: int | None = None,  # NEW
 ):
+
     """
     Generate order-level structure and expand to line-level rows.
 
@@ -124,8 +127,22 @@ def build_orders(
     days = order_dates.astype("datetime64[D]").astype(np.int64, copy=False)
     date_int = _yyyymmdd_from_days(days)
 
-    suffix_int = rng.integers(0, 1_000_000_000, size=order_count, dtype=np.int64)
-    order_ids_int = date_int * 1_000_000_000 + suffix_int
+    MOD = np.int64(1_000_000_000)
+
+    if order_id_start is None:
+        raise RuntimeError(
+            "order_id_start is required to guarantee unique SalesOrderNumber "
+            "(caller must assign a disjoint range per chunk)."
+        )
+
+    start = np.int64(order_id_start)
+    suffix_int = start + np.arange(order_count, dtype=np.int64)
+
+    # Safety: suffix must fit in 9 digits
+    if suffix_int.size and suffix_int[-1] >= MOD:
+        raise RuntimeError("SalesOrderNumber suffix overflow; increase suffix width or capacity.")
+
+    order_ids_int = date_int * MOD + suffix_int
 
     # ------------------------------------------------------------
     # Assign a customer per order (preserve upstream distribution)

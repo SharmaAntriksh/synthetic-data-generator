@@ -143,7 +143,15 @@ def _empty_table(schema: pa.Schema) -> pa.Table:
 # ------------------------------------------------------------
 # Main
 # ------------------------------------------------------------
-def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
+def build_chunk_table(
+    n: int,
+    seed: int,
+    no_discount_key: int = 1,
+    *,
+    chunk_idx: int,
+    chunk_capacity_orders: int,
+) -> pa.Table:
+
     """
     Build a chunk of synthetic sales data.
 
@@ -159,6 +167,16 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
 
     rng = np.random.default_rng(int(seed))
     skip_cols = bool(State.skip_order_cols)
+    chunk_idx = int(chunk_idx)
+    cap = int(chunk_capacity_orders)
+
+    MOD = np.int64(1_000_000_000)
+
+    # Each chunk owns a disjoint suffix range: [base, base + cap)
+    base = np.int64(chunk_idx) * np.int64(cap)
+
+    # Advances as we allocate orders month-by-month inside this chunk
+    order_cursor = np.int64(0)
 
     # ------------------------------------------------------------
     # STATIC STATE
@@ -423,6 +441,10 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
         # ORDERS (use month-specific date pool so month loop is real)
         # --------------------------------------------------------
         if not skip_cols:
+            order_id_start = base + order_cursor
+            if order_id_start + np.int64(n_orders) >= MOD:
+                raise RuntimeError("SalesOrderNumber suffix overflow; increase suffix width/capacity.")
+
             orders = build_orders(
                 rng=rng,
                 n=n_orders,
@@ -433,12 +455,16 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
                 product_keys=product_keys,
                 _len_date_pool=len(month_date_pool),
                 _len_customers=n_orders,
+                order_id_start=int(order_id_start),
             )
+
+            order_cursor += np.int64(n_orders)
 
             customer_keys_out = orders["customer_keys"]
             order_dates = orders["order_dates"]
             order_ids_int = orders["order_ids_int"]
             line_num = orders["line_num"]
+
         else:
             customer_keys_out = customer_keys_for_orders
             order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=n_orders)]
