@@ -1,0 +1,91 @@
+table SalesOrderHeader
+	isHidden
+	lineageTag: a6858967-9b2f-4631-b1db-1fc3279814ea
+
+	column SalesOrderNumber
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: f54cd52d-191e-41c3-9c06-c3c4c0b2941a
+		summarizeBy: sum
+		sourceColumn: SalesOrderNumber
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerKey
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: e494926b-c112-4d65-a2f5-d01b8272d2e0
+		summarizeBy: count
+		sourceColumn: CustomerKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column OrderDate
+		dataType: dateTime
+		isHidden
+		formatString: Long Date
+		lineageTag: cfc3783a-99e1-4910-a1f6-077df3c58ad9
+		summarizeBy: none
+		sourceColumn: OrderDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column IsOrderDelayed
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 7d1250a8-8b99-4926-a95c-848b1126a628
+		summarizeBy: sum
+		sourceColumn: IsOrderDelayed
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition SalesOrderHeader = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source = Folder.Files ( ContosoFolder & "\facts\sales_order_header" ),
+				    FilterHidden = Table.SelectRows ( Source, each [Attributes]?[Hidden]? <> true ),
+				    InvokeCustomFunction = Table.AddColumn (
+				        FilterHidden,
+				        "Transform File",
+				        each Transform_SOH_File ( [Content] )
+				    ),
+				    RenameCols = Table.RenameColumns ( InvokeCustomFunction, { "Name", "Source.Name" } ),
+				    RemoveOtherCols = Table.SelectColumns ( RenameCols, { "Transform File" } ),
+				    ExpandTable = Table.ExpandTableColumn (
+				        RemoveOtherCols,
+				        "Transform File",
+				        Table.ColumnNames ( Transform_SOH_File ( Sample_File_SOH ) )
+				    ),
+				    CombineTables = Table.TransformColumnTypes (
+				        ExpandTable,
+				        {
+				            { "SalesOrderNumber", Int64.Type },
+				            { "CustomerKey", Int64.Type },
+				            { "OrderDate", type date },
+				            { "IsOrderDelayed", Int64.Type }
+				        }
+				    )
+				in
+				    CombineTables
+
+	changedProperty = IsHidden
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

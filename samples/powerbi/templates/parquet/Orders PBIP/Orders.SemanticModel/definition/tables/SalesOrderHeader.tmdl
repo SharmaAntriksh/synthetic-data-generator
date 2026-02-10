@@ -1,0 +1,69 @@
+table SalesOrderHeader
+	isHidden
+	lineageTag: d0dfbf95-fd25-406d-8448-39d00c0572d6
+
+	column SalesOrderNumber
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: f17d5347-259c-4ea8-b3dc-4d2b48560f58
+		summarizeBy: none
+		sourceColumn: SalesOrderNumber
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerKey
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: da63cb2e-08d8-4c46-a8a4-10e89d95b9f3
+		summarizeBy: none
+		sourceColumn: CustomerKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column OrderDate
+		dataType: dateTime
+		isHidden
+		formatString: Short Date
+		lineageTag: 54f5f09c-2bf8-43cb-92cb-75c72ed4c6be
+		summarizeBy: none
+		sourceColumn: OrderDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column IsOrderDelayed
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: a9c0c2c4-9ff2-4f61-aab2-911d995947be
+		summarizeBy: sum
+		sourceColumn: IsOrderDelayed
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition SalesOrderHeader = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source = FxReadParquetFile ( "facts\sales_order_header" )
+				in
+				    Source
+
+	changedProperty = IsHidden
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

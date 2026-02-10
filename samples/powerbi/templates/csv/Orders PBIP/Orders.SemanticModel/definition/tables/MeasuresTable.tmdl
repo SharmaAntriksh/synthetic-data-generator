@@ -1,0 +1,60 @@
+table MeasuresTable
+	lineageTag: 09884a1f-f5d3-4d32-9913-353326f25b6a
+
+	measure 'Sales Amount' = ```
+			
+			SUMX ( 
+			    SalesOrderDetail,
+			    SalesOrderDetail[Quantity] * SalesOrderDetail[NetPrice]
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: da55f0b3-05ec-4a91-a1dc-7f0c25f625e5
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Cost Amount' = ```
+			
+			SUMX ( 
+			    SalesOrderDetail,
+			    SalesOrderDetail[UnitCost] * SalesOrderDetail[Quantity]
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 67a26120-bf02-41ae-a523-b8f62f1fdfef
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Profit Amount' = [Sales Amount] - [Cost Amount]
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: f8647297-675c-4b3d-aa5f-6b54c27ffadc
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	column Column1
+		dataType: string
+		isHidden
+		lineageTag: 1c700fcd-3626-4e6a-aaee-6857af0eeaa4
+		summarizeBy: none
+		sourceColumn: Column1
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition MeasuresTable = m
+		mode: import
+		source =
+				let
+				    Source = Table.FromRows(Json.Document(Binary.Decompress(Binary.FromText("i44FAA==", BinaryEncoding.Base64), Compression.Deflate)), let _t = ((type nullable text) meta [Serialized.Text = true]) in type table [Column1 = _t]),
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"Column1", type text}})
+				in
+				    #"Changed Type"
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+

@@ -1,0 +1,404 @@
+table Dates
+	lineageTag: 1e93e289-4d40-485f-9fbc-7760c3c5e1fd
+	dataCategory: Time
+
+	column Date
+		dataType: dateTime
+		isKey
+		formatString: Short Date
+		lineageTag: 3fd4def5-f7ac-43bb-b84a-3bab249d71e1
+		summarizeBy: none
+		sourceColumn: Date
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column DateKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 39c1bef1-cb8a-4c3f-8251-70835117b54d
+		summarizeBy: count
+		sourceColumn: DateKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column Year
+		dataType: int64
+		formatString: 0
+		lineageTag: 996eb0fd-712d-4c55-b1e1-c3fb6938ba86
+		summarizeBy: sum
+		sourceColumn: Year
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsYearStart
+		dataType: int64
+		formatString: 0
+		lineageTag: 0fa01c5a-256d-4a9b-8846-df82a8e04316
+		summarizeBy: sum
+		sourceColumn: IsYearStart
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsYearEnd
+		dataType: int64
+		formatString: 0
+		lineageTag: e01fa196-d101-42f9-8ed9-a96013bf317d
+		summarizeBy: sum
+		sourceColumn: IsYearEnd
+
+		annotation SummarizationSetBy = Automatic
+
+	column Quarter
+		dataType: int64
+		formatString: 0
+		lineageTag: 45ccab9c-ce97-43bf-8e64-e11a01b2663d
+		summarizeBy: sum
+		sourceColumn: Quarter
+
+		annotation SummarizationSetBy = Automatic
+
+	column QuarterStartDate
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: c461ebcb-c06a-4fef-916a-e5bcb1fb8584
+		summarizeBy: none
+		sourceColumn: QuarterStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column QuarterEndDate
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: dc499a69-273c-4b3b-a9b8-b0ba8bb8a289
+		summarizeBy: none
+		sourceColumn: QuarterEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column IsQuarterStart
+		dataType: int64
+		formatString: 0
+		lineageTag: ccb9f3a0-81eb-4680-8416-4336a5807833
+		summarizeBy: sum
+		sourceColumn: IsQuarterStart
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsQuarterEnd
+		dataType: int64
+		formatString: 0
+		lineageTag: e42a4d4e-1e5a-46b3-98c2-594bc49b72f2
+		summarizeBy: sum
+		sourceColumn: IsQuarterEnd
+
+		annotation SummarizationSetBy = Automatic
+
+	column QuarterYear
+		dataType: string
+		lineageTag: 99dacc30-46c9-41cd-b8bc-02a7917d57b0
+		summarizeBy: none
+		sourceColumn: QuarterYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column Month
+		dataType: int64
+		formatString: 0
+		lineageTag: 5de2751c-c920-47e7-ad61-50362f65a8dd
+		summarizeBy: sum
+		sourceColumn: Month
+
+		annotation SummarizationSetBy = Automatic
+
+	column MonthName
+		dataType: string
+		lineageTag: 1c1b18b8-f048-48be-8ea1-4b1b458d11b5
+		summarizeBy: none
+		sourceColumn: MonthName
+
+		annotation SummarizationSetBy = Automatic
+
+	column MonthShort
+		dataType: string
+		lineageTag: 629c62a1-d4cf-47d5-ba88-01888209e775
+		summarizeBy: none
+		sourceColumn: MonthShort
+
+		annotation SummarizationSetBy = Automatic
+
+	column MonthStartDate
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: e1d2c99f-5076-4a6a-b114-ea862dbd50c8
+		summarizeBy: none
+		sourceColumn: MonthStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column MonthEndDate
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: 2453504c-d732-4600-a8e4-0519ce4281a9
+		summarizeBy: none
+		sourceColumn: MonthEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column MonthYear
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: dec1a8fb-1746-4776-8c7c-5e32a44bd907
+		summarizeBy: none
+		sourceColumn: MonthYear
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column MonthYearNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: c2d4c82e-8707-4d57-8ddb-8f87e1074676
+		summarizeBy: sum
+		sourceColumn: MonthYearNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column CalendarMonthIndex
+		dataType: int64
+		formatString: 0
+		lineageTag: 3a2407da-1f0a-490a-b6ec-cfa0af5c409d
+		summarizeBy: sum
+		sourceColumn: CalendarMonthIndex
+
+		annotation SummarizationSetBy = Automatic
+
+	column CalendarQuarterIndex
+		dataType: int64
+		formatString: 0
+		lineageTag: 569a30fa-6067-48fd-954c-2c2aa675e9e2
+		summarizeBy: sum
+		sourceColumn: CalendarQuarterIndex
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsMonthStart
+		dataType: int64
+		formatString: 0
+		lineageTag: 7ba9a583-cc65-49c4-bfae-4ef5cabe119d
+		summarizeBy: sum
+		sourceColumn: IsMonthStart
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsMonthEnd
+		dataType: int64
+		formatString: 0
+		lineageTag: c296b142-d065-41b6-be89-9b0ab2f75b51
+		summarizeBy: sum
+		sourceColumn: IsMonthEnd
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeekOfMonth
+		dataType: int64
+		formatString: 0
+		lineageTag: 5427df1a-095d-45a6-b3a1-96273463af73
+		summarizeBy: sum
+		sourceColumn: WeekOfMonth
+
+		annotation SummarizationSetBy = Automatic
+
+	column Day
+		dataType: int64
+		formatString: 0
+		lineageTag: 1a997df4-2abb-4de1-8d9d-8305dbd43ed1
+		summarizeBy: sum
+		sourceColumn: Day
+
+		annotation SummarizationSetBy = Automatic
+
+	column DayName
+		dataType: string
+		lineageTag: 79ec9d90-0bf8-455b-b330-6d5ef21a0ed3
+		summarizeBy: none
+		sourceColumn: DayName
+
+		annotation SummarizationSetBy = Automatic
+
+	column DayShort
+		dataType: string
+		lineageTag: efe73c27-c199-4ae3-b85c-e610acda1698
+		summarizeBy: none
+		sourceColumn: DayShort
+
+		annotation SummarizationSetBy = Automatic
+
+	column DayOfYear
+		dataType: int64
+		formatString: 0
+		lineageTag: 1a8fe719-2776-4cef-8344-f4251db4e5fa
+		summarizeBy: sum
+		sourceColumn: DayOfYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column DayOfWeek
+		dataType: int64
+		formatString: 0
+		lineageTag: 7d6e8180-ddfd-4ad8-bdb6-1f43015c81b3
+		summarizeBy: sum
+		sourceColumn: DayOfWeek
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsWeekend
+		dataType: int64
+		formatString: 0
+		lineageTag: 4d167d05-7c47-44dd-bf28-0da4c96613b6
+		summarizeBy: sum
+		sourceColumn: IsWeekend
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsBusinessDay
+		dataType: int64
+		formatString: 0
+		lineageTag: 1f5ca372-3aa6-4b9a-b2a9-fb547bd03381
+		summarizeBy: sum
+		sourceColumn: IsBusinessDay
+
+		annotation SummarizationSetBy = Automatic
+
+	column NextBusinessDay
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: 05d82fbc-a2c9-49a1-ac20-9079af2e0bc7
+		summarizeBy: none
+		sourceColumn: NextBusinessDay
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column PreviousBusinessDay
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: e3c83809-8168-44ff-8169-b9c8dd4e84f9
+		summarizeBy: none
+		sourceColumn: PreviousBusinessDay
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column IsToday
+		dataType: int64
+		formatString: 0
+		lineageTag: 98462bd4-960c-46d6-8406-bf743cef09f9
+		summarizeBy: sum
+		sourceColumn: IsToday
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsCurrentYear
+		dataType: int64
+		formatString: 0
+		lineageTag: c2cba7b4-0a8f-47e5-a4dd-4c8e3c651b4b
+		summarizeBy: sum
+		sourceColumn: IsCurrentYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsCurrentMonth
+		dataType: int64
+		formatString: 0
+		lineageTag: 84c60459-6920-4c6a-aa08-c727841407ba
+		summarizeBy: sum
+		sourceColumn: IsCurrentMonth
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsCurrentQuarter
+		dataType: int64
+		formatString: 0
+		lineageTag: 4323b79a-710a-437c-a338-72047e9d261a
+		summarizeBy: sum
+		sourceColumn: IsCurrentQuarter
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrentDayOffset
+		dataType: int64
+		formatString: 0
+		lineageTag: 59701842-1673-4a62-9f00-2dc46610c9d6
+		summarizeBy: sum
+		sourceColumn: CurrentDayOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Dates = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "dates" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        {
+				            { "Date", type date },
+				            { "DateKey", Int64.Type },
+				            { "Year", Int64.Type },
+				            { "IsYearStart", Int64.Type },
+				            { "IsYearEnd", Int64.Type },
+				            { "Quarter", Int64.Type },
+				            { "QuarterStartDate", type date },
+				            { "QuarterEndDate", type date },
+				            { "IsQuarterStart", Int64.Type },
+				            { "IsQuarterEnd", Int64.Type },
+				            { "QuarterYear", type text },
+				            { "Month", Int64.Type },
+				            { "MonthName", type text },
+				            { "MonthShort", type text },
+				            { "MonthStartDate", type date },
+				            { "MonthEndDate", type date },
+				            { "MonthYear", type date },
+				            { "MonthYearNumber", Int64.Type },
+				            { "CalendarMonthIndex", Int64.Type },
+				            { "CalendarQuarterIndex", Int64.Type },
+				            { "IsMonthStart", Int64.Type },
+				            { "IsMonthEnd", Int64.Type },
+				            { "WeekOfMonth", Int64.Type },
+				            { "Day", Int64.Type },
+				            { "DayName", type text },
+				            { "DayShort", type text },
+				            { "DayOfYear", Int64.Type },
+				            { "DayOfWeek", Int64.Type },
+				            { "IsWeekend", Int64.Type },
+				            { "IsBusinessDay", Int64.Type },
+				            { "NextBusinessDay", type date },
+				            { "PreviousBusinessDay", type date },
+				            { "IsToday", Int64.Type },
+				            { "IsCurrentYear", Int64.Type },
+				            { "IsCurrentMonth", Int64.Type },
+				            { "IsCurrentQuarter", Int64.Type },
+				            { "CurrentDayOffset", Int64.Type }
+				        }
+				    )
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

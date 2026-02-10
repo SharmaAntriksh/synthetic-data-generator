@@ -1,0 +1,85 @@
+expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-10 01_53_20 AM Customers 20K Sales 600K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+	lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
+	queryGroup: 'Parameters & Functions'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Text
+
+expression FxReadCSVFile =
+		( TableType as text, FileName as text ) as table =>
+		    let
+		        FileContents = File.Contents ( ContosoFolder & "\" & TableType & "\" & FileName & ".csv" ),
+		        CsvDocument = Csv.Document (
+		            FileContents,
+		            [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		        ),
+		        PromoteHeaders = Table.PromoteHeaders ( CsvDocument, [ PromoteAllScalars = true ] )
+		    in
+		        PromoteHeaders
+	lineageTag: d2ba962f-2339-4f99-977a-ef51cbe9f4db
+	queryGroup: 'Parameters & Functions'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Function
+
+expression Parameter_Sales = Sample_File_Sales meta [IsParameterQuery=true, BinaryIdentifier=Sample_File_Sales, Type="Binary", IsParameterQueryRequired=true]
+	lineageTag: 16937932-d36d-422d-85f2-d36ecebbbad7
+	queryGroup: 'Transform File from facts\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Binary
+
+expression Sample_File_Sales =
+		let
+		    Source = Folder.Files ( ContosoFolder & "\facts"),
+		    #"Removed Other Columns" = Table.SelectColumns(Source,{"Content"}),
+		    Navigation1 = #"Removed Other Columns"{0}[Content]
+		in
+		    Navigation1
+	lineageTag: 2d6942c2-78d6-4a2a-9528-293fdf7c7537
+	queryGroup: 'Transform File from facts\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Binary
+
+expression Sample_Sales = ```
+		let
+		    Source = Csv.Document (
+		        Parameter_Sales, 
+		        [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		    ), 
+		    PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+		in
+		    PromotedHeaders
+		```
+	lineageTag: deddc6d1-7ebb-4b3c-8930-64afc34b1ed5
+	queryGroup: 'Transform File from facts'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+
+expression Transform_Sales_File =
+		let
+		    Source = ( Parameter1 as binary ) =>
+		        let
+		            Source = Csv.Document (
+		                Parameter1,
+		                [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		            ),
+		            PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+		        in
+		            PromotedHeaders
+		in
+		    Source
+	lineageTag: 14c2d493-d731-4603-ae19-1abf30ca23e3
+	queryGroup: 'Transform File from facts\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Function
+

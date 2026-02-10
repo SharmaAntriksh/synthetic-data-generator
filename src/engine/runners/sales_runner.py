@@ -6,7 +6,7 @@ from pathlib import Path
 
 from src.utils.logging_utils import stage, info, done
 from src.engine.packaging import package_output
-from src.engine.powerbi_packaging import attach_pbip_project
+from src.engine.powerbi_packaging import maybe_attach_pbip_project
 from src.facts.sales.sales import generate_sales_fact
 from src.facts.sales.sales_logic.globals import bind_globals, State
 
@@ -64,9 +64,11 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # Validate critical config early
     # ------------------------------------------------------------
     if "skip_order_cols" not in sales_cfg:
-        raise RuntimeError(
-            "sales.skip_order_cols must be explicitly defined in config"
-        )
+        raise RuntimeError("sales.skip_order_cols must be explicitly defined in config")
+
+    # Needed for PBIP selection (sales | sales_order | both)
+    if "sales_output" not in sales_cfg:
+        raise RuntimeError("sales.sales_output must be explicitly defined in config")
 
     skip_order_cols = bool(sales_cfg["skip_order_cols"])
 
@@ -82,16 +84,12 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         columns=["ProductKey", "IsActiveInSales", "UnitPrice", "UnitCost"],
     )
 
-    active_products_df = products_df.loc[
-        products_df["IsActiveInSales"] == 1
-    ]
+    active_products_df = products_df.loc[products_df["IsActiveInSales"] == 1]
 
     if active_products_df.empty:
         raise RuntimeError("No active products found for sales generation")
 
-    active_product_np = active_products_df[
-        ["ProductKey", "UnitPrice", "UnitCost"]
-    ].to_numpy()
+    active_product_np = active_products_df[["ProductKey", "UnitPrice", "UnitCost"]].to_numpy()
 
     # ------------------------------------------------------------
     # Bind ONLY runner-level globals
@@ -99,11 +97,13 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # NOTE:
     # - We do NOT bind active_customer_keys anymore
     # - Customer lifecycle is resolved inside sales.py
-    bind_globals({
-        "skip_order_cols": skip_order_cols,
-        "active_product_np": active_product_np,
-        "models_cfg": State.models_cfg,
-    })
+    bind_globals(
+        {
+            "skip_order_cols": skip_order_cols,
+            "active_product_np": active_product_np,
+            "models_cfg": State.models_cfg,
+        }
+    )
 
     # ------------------------------------------------------------
     # Run sales fact generation
@@ -117,22 +117,18 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         out_folder=str(sales_out_folder),
         total_rows=sales_cfg["total_rows"],
         file_format=sales_cfg["file_format"],
-
         # Parquet merge options
         merge_parquet=sales_cfg.get("merge_parquet", False),
         merged_file=sales_cfg.get("merged_file", "sales.parquet"),
-
         # Performance / execution
         row_group_size=sales_cfg.get("row_group_size", 2_000_000),
         compression=sales_cfg.get("compression", "snappy"),
         chunk_size=sales_cfg.get("chunk_size", 1_000_000),
         workers=sales_cfg.get("workers"),
-
         # Partitioning / delta
         partition_enabled=sales_cfg.get("partition_enabled", False),
         partition_cols=sales_cfg.get("partition_cols", ["Year", "Month"]),
         delta_output_folder=str(sales_out_folder),
-
         skip_order_cols=skip_order_cols,
     )
 
@@ -145,18 +141,13 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
 
     final_folder = package_output(cfg, sales_cfg, parquet_dims, fact_out)
 
-    pbip_template = None
-
-    if fmt == "csv":
-        pbip_template = Path("samples/powerbi/templates/PBIP CSV")
-    elif fmt == "parquet":
-        pbip_template = Path("samples/powerbi/templates/PBIP Parquet")
-    # deltaparquet intentionally skips PBIP
-
-    if pbip_template is not None:
-        attach_pbip_project(
-            final_folder=final_folder,
-            pbip_template_root=pbip_template,
-        )
+    # PBIP templates now live under:
+    #   samples/powerbi/templates/{csv|parquet}/{Sales|Orders|Sales and Orders}
+    # deltaparquet intentionally skips PBIP.
+    maybe_attach_pbip_project(
+        final_folder=final_folder,
+        file_format=sales_cfg["file_format"],
+        sales_output=sales_cfg["sales_output"],
+    )
 
     done(f"Creating Final Output Folder completed in {time.time() - t1:.1f}s")

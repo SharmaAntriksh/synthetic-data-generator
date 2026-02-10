@@ -1,0 +1,137 @@
+expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-10 01_28_17 PM Customers 20K Sales 600K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+	lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
+	queryGroup: 'Parameters & Functions'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Text
+
+expression FxReadCSVFile =
+		( TableType as text, FileName as text ) as table =>
+		    let
+		        FileContents = File.Contents ( ContosoFolder & "\" & TableType & "\" & FileName & ".csv" ),
+		        CsvDocument = Csv.Document (
+		            FileContents,
+		            [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		        ),
+		        PromoteHeaders = Table.PromoteHeaders ( CsvDocument, [ PromoteAllScalars = true ] )
+		    in
+		        PromoteHeaders
+	lineageTag: d2ba962f-2339-4f99-977a-ef51cbe9f4db
+	queryGroup: 'Parameters & Functions'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Function
+
+expression Parameter_SOH = Sample_File_SOH meta [IsParameterQuery=true, BinaryIdentifier=Sample_File_SOH, Type="Binary", IsParameterQueryRequired=true]
+	lineageTag: 38bac50a-02f2-4609-84d8-fc8b1e80fec9
+	queryGroup: 'SOH Transformation\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Binary
+
+expression Parameter_SOD = Sample_File_SOD meta [IsParameterQuery=true, BinaryIdentifier=Sample_File_SOD, Type="Binary", IsParameterQueryRequired=true]
+	lineageTag: 32a8b147-7866-460d-bdf2-2b31c7ced178
+	queryGroup: 'SOD Transformations\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Binary
+
+expression Sample_File_SOH =
+		let
+		    Source = Folder.Files ( ContosoFolder & "\facts\sales_order_header" ),
+		    Navigation1 = Source{0}[Content]
+		in
+		    Navigation1
+	lineageTag: 0a8e16ff-f7c1-4959-99c9-1dc1711e5e6b
+	queryGroup: 'SOH Transformation\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Binary
+
+expression Sample_SOH =
+		let
+		    Source = Csv.Document(Parameter_SOH,[Delimiter=",", Columns=4, Encoding=1252, QuoteStyle=QuoteStyle.None]),
+		    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true])
+		in
+		    #"Promoted Headers"
+	lineageTag: 2af751b9-80d3-463d-88d1-d469a93b71f2
+	queryGroup: 'SOH Transformation'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+
+expression Transform_SOH_File =
+		let
+		    Source = ( Parameter1 ) =>
+		        let
+		            Source = Csv.Document (
+		                Parameter1,
+		                [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		            ),
+		            PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+		        in
+		            PromotedHeaders
+		in
+		    Source
+	lineageTag: 8acf9592-37f3-413f-b245-8b02e8405ff3
+	queryGroup: 'SOH Transformation\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Function
+
+expression Sample_File_SOD =
+		let
+		    Source = Folder.Files ( ContosoFolder & "\facts\sales_order_detail" ),
+		    Navigation1 = Source{0}[Content]
+		in
+		    Navigation1
+	lineageTag: 98fbce9b-5cdb-4a21-8836-331957ab487a
+	queryGroup: 'SOD Transformations\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Binary
+
+expression Sample_SOD =
+		let
+		    Source = Csv.Document (
+		        Parameter_SOD,
+		        [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		    ),
+		    PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+		in
+		    PromotedHeaders
+	lineageTag: a463ef4a-6b02-499b-beac-cd6dcb2e5ac3
+	queryGroup: 'SOD Transformations'
+
+	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
+
+expression Transform_SOD_File =
+		let
+		    Source = (Parameter_SOD as binary) => let
+		        Source = Csv.Document (
+		            Parameter_SOD,
+		            [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		        ),
+		        PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+		    in
+		        PromotedHeaders
+		in
+		    Source
+	mAttributes: [ FunctionQueryBinding = "{""exemplarFormulaName"":""Sample_SOD""}" ]
+	lineageTag: dbca9cbf-677c-4649-a801-b600c9313e07
+	queryGroup: 'SOD Transformations\Helper Queries'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Function
+

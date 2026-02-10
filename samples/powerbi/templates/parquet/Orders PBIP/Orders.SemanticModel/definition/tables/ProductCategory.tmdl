@@ -1,0 +1,49 @@
+table ProductCategory
+	lineageTag: 9e8dfa4d-bbb6-4266-8032-8525a6ffab55
+
+	column CategoryKey
+		dataType: int64
+		formatString: 0
+		lineageTag: af011566-9475-4ca8-a0e7-04588a8cf00c
+		summarizeBy: none
+		sourceColumn: CategoryKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: fe316b83-bf3c-40a5-987a-67a17e514cf2
+		summarizeBy: none
+		sourceColumn: Category
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column CategoryLabel
+		dataType: string
+		lineageTag: f8cc84e7-1328-46f7-960a-e474587ae142
+		summarizeBy: none
+		sourceColumn: CategoryLabel
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition ProductCategory = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\product_category" )
+				in
+				    Source
+
+	changedProperty = IsHidden
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

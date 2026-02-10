@@ -1,0 +1,99 @@
+table MeasuresTable
+	lineageTag: a79715bc-3f48-4e38-a742-77f338a1070a
+
+	measure '# Customers' =
+			
+			DISTINCTCOUNT ( Sales[CustomerKey] )
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 6ec8f0ae-723d-46cd-b46d-b9c1cedc3068
+
+		changedProperty = IsHidden
+
+	measure 'Cost Amount' = ```
+			
+			SUMX ( 
+			    Sales, 
+			    Sales[Quantity] * Sales[UnitCost]
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 161627e6-1af2-4474-94e3-8f71733d228e
+
+		changedProperty = IsHidden
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Profit Amount' =
+			
+			[Sales Amount] - [Cost Amount]
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: a95a2156-9a97-45f8-b9a9-08a4ef5a8d06
+
+		changedProperty = IsHidden
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Sales Amount' = ```
+			
+			SUMX ( 
+			    Sales, 
+			    Sales[Quantity] * Sales[NetPrice]
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 48d9e8b9-f997-475d-b363-973edb1d5bb3
+
+		changedProperty = IsHidden
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Sales Amount (SOD )' = ```
+			
+			SUMX ( 
+			    SalesOrderDetail, 
+			    SalesOrderDetail[Quantity] * SalesOrderDetail[NetPrice]
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 6e07a49f-8504-460e-9f2c-9364cd1dbd89
+
+		changedProperty = IsHidden
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure Transactions =
+			
+			COUNTROWS ( Sales )
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: f941d2a9-2c52-4441-ba75-afa6c2f91413
+
+		changedProperty = IsHidden
+
+	column Column1
+		dataType: string
+		isHidden
+		lineageTag: 2c629aff-ace3-49e6-9e5a-e9c089996261
+		summarizeBy: none
+		sourceColumn: Column1
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition MeasuresTable = m
+		mode: import
+		source =
+				let
+				    Source = Table.FromRows(Json.Document(Binary.Decompress(Binary.FromText("i44FAA==", BinaryEncoding.Base64), Compression.Deflate)), let _t = ((type nullable text) meta [Serialized.Text = true]) in type table [Column1 = _t]),
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"Column1", type text}})
+				in
+				    #"Changed Type"
+
+	annotation PBI_ResultType = Table
+
