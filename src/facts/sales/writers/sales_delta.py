@@ -17,6 +17,7 @@ def write_delta_partitioned(
     *,
     sort_small_parts: bool = True,
     sort_row_limit: int = 2_000_000,
+    table_name: str | None = None,
 ):
     """
     Convert worker parquet parts into a partitioned Delta table.
@@ -28,14 +29,16 @@ def write_delta_partitioned(
            - absolute/relative file paths
 
     Notes:
-    - Validates required pricing columns and partition columns
+    - Validates required pricing columns (table-aware via `table_name`)
+    - Validates partition columns, with a safe fallback for missing cols
+      (drops missing partition cols instead of failing hard when table_name is provided)
     - Projects schema differences to the first part's schema
     - Optionally sorts *small* parts by partition columns for stable output
       (sorting large parts is skipped for performance).
     """
     from src.utils.logging_utils import info
 
-    pa, _, pq = _arrow()
+    _, _, pq = _arrow()
 
     parts_folder = os.path.abspath(parts_folder) if parts_folder else None
     delta_output_folder = os.path.abspath(delta_output_folder)
@@ -83,11 +86,21 @@ def write_delta_partitioned(
     # Validate schema once (first file)
     first_pf = pq.ParquetFile(part_files[0])
     canonical_schema = first_pf.schema_arrow
-    _validate_required(canonical_schema)
 
+    # IMPORTANT: table-aware required columns validation (Header must not require pricing cols)
+    _validate_required(canonical_schema, table_name=table_name)
+
+    # Partition columns: strict if table_name is not provided (back-compat);
+    # otherwise drop missing partition cols and proceed.
     missing_part_cols = [c for c in partition_cols if c not in canonical_schema.names]
     if missing_part_cols:
-        raise RuntimeError(f"Partition columns missing from schema: {missing_part_cols}")
+        if table_name is None:
+            raise RuntimeError(f"Partition columns missing from schema: {missing_part_cols}")
+        partition_cols = [c for c in partition_cols if c in canonical_schema.names]
+        info(
+            f"[DELTA] Partition cols missing for table={table_name}; "
+            f"dropping {missing_part_cols}. Remaining={partition_cols}"
+        )
 
     os.makedirs(delta_output_folder, exist_ok=True)
 
@@ -104,7 +117,8 @@ def write_delta_partitioned(
                 f"top-level error={e1!r}; fallback error={e2!r}"
             ) from e2
 
-    info(f"[DELTA] Writing {len(part_files)} parts (Arrow -> Delta)")
+    suffix = f" table={table_name}" if table_name else ""
+    info(f"[DELTA] Writing {len(part_files)} parts (Arrow -> Delta){suffix}")
 
     first = True
     for pf_path in part_files:

@@ -1,0 +1,169 @@
+table Store
+	lineageTag: b6787471-f359-49c1-8666-e49d80de3bf8
+
+	column StoreKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8637d84b-74d0-48a2-92c8-2af2e7cb27a6
+		summarizeBy: none
+		sourceColumn: StoreKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreName
+		dataType: string
+		lineageTag: 72ba9cc9-f09d-41c0-9a80-a41a12023084
+		summarizeBy: none
+		sourceColumn: StoreName
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreType
+		dataType: string
+		lineageTag: 99c219ef-bdbc-4d17-be91-7b42ea630553
+		summarizeBy: none
+		sourceColumn: StoreType
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Status
+		dataType: string
+		lineageTag: b6499753-8667-48b7-9343-725afb9e0bf0
+		summarizeBy: none
+		sourceColumn: Status
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column GeographyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: dfddc145-b9df-431c-bad2-89fb5e22c252
+		summarizeBy: none
+		sourceColumn: GeographyKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column OpeningDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 38713ebc-a588-4f9d-b653-045c9d2f883f
+		summarizeBy: none
+		sourceColumn: OpeningDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column ClosingDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: e225643c-a9cd-4b79-a9a3-d999c1e7d19c
+		summarizeBy: none
+		sourceColumn: ClosingDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column OpenFlag
+		dataType: int64
+		formatString: 0
+		lineageTag: fe65a993-456c-4d32-924b-21d0dc34de01
+		summarizeBy: none
+		sourceColumn: OpenFlag
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column SquareFootage
+		dataType: int64
+		formatString: 0
+		lineageTag: 397a3657-92e0-47f9-8a90-7139436eb067
+		summarizeBy: none
+		sourceColumn: SquareFootage
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column EmployeeCount
+		dataType: int64
+		formatString: 0
+		lineageTag: e167b0c3-6ef3-4b0d-b1d0-474b566ab5f3
+		summarizeBy: none
+		sourceColumn: EmployeeCount
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreManager
+		dataType: string
+		lineageTag: 3a6eefda-f93f-41d2-9a51-4412ba34ed04
+		summarizeBy: none
+		sourceColumn: StoreManager
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column Phone
+		dataType: string
+		lineageTag: 8bfa479e-183c-47ca-8a2b-e23a1c8d3592
+		summarizeBy: none
+		sourceColumn: Phone
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreDescription
+		dataType: string
+		lineageTag: cd83747a-a10f-45d4-9d20-eb2807a58713
+		summarizeBy: none
+		sourceColumn: StoreDescription
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column CloseReason
+		dataType: string
+		lineageTag: 4be9573e-b903-481c-8700-80dc86f47667
+		summarizeBy: none
+		sourceColumn: CloseReason
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Store = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\stores" )
+				in
+				    Source
+
+	changedProperty = IsHidden
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

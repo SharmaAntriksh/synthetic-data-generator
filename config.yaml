@@ -14,6 +14,16 @@ defaults:
   paths:
     geography: "./data/parquet_dims/geography.parquet"
 
+packaging:
+  reset_scratch_fact_out: true   # default current behavior
+  clean_scratch_fact_out: true   # default current behavior
+
+facts:
+  enabled: ["sales", "returns"]
+returns:
+  enabled: true
+  return_rate: 0.03
+
 # ---------------------------------------------------------------------
 # SALES FACT GENERATION
 # ---------------------------------------------------------------------
@@ -21,10 +31,11 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 100230321
-  chunk_size: 2000000
+  total_rows: 1002301
+  chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
+  sales_output: "both"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -42,7 +53,7 @@ sales:
   write_pyarrow: true
   tune_chunk: false
 
-  skip_order_cols: true
+  skip_order_cols: false
 
   override:
     dates:
@@ -58,15 +69,15 @@ sales:
 # ---------------------------------------------------------------------
 products:
   use_contoso_products: false
-  num_products: 316022
+  num_products: 4160
   active_ratio: 0.94
   seed: 42
 
   pricing:
     base:
       value_scale: 0.10
-      min_unit_price: 10
-      max_unit_price: 5000
+      min_unit_price: 50
+      max_unit_price: 3000
 
       # optional tuning:
       stretch_to_range: false
@@ -103,7 +114,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 5018413
+  total_customers: 34184
   active_ratio: 0.90
 
   pct_india: 10

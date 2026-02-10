@@ -33,13 +33,31 @@ def _short_path(p: Path, *, base: Path | None = None) -> str:
 # SQL file execution helpers
 # -------------------------
 def _read_sql_text(sql_file: Path) -> str:
-    try:
-        try:
-            return sql_file.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            return sql_file.read_text(encoding="utf-16")
-    except OSError as exc:
-        raise SqlServerImportError(f"Failed reading SQL file '{sql_file.name}': {exc}") from exc
+    raw = sql_file.read_bytes()
+
+    # BOM detection
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        text = raw.decode("utf-16")
+    elif raw.startswith(b"\xef\xbb\xbf"):
+        text = raw.decode("utf-8-sig")
+    else:
+        # Heuristic: NULs early usually mean UTF-16
+        if b"\x00" in raw[:4096]:
+            try:
+                text = raw.decode("utf-16")
+            except UnicodeDecodeError:
+                text = raw.decode("utf-8", errors="replace")
+        else:
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = raw.decode("utf-16")
+
+    # Strip NULs that break identifiers (dbo -> d\0b\0o\0)
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+
+    return text
 
 
 def execute_sql_batches(cursor, sql_file: Path) -> None:

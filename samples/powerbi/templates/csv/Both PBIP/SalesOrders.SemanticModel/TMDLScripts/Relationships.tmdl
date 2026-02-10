@@ -1,0 +1,84 @@
+createOrReplace
+
+	relationship 3bb02a0a-77e9-8fd5-1882-a4bed0493884
+		fromColumn: Customers.GeographyKey
+		toColumn: Geography.GeographyKey
+
+	relationship 525ee982-092b-a66e-0179-255a18f8e461
+		isActive: false
+		fromColumn: Store.GeographyKey
+		toColumn: Geography.GeographyKey
+
+	relationship d023a999-5449-fd85-6bd5-c77eea3ff127
+		fromColumn: SalesOrderHeader.OrderDate
+		toColumn: Dates.Date
+
+	relationship 9be8d967-d6b9-e0ff-4901-c81ba25499a7
+		fromColumn: SalesOrderDetail.SalesOrderNumber
+		toColumn: SalesOrderHeader.SalesOrderNumber
+
+	relationship 28da5e4c-5712-cf93-3464-27b5443b4425
+		fromColumn: Sales.CustomerKey
+		toColumn: Customers.CustomerKey
+
+	relationship 15201b52-ac1f-eeb6-e516-2af86d8855c2
+		fromColumn: Sales.StoreKey
+		toColumn: Store.StoreKey
+
+	relationship 7e007976-a441-ca63-3cb5-dd11917d164a
+		fromColumn: Sales.OrderDate
+		toColumn: Dates.Date
+
+	relationship e386c2fa-b68b-c8b5-5870-731fd37a0e40
+		isActive: false
+		fromColumn: Sales.DueDate
+		toColumn: Dates.Date
+
+	relationship 5cc4919b-bde3-116b-6c67-ecbb833a1a66
+		isActive: false
+		fromColumn: Sales.DeliveryDate
+		toColumn: Dates.Date
+
+	relationship 4bf0dddb-c104-72f1-5f06-40df8b888232
+		fromColumn: Sales.PromotionKey
+		toColumn: Promotions.PromotionKey
+
+	relationship d4703835-9aff-5266-5857-40468c145baa
+		fromColumn: Sales.ProductKey
+		toColumn: Products.ProductKey
+
+	relationship d334731b-09fb-8eb2-3f35-4a7640e7f1ac
+		fromColumn: ExchangeRates.Date
+		toColumn: Dates.Date
+
+	relationship 7ca0bd36-df37-71a6-440e-09913b545112
+		fromColumn: ExchangeRates.ToCurrency
+		toColumn: Currency.ToCurrency
+
+	relationship 853887d0-e696-5f31-e439-553fe910ddb2
+		fromColumn: Products.SubcategoryKey
+		toColumn: ProductSubcategory.SubcategoryKey
+
+	relationship cb4c6f5d-fbe5-091e-e26b-be6cd2a31828
+		fromColumn: ProductSubcategory.CategoryKey
+		toColumn: ProductCategory.CategoryKey
+
+	relationship dded5175-84e2-b7b8-6f6d-f340109e64ff
+		fromColumn: SalesOrderDetail.ProductKey
+		toColumn: Products.ProductKey
+
+	relationship 1fac21a3-ee5d-cac2-b359-3985ac449411
+		fromColumn: SalesOrderDetail.PromotionKey
+		toColumn: Promotions.PromotionKey
+
+	relationship 7b2e0cb0-a9bc-2724-42f2-0a172ddf5156
+		fromColumn: SalesOrderDetail.StoreKey
+		toColumn: Store.StoreKey
+
+	relationship e592004a-d7f4-4ab6-e25c-a9eba894cc16
+		fromColumn: SalesOrderDetail.CurrencyKey
+		toColumn: Currency.CurrencyKey
+
+	relationship 4407fcda-70ba-5a9a-d338-638b7def17f6
+		fromColumn: SalesOrderHeader.CustomerKey
+		toColumn: Customers.CustomerKey

@@ -1,6 +1,8 @@
 import os
+import re
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable, Mapping, Optional, Set
 
 from src.utils.logging_utils import work, skip
 
@@ -88,10 +90,54 @@ def _quote_multipart_name_sqlserver(name: str) -> str:
     return ".".join(_quote_identifier_sqlserver(p) for p in parts)
 
 
+_CHUNK_SUFFIX_RE = re.compile(r"(?:_chunk\d+|_part\d+)$", flags=re.IGNORECASE)
+
+
 def _infer_table_from_filename(csv_file: str) -> str:
+    """
+    Infer PascalCase table name from a chunked snake_case filename.
+
+    Examples:
+      sales_chunk0001.csv                 -> Sales
+      sales_order_detail_chunk0001.csv    -> SalesOrderDetail
+      sales_order_header_chunk0001.csv    -> SalesOrderHeader
+    """
     base = Path(csv_file).stem
-    # e.g. sales_order_detail -> SalesOrderDetail
+    base = _CHUNK_SUFFIX_RE.sub("", base)
+    # snake_case -> PascalCase
     return base.replace("_", " ").title().replace(" ", "")
+
+
+def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
+    """
+    Build the set of fact tables we want in the facts bulk insert script,
+    based on cfg['sales']['sales_output'].
+
+    Returns None if cfg is None (meaning: don't filter; include all inferred tables).
+    """
+    if cfg is None:
+        return None
+
+    sales_cfg = cfg.get("sales") or {}
+    mode = str(sales_cfg.get("sales_output", "sales")).lower().strip()
+    if mode not in {"sales", "sales_order", "both"}:
+        raise ValueError(f"Invalid sales.sales_output: {mode!r}. Expected sales|sales_order|both.")
+
+    allowed: set[str] = set()
+    if mode in {"sales", "both"}:
+        allowed.add("Sales")
+    if mode in {"sales_order", "both"}:
+        allowed.add("SalesOrderHeader")
+        allowed.add("SalesOrderDetail")
+
+    return allowed
+
+
+def _iter_csv_files(csv_folder: Path, *, recursive: bool) -> Iterable[Path]:
+    if recursive:
+        yield from sorted(csv_folder.rglob("*.csv"))
+    else:
+        yield from sorted(p for p in csv_folder.iterdir() if p.is_file() and p.suffix.lower() == ".csv")
 
 
 def generate_bulk_insert_script(
@@ -110,9 +156,16 @@ def generate_bulk_insert_script(
     max_errors=None,
     error_file=None,
     keep_nulls=False,
+    recursive: bool = False,
+    allowed_tables: Optional[Set[str]] = None,
 ):
     """
-    Generate a BULK INSERT SQL script for all CSV files in a folder.
+    Generate a BULK INSERT SQL script for CSV files in a folder.
+
+    Enhancements vs previous version:
+      - recursive=True scans subfolders (needed for facts layout)
+      - filename inference strips _chunkNNNN suffixes
+      - allowed_tables lets you filter inserts conditionally (based on config)
 
     Notes:
     - BULK INSERT file paths are resolved on the SQL Server machine.
@@ -123,7 +176,6 @@ def generate_bulk_insert_script(
     Backward-compat:
     - If output_sql_file is a bare filename (no directories), the script is written to:
         <csv_folder>/../load/<output_sql_file>
-      (same as the previous behavior).
     - If output_sql_file includes a directory (relative or absolute), that path is honored.
     """
 
@@ -142,13 +194,8 @@ def generate_bulk_insert_script(
 
     target_sql.parent.mkdir(parents=True, exist_ok=True)
 
-    # Collect CSV files (stable order)
-    csv_files = sorted(
-        f for f in os.listdir(csv_folder)
-        if f.lower().endswith(".csv")
-    )
-
-    if not csv_files:
+    csv_paths = list(_iter_csv_files(csv_folder, recursive=recursive))
+    if not csv_paths:
         skip(f"No CSV files found in {csv_folder}. Skipping BULK INSERT script.")
         return None
 
@@ -161,12 +208,19 @@ def generate_bulk_insert_script(
         "",
     ]
 
-    for csv_file in csv_files:
-        inferred = _infer_table_from_filename(csv_file)
+    emitted = 0
+
+    for csv_path in csv_paths:
+        inferred = _infer_table_from_filename(csv_path.name)
         target_table = table_name or inferred
+
+        # Optional filtering (config-driven)
+        if allowed_tables is not None and target_table not in allowed_tables:
+            continue
+
         quoted_table = _quote_multipart_name_sqlserver(str(target_table))
 
-        csv_full_path = str((csv_folder / csv_file).resolve())
+        csv_full_path = str(csv_path.resolve())
         csv_full_path_sql = _sql_escape_literal(csv_full_path)
 
         with_options: list[str] = []
@@ -185,7 +239,6 @@ def generate_bulk_insert_script(
             with_options.insert(0, "FORMAT = 'CSV'")
             with_options.append(f"CODEPAGE = '{codepage}'")
 
-            # Optional CSV knobs (left unset by default to preserve current output)
             if csv_field_quote is not None:
                 with_options.append(f"FIELDQUOTE = '{_sql_escape_literal(str(csv_field_quote))}'")
             if csv_row_terminator is not None:
@@ -195,7 +248,6 @@ def generate_bulk_insert_script(
 
             with_options.append("TABLOCK")
         else:
-            # Legacy: explicit terminators
             with_options.append(f"FIELDTERMINATOR = '{_sql_escape_literal(str(field_terminator))}'")
             with_options.append(f"ROWTERMINATOR = '{_sql_escape_literal(str(row_terminator))}'")
             with_options.append(f"CODEPAGE = '{codepage}'")
@@ -203,7 +255,9 @@ def generate_bulk_insert_script(
 
         opts_sql = ",\n    ".join(with_options)
 
-        stmt = f"""-- Source file: {csv_file}
+        rel_hint = str(csv_path.relative_to(csv_folder)) if recursive else csv_path.name
+
+        stmt = f"""-- Source file: {rel_hint}
 BULK INSERT {quoted_table}
 FROM '{csv_full_path_sql}'
 WITH (
@@ -211,8 +265,61 @@ WITH (
 );
 """
         lines.append(stmt.strip())
-        lines.append("")  # spacing between statements
+        lines.append("")
+        emitted += 1
+
+    if emitted == 0:
+        skip(f"No matching CSV files to emit (allowed_tables filter may have excluded all). Folder: {csv_folder}")
+        return None
 
     target_sql.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     work(f"Wrote BULK INSERT script: {target_sql.name}")
     return str(target_sql)
+
+
+def generate_dims_and_facts_bulk_insert_scripts(
+    *,
+    dims_folder,
+    facts_folder,
+    cfg,
+    load_output_folder,
+    dims_sql_name: str = "01_bulk_insert_dims.sql",
+    facts_sql_name: str = "02_bulk_insert_facts.sql",
+    dims_mode: str = "csv",
+    facts_mode: str = "legacy",
+    row_terminator: str = "0x0a",
+):
+    """
+    Convenience wrapper that ALWAYS writes exactly two files:
+      01_bulk_insert_dims.sql
+      02_bulk_insert_facts.sql  (conditional by cfg['sales']['sales_output'])
+
+    - dims: flat folder
+    - facts: recursive scan (handles facts/<table>/*.csv layout)
+    """
+    load_output_folder = Path(load_output_folder)
+    load_output_folder.mkdir(parents=True, exist_ok=True)
+
+    dims_sql = load_output_folder / dims_sql_name
+    facts_sql = load_output_folder / facts_sql_name
+
+    generate_bulk_insert_script(
+        csv_folder=str(dims_folder),
+        table_name=None,
+        output_sql_file=str(dims_sql),
+        mode=dims_mode,
+    )
+
+    allowed_tables = _allowed_fact_tables_from_cfg(cfg)
+
+    generate_bulk_insert_script(
+        csv_folder=str(facts_folder),
+        table_name=None,
+        output_sql_file=str(facts_sql),
+        mode=facts_mode,
+        row_terminator=row_terminator,
+        recursive=True,
+        allowed_tables=allowed_tables,
+    )
+
+    return str(dims_sql), str(facts_sql)

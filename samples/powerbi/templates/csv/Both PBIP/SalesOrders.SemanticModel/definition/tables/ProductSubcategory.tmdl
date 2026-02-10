@@ -1,0 +1,60 @@
+table ProductSubcategory
+	lineageTag: da7e7e12-9e93-46f3-a723-4e61f38c64b2
+
+	column Subcategory
+		dataType: string
+		lineageTag: 413cc7bc-6f9f-4c34-9b9a-cfa7ad0b2a3e
+		summarizeBy: none
+		sourceColumn: Subcategory
+
+		annotation SummarizationSetBy = Automatic
+
+	column CategoryKey
+		dataType: int64
+		formatString: 0
+		lineageTag: c65defde-05fe-4684-b78c-9d6dd0c6c177
+		summarizeBy: count
+		sourceColumn: CategoryKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SubcategoryKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8461138a-1331-4d9f-a0e1-096475ebbf5d
+		summarizeBy: count
+		sourceColumn: SubcategoryKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SubcategoryLabel
+		dataType: int64
+		formatString: 0
+		lineageTag: 8679faa9-c6e9-4099-b2f1-1a4eb23e70e3
+		summarizeBy: sum
+		sourceColumn: SubcategoryLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	partition ProductSubcategory = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "product_subcategory" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        {
+				            { "SubcategoryKey", Int64.Type },
+				            { "SubcategoryLabel", Int64.Type },
+				            { "Subcategory", type text },
+				            { "CategoryKey", Int64.Type }
+				        }
+				    )
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

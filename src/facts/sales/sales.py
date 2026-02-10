@@ -14,6 +14,27 @@ from src.utils.logging_utils import done, info, skip, work
 from .sales_logic.globals import State
 from .sales_worker import _worker_task, init_sales_worker
 from .sales_writer import merge_parquet_files
+from .output_paths import OutputPaths, TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
+
+
+from dataclasses import dataclass
+from typing import Any, Optional
+
+@dataclass(frozen=True)
+class TableOutputs:
+    table: str
+    file_format: str
+    chunks: list[Any]                 # list[str] for csv/parquet; list[{"part":..,"rows":..}] for delta
+    merged_path: Optional[str] = None # parquet only
+    delta_table_dir: Optional[str] = None  # delta only
+    delta_parts_dir: Optional[str] = None  # delta only
+
+@dataclass(frozen=True)
+class SalesRunManifest:
+    sales_output: str
+    file_format: str
+    out_folder: str
+    tables: dict[str, TableOutputs]
 
 
 # =====================================================================
@@ -316,7 +337,8 @@ def generate_sales_fact(
     skip_order_cols=False,
     write_pyarrow=True,
     partition_enabled=False,
-    partition_cols=None
+    partition_cols=None,
+    return_manifest: bool = False,
 ):
     # ------------------------------------------------------------
     # Normalize cfg defaults (cfg is source-of-truth when call-site omits)
@@ -345,6 +367,11 @@ def generate_sales_fact(
     workers = _apply_cfg_default(workers, None, sales_cfg.get("workers") if "workers" in sales_cfg else None)
     tune_chunk = _apply_cfg_default(tune_chunk, False, _bool_or(sales_cfg.get("tune_chunk"), tune_chunk) if "tune_chunk" in sales_cfg else None)
     write_pyarrow = _apply_cfg_default(write_pyarrow, True, _bool_or(sales_cfg.get("write_pyarrow"), write_pyarrow) if "write_pyarrow" in sales_cfg else None)
+    skip_order_cols = _apply_cfg_default(
+        skip_order_cols,
+        False,
+        _bool_or(sales_cfg.get("skip_order_cols"), skip_order_cols) if "skip_order_cols" in sales_cfg else None,
+    )
 
     start_date, end_date = _resolve_date_range(cfg, start_date, end_date)
     seed = _resolve_seed(cfg, seed, default_seed=42)
@@ -355,15 +382,42 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     parquet_folder_p = Path(str(parquet_folder))
     out_folder_p = Path(str(out_folder))
-    ensure_dir(out_folder_p)
 
-    # Delta setup
+    # Resolve delta folder early (so OutputPaths is built with final values)
     if file_format == "deltaparquet":
         if delta_output_folder is None:
             delta_output_folder = str(out_folder_p / "delta")
         delta_output_folder = os.path.abspath(str(delta_output_folder))
-        ensure_dir(delta_output_folder)
-        ensure_dir(os.path.join(delta_output_folder, "_tmp_parts"))
+
+    output_paths = OutputPaths(
+        file_format=file_format,
+        out_folder=str(out_folder_p),
+        merged_file=str(merged_file),
+        delta_output_folder=(str(delta_output_folder) if file_format == "deltaparquet" else None),
+    )
+
+    sales_output = _str_or(sales_cfg.get("sales_output"), "sales").lower()
+    if sales_output not in {"sales", "sales_order", "both"}:
+        raise ValueError(f"Invalid sales_output: {sales_output}")
+
+    needs_order_cols = sales_output in {"sales_order", "both"}
+
+    # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
+    if sales_output == "both" and not bool(skip_order_cols):
+        info("Config: both + skip_order_cols=false -> Sales includes order cols.")
+        info("Note: output will be large; set skip_order_cols=true for slimmer Sales.")
+
+    tables: list[str] = []
+    if sales_output in {"sales", "both"}:
+        tables.append(TABLE_SALES)
+    if sales_output in {"sales_order", "both"}:
+        tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
+
+    for t in tables:
+        output_paths.ensure_dirs(t)
+
+    # Normalize delta_output_folder after OutputPaths decides defaults/abspath (if your class does that)
+    delta_output_folder = output_paths.delta_output_folder
 
     # ------------------------------------------------------------
     # Optional auto chunk sizing
@@ -521,11 +575,18 @@ def generate_sales_fact(
         date_pool=date_pool,
         date_prob=date_prob,
 
-        out_folder=str(out_folder_p),
+        output_paths=output_paths.to_dict() if hasattr(output_paths, "to_dict") else {
+            "file_format": output_paths.file_format,
+            "out_folder": output_paths.out_folder,
+            "merged_file": output_paths.merged_file,
+            "delta_output_folder": output_paths.delta_output_folder,
+        },
         file_format=file_format,
+        out_folder=str(out_folder_p),
         row_group_size=_int_or(row_group_size, 2_000_000),
         compression=_str_or(compression, "snappy"),
-
+        sales_output=sales_output,
+        
         # legacy knobs (kept)
         heavy_pct=heavy_pct,
         heavy_mult=heavy_mult,
@@ -533,7 +594,9 @@ def generate_sales_fact(
 
         delta_output_folder=delta_output_folder,
         write_delta=write_delta,
-        skip_order_cols=skip_order_cols,
+        skip_order_cols=bool(skip_order_cols),
+        skip_order_cols_requested=bool(skip_order_cols),
+
         write_pyarrow=write_pyarrow,
 
         partition_enabled=partition_enabled,
@@ -542,7 +605,35 @@ def generate_sales_fact(
         models_cfg=State.models_cfg,
     )
 
-    created_files: List[str] = []
+    # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)
+    created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
+    created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
+
+    def _record_chunk_result(r: Any, completed_units: int, total_units: int) -> None:
+        """
+        r can be:
+          - str (legacy 'sales' mode): path
+          - dict(table_name -> write_result): multi-table modes
+              write_result is str for csv/parquet, or {"part":..., "rows":...} for delta
+        """
+        if isinstance(r, str):
+            created_by_table.setdefault(TABLE_SALES, []).append(r)
+            created_files.append(r)
+            work(f"[{completed_units}/{total_units}] -> {os.path.basename(r)}")
+            return
+
+        if isinstance(r, dict):
+            for table_name, val in r.items():
+                created_by_table.setdefault(table_name, []).append(val)
+                if isinstance(val, str):
+                    created_files.append(val)
+                    work(f"[{completed_units}/{total_units}] -> {os.path.basename(val)}")
+                elif isinstance(val, dict) and "part" in val:
+                    work(f"[{completed_units}/{total_units}] -> {table_name}:{val['part']}")
+            return
+
+        # Unknown / unexpected return type: ignore quietly
+        return
 
     # ------------------------------------------------------------
     # Multiprocessing (batched)
@@ -562,48 +653,94 @@ def generate_sales_fact(
             if isinstance(result, list):
                 for r in result:
                     completed_units += 1
-                    if isinstance(r, str):
-                        created_files.append(r)
-                        work(f"[{completed_units}/{total_units}] -> {os.path.basename(r)}")
+                    _record_chunk_result(r, completed_units, total_units)
             else:
                 completed_units += 1
-                if isinstance(result, str):
-                    created_files.append(result)
-                    work(f"[{completed_units}/{total_units}] -> {os.path.basename(result)}")
+                _record_chunk_result(result, completed_units, total_units)
 
     done("All chunks completed.")
 
     # ------------------------------------------------------------
-    # Final assembly
+    # Manifest helper (defined BEFORE returns so it actually runs)
+    # ------------------------------------------------------------
+    def _build_sales_manifest() -> SalesRunManifest:
+        per_table: dict[str, TableOutputs] = {}
+
+        for t in tables:
+            per_table[t] = TableOutputs(
+                table=t,
+                file_format=file_format,
+                chunks=list(created_by_table.get(t, [])),
+                merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
+                delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
+                delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
+            )
+
+        return SalesRunManifest(
+            sales_output=sales_output,
+            file_format=file_format,
+            out_folder=str(out_folder_p),
+            tables=per_table,
+        )
+
+    # ------------------------------------------------------------
+    # Final assembly (TABLE-AWARE)
     # ------------------------------------------------------------
     if file_format == "deltaparquet":
-        from .sales_writer import write_delta_partitioned
+        from .writers.sales_delta import write_delta_partitioned
 
-        write_delta_partitioned(
-            parts_folder=os.path.join(str(delta_output_folder), "_tmp_parts"),
-            delta_output_folder=str(delta_output_folder),
-            partition_cols=partition_cols,
-        )
-        return created_files
+        missing_parts = []
+        wrote = 0
+
+        for t in tables:
+            parts_dir = output_paths.delta_parts_dir(t)
+            delta_dir = output_paths.delta_table_dir(t)
+
+            if not os.path.exists(parts_dir):
+                missing_parts.append((t, parts_dir))
+                continue
+
+            write_delta_partitioned(
+                parts_folder=parts_dir,
+                delta_output_folder=delta_dir,
+                partition_cols=partition_cols,
+                table_name=t,
+            )
+            wrote += 1
+
+        if wrote == 0:
+            msg = " | ".join([f"{t} -> {p}" for t, p in missing_parts]) if missing_parts else "no parts found"
+            raise RuntimeError(f"No delta parts found for any table. {msg}")
+
+        manifest = _build_sales_manifest()
+        return (created_files, manifest) if return_manifest else created_files
 
     if file_format == "csv":
-        return created_files
+        manifest = _build_sales_manifest()
+        return (created_files, manifest) if return_manifest else created_files
 
     if file_format == "parquet":
-        parquet_chunks = sorted(
-            [f for f in created_files if isinstance(f, str) and f.endswith(".parquet") and os.path.isfile(f)]
-        )
-        if not parquet_chunks:
-            parquet_chunks = sorted(
-                f for f in glob.glob(os.path.join(str(out_folder_p), "sales_chunk*.parquet"))
-                if os.path.isfile(f)
-            )
+        if merge_parquet:
+            from .writers.parquet_merge import merge_parquet_files
 
-        if parquet_chunks and merge_parquet:
-            merge_parquet_files(
-                parquet_chunks,
-                os.path.join(str(out_folder_p), merged_file),
-                delete_after=bool(delete_chunks),
-            )
+            for t in tables:
+                chunks = sorted(
+                    f for f in glob.glob(output_paths.chunk_glob(t, "parquet"))
+                    if os.path.isfile(f)
+                )
+                if not chunks:
+                    info(f"No parquet chunks found for {t}; skipping merge")
+                    continue
 
-    return created_files
+                merge_parquet_files(
+                    chunks,
+                    output_paths.merged_path(t),
+                    delete_after=bool(delete_chunks),
+                    table_name=t,
+                )
+
+        manifest = _build_sales_manifest()
+        return (created_files, manifest) if return_manifest else created_files
+
+    raise ValueError(f"Unknown file_format: {file_format}")
+

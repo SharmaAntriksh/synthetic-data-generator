@@ -1,0 +1,34 @@
+createOrReplace
+
+	ref table MeasuresTable
+
+		measure 'Cost Amount' = ```
+				
+				SUMX ( 
+				    SalesOrderDetail,
+				    SalesOrderDetail[UnitCost] * SalesOrderDetail[Quantity]
+				)
+				```
+			formatString: #,0
+			lineageTag: 67a26120-bf02-41ae-a523-b8f62f1fdfef
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure 'Profit Amount' = [Sales Amount] - [Cost Amount]
+			formatString: #,0
+			lineageTag: f8647297-675c-4b3d-aa5f-6b54c27ffadc
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure 'Sales Amount' = ```
+				
+				SUMX ( 
+				    SalesOrderDetail,
+				    SalesOrderDetail[Quantity] * SalesOrderDetail[NetPrice]
+				)
+				```
+			formatString: #,0
+			lineageTag: da55f0b3-05ec-4a91-a1dc-7f0c25f625e5
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+

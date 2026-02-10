@@ -1,0 +1,296 @@
+table Sales
+	lineageTag: f4666ca0-6a51-44bc-9ac1-318199c49815
+
+	measure '# Customers' =
+			
+			DISTINCTCOUNT ( Sales[CustomerKey] )
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 6ec8f0ae-723d-46cd-b46d-b9c1cedc3068
+
+	measure 'Cost Amount' = ```
+			
+			SUMX ( 
+			    Sales, 
+			    Sales[Quantity] * Sales[UnitCost]
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 161627e6-1af2-4474-94e3-8f71733d228e
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Profit Amount' =
+			
+			[Sales Amount] - [Cost Amount]
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: a95a2156-9a97-45f8-b9a9-08a4ef5a8d06
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Sales Amount' = ```
+			
+			SUMX ( 
+			    Sales, 
+			    Sales[Quantity] * Sales[NetPrice]
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 48d9e8b9-f997-475d-b363-973edb1d5bb3
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure Transactions =
+			
+			COUNTROWS ( Sales )
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: f941d2a9-2c52-4441-ba75-afa6c2f91413
+
+	column CustomerKey
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 1d4fe487-d26b-4122-b859-bc5698a9fbe1
+		summarizeBy: count
+		sourceColumn: CustomerKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column ProductKey
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 527c3994-dac4-4258-aeb7-65b5ea481208
+		summarizeBy: count
+		sourceColumn: ProductKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreKey
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: fde4d6ec-f131-422f-8f8a-d743bc4b92f7
+		summarizeBy: count
+		sourceColumn: StoreKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionKey
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 01635ae8-0b29-4e01-9909-17c707552888
+		summarizeBy: count
+		sourceColumn: PromotionKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencyKey
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 4ae6fb5d-a0a9-45f8-9343-a24082011484
+		summarizeBy: count
+		sourceColumn: CurrencyKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column OrderDate
+		dataType: dateTime
+		isHidden
+		formatString: Long Date
+		lineageTag: 9331a271-99b7-434b-a739-db9a7df62a84
+		summarizeBy: none
+		sourceColumn: OrderDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column DueDate
+		dataType: dateTime
+		isHidden
+		formatString: Long Date
+		lineageTag: a781ae6f-5ed6-40de-95ac-91debb993042
+		summarizeBy: none
+		sourceColumn: DueDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column DeliveryDate
+		dataType: dateTime
+		isHidden
+		formatString: Long Date
+		lineageTag: 5da03247-1e61-4876-af60-fbd845bb26ed
+		summarizeBy: none
+		sourceColumn: DeliveryDate
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column Quantity
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: 90a1b5f8-5a16-4790-ac9b-31dad4b52af6
+		summarizeBy: sum
+		sourceColumn: Quantity
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column NetPrice
+		dataType: decimal
+		isHidden
+		lineageTag: 9cca891c-8757-4560-a5f4-8a3be8906e25
+		summarizeBy: sum
+		sourceColumn: NetPrice
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column UnitCost
+		dataType: decimal
+		isHidden
+		lineageTag: 24c21a55-1fb2-484b-87ce-6da090009bc1
+		summarizeBy: sum
+		sourceColumn: UnitCost
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column UnitPrice
+		dataType: decimal
+		isHidden
+		lineageTag: eb642cde-0767-4606-adcb-7f0709f91f25
+		summarizeBy: sum
+		sourceColumn: UnitPrice
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column DiscountAmount
+		dataType: decimal
+		isHidden
+		lineageTag: 0dd9df50-7074-4818-918d-3040e9d5d602
+		summarizeBy: sum
+		sourceColumn: DiscountAmount
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column DeliveryStatus
+		dataType: string
+		isHidden
+		lineageTag: d194f91b-d514-4ded-ae64-68e5cd9d32f8
+		summarizeBy: none
+		sourceColumn: DeliveryStatus
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsOrderDelayed
+		dataType: int64
+		isHidden
+		formatString: 0
+		lineageTag: e743a0fc-21d5-42c7-ae86-d1829d4ce601
+		summarizeBy: sum
+		sourceColumn: IsOrderDelayed
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Sales = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source = Folder.Files ( ContosoFolder & "\facts" ),
+				    RemoveCols = Table.SelectColumns ( Source, { "Content" } ),
+				    RemoveHiden = Table.SelectRows ( RemoveCols, each [Attributes]?[Hidden]? <> true ),
+				    InvokeCustom = Table.AddColumn (
+				        RemoveHiden,
+				        "Transform File",
+				        each Transform_Sales_File ( [Content] )
+				    ),
+				    RemoveOtherCol = Table.SelectColumns ( InvokeCustom, { "Transform File" } ),
+				    CombineTables = Table.ExpandTableColumn (
+				        RemoveOtherCol,
+				        "Transform File",
+				        Table.ColumnNames ( Transform_Sales_File ( Sample_File_Sales ) )
+				    ),
+				    DataTypes = {
+				        { "SalesOrderNumber", Int64.Type },
+				        { "SalesOrderLineNumber", Int64.Type },
+				        { "CustomerKey", Int64.Type },
+				        { "ProductKey", Int64.Type },
+				        { "StoreKey", Int64.Type },
+				        { "PromotionKey", Int64.Type },
+				        { "CurrencyKey", Int64.Type },
+				        { "OrderDate", type date },
+				        { "DueDate", type date },
+				        { "DeliveryDate", type date },
+				        { "Quantity", Int64.Type },
+				        { "NetPrice", Currency.Type },
+				        { "UnitCost", Currency.Type },
+				        { "UnitPrice", Currency.Type },
+				        { "DiscountAmount", Currency.Type },
+				        { "DeliveryStatus", type text },
+				        { "IsOrderDelayed", Int64.Type }
+				    },
+				    CheckNamesForTypes =
+				        if List.ContainsAny (
+				            Table.ColumnNames ( CombineTables ),
+				            { "SalesOrderNumber", "SalesOrderLineNumber" }
+				        )
+				        then
+				            DataTypes
+				        else
+				            List.RemoveFirstN ( DataTypes, 2 ),
+				    ChangeTypes = Table.TransformColumnTypes ( CombineTables, CheckNamesForTypes )
+				in
+				    ChangeTypes
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

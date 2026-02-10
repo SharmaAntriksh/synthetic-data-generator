@@ -1,0 +1,55 @@
+createOrReplace
+
+	ref table MeasureTable
+
+		measure '# Customers' =
+				
+				DISTINCTCOUNT ( Sales[CustomerKey] )
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: 174e935b-1f31-468a-b9a3-8e4c43aa2487
+
+		measure 'Cost Amount' = ```
+				
+				SUMX ( 
+				    Sales, 
+				    Sales[Quantity] * Sales[UnitCost]
+				)
+				```
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: 316bc9a9-7992-4938-830c-767ce80a76be
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure 'Profit Amount' =
+				
+				[Sales Amount] - [Cost Amount]
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: a95a2156-9a97-45f8-b9a9-08a4ef5a8d06
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure 'Sales Amount' = ```
+				
+				SUMX ( 
+				    Sales,
+				    Sales[Quantity] * Sales[NetPrice]
+				)
+				```
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: 0d511203-d4fa-4fbf-bed4-84ce7a184526
+
+			changedProperty = IsHidden
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure Transactions =
+				
+				COUNTROWS ( Sales )
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: f941d2a9-2c52-4441-ba75-afa6c2f91413
+

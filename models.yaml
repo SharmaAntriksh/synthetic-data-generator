@@ -258,5 +258,5 @@ models:
       discount:
         rounding: nearest
         bands:
-          - { max: 5000,  step: 5 }
-          - { max: 1e18,  step: 10 }
+          - { max: 5000,  step: 0.01 }
+          - { max: 1e18,  step: 0.01 }

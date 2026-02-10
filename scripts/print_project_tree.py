@@ -4,7 +4,7 @@ EXCLUDE_DIRS = {
     "__pycache__", ".git", ".venv", "venv",
     "build", "dist", ".idea", ".vscode",
     ".mypy_cache", ".pytest_cache",
-    "data", "generated_datasets",
+    "generated_datasets",
     "logs", "output", "fact_out", "parquet_dims", 
     "PBIP Parquet", "PBIP CSV", "ui", "samples", "docs"
 }

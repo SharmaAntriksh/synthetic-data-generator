@@ -209,11 +209,18 @@ def run_pipeline(
         parquet_dims.mkdir(parents=True, exist_ok=True)
         fact_out.mkdir(parents=True, exist_ok=True)
 
-        # Hard reset scratch fact output (as per CLI behavior)
-        info(f"Resetting fact output folder: {fact_out}")
-        if fact_out.exists():
-            shutil.rmtree(fact_out, ignore_errors=True)
-        fact_out.mkdir(parents=True, exist_ok=True)
+        # Hard reset scratch fact output (as per CLI behavior) — configurable
+        packaging_cfg = cfg.get("packaging", {}) if isinstance(cfg, dict) else {}
+        reset_scratch = bool(packaging_cfg.get("reset_scratch_fact_out", True))
+
+        if reset_scratch:
+            info(f"Resetting fact output folder: {fact_out}")
+            if fact_out.exists():
+                shutil.rmtree(fact_out, ignore_errors=True)
+            fact_out.mkdir(parents=True, exist_ok=True)
+        else:
+            info(f"Keeping existing fact_out folder (packaging.reset_scratch_fact_out=false): {fact_out}")
+            fact_out.mkdir(parents=True, exist_ok=True)
 
         # ----------------------------
         # Run pipelines
@@ -226,10 +233,16 @@ def run_pipeline(
             run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg)
 
         # ----------------------------
-        # Final cleanup (scratch)
+        # Final cleanup (scratch) — configurable
         # ----------------------------
-        info(f"Cleaning scratch fact_out folder: {fact_out}")
-        shutil.rmtree(fact_out, ignore_errors=True)
+        packaging_cfg = cfg.get("packaging", {}) if isinstance(cfg, dict) else {}
+        clean_scratch = bool(packaging_cfg.get("clean_scratch_fact_out", True))
+
+        if clean_scratch:
+            info(f"Cleaning scratch fact_out folder: {fact_out}")
+            shutil.rmtree(fact_out, ignore_errors=True)
+        else:
+            info(f"Keeping scratch fact_out folder (packaging.clean_scratch_fact_out=false): {fact_out}")
 
         elapsed = time.time() - start_ts
         info(f"All pipelines completed in {fmt_sec(elapsed)}.")

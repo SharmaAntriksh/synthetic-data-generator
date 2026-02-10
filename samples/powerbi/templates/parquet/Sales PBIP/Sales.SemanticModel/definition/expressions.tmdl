@@ -1,0 +1,25 @@
+expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-10 01_12_43 PM Customers 20K Sales 600K PARQUET" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+	lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
+	queryGroup: 'Parameters & Functions'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Text
+
+expression FxReadParquetFile = ```
+		let
+		    Source = (ParquetFileName as text) as table =>
+		    Parquet.Document (
+		        File.Contents ( ContosoFolder & "\" & ParquetFileName & ".parquet"), 
+		        [Compression = null, LegacyColumnNameEncoding = false, MaxDepth = null] 
+		    )
+		in
+		    Source
+		```
+	lineageTag: d2ba962f-2339-4f99-977a-ef51cbe9f4db
+	queryGroup: 'Parameters & Functions'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Function
+

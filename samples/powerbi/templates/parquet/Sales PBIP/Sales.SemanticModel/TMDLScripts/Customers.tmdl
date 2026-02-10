@@ -1,0 +1,262 @@
+createOrReplace
+
+	table Customers
+		lineageTag: 674067c5-4401-41cd-b2ef-353674838648
+
+		column CustomerKey
+			dataType: int64
+			formatString: 0
+			lineageTag: d352fa1d-5bd8-4e69-879f-2a5f7904f6c5
+			summarizeBy: none
+			sourceColumn: CustomerKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerName
+			dataType: string
+			lineageTag: 806d2a55-e606-427f-bea9-5ec5ce714ebd
+			summarizeBy: none
+			sourceColumn: CustomerName
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column DOB
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: 5639756d-83ed-468f-ae18-b642da9dd1ab
+			summarizeBy: none
+			sourceColumn: DOB
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column MaritalStatus
+			dataType: string
+			lineageTag: 45c89270-7cb1-4c50-984f-6f753ce0f755
+			summarizeBy: none
+			sourceColumn: MaritalStatus
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column Gender
+			dataType: string
+			lineageTag: ca0ddd1d-b7a2-44ad-8a25-15d540a1930c
+			summarizeBy: none
+			sourceColumn: Gender
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column EmailAddress
+			dataType: string
+			lineageTag: d5393a24-7194-4ad7-a85f-3db7ca1c3782
+			summarizeBy: none
+			sourceColumn: EmailAddress
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column YearlyIncome
+			dataType: double
+			formatString: #,0
+			lineageTag: 129814d9-3c28-4208-9787-28f5906159bd
+			summarizeBy: sum
+			sourceColumn: YearlyIncome
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column TotalChildren
+			dataType: int64
+			formatString: 0
+			lineageTag: cafc6727-3d2b-430d-94eb-e68679ef92f8
+			summarizeBy: sum
+			sourceColumn: TotalChildren
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column Education
+			dataType: string
+			lineageTag: 7eaf3ced-ff39-4e2d-b9f9-e3f9206bed98
+			summarizeBy: none
+			sourceColumn: Education
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column Occupation
+			dataType: string
+			lineageTag: fd7293d0-8121-4aed-927f-a5fad295b96b
+			summarizeBy: none
+			sourceColumn: Occupation
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerType
+			dataType: string
+			lineageTag: d835c924-2f8f-4b00-aa03-3467617feef7
+			summarizeBy: none
+			sourceColumn: CustomerType
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CompanyName
+			dataType: string
+			lineageTag: da6b4a66-256d-47a1-9dca-383e8d95f221
+			summarizeBy: none
+			sourceColumn: CompanyName
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column GeographyKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 268c9fcc-8f44-4865-84dc-6da90d40b2ce
+			summarizeBy: none
+			sourceColumn: GeographyKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsActiveInSales
+			dataType: int64
+			formatString: 0
+			lineageTag: 07912eb8-210c-4338-a6a6-e9de0e9936da
+			summarizeBy: sum
+			sourceColumn: IsActiveInSales
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerStartMonth
+			dataType: int64
+			formatString: 0
+			lineageTag: a1e43b8b-1d3d-4271-8c16-be8b0d3b2447
+			summarizeBy: sum
+			sourceColumn: CustomerStartMonth
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerEndMonth
+			dataType: int64
+			formatString: 0
+			lineageTag: 642da6cb-a12c-4497-a808-4fac63fe03fb
+			summarizeBy: sum
+			sourceColumn: CustomerEndMonth
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerStartDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: f54caa95-dea1-4383-b8e5-b683ceae8f3c
+			summarizeBy: none
+			sourceColumn: CustomerStartDate
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column CustomerEndDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: 2ba8377b-22c4-4b3f-98d4-55183da2b482
+			summarizeBy: none
+			sourceColumn: CustomerEndDate
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column CustomerWeight
+			dataType: double
+			lineageTag: 6ba15009-5728-4fc2-b02e-f389feac3adb
+			summarizeBy: sum
+			sourceColumn: CustomerWeight
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column CustomerTemperature
+			dataType: double
+			lineageTag: f62b5d28-ae7c-4530-846a-fd742e65b2c4
+			summarizeBy: sum
+			sourceColumn: CustomerTemperature
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column CustomerSegment
+			dataType: string
+			lineageTag: 8a50052f-7ef8-4d91-b776-36ddf0a0d0e2
+			summarizeBy: none
+			sourceColumn: CustomerSegment
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerChurnBias
+			dataType: double
+			lineageTag: 2f8b5181-e159-4590-92c5-f7c892dc009d
+			summarizeBy: sum
+			sourceColumn: CustomerChurnBias
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		partition Customers = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadParquetFile ( "dimensions\customers" )
+					in
+					    Source
+
+		changedProperty = IsHidden
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+

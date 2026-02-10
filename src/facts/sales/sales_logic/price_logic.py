@@ -196,9 +196,21 @@ def _step_for_price(up: np.ndarray, band_max: np.ndarray, band_step: np.ndarray)
     return np.where(step > 0.0, step, 0.01)
 
 
-def _quantize_discount(disc: np.ndarray, up: np.ndarray, band_max: np.ndarray, band_step: np.ndarray, rounding: str) -> np.ndarray:
+def _quantize_discount(
+    disc: np.ndarray,
+    up: np.ndarray,
+    band_max: np.ndarray,
+    band_step: np.ndarray,
+    rounding: str,
+) -> np.ndarray:
     """
-    Quantize discount to clean increments chosen per-row based on UnitPrice.
+    Quantize discount to clean increments chosen per-row based on UnitPrice,
+    then apply a ".99" ending (e.g., 5.00 -> 4.99, 10.00 -> 9.99) for demo-friendly visuals.
+
+    Note:
+      - 0 stays 0
+      - This makes discounts slightly smaller, so it will NOT violate max_pct/min_net constraints
+        (those constraints are re-applied after quantization anyway).
     """
     step = _step_for_price(up, band_max, band_step)
 
@@ -207,7 +219,10 @@ def _quantize_discount(disc: np.ndarray, up: np.ndarray, band_max: np.ndarray, b
     else:
         q = np.floor(disc / step) * step
 
-    return np.maximum(q, 0.0)
+    # Apply ".99" ending for non-zero discounts
+    q = np.where(q > 0.0, np.maximum(q - 0.01, 0.0), 0.0)
+
+    return q
 
 
 def compute_prices(
@@ -307,7 +322,9 @@ def compute_prices(
     # Invariants
     uc = np.minimum(uc, up)
     if not allow_neg_margin:
-        uc = np.minimum(uc, net)
+        # Demo-friendly: avoid negative AND avoid exact break-even after rounding to cents.
+        MIN_PROFIT = 0.01  # 1 cent
+        uc = np.minimum(uc, np.maximum(net - MIN_PROFIT, 0.0))
 
     # Round to cents for storage
     up = np.round(up, 2)
@@ -323,7 +340,8 @@ def compute_prices(
     net = np.maximum(net, 0.0)
 
     if not allow_neg_margin:
-        uc = np.minimum(uc, net)
+        MIN_PROFIT = 0.01  # 1 cent
+        uc = np.minimum(uc, np.maximum(net - MIN_PROFIT, 0.0))
 
     return {
         "final_unit_price": up,
