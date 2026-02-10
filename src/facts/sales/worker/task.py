@@ -150,7 +150,10 @@ def _worker_task(args):
             sales_table = detail_table
             if bool(getattr(State, "skip_order_cols_requested", False)):
                 sales_table = _drop_order_cols_for_sales(sales_table)
-            out[TABLE_SALES] = _write_table(TABLE_SALES, int(idx), sales_table)
+
+            # Enforce the canonical Sales schema (drops any unexpected cols, keeps stable order)
+            sales_out = _project_for_table(TABLE_SALES, sales_table)
+            out[TABLE_SALES] = _write_table(TABLE_SALES, int(idx), sales_out)
 
         # Build header from the FULL raw detail table
         header_table = build_header_from_detail(detail_table)

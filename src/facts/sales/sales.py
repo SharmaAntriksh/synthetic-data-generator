@@ -367,6 +367,11 @@ def generate_sales_fact(
     workers = _apply_cfg_default(workers, None, sales_cfg.get("workers") if "workers" in sales_cfg else None)
     tune_chunk = _apply_cfg_default(tune_chunk, False, _bool_or(sales_cfg.get("tune_chunk"), tune_chunk) if "tune_chunk" in sales_cfg else None)
     write_pyarrow = _apply_cfg_default(write_pyarrow, True, _bool_or(sales_cfg.get("write_pyarrow"), write_pyarrow) if "write_pyarrow" in sales_cfg else None)
+    skip_order_cols = _apply_cfg_default(
+        skip_order_cols,
+        False,
+        _bool_or(sales_cfg.get("skip_order_cols"), skip_order_cols) if "skip_order_cols" in sales_cfg else None,
+    )
 
     start_date, end_date = _resolve_date_range(cfg, start_date, end_date)
     seed = _resolve_seed(cfg, seed, default_seed=42)
@@ -399,11 +404,8 @@ def generate_sales_fact(
 
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
     if sales_output == "both" and not bool(skip_order_cols):
-        info(
-            "Config: sales_output=both and skip_order_cols=false -> Sales will include order columns "
-            "AND SalesOrderHeader/Detail will also be written. Expect much larger output. "
-            "If you want Sales slimmer, set skip_order_cols=true."
-        )
+        info("Config: both + skip_order_cols=false -> Sales includes order cols.")
+        info("Note: output will be large; set skip_order_cols=true for slimmer Sales.")
 
     tables: list[str] = []
     if sales_output in {"sales", "both"}:
@@ -592,7 +594,7 @@ def generate_sales_fact(
 
         delta_output_folder=delta_output_folder,
         write_delta=write_delta,
-        skip_order_cols=(False if needs_order_cols else bool(skip_order_cols)),
+        skip_order_cols=bool(skip_order_cols),
         skip_order_cols_requested=bool(skip_order_cols),
 
         write_pyarrow=write_pyarrow,

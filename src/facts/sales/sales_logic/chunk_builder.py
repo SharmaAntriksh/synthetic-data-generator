@@ -219,9 +219,17 @@ def build_chunk_table(n: int, seed: int, no_discount_key: int = 1) -> pa.Table:
     if st2g_arr is None or g2c_arr is None:
         raise RuntimeError("State must provide store_to_geo_arr and geo_to_currency_arr")
 
-    schema = State.sales_schema
-    schema_types = {f.name: f.type for f in schema}
     file_format = State.file_format
+
+    # IMPORTANT:
+    # - State.sales_schema reflects the *Sales output* schema (driven by skip_order_cols_requested)
+    # - chunk_builder must use the *generation* schema (driven by skip_order_cols effective)
+    if file_format == "deltaparquet":
+        schema = State.schema_no_order_delta if skip_cols else State.schema_with_order_delta
+    else:
+        schema = State.schema_no_order if skip_cols else State.schema_with_order
+
+    schema_types = {f.name: f.type for f in schema}
 
     # ------------------------------------------------------------
     # MONTH SLICES (date_pool indices per month)

@@ -319,5 +319,5 @@ def create_final_output_folder(
                 "Facts + SQL are packaged by src.engine.packaging.package_output()."
             )
 
-        done(f"Created final folder: {final_folder}")
+        done(f"Created final folder: {final_folder.name}")
         return final_folder

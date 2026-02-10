@@ -128,7 +128,7 @@ def init_sales_worker(worker_cfg: dict):
 
         # Preserve user's intent for the Sales table, even if we force order cols on
         # to generate Header/Detail.
-        skip_order_cols_requested = bool(skip_order_cols)
+        skip_order_cols_requested = bool(worker_cfg.get("skip_order_cols_requested", skip_order_cols))
 
         # Effective behavior: Order tables require order keys, so chunk_builder must output them.
         if sales_output in {"sales_order", "both"}:
@@ -258,10 +258,14 @@ def init_sales_worker(worker_cfg: dict):
     schema_no_order_delta = pa.schema(base_fields + delta_fields)
     schema_with_order_delta = pa.schema(order_fields + base_fields + delta_fields)
 
+    # Generation schema (must match effective skip_order_cols)
+    # Output schema for Sales table (must match user intent: skip_order_cols_requested)
     if file_format == "deltaparquet":
-        sales_schema = schema_no_order_delta if skip_order_cols_requested else schema_with_order_delta
+        sales_schema_gen = schema_no_order_delta if skip_order_cols else schema_with_order_delta
+        sales_schema_out = schema_no_order_delta if skip_order_cols_requested else schema_with_order_delta
     else:
-        sales_schema = schema_no_order if skip_order_cols_requested else schema_with_order
+        sales_schema_gen = schema_no_order if skip_order_cols else schema_with_order
+        sales_schema_out = schema_no_order if skip_order_cols_requested else schema_with_order
 
     # --- SalesOrderDetail (SLIM, conventional) ---
     # Conventional: header-level foreign keys + order dates live in Header, not Detail.
@@ -309,7 +313,7 @@ def init_sales_worker(worker_cfg: dict):
     )
 
     schema_by_table = {
-        TABLE_SALES: sales_schema,
+        TABLE_SALES: sales_schema_out,
         TABLE_SALES_ORDER_DETAIL: detail_schema,
         TABLE_SALES_ORDER_HEADER: header_schema,
     }
@@ -383,7 +387,8 @@ def init_sales_worker(worker_cfg: dict):
         "schema_with_order": schema_with_order,
         "schema_no_order_delta": schema_no_order_delta,
         "schema_with_order_delta": schema_with_order_delta,
-        "sales_schema": sales_schema,
+        "sales_schema": sales_schema_gen,          # used by chunk_builder
+        "sales_schema_out": sales_schema_out,      # optional (debug / future use)
         "schema_by_table": schema_by_table,
         "parquet_dict_cols_by_table": parquet_dict_cols_by_table,
 
