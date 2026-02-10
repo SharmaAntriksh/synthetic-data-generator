@@ -307,7 +307,9 @@ def compute_prices(
     # Invariants
     uc = np.minimum(uc, up)
     if not allow_neg_margin:
-        uc = np.minimum(uc, net)
+        # Demo-friendly: avoid negative AND avoid exact break-even after rounding to cents.
+        MIN_PROFIT = 0.01  # 1 cent
+        uc = np.minimum(uc, np.maximum(net - MIN_PROFIT, 0.0))
 
     # Round to cents for storage
     up = np.round(up, 2)
@@ -323,7 +325,8 @@ def compute_prices(
     net = np.maximum(net, 0.0)
 
     if not allow_neg_margin:
-        uc = np.minimum(uc, net)
+        MIN_PROFIT = 0.01  # 1 cent
+        uc = np.minimum(uc, np.maximum(net - MIN_PROFIT, 0.0))
 
     return {
         "final_unit_price": up,

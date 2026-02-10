@@ -76,8 +76,8 @@ products:
   pricing:
     base:
       value_scale: 0.10
-      min_unit_price: 10
-      max_unit_price: 5000
+      min_unit_price: 50
+      max_unit_price: 3000
 
       # optional tuning:
       stretch_to_range: false
