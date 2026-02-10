@@ -1,0 +1,219 @@
+table Customers
+	lineageTag: 674067c5-4401-41cd-b2ef-353674838648
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: d352fa1d-5bd8-4e69-879f-2a5f7904f6c5
+		summarizeBy: count
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerName
+		dataType: string
+		lineageTag: 806d2a55-e606-427f-bea9-5ec5ce714ebd
+		summarizeBy: none
+		sourceColumn: CustomerName
+
+		annotation SummarizationSetBy = Automatic
+
+	column DOB
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: 5639756d-83ed-468f-ae18-b642da9dd1ab
+		summarizeBy: none
+		sourceColumn: DOB
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column MaritalStatus
+		dataType: string
+		lineageTag: 45c89270-7cb1-4c50-984f-6f753ce0f755
+		summarizeBy: none
+		sourceColumn: MaritalStatus
+
+		annotation SummarizationSetBy = Automatic
+
+	column Gender
+		dataType: string
+		lineageTag: ca0ddd1d-b7a2-44ad-8a25-15d540a1930c
+		summarizeBy: none
+		sourceColumn: Gender
+
+		annotation SummarizationSetBy = Automatic
+
+	column EmailAddress
+		dataType: string
+		lineageTag: d5393a24-7194-4ad7-a85f-3db7ca1c3782
+		summarizeBy: none
+		sourceColumn: EmailAddress
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearlyIncome
+		dataType: int64
+		formatString: #,0
+		lineageTag: 129814d9-3c28-4208-9787-28f5906159bd
+		summarizeBy: sum
+		sourceColumn: YearlyIncome
+
+		annotation SummarizationSetBy = Automatic
+
+	column TotalChildren
+		dataType: int64
+		formatString: 0
+		lineageTag: cafc6727-3d2b-430d-94eb-e68679ef92f8
+		summarizeBy: sum
+		sourceColumn: TotalChildren
+
+		annotation SummarizationSetBy = Automatic
+
+	column Education
+		dataType: string
+		lineageTag: 7eaf3ced-ff39-4e2d-b9f9-e3f9206bed98
+		summarizeBy: none
+		sourceColumn: Education
+
+		annotation SummarizationSetBy = Automatic
+
+	column Occupation
+		dataType: string
+		lineageTag: fd7293d0-8121-4aed-927f-a5fad295b96b
+		summarizeBy: none
+		sourceColumn: Occupation
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerType
+		dataType: string
+		lineageTag: d835c924-2f8f-4b00-aa03-3467617feef7
+		summarizeBy: none
+		sourceColumn: CustomerType
+
+		annotation SummarizationSetBy = Automatic
+
+	column CompanyName
+		dataType: string
+		lineageTag: da6b4a66-256d-47a1-9dca-383e8d95f221
+		summarizeBy: none
+		sourceColumn: CompanyName
+
+		annotation SummarizationSetBy = Automatic
+
+	column GeographyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 268c9fcc-8f44-4865-84dc-6da90d40b2ce
+		summarizeBy: count
+		sourceColumn: GeographyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsActiveInSales
+		dataType: int64
+		formatString: 0
+		lineageTag: 1b05a06a-570a-4e1d-90cb-7d7c2bbbe78d
+		summarizeBy: sum
+		sourceColumn: IsActiveInSales
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerStartMonth
+		dataType: string
+		lineageTag: 0dcc097d-59ff-4e91-bd2e-dfe9868aeed2
+		summarizeBy: none
+		sourceColumn: CustomerStartMonth
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerEndMonth
+		dataType: string
+		lineageTag: d20a5cd3-25cd-4951-9531-46bd0e0b6c39
+		summarizeBy: none
+		sourceColumn: CustomerEndMonth
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerStartDate
+		dataType: string
+		lineageTag: 6b379e20-a371-416f-a6a5-2baa07e6dd0a
+		summarizeBy: none
+		sourceColumn: CustomerStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerEndDate
+		dataType: string
+		lineageTag: e4ab6bc1-e138-46ed-9b0d-24c22548d64a
+		summarizeBy: none
+		sourceColumn: CustomerEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerWeight
+		dataType: string
+		lineageTag: 19aab1c5-ae95-457f-95e6-c987a21e5e3e
+		summarizeBy: none
+		sourceColumn: CustomerWeight
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerTemperature
+		dataType: string
+		lineageTag: 661e1379-f5a2-4514-8ed4-c537f0330e3d
+		summarizeBy: none
+		sourceColumn: CustomerTemperature
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerSegment
+		dataType: string
+		lineageTag: 0cff27ce-1a2f-4c94-b377-fab259fe9265
+		summarizeBy: none
+		sourceColumn: CustomerSegment
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerChurnBias
+		dataType: string
+		lineageTag: 7392ad4c-71e8-4e90-8e28-d718062d8e57
+		summarizeBy: none
+		sourceColumn: CustomerChurnBias
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Customers = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "customers" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        {
+				            { "CustomerKey", Int64.Type },
+				            { "CustomerName", type text },
+				            { "DOB", type date },
+				            { "MaritalStatus", type text },
+				            { "Gender", type text },
+				            { "EmailAddress", type text },
+				            { "YearlyIncome", Int64.Type },
+				            { "TotalChildren", Int64.Type },
+				            { "Education", type text },
+				            { "Occupation", type text },
+				            { "CustomerType", type text },
+				            { "CompanyName", type text },
+				            { "GeographyKey", Int64.Type },
+				            { "IsActiveInSales", Int64.Type }
+				        }
+				    )
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

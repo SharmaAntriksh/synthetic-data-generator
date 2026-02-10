@@ -1,0 +1,46 @@
+table ProductCategory
+	lineageTag: 9e8dfa4d-bbb6-4266-8032-8525a6ffab55
+
+	column CategoryKey
+		dataType: int64
+		formatString: 0
+		lineageTag: af011566-9475-4ca8-a0e7-04588a8cf00c
+		summarizeBy: count
+		sourceColumn: CategoryKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: fe316b83-bf3c-40a5-987a-67a17e514cf2
+		summarizeBy: none
+		sourceColumn: Category
+
+		annotation SummarizationSetBy = Automatic
+
+	column CategoryLabel
+		dataType: int64
+		formatString: 0
+		lineageTag: 81a069e3-c3b8-4d46-91c1-288590d4f108
+		summarizeBy: none
+		sourceColumn: CategoryLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	partition ProductCategory = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "product_category" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        { { "CategoryKey", Int64.Type }, { "Category", type text }, { "CategoryLabel", Int64.Type } }
+				    )
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

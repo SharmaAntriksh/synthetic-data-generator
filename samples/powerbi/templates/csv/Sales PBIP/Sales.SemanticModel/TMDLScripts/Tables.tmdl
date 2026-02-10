@@ -1,0 +1,1467 @@
+createOrReplace
+
+	table Sales
+		lineageTag: f4666ca0-6a51-44bc-9ac1-318199c49815
+
+		measure '# Customers' =
+				
+				DISTINCTCOUNT ( Sales[CustomerKey] )
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: 6ec8f0ae-723d-46cd-b46d-b9c1cedc3068
+
+		measure 'Cost Amount' = ```
+				
+				SUMX ( 
+				    Sales, 
+				    Sales[Quantity] * Sales[UnitCost]
+				)
+				```
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: 161627e6-1af2-4474-94e3-8f71733d228e
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure 'Profit Amount' =
+				
+				[Sales Amount] - [Cost Amount]
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: a95a2156-9a97-45f8-b9a9-08a4ef5a8d06
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure 'Sales Amount' = ```
+				
+				SUMX ( 
+				    Sales, 
+				    Sales[Quantity] * Sales[NetPrice]
+				)
+				```
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: 48d9e8b9-f997-475d-b363-973edb1d5bb3
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure Transactions =
+				
+				COUNTROWS ( Sales )
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: f941d2a9-2c52-4441-ba75-afa6c2f91413
+
+		column CustomerKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 1d4fe487-d26b-4122-b859-bc5698a9fbe1
+			summarizeBy: count
+			sourceColumn: CustomerKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column ProductKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 527c3994-dac4-4258-aeb7-65b5ea481208
+			summarizeBy: count
+			sourceColumn: ProductKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column StoreKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: fde4d6ec-f131-422f-8f8a-d743bc4b92f7
+			summarizeBy: count
+			sourceColumn: StoreKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column PromotionKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 01635ae8-0b29-4e01-9909-17c707552888
+			summarizeBy: count
+			sourceColumn: PromotionKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column CurrencyKey
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 4ae6fb5d-a0a9-45f8-9343-a24082011484
+			summarizeBy: count
+			sourceColumn: CurrencyKey
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column OrderDate
+			dataType: dateTime
+			isHidden
+			formatString: Long Date
+			lineageTag: 9331a271-99b7-434b-a739-db9a7df62a84
+			summarizeBy: none
+			sourceColumn: OrderDate
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column DueDate
+			dataType: dateTime
+			isHidden
+			formatString: Long Date
+			lineageTag: a781ae6f-5ed6-40de-95ac-91debb993042
+			summarizeBy: none
+			sourceColumn: DueDate
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column DeliveryDate
+			dataType: dateTime
+			isHidden
+			formatString: Long Date
+			lineageTag: 5da03247-1e61-4876-af60-fbd845bb26ed
+			summarizeBy: none
+			sourceColumn: DeliveryDate
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column Quantity
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: 90a1b5f8-5a16-4790-ac9b-31dad4b52af6
+			summarizeBy: sum
+			sourceColumn: Quantity
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column NetPrice
+			dataType: decimal
+			isHidden
+			lineageTag: 9cca891c-8757-4560-a5f4-8a3be8906e25
+			summarizeBy: sum
+			sourceColumn: NetPrice
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column UnitCost
+			dataType: decimal
+			isHidden
+			lineageTag: 24c21a55-1fb2-484b-87ce-6da090009bc1
+			summarizeBy: sum
+			sourceColumn: UnitCost
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column UnitPrice
+			dataType: decimal
+			isHidden
+			lineageTag: eb642cde-0767-4606-adcb-7f0709f91f25
+			summarizeBy: sum
+			sourceColumn: UnitPrice
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column DiscountAmount
+			dataType: decimal
+			isHidden
+			lineageTag: 0dd9df50-7074-4818-918d-3040e9d5d602
+			summarizeBy: sum
+			sourceColumn: DiscountAmount
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column DeliveryStatus
+			dataType: string
+			isHidden
+			lineageTag: d194f91b-d514-4ded-ae64-68e5cd9d32f8
+			summarizeBy: none
+			sourceColumn: DeliveryStatus
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsOrderDelayed
+			dataType: int64
+			isHidden
+			formatString: 0
+			lineageTag: e743a0fc-21d5-42c7-ae86-d1829d4ce601
+			summarizeBy: sum
+			sourceColumn: IsOrderDelayed
+
+			changedProperty = IsHidden
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Sales = m
+			mode: import
+			queryGroup: Fact
+			source =
+					let
+					    Source = Folder.Files ( ContosoFolder & "\facts" ),
+					    RemoveCols = Table.SelectColumns(Source,{"Content"}),
+					    RemoveHiden = Table.SelectRows(RemoveCols, each [Attributes]?[Hidden]? <> true),
+					    InvokeCustom = Table.AddColumn(RemoveHiden, "Transform File", each #"Transform File"([Content])),
+					    RemoveOtherCol = Table.SelectColumns(InvokeCustom, {"Transform File"}),
+					    Expand = Table.ExpandTableColumn(RemoveOtherCol, "Transform File", Table.ColumnNames(#"Transform File"(#"Sample File"))),
+					    DataTypes = {{"SalesOrderNumber", Int64.Type}, {"SalesOrderLineNumber", Int64.Type}, {"CustomerKey", Int64.Type}, {"ProductKey", Int64.Type}, {"StoreKey", Int64.Type}, {"PromotionKey", Int64.Type}, {"CurrencyKey", Int64.Type}, {"OrderDate", type date}, {"DueDate", type date}, {"DeliveryDate", type date}, {"Quantity", Int64.Type}, {"NetPrice", Currency.Type }, {"UnitCost", Currency.Type}, {"UnitPrice", Currency.Type}, {"DiscountAmount", Currency.Type}, {"DeliveryStatus", type text}, {"IsOrderDelayed", Int64.Type}},
+					    CheckNamesForTypes = if List.ContainsAny ( Table.ColumnNames ( Expand ), {"SalesOrderNumber", "SalesOrderLineNumber" } ) then DataTypes else List.RemoveFirstN ( DataTypes, 2 ),
+					    ChangeTypes = Table.TransformColumnTypes ( Expand, CheckNamesForTypes )
+					in
+					    ChangeTypes
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table Currency
+		lineageTag: 6abe0bfa-86b5-4aa4-b99e-18a7cdc2214d
+
+		column CurrencyKey
+			dataType: string
+			lineageTag: 05d148a7-8f50-4672-af86-2acd1915bde8
+			summarizeBy: none
+			sourceColumn: CurrencyKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column CurrencyName
+			dataType: string
+			lineageTag: 6a1b6312-51a5-48d6-8ce5-01e59ef35ba2
+			summarizeBy: none
+			sourceColumn: CurrencyName
+
+			annotation SummarizationSetBy = Automatic
+
+		column ToCurrency
+			dataType: string
+			lineageTag: b5b079c9-2563-4898-916f-56bfef58d097
+			summarizeBy: none
+			sourceColumn: ToCurrency
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Currency = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "currency" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true])
+					in
+					    PromotedHeaders
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table Customers
+		lineageTag: 674067c5-4401-41cd-b2ef-353674838648
+
+		column CustomerKey
+			dataType: int64
+			formatString: 0
+			lineageTag: d352fa1d-5bd8-4e69-879f-2a5f7904f6c5
+			summarizeBy: count
+			sourceColumn: CustomerKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerName
+			dataType: string
+			lineageTag: 806d2a55-e606-427f-bea9-5ec5ce714ebd
+			summarizeBy: none
+			sourceColumn: CustomerName
+
+			annotation SummarizationSetBy = Automatic
+
+		column DOB
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: 5639756d-83ed-468f-ae18-b642da9dd1ab
+			summarizeBy: none
+			sourceColumn: DOB
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column MaritalStatus
+			dataType: string
+			lineageTag: 45c89270-7cb1-4c50-984f-6f753ce0f755
+			summarizeBy: none
+			sourceColumn: MaritalStatus
+
+			annotation SummarizationSetBy = Automatic
+
+		column Gender
+			dataType: string
+			lineageTag: ca0ddd1d-b7a2-44ad-8a25-15d540a1930c
+			summarizeBy: none
+			sourceColumn: Gender
+
+			annotation SummarizationSetBy = Automatic
+
+		column EmailAddress
+			dataType: string
+			lineageTag: d5393a24-7194-4ad7-a85f-3db7ca1c3782
+			summarizeBy: none
+			sourceColumn: EmailAddress
+
+			annotation SummarizationSetBy = Automatic
+
+		column YearlyIncome
+			dataType: int64
+			formatString: #,0
+			lineageTag: 129814d9-3c28-4208-9787-28f5906159bd
+			summarizeBy: sum
+			sourceColumn: YearlyIncome
+
+			annotation SummarizationSetBy = Automatic
+
+		column TotalChildren
+			dataType: int64
+			formatString: 0
+			lineageTag: cafc6727-3d2b-430d-94eb-e68679ef92f8
+			summarizeBy: sum
+			sourceColumn: TotalChildren
+
+			annotation SummarizationSetBy = Automatic
+
+		column Education
+			dataType: string
+			lineageTag: 7eaf3ced-ff39-4e2d-b9f9-e3f9206bed98
+			summarizeBy: none
+			sourceColumn: Education
+
+			annotation SummarizationSetBy = Automatic
+
+		column Occupation
+			dataType: string
+			lineageTag: fd7293d0-8121-4aed-927f-a5fad295b96b
+			summarizeBy: none
+			sourceColumn: Occupation
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerType
+			dataType: string
+			lineageTag: d835c924-2f8f-4b00-aa03-3467617feef7
+			summarizeBy: none
+			sourceColumn: CustomerType
+
+			annotation SummarizationSetBy = Automatic
+
+		column CompanyName
+			dataType: string
+			lineageTag: da6b4a66-256d-47a1-9dca-383e8d95f221
+			summarizeBy: none
+			sourceColumn: CompanyName
+
+			annotation SummarizationSetBy = Automatic
+
+		column GeographyKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 268c9fcc-8f44-4865-84dc-6da90d40b2ce
+			summarizeBy: count
+			sourceColumn: GeographyKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsActiveInSales
+			dataType: int64
+			formatString: 0
+			lineageTag: 1b05a06a-570a-4e1d-90cb-7d7c2bbbe78d
+			summarizeBy: sum
+			sourceColumn: IsActiveInSales
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerStartMonth
+			dataType: string
+			lineageTag: 0dcc097d-59ff-4e91-bd2e-dfe9868aeed2
+			summarizeBy: none
+			sourceColumn: CustomerStartMonth
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerEndMonth
+			dataType: string
+			lineageTag: d20a5cd3-25cd-4951-9531-46bd0e0b6c39
+			summarizeBy: none
+			sourceColumn: CustomerEndMonth
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerStartDate
+			dataType: string
+			lineageTag: 6b379e20-a371-416f-a6a5-2baa07e6dd0a
+			summarizeBy: none
+			sourceColumn: CustomerStartDate
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerEndDate
+			dataType: string
+			lineageTag: e4ab6bc1-e138-46ed-9b0d-24c22548d64a
+			summarizeBy: none
+			sourceColumn: CustomerEndDate
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerWeight
+			dataType: string
+			lineageTag: 19aab1c5-ae95-457f-95e6-c987a21e5e3e
+			summarizeBy: none
+			sourceColumn: CustomerWeight
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerTemperature
+			dataType: string
+			lineageTag: 661e1379-f5a2-4514-8ed4-c537f0330e3d
+			summarizeBy: none
+			sourceColumn: CustomerTemperature
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerSegment
+			dataType: string
+			lineageTag: 0cff27ce-1a2f-4c94-b377-fab259fe9265
+			summarizeBy: none
+			sourceColumn: CustomerSegment
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerChurnBias
+			dataType: string
+			lineageTag: 7392ad4c-71e8-4e90-8e28-d718062d8e57
+			summarizeBy: none
+			sourceColumn: CustomerChurnBias
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Customers = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "customers" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"CustomerKey", Int64.Type}, {"CustomerName", type text}, {"DOB", type date}, {"MaritalStatus", type text}, {"Gender", type text}, {"EmailAddress", type text}, {"YearlyIncome", Int64.Type}, {"TotalChildren", Int64.Type}, {"Education", type text}, {"Occupation", type text}, {"CustomerType", type text}, {"CompanyName", type text}, {"GeographyKey", Int64.Type}, {"IsActiveInSales", Int64.Type}})
+					in
+					    ChangedType
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table Dates
+		lineageTag: 1e93e289-4d40-485f-9fbc-7760c3c5e1fd
+		dataCategory: Time
+
+		column Date
+			dataType: dateTime
+			isKey
+			formatString: Short Date
+			lineageTag: 3fd4def5-f7ac-43bb-b84a-3bab249d71e1
+			summarizeBy: none
+			sourceColumn: Date
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column DateKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 39c1bef1-cb8a-4c3f-8251-70835117b54d
+			summarizeBy: count
+			sourceColumn: DateKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column Year
+			dataType: int64
+			formatString: 0
+			lineageTag: 996eb0fd-712d-4c55-b1e1-c3fb6938ba86
+			summarizeBy: sum
+			sourceColumn: Year
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsYearStart
+			dataType: int64
+			formatString: 0
+			lineageTag: 0fa01c5a-256d-4a9b-8846-df82a8e04316
+			summarizeBy: sum
+			sourceColumn: IsYearStart
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsYearEnd
+			dataType: int64
+			formatString: 0
+			lineageTag: e01fa196-d101-42f9-8ed9-a96013bf317d
+			summarizeBy: sum
+			sourceColumn: IsYearEnd
+
+			annotation SummarizationSetBy = Automatic
+
+		column Quarter
+			dataType: int64
+			formatString: 0
+			lineageTag: 45ccab9c-ce97-43bf-8e64-e11a01b2663d
+			summarizeBy: sum
+			sourceColumn: Quarter
+
+			annotation SummarizationSetBy = Automatic
+
+		column QuarterStartDate
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: c461ebcb-c06a-4fef-916a-e5bcb1fb8584
+			summarizeBy: none
+			sourceColumn: QuarterStartDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column QuarterEndDate
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: dc499a69-273c-4b3b-a9b8-b0ba8bb8a289
+			summarizeBy: none
+			sourceColumn: QuarterEndDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column IsQuarterStart
+			dataType: int64
+			formatString: 0
+			lineageTag: ccb9f3a0-81eb-4680-8416-4336a5807833
+			summarizeBy: sum
+			sourceColumn: IsQuarterStart
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsQuarterEnd
+			dataType: int64
+			formatString: 0
+			lineageTag: e42a4d4e-1e5a-46b3-98c2-594bc49b72f2
+			summarizeBy: sum
+			sourceColumn: IsQuarterEnd
+
+			annotation SummarizationSetBy = Automatic
+
+		column QuarterYear
+			dataType: string
+			lineageTag: 99dacc30-46c9-41cd-b8bc-02a7917d57b0
+			summarizeBy: none
+			sourceColumn: QuarterYear
+
+			annotation SummarizationSetBy = Automatic
+
+		column Month
+			dataType: int64
+			formatString: 0
+			lineageTag: 5de2751c-c920-47e7-ad61-50362f65a8dd
+			summarizeBy: sum
+			sourceColumn: Month
+
+			annotation SummarizationSetBy = Automatic
+
+		column MonthName
+			dataType: string
+			lineageTag: 1c1b18b8-f048-48be-8ea1-4b1b458d11b5
+			summarizeBy: none
+			sourceColumn: MonthName
+
+			annotation SummarizationSetBy = Automatic
+
+		column MonthShort
+			dataType: string
+			lineageTag: 629c62a1-d4cf-47d5-ba88-01888209e775
+			summarizeBy: none
+			sourceColumn: MonthShort
+
+			annotation SummarizationSetBy = Automatic
+
+		column MonthStartDate
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: e1d2c99f-5076-4a6a-b114-ea862dbd50c8
+			summarizeBy: none
+			sourceColumn: MonthStartDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column MonthEndDate
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: 2453504c-d732-4600-a8e4-0519ce4281a9
+			summarizeBy: none
+			sourceColumn: MonthEndDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column MonthYear
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: dec1a8fb-1746-4776-8c7c-5e32a44bd907
+			summarizeBy: none
+			sourceColumn: MonthYear
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column MonthYearNumber
+			dataType: int64
+			formatString: 0
+			lineageTag: c2d4c82e-8707-4d57-8ddb-8f87e1074676
+			summarizeBy: sum
+			sourceColumn: MonthYearNumber
+
+			annotation SummarizationSetBy = Automatic
+
+		column CalendarMonthIndex
+			dataType: int64
+			formatString: 0
+			lineageTag: 3a2407da-1f0a-490a-b6ec-cfa0af5c409d
+			summarizeBy: sum
+			sourceColumn: CalendarMonthIndex
+
+			annotation SummarizationSetBy = Automatic
+
+		column CalendarQuarterIndex
+			dataType: int64
+			formatString: 0
+			lineageTag: 569a30fa-6067-48fd-954c-2c2aa675e9e2
+			summarizeBy: sum
+			sourceColumn: CalendarQuarterIndex
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsMonthStart
+			dataType: int64
+			formatString: 0
+			lineageTag: 7ba9a583-cc65-49c4-bfae-4ef5cabe119d
+			summarizeBy: sum
+			sourceColumn: IsMonthStart
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsMonthEnd
+			dataType: int64
+			formatString: 0
+			lineageTag: c296b142-d065-41b6-be89-9b0ab2f75b51
+			summarizeBy: sum
+			sourceColumn: IsMonthEnd
+
+			annotation SummarizationSetBy = Automatic
+
+		column WeekOfMonth
+			dataType: int64
+			formatString: 0
+			lineageTag: 5427df1a-095d-45a6-b3a1-96273463af73
+			summarizeBy: sum
+			sourceColumn: WeekOfMonth
+
+			annotation SummarizationSetBy = Automatic
+
+		column Day
+			dataType: int64
+			formatString: 0
+			lineageTag: 1a997df4-2abb-4de1-8d9d-8305dbd43ed1
+			summarizeBy: sum
+			sourceColumn: Day
+
+			annotation SummarizationSetBy = Automatic
+
+		column DayName
+			dataType: string
+			lineageTag: 79ec9d90-0bf8-455b-b330-6d5ef21a0ed3
+			summarizeBy: none
+			sourceColumn: DayName
+
+			annotation SummarizationSetBy = Automatic
+
+		column DayShort
+			dataType: string
+			lineageTag: efe73c27-c199-4ae3-b85c-e610acda1698
+			summarizeBy: none
+			sourceColumn: DayShort
+
+			annotation SummarizationSetBy = Automatic
+
+		column DayOfYear
+			dataType: int64
+			formatString: 0
+			lineageTag: 1a8fe719-2776-4cef-8344-f4251db4e5fa
+			summarizeBy: sum
+			sourceColumn: DayOfYear
+
+			annotation SummarizationSetBy = Automatic
+
+		column DayOfWeek
+			dataType: int64
+			formatString: 0
+			lineageTag: 7d6e8180-ddfd-4ad8-bdb6-1f43015c81b3
+			summarizeBy: sum
+			sourceColumn: DayOfWeek
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsWeekend
+			dataType: int64
+			formatString: 0
+			lineageTag: 4d167d05-7c47-44dd-bf28-0da4c96613b6
+			summarizeBy: sum
+			sourceColumn: IsWeekend
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsBusinessDay
+			dataType: int64
+			formatString: 0
+			lineageTag: 1f5ca372-3aa6-4b9a-b2a9-fb547bd03381
+			summarizeBy: sum
+			sourceColumn: IsBusinessDay
+
+			annotation SummarizationSetBy = Automatic
+
+		column NextBusinessDay
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: 05d82fbc-a2c9-49a1-ac20-9079af2e0bc7
+			summarizeBy: none
+			sourceColumn: NextBusinessDay
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column PreviousBusinessDay
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: e3c83809-8168-44ff-8169-b9c8dd4e84f9
+			summarizeBy: none
+			sourceColumn: PreviousBusinessDay
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column IsToday
+			dataType: int64
+			formatString: 0
+			lineageTag: 98462bd4-960c-46d6-8406-bf743cef09f9
+			summarizeBy: sum
+			sourceColumn: IsToday
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsCurrentYear
+			dataType: int64
+			formatString: 0
+			lineageTag: c2cba7b4-0a8f-47e5-a4dd-4c8e3c651b4b
+			summarizeBy: sum
+			sourceColumn: IsCurrentYear
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsCurrentMonth
+			dataType: int64
+			formatString: 0
+			lineageTag: 84c60459-6920-4c6a-aa08-c727841407ba
+			summarizeBy: sum
+			sourceColumn: IsCurrentMonth
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsCurrentQuarter
+			dataType: int64
+			formatString: 0
+			lineageTag: 4323b79a-710a-437c-a338-72047e9d261a
+			summarizeBy: sum
+			sourceColumn: IsCurrentQuarter
+
+			annotation SummarizationSetBy = Automatic
+
+		column CurrentDayOffset
+			dataType: int64
+			formatString: 0
+			lineageTag: 59701842-1673-4a62-9f00-2dc46610c9d6
+			summarizeBy: sum
+			sourceColumn: CurrentDayOffset
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Dates = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "dates" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"Date", type date}, {"DateKey", Int64.Type}, {"Year", Int64.Type}, {"IsYearStart", Int64.Type}, {"IsYearEnd", Int64.Type}, {"Quarter", Int64.Type}, {"QuarterStartDate", type date}, {"QuarterEndDate", type date}, {"IsQuarterStart", Int64.Type}, {"IsQuarterEnd", Int64.Type}, {"QuarterYear", type text}, {"Month", Int64.Type}, {"MonthName", type text}, {"MonthShort", type text}, {"MonthStartDate", type date}, {"MonthEndDate", type date}, {"MonthYear", type date}, {"MonthYearNumber", Int64.Type}, {"CalendarMonthIndex", Int64.Type}, {"CalendarQuarterIndex", Int64.Type}, {"IsMonthStart", Int64.Type}, {"IsMonthEnd", Int64.Type}, {"WeekOfMonth", Int64.Type}, {"Day", Int64.Type}, {"DayName", type text}, {"DayShort", type text}, {"DayOfYear", Int64.Type}, {"DayOfWeek", Int64.Type}, {"IsWeekend", Int64.Type}, {"IsBusinessDay", Int64.Type}, {"NextBusinessDay", type date}, {"PreviousBusinessDay", type date}, {"IsToday", Int64.Type}, {"IsCurrentYear", Int64.Type}, {"IsCurrentMonth", Int64.Type}, {"IsCurrentQuarter", Int64.Type}, {"CurrentDayOffset", Int64.Type}})
+					in
+					    ChangedType
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table ExchangeRates
+		lineageTag: 97443b1d-382e-4d8e-a6e8-526c8068417b
+
+		column Date
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: 5bd033c4-e594-4230-a2d2-44283030a30a
+			summarizeBy: none
+			sourceColumn: Date
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column FromCurrency
+			dataType: string
+			lineageTag: e193ed6c-c9f2-40f4-a52e-e39fb84124c3
+			summarizeBy: none
+			sourceColumn: FromCurrency
+
+			annotation SummarizationSetBy = Automatic
+
+		column ToCurrency
+			dataType: string
+			lineageTag: c484ce83-c05e-4595-8b9f-c5b1b9ad26ce
+			summarizeBy: none
+			sourceColumn: ToCurrency
+
+			annotation SummarizationSetBy = Automatic
+
+		column Rate
+			dataType: double
+			lineageTag: 4b605f58-5ca7-4db7-aec9-758d1d7996bd
+			summarizeBy: sum
+			sourceColumn: Rate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		partition ExchangeRates = m
+			mode: import
+			queryGroup: Fact
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "exchange_rates" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"Date", type date}, {"FromCurrency", type text}, {"ToCurrency", type text}, {"Rate", type number}})
+					in
+					    ChangedType
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table Geography
+		lineageTag: e1efdba3-1f8e-4419-a2cc-15ee8ccae934
+
+		column GeographyKey
+			dataType: int64
+			formatString: 0
+			lineageTag: b6c43b13-0208-43d9-849c-703285b7fe7d
+			summarizeBy: count
+			sourceColumn: GeographyKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column City
+			dataType: string
+			lineageTag: dc69bb8a-690d-4e9a-b19c-5af57549fc39
+			summarizeBy: none
+			sourceColumn: City
+
+			annotation SummarizationSetBy = Automatic
+
+		column State
+			dataType: string
+			lineageTag: 894c16d4-2c79-4475-9d53-01cd2e5c9da4
+			summarizeBy: none
+			sourceColumn: State
+
+			annotation SummarizationSetBy = Automatic
+
+		column Country
+			dataType: string
+			lineageTag: 4bc0780d-695c-4c3a-ab2a-e1e4a5b6310a
+			summarizeBy: none
+			sourceColumn: Country
+
+			annotation SummarizationSetBy = Automatic
+
+		column Continent
+			dataType: string
+			lineageTag: f536c8db-4899-43c1-84c7-992733e0937d
+			summarizeBy: none
+			sourceColumn: Continent
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Geography = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "geography" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"GeographyKey", Int64.Type}, {"City", type text}, {"State", type text}, {"Country", type text}, {"Continent", type text}, {"ISOCode", type text}}),
+					    RemovedColumns = Table.RemoveColumns(ChangedType,{"ISOCode"})
+					in
+					    RemovedColumns
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table ProductCategory
+		lineageTag: 9e8dfa4d-bbb6-4266-8032-8525a6ffab55
+
+		column CategoryKey
+			dataType: int64
+			formatString: 0
+			lineageTag: af011566-9475-4ca8-a0e7-04588a8cf00c
+			summarizeBy: count
+			sourceColumn: CategoryKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column Category
+			dataType: string
+			lineageTag: fe316b83-bf3c-40a5-987a-67a17e514cf2
+			summarizeBy: none
+			sourceColumn: Category
+
+			annotation SummarizationSetBy = Automatic
+
+		column CategoryLabel
+			dataType: int64
+			formatString: 0
+			lineageTag: 81a069e3-c3b8-4d46-91c1-288590d4f108
+			summarizeBy: none
+			sourceColumn: CategoryLabel
+
+			annotation SummarizationSetBy = Automatic
+
+		partition ProductCategory = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "product_category" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"CategoryKey", Int64.Type}, {"Category", type text}, {"CategoryLabel", Int64.Type}})
+					in
+					    ChangedType
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table Products
+		lineageTag: a736d030-7050-4b89-afb0-103296247af9
+
+		column ProductKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 817fb5b9-efba-4622-9733-06c52a3785e4
+			summarizeBy: none
+			sourceColumn: ProductKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column ProductCode
+			dataType: int64
+			formatString: 0
+			lineageTag: 361f0e4b-eb23-4937-8dac-22a201b28459
+			summarizeBy: count
+			sourceColumn: ProductCode
+
+			annotation SummarizationSetBy = Automatic
+
+		column ProductName
+			dataType: string
+			lineageTag: 22321e1c-f522-4b5f-874e-aa5d32b76c35
+			summarizeBy: none
+			sourceColumn: ProductName
+
+			annotation SummarizationSetBy = Automatic
+
+		column ProductDescription
+			dataType: string
+			lineageTag: 15e4db0b-ef90-4c66-88a9-8b3b8b5e6396
+			summarizeBy: none
+			sourceColumn: ProductDescription
+
+			annotation SummarizationSetBy = Automatic
+
+		column SubcategoryKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 169bba0b-83a5-49c2-ae55-f76e8d03183f
+			summarizeBy: none
+			sourceColumn: SubcategoryKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column Brand
+			dataType: string
+			lineageTag: a2dc35fb-6ee5-4ff5-9adf-abc288b1c3ef
+			summarizeBy: none
+			sourceColumn: Brand
+
+			annotation SummarizationSetBy = Automatic
+
+		column Class
+			dataType: string
+			lineageTag: 589d9b5a-c66d-4b43-80bd-0538d5efe4a7
+			summarizeBy: none
+			sourceColumn: Class
+
+			annotation SummarizationSetBy = Automatic
+
+		column Color
+			dataType: string
+			lineageTag: 6ee81513-8370-473a-8cca-279477f735db
+			summarizeBy: none
+			sourceColumn: Color
+
+			annotation SummarizationSetBy = Automatic
+
+		column StockTypeCode
+			dataType: int64
+			formatString: 0
+			lineageTag: 29179efc-8bbc-464f-a2ec-9dc6e80bc4a8
+			summarizeBy: count
+			sourceColumn: StockTypeCode
+
+			annotation SummarizationSetBy = Automatic
+
+		column StockType
+			dataType: string
+			lineageTag: 74663ff5-bf7e-41b9-b2de-5187e17f5f63
+			summarizeBy: none
+			sourceColumn: StockType
+
+			annotation SummarizationSetBy = Automatic
+
+		column UnitCost
+			dataType: decimal
+			formatString: #,0.00
+			lineageTag: 55417800-0963-4dcf-bbb2-b6a61d0f428a
+			summarizeBy: sum
+			sourceColumn: UnitCost
+
+			annotation SummarizationSetBy = Automatic
+
+		column UnitPrice
+			dataType: decimal
+			formatString: #,0.00
+			lineageTag: 11e753c5-0f96-43ea-83b7-a269d2c1a0d6
+			summarizeBy: sum
+			sourceColumn: UnitPrice
+
+			annotation SummarizationSetBy = Automatic
+
+		column BaseProductKey
+			dataType: int64
+			formatString: 0
+			lineageTag: e1219f43-3c77-47eb-8654-8da6b4a5df26
+			summarizeBy: count
+			sourceColumn: BaseProductKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column VariantIndex
+			dataType: int64
+			formatString: 0
+			lineageTag: 849c6ce3-9802-4902-a69f-56f08d095ce9
+			summarizeBy: sum
+			sourceColumn: VariantIndex
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsActiveInSales
+			dataType: int64
+			formatString: 0
+			lineageTag: 8c492ffd-f8ae-4dda-86fe-9a9c21684a60
+			summarizeBy: sum
+			sourceColumn: IsActiveInSales
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Products = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "products" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"ProductKey", Int64.Type}, {"ProductCode", Int64.Type}, {"ProductName", type text}, {"ProductDescription", type text}, {"SubcategoryKey", Int64.Type}, {"Brand", type text}, {"Class", type text}, {"Color", type text}, {"StockTypeCode", Int64.Type}, {"StockType", type text}, {"UnitCost", Currency.Type}, {"UnitPrice", Currency.Type}, {"BaseProductKey", Int64.Type}, {"VariantIndex", Int64.Type}, {"IsActiveInSales", Int64.Type}})
+					in
+					    ChangedType
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table ProductSubcategory
+		lineageTag: da7e7e12-9e93-46f3-a723-4e61f38c64b2
+
+		column Subcategory
+			dataType: string
+			lineageTag: 413cc7bc-6f9f-4c34-9b9a-cfa7ad0b2a3e
+			summarizeBy: none
+			sourceColumn: Subcategory
+
+			annotation SummarizationSetBy = Automatic
+
+		column CategoryKey
+			dataType: int64
+			formatString: 0
+			lineageTag: c65defde-05fe-4684-b78c-9d6dd0c6c177
+			summarizeBy: none
+			sourceColumn: CategoryKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column SubcategoryKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 8461138a-1331-4d9f-a0e1-096475ebbf5d
+			summarizeBy: none
+			sourceColumn: SubcategoryKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column SubcategoryLabel
+			dataType: int64
+			formatString: 0
+			lineageTag: 8679faa9-c6e9-4099-b2f1-1a4eb23e70e3
+			summarizeBy: sum
+			sourceColumn: SubcategoryLabel
+
+			annotation SummarizationSetBy = Automatic
+
+		partition ProductSubcategory = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "product_subcategory" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"SubcategoryKey", Int64.Type}, {"SubcategoryLabel", Int64.Type}, {"Subcategory", type text}, {"CategoryKey", Int64.Type}})
+					in
+					    ChangedType
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table Promotions
+		lineageTag: 398acef2-142d-4969-aba2-44201a493192
+
+		column PromotionKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 7e6df572-b676-4cca-a951-71240f847fa4
+			summarizeBy: count
+			sourceColumn: PromotionKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column PromotionLabel
+			dataType: int64
+			formatString: 0
+			lineageTag: 954fe7fd-37b0-4a45-bf0d-5efa7a04e569
+			summarizeBy: sum
+			sourceColumn: PromotionLabel
+
+			annotation SummarizationSetBy = Automatic
+
+		column PromotionName
+			dataType: string
+			lineageTag: 0c57aabe-5173-4e4a-8bff-2811e9658c4d
+			summarizeBy: none
+			sourceColumn: PromotionName
+
+			annotation SummarizationSetBy = Automatic
+
+		column PromotionDescription
+			dataType: string
+			lineageTag: 7f871e60-ba9d-4abe-9a2f-76c5e1886ff5
+			summarizeBy: none
+			sourceColumn: PromotionDescription
+
+			annotation SummarizationSetBy = Automatic
+
+		column DiscountPct
+			dataType: double
+			lineageTag: d32f03db-d535-422f-96c3-f7673b9335c8
+			summarizeBy: sum
+			sourceColumn: DiscountPct
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column PromotionType
+			dataType: string
+			lineageTag: 02af240f-9a14-43d5-ac36-ff6f3084481e
+			summarizeBy: none
+			sourceColumn: PromotionType
+
+			annotation SummarizationSetBy = Automatic
+
+		column PromotionCategory
+			dataType: string
+			lineageTag: 9e6cd0b7-b5a6-4770-916f-da1fef33d433
+			summarizeBy: none
+			sourceColumn: PromotionCategory
+
+			annotation SummarizationSetBy = Automatic
+
+		column StartDate
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: 8a50adea-bf23-4ecd-9453-ac764a1a7571
+			summarizeBy: none
+			sourceColumn: StartDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column EndDate
+			dataType: dateTime
+			formatString: Short Date
+			lineageTag: 40dc50b6-653b-4693-b181-3c93c2e2e70f
+			summarizeBy: none
+			sourceColumn: EndDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		partition Promotions = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "promotions" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"PromotionKey", Int64.Type}, {"PromotionLabel", Int64.Type}, {"PromotionName", type text}, {"PromotionDescription", type text}, {"DiscountPct", type number}, {"PromotionType", type text}, {"PromotionCategory", type text}, {"StartDate", type date}, {"EndDate", type date}})
+					in
+					    ChangedType
+
+		annotation PBI_ResultType = Table
+
+		annotation PBI_NavigationStepName = Navigation
+
+	table Store
+		lineageTag: b6787471-f359-49c1-8666-e49d80de3bf8
+
+		column StoreKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 8637d84b-74d0-48a2-92c8-2af2e7cb27a6
+			summarizeBy: count
+			sourceColumn: StoreKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column StoreName
+			dataType: string
+			lineageTag: 72ba9cc9-f09d-41c0-9a80-a41a12023084
+			summarizeBy: none
+			sourceColumn: StoreName
+
+			annotation SummarizationSetBy = Automatic
+
+		column StoreType
+			dataType: string
+			lineageTag: 99c219ef-bdbc-4d17-be91-7b42ea630553
+			summarizeBy: none
+			sourceColumn: StoreType
+
+			annotation SummarizationSetBy = Automatic
+
+		column Status
+			dataType: string
+			lineageTag: b6499753-8667-48b7-9343-725afb9e0bf0
+			summarizeBy: none
+			sourceColumn: Status
+
+			annotation SummarizationSetBy = Automatic
+
+		column GeographyKey
+			dataType: int64
+			formatString: 0
+			lineageTag: dfddc145-b9df-431c-bad2-89fb5e22c252
+			summarizeBy: count
+			sourceColumn: GeographyKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column OpeningDate
+			dataType: dateTime
+			formatString: General Date
+			lineageTag: 38713ebc-a588-4f9d-b653-045c9d2f883f
+			summarizeBy: none
+			sourceColumn: OpeningDate
+
+			annotation SummarizationSetBy = Automatic
+
+		column ClosingDate
+			dataType: dateTime
+			formatString: General Date
+			lineageTag: e225643c-a9cd-4b79-a9a3-d999c1e7d19c
+			summarizeBy: none
+			sourceColumn: ClosingDate
+
+			annotation SummarizationSetBy = Automatic
+
+		column OpenFlag
+			dataType: int64
+			formatString: 0
+			lineageTag: fe65a993-456c-4d32-924b-21d0dc34de01
+			summarizeBy: sum
+			sourceColumn: OpenFlag
+
+			annotation SummarizationSetBy = Automatic
+
+		column SquareFootage
+			dataType: int64
+			formatString: 0
+			lineageTag: 397a3657-92e0-47f9-8a90-7139436eb067
+			summarizeBy: sum
+			sourceColumn: SquareFootage
+
+			annotation SummarizationSetBy = Automatic
+
+		column EmployeeCount
+			dataType: int64
+			formatString: 0
+			lineageTag: e167b0c3-6ef3-4b0d-b1d0-474b566ab5f3
+			summarizeBy: sum
+			sourceColumn: EmployeeCount
+
+			annotation SummarizationSetBy = Automatic
+
+		column StoreManager
+			dataType: string
+			lineageTag: 3a6eefda-f93f-41d2-9a51-4412ba34ed04
+			summarizeBy: none
+			sourceColumn: StoreManager
+
+			annotation SummarizationSetBy = Automatic
+
+		column Phone
+			dataType: string
+			lineageTag: 8bfa479e-183c-47ca-8a2b-e23a1c8d3592
+			summarizeBy: none
+			sourceColumn: Phone
+
+			annotation SummarizationSetBy = Automatic
+
+		column StoreDescription
+			dataType: string
+			lineageTag: cd83747a-a10f-45d4-9d20-eb2807a58713
+			summarizeBy: none
+			sourceColumn: StoreDescription
+
+			annotation SummarizationSetBy = Automatic
+
+		column CloseReason
+			dataType: string
+			lineageTag: 4be9573e-b903-481c-8700-80dc86f47667
+			summarizeBy: none
+			sourceColumn: CloseReason
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Store = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadCSVFile ( "dimensions", "stores" ),
+					    PromotedHeaders = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+					    ChangedType = Table.TransformColumnTypes(PromotedHeaders,{{"StoreKey", Int64.Type}, {"StoreName", type text}, {"StoreType", type text}, {"Status", type text}, {"GeographyKey", Int64.Type}, {"OpeningDate", type datetime}, {"ClosingDate", type datetime}, {"OpenFlag", Int64.Type}, {"SquareFootage", Int64.Type}, {"EmployeeCount", Int64.Type}, {"StoreManager", type text}, {"Phone", type text}, {"StoreDescription", type text}, {"CloseReason", type text}})
+					in
+					    ChangedType
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+

@@ -14,9 +14,9 @@ PBIP_TEMPLATES_ROOT = Path("samples/powerbi/templates")
 
 # sales.sales_output -> folder name under templates/{csv|parquet}/
 _MODE_DIR = {
-    "sales": "Sales",
-    "sales_order": "Orders",
-    "both": "Sales and Orders",
+    "sales": "Sales PBIP",
+    "sales_order": "Orders PBIP",
+    "both": "Both PBIP",
 }
 
 

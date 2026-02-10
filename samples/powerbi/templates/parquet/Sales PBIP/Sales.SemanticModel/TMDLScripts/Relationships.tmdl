@@ -1,0 +1,57 @@
+createOrReplace
+
+	relationship 3bb02a0a-77e9-8fd5-1882-a4bed0493884
+		fromColumn: Customers.GeographyKey
+		toColumn: Geography.GeographyKey
+
+	relationship 525ee982-092b-a66e-0179-255a18f8e461
+		isActive: false
+		fromColumn: Store.GeographyKey
+		toColumn: Geography.GeographyKey
+
+	relationship 28da5e4c-5712-cf93-3464-27b5443b4425
+		fromColumn: Sales.CustomerKey
+		toColumn: Customers.CustomerKey
+
+	relationship 15201b52-ac1f-eeb6-e516-2af86d8855c2
+		fromColumn: Sales.StoreKey
+		toColumn: Store.StoreKey
+
+	relationship 7e007976-a441-ca63-3cb5-dd11917d164a
+		fromColumn: Sales.OrderDate
+		toColumn: Dates.Date
+
+	relationship e386c2fa-b68b-c8b5-5870-731fd37a0e40
+		isActive: false
+		fromColumn: Sales.DueDate
+		toColumn: Dates.Date
+
+	relationship 5cc4919b-bde3-116b-6c67-ecbb833a1a66
+		isActive: false
+		fromColumn: Sales.DeliveryDate
+		toColumn: Dates.Date
+
+	relationship 4bf0dddb-c104-72f1-5f06-40df8b888232
+		fromColumn: Sales.PromotionKey
+		toColumn: Promotions.PromotionKey
+
+	relationship d4703835-9aff-5266-5857-40468c145baa
+		fromColumn: Sales.ProductKey
+		toColumn: Products.ProductKey
+
+	relationship d334731b-09fb-8eb2-3f35-4a7640e7f1ac
+		fromColumn: ExchangeRates.Date
+		toColumn: Dates.Date
+
+	relationship 7ca0bd36-df37-71a6-440e-09913b545112
+		fromColumn: ExchangeRates.ToCurrency
+		toColumn: Currency.ToCurrency
+
+	relationship 853887d0-e696-5f31-e439-553fe910ddb2
+		fromColumn: Products.SubcategoryKey
+		toColumn: ProductSubcategory.SubcategoryKey
+
+	relationship cb4c6f5d-fbe5-091e-e26b-be6cd2a31828
+		fromColumn: ProductSubcategory.CategoryKey
+		toColumn: ProductCategory.CategoryKey
+
