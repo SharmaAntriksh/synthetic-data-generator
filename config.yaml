@@ -34,7 +34,7 @@ sales:
   total_rows: 1002301
   chunk_size: 1000000
 
-  file_format: "deltaparquet"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   sales_output: "both"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -69,7 +69,7 @@ sales:
 # ---------------------------------------------------------------------
 products:
   use_contoso_products: false
-  num_products: 23160
+  num_products: 4160
   active_ratio: 0.94
   seed: 42
 
@@ -114,7 +114,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 50184
+  total_customers: 34184
   active_ratio: 0.90
 
   pct_india: 10

@@ -111,6 +111,8 @@ def _worker_task(args):
             int(batch_size),
             int(chunk_seed),
             no_discount_key=State.no_discount_key,
+            chunk_idx=int(idx),
+            chunk_capacity_orders=int(getattr(State, "chunk_size", batch_size)),
         )
         if not isinstance(detail_table, pa.Table):
             raise TypeError("chunk_builder must return pyarrow.Table")
