@@ -52,6 +52,14 @@ models:
       small_dataset: { low: 0.82, high: 1.22 }
       large_dataset: { low: 0.82, high: 1.18 }
 
+  brand_popularity:
+    enabled: true
+    seed: 123
+    winner_boost: 2.5
+    noise_sd: 0.15
+    min_share: 0.02
+    year_len_months: 12
+    
   # ============================================================
   # MACRO DEMAND (row allocation shape per month)
   # ============================================================
@@ -123,7 +131,7 @@ models:
 
     noise_sd: 0.12
     min_qty: 1
-    max_qty: 4
+    max_qty: 10
 
   # ============================================================
   # CUSTOMER DISCOVERY (first-time appearance)

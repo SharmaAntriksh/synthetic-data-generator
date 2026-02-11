@@ -24,6 +24,110 @@ from .customer_sampling import (
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------
+
+def _normalize_prob(p: np.ndarray) -> np.ndarray | None:
+    p = np.asarray(p, dtype="float64")
+    p = np.where(np.isfinite(p) & (p > 0), p, 0.0)
+    s = float(p.sum())
+    if s <= 1e-12:
+        return None
+    return p / s
+
+
+def _sample_product_row_indices(
+    rng: np.random.Generator,
+    n: int,
+    product_np: np.ndarray,
+    *,
+    m_offset: int,
+    enabled: bool,
+) -> np.ndarray:
+    """
+    Return row indices into `product_np` for n orders.
+
+    Brand-first sampling is used iff:
+      - enabled == True (controlled by models_cfg.brand_popularity presence), AND
+      - State provides brand buckets and optionally per-month brand probabilities.
+
+    Required State attributes (to actually take effect):
+      - State.brand_to_row_idx (list/tuple where entry b is np.ndarray of row indices into product_np)
+        OR State.active_brand_to_row_idx if product_np is State.active_product_np
+    Optional:
+      - State.brand_prob_by_month: shape (T, B) or (B,)
+        If absent or invalid, falls back to equal probability over non-empty brands.
+
+    Safe fallback:
+      - If anything is missing/invalid -> uniform sampling over product_np (old behavior).
+    """
+    if not enabled:
+        return rng.integers(0, len(product_np), size=int(n)).astype("int64", copy=False)
+
+    # Prefer "active" buckets if we're using active_product_np upstream.
+    # Choose buckets that align with the passed `product_np`.
+    if getattr(State, "active_product_np", None) is not None and product_np is State.active_product_np:
+        brand_to_rows = getattr(State, "active_brand_to_row_idx", None)
+    else:
+        brand_to_rows = getattr(State, "brand_to_row_idx", None)
+        
+    if brand_to_rows is not None:
+        mx = -1
+        for b in brand_to_rows:
+            if b is not None and len(b) > 0:
+                mx = max(mx, int(np.max(b)))
+        if mx >= len(product_np):
+            brand_to_rows = None  # force uniform fallback
+
+    brand_probs_by_month = _get_state_attr("brand_prob_by_month", default=None)
+
+    if brand_to_rows is None or len(brand_to_rows) == 0:
+        return rng.integers(0, len(product_np), size=int(n)).astype("int64", copy=False)
+
+    B = int(len(brand_to_rows))
+
+    # Select probability vector for this month
+    p = None
+    if brand_probs_by_month is not None:
+        probs = np.asarray(brand_probs_by_month, dtype="float64")
+        if probs.ndim == 1:
+            cand = probs
+        else:
+            cand = probs[int(m_offset) % int(probs.shape[0])]
+        cand = _normalize_prob(cand)
+        if cand is not None and int(cand.size) == B:
+            p = cand
+
+    # Fallback: equal probability across brands with at least 1 SKU
+    if p is None:
+        avail = np.asarray([len(x) > 0 for x in brand_to_rows], dtype="float64")
+        if float(avail.sum()) <= 0:
+            return rng.integers(0, len(product_np), size=int(n)).astype("int64", copy=False)
+        p = avail / float(avail.sum())
+
+    brand_ids = rng.choice(B, size=int(n), p=p)
+
+    # Fill output by grouping same-brand rows (minimizes Python overhead)
+    out = np.empty(int(n), dtype="int64")
+
+    order = np.argsort(brand_ids)
+    b_sorted = brand_ids[order]
+
+    starts = np.flatnonzero(np.r_[True, b_sorted[1:] != b_sorted[:-1]])
+    ends = np.r_[starts[1:], b_sorted.size]
+
+    for s, e in zip(starts, ends):
+        b = int(b_sorted[int(s)])
+        bucket = brand_to_rows[b]
+        k = int(e - s)
+
+        if bucket is None or len(bucket) == 0:
+            out[order[s:e]] = rng.integers(0, len(product_np), size=k).astype("int64", copy=False)
+        else:
+            sel = rng.integers(0, len(bucket), size=k).astype("int64", copy=False)
+            out[order[s:e]] = np.asarray(bucket, dtype="int64")[sel]
+
+    return out
+
+
 def _get_state_attr(*names, default=None):
     """Return the first non-None attribute from State among names."""
     for n in names:
@@ -291,6 +395,10 @@ def build_chunk_table(
     use_participation = bool(participation_cfg) and bool(participation_cfg.get("enabled", True))
     participation_cfg = participation_cfg or {}
 
+    # Brand popularity is OFF if block absent. If present without enabled, default-on.
+    brand_cfg = State.models_cfg.get("brand_popularity", None)
+    use_brand_popularity = bool(brand_cfg) and bool(brand_cfg.get("enabled", True))
+
     # Discovery state only matters if discovery is enabled
     if use_discovery:
         seen_customers = getattr(State, "seen_customers", None)
@@ -421,10 +529,17 @@ def build_chunk_table(
         # --------------------------------------------------------
         # PRODUCTS (PER ORDER) - avoid temporary prods array
         # --------------------------------------------------------
-        prod_idx = rng.integers(0, len(product_np), size=n_orders)
+        prod_idx = _sample_product_row_indices(
+            rng=rng,
+            n=n_orders,
+            product_np=product_np,
+            m_offset=int(m_offset),
+            enabled=use_brand_popularity,
+        )
+
         product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
-        unit_price = product_np[prod_idx, 1].astype(np.float64, copy=False)
-        unit_cost = product_np[prod_idx, 2].astype(np.float64, copy=False)
+        unit_price  = product_np[prod_idx, 1].astype(np.float64, copy=False)
+        unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
         # --------------------------------------------------------
         # STORE → GEO → CURRENCY (guard missing mappings)

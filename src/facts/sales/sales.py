@@ -477,11 +477,59 @@ def generate_sales_fact(
         info("CustomerBaseWeight loaded; chunk_builder can use it for weighted sampling.")
 
     # Products: respect runner-bound active_product_np
-    if hasattr(State, "active_product_np") and State.active_product_np is not None:
+    product_brand_key = None
+    products_path = parquet_folder_p / "products.parquet"
+
+    def _brand_codes_from_series(s: pd.Series) -> np.ndarray:
+        # Guarantee no NA => no -1 codes
+        s2 = s.fillna("Unknown").astype(str)
+        codes, _ = pd.factorize(s2, sort=True)
+        return np.asarray(codes, dtype=np.int64)
+
+    if getattr(State, "active_product_np", None) is not None:
         product_np = State.active_product_np
+
+        try:
+            brand_df = load_parquet_df(products_path, ["ProductKey", "Brand"])
+            brand_df = brand_df.drop_duplicates("ProductKey", keep="first")
+
+            brand_df["ProductKey"] = brand_df["ProductKey"].astype("int64", copy=False)
+            brand_df["_BrandKey"] = _brand_codes_from_series(brand_df["Brand"])
+
+            # Map ProductKey -> BrandKey
+            brand_map = pd.Series(
+                brand_df["_BrandKey"].to_numpy(),
+                index=brand_df["ProductKey"].to_numpy(),
+            )
+
+            active_keys = np.asarray(product_np[:, 0], dtype=np.int64)
+            bk = brand_map.reindex(active_keys).to_numpy(dtype="float64")
+
+            invalid = (~np.isfinite(bk)) | (bk < 0)
+            if np.any(invalid):
+                info("Brand mapping missing/invalid for some ProductKeys; disabling brand_popularity for this run.")
+                product_brand_key = None
+            else:
+                product_brand_key = bk.astype(np.int64, copy=False)
+
+        except Exception:
+            info("Could not load/derive Brand from products.parquet; disabling brand_popularity for this run.")
+            product_brand_key = None
+
     else:
-        prod_df = load_parquet_df(parquet_folder_p / "products.parquet", ["ProductKey", "UnitPrice", "UnitCost"])
-        product_np = prod_df.to_numpy()
+        # Full product path: keep backward compatibility if Brand is absent
+        try:
+            prod_df = load_parquet_df(products_path, ["ProductKey", "UnitPrice", "UnitCost", "Brand"])
+            product_np = prod_df[["ProductKey", "UnitPrice", "UnitCost"]].to_numpy()
+
+            codes = _brand_codes_from_series(prod_df["Brand"])
+            product_brand_key = codes if not np.any(codes < 0) else None
+
+        except Exception:
+            prod_df = load_parquet_df(products_path, ["ProductKey", "UnitPrice", "UnitCost"])
+            product_np = prod_df[["ProductKey", "UnitPrice", "UnitCost"]].to_numpy()
+            product_brand_key = None
+
 
     # Stores: read ONCE (keys + geography)
     store_df = load_parquet_df(parquet_folder_p / "stores.parquet", ["StoreKey", "GeographyKey"])
@@ -554,6 +602,7 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     worker_cfg = dict(
         product_np=product_np,
+        product_brand_key=product_brand_key,
         store_keys=store_keys,
         promo_keys_all=promo_keys_all,
         promo_pct_all=promo_pct_all,
