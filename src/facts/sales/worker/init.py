@@ -421,7 +421,7 @@ def init_sales_worker(worker_cfg: dict):
 
     delta_fields = [
         pa.field("Year", pa.int16()),
-        pa.field("Month", pa.int8()),
+        pa.field("Month", pa.int16()),
     ]
 
     schema_no_order = pa.schema(base_fields)

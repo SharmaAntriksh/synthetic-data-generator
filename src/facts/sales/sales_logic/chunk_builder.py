@@ -704,7 +704,7 @@ def build_chunk_table(
         if file_format == "deltaparquet":
             m_int = order_dates.astype("datetime64[M]").astype("int64")
             add("Year", (m_int // 12 + 1970).astype("int16"))
-            add("Month", (m_int % 12 + 1).astype("int8"))
+            add("Month", (m_int % 12 + 1).astype("int16"))   # was int8
 
         tables.append(pa.Table.from_arrays(arrays, schema=schema))
 

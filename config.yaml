@@ -34,7 +34,7 @@ sales:
   total_rows: 1025301
   chunk_size: 1000000
 
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "deltaparquet"          # csv | parquet | deltaparquet
   sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -61,7 +61,7 @@ sales:
     seed: null
 
   partitioning:
-    enabled: true
+    enabled: false
     columns: ["Year", "Month"]
 
 # ---------------------------------------------------------------------
