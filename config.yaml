@@ -8,7 +8,7 @@ defaults:
   seed: 42
 
   dates:
-    start: "2021-01-02"
+    start: "2021-01-01"
     end: "2026-12-31"
 
   paths:
@@ -31,11 +31,11 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 1002301
+  total_rows: 1025301
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
-  sales_output: "both"           # sales | sales_order | both
+  file_format: "csv"          # csv | parquet | deltaparquet
+  sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -75,9 +75,9 @@ products:
 
   pricing:
     base:
-      value_scale: 0.10
+      value_scale: .10
       min_unit_price: 50
-      max_unit_price: 3000
+      max_unit_price: 5000
 
       # optional tuning:
       stretch_to_range: false
@@ -86,13 +86,21 @@ products:
 
     cost:
       mode: margin          # add this (or "keep" if you want to preserve Contoso UnitCost when use_contoso_products: true)
-      min_margin_pct: 0.20
-      max_margin_pct: 0.45
+      min_margin_pct: 0.30
+      max_margin_pct: 0.65
 
     jitter:
       price_pct: 0.03
       cost_pct: 0.02
 
+    brand_normalization:
+      enabled: true
+      brand_col: Brand          # or BrandName; if omitted we'll try Brand then BrandName
+      alpha: 0.70               # 0..1 (strength of pull toward global typical price)
+      min_factor: 0.60          # clamp per-brand rescale factor
+      max_factor: 1.60
+      min_count: 10             # brands with < min_count products won't be adjusted
+      noise_sd: 0.05            # optional per-brand log-noise (0 disables)
     # NEW: controls how prices *look* (works for max 2000 / 10000 / etc.)
     appearance:
       snap_unit_price: true
@@ -114,7 +122,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 34184
+  total_customers: 28184
   active_ratio: 0.90
 
   pct_india: 10

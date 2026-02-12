@@ -112,6 +112,8 @@ def _infer_T_from_date_pool(date_pool: Any) -> int:
     return int(np.unique(months).size)
 
 
+import numpy as np
+
 def _build_brand_prob_by_month_rotate_winner(
     rng: np.random.Generator,
     *,
@@ -123,40 +125,67 @@ def _build_brand_prob_by_month_rotate_winner(
     year_len_months: int = 12,
 ) -> np.ndarray:
     """
-    Build (T, B) probabilities where each year rotates a "winner" brand (year % B),
-    optionally with multiplicative lognormal noise, then normalize.
+    Build (T, B) probability matrix where each block of `year_len_months` months
+    has a randomized 'winner' brand, deterministic under rng/seed.
 
-    This guarantees "no single brand stays #1 every year" assuming:
-      - B > 1
-      - winner_boost is meaningfully > 1
-      - T spans multiple years (>= 24 months for obvious rotation)
+    - Winners are drawn as shuffled permutations of 0..B-1 (no repeats until exhausted),
+      then reshuffled if more blocks are needed.
+    - Avoids immediate repeats across permutation boundaries when B>1.
+    - Applies min_share as a probability floor (post-normalization).
     """
     T = int(max(1, T))
     B = int(max(1, B))
+    year_len = int(max(1, year_len_months))
 
-    W = np.ones((T, B), dtype=np.float64)
+    wb = float(max(1.0, winner_boost))
+    ns = float(max(0.0, noise_sd))
+    ms = float(max(0.0, min_share))
 
-    # Rotate yearly winner
-    if B > 1 and winner_boost and float(winner_boost) > 1.0:
-        for t in range(T):
-            year = int(t // max(1, int(year_len_months)))
-            winner = int(year % B)
-            W[t, winner] *= float(winner_boost)
+    # prevent impossible floors (must be < 1/B)
+    if ms > 0.0:
+        ms = min(ms, 0.99 / B)
 
-    # Add mild noise (keeps it from looking too deterministic)
-    if noise_sd and float(noise_sd) > 0:
-        W *= np.exp(rng.normal(0.0, float(noise_sd), size=W.shape))
+    # how many winner-blocks do we need?
+    n_blocks = int((T + year_len - 1) // year_len)
 
-    # Floor shares to avoid permanent collapse
-    if min_share and float(min_share) > 0:
-        floor = float(min_share)
-        W = np.maximum(W, floor)
+    # build randomized winner order: permutations stitched together
+    winners = []
+    prev = None
+    while len(winners) < n_blocks:
+        perm = list(range(B))
+        rng.shuffle(perm)
+        if prev is not None and B > 1 and perm[0] == prev:
+            # swap first with second to avoid consecutive repeat
+            perm[0], perm[1] = perm[1], perm[0]
+        winners.extend(perm)
+        prev = winners[-1]
+    winners = winners[:n_blocks]
 
-    # Normalize each month
-    row_sum = W.sum(axis=1, keepdims=True)
-    row_sum = np.where(row_sum <= 0, 1.0, row_sum)
-    return W / row_sum
+    out = np.empty((T, B), dtype=np.float64)
 
+    for t in range(T):
+        block = t // year_len
+        winner = int(winners[block])
+
+        w = np.ones(B, dtype=np.float64)
+        w[winner] *= wb
+
+        # multiplicative noise in log space
+        if ns > 0.0:
+            w *= np.exp(rng.normal(0.0, ns, size=B))
+
+        # normalize
+        s = float(w.sum())
+        p = (w / s) if s > 1e-12 else np.full(B, 1.0 / B, dtype=np.float64)
+
+        # true probability floor
+        if ms > 0.0:
+            p = np.maximum(p, ms)
+            p /= max(float(p.sum()), 1e-12)
+
+        out[t] = p
+
+    return out
 
 # ===============================================================
 # Worker initializer (runs once per process)
@@ -235,7 +264,13 @@ def init_sales_worker(worker_cfg: dict):
         partition_enabled = worker_cfg.get("partition_enabled", False)
         partition_cols = worker_cfg.get("partition_cols") or []
         models_cfg = worker_cfg.get("models_cfg")
-
+        # models_cfg may be the *root* YAML dict with {"tuning": ..., "models": {...}}.
+        # The generator expects the *leaf* dict: the content under "models:".
+        if isinstance(models_cfg, dict) and "models" in models_cfg:
+            models_cfg = models_cfg.get("models") or {}
+        elif models_cfg is None:
+            models_cfg = {}
+            
         # Optional (passed by sales.py; keep for future compatibility)
         write_pyarrow = worker_cfg.get("write_pyarrow", True)
 

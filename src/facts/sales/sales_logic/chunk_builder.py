@@ -63,12 +63,14 @@ def _sample_product_row_indices(
         return rng.integers(0, len(product_np), size=int(n)).astype("int64", copy=False)
 
     # Prefer "active" buckets if we're using active_product_np upstream.
-    # Choose buckets that align with the passed `product_np`.
+    # If active buckets aren't provided, fall back to brand_to_row_idx and let the mx-guard validate alignment.
     if getattr(State, "active_product_np", None) is not None and product_np is State.active_product_np:
         brand_to_rows = getattr(State, "active_brand_to_row_idx", None)
+        if brand_to_rows is None:
+            brand_to_rows = getattr(State, "brand_to_row_idx", None)
     else:
         brand_to_rows = getattr(State, "brand_to_row_idx", None)
-        
+
     if brand_to_rows is not None:
         mx = -1
         for b in brand_to_rows:
