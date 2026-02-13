@@ -122,6 +122,120 @@ def _round_to_step(x: np.ndarray, bands) -> np.ndarray:
     return rounded
 
 
+def _apply_brand_price_normalization(
+    out: pd.DataFrame,
+    brand_cfg: dict,
+    rng: np.random.Generator,
+    min_price: float | None,
+    max_price: float | None,
+) -> None:
+    """
+    In-place adjustment of out["UnitPrice"] to reduce systematic brand-level price skew.
+
+    Strategy:
+      - Work in log space (robust to heavy-tailed prices).
+      - Compute per-brand median(log(UnitPrice)).
+      - Compute global median(log(UnitPrice)).
+      - Multiply UnitPrice by exp(alpha * (global - brand_median)).
+      - Optional per-brand log-noise (deterministic via rng).
+      - Clamp factor and re-apply hard bounds.
+    """
+    if not isinstance(brand_cfg, dict) or not _to_bool(brand_cfg.get("enabled"), False):
+        return
+
+    # Figure out brand column
+    brand_col = brand_cfg.get("brand_col")
+    if not brand_col:
+        if "Brand" in out.columns:
+            brand_col = "Brand"
+        elif "BrandName" in out.columns:
+            brand_col = "BrandName"
+        else:
+            return
+    if brand_col not in out.columns:
+        return
+
+    alpha = _to_float(brand_cfg.get("alpha"), 0.7)
+    if alpha is None:
+        alpha = 0.7
+    alpha = float(np.clip(alpha, 0.0, 1.0))
+
+    min_factor = _to_float(brand_cfg.get("min_factor"), 0.6)
+    max_factor = _to_float(brand_cfg.get("max_factor"), 1.6)
+    if min_factor is None:
+        min_factor = 0.6
+    if max_factor is None:
+        max_factor = 1.6
+    if max_factor <= 0 or min_factor <= 0 or max_factor < min_factor:
+        # bad config => no-op
+        return
+
+    min_count = brand_cfg.get("min_count", 10)
+    try:
+        min_count = int(min_count)
+    except Exception:
+        min_count = 10
+    min_count = max(1, min_count)
+
+    noise_sd = _to_float(brand_cfg.get("noise_sd"), 0.0) or 0.0
+    noise_sd = float(max(0.0, noise_sd))
+
+    # Prices (finite, >0)
+    up = out["UnitPrice"].to_numpy(dtype=np.float64, copy=False)
+    finite = np.isfinite(up) & (up > 0.0)
+    if not finite.any():
+        return
+
+    logp = np.full(up.shape[0], np.nan, dtype=np.float64)
+    logp[finite] = np.log(up[finite])
+
+    global_med = float(np.nanmedian(logp))
+    if not np.isfinite(global_med):
+        return
+
+    tmp = pd.DataFrame(
+        {
+            "_brand": out[brand_col].astype("string"),
+            "_logp": logp,
+        }
+    )
+
+    # Per-brand center + counts (ignore NaNs)
+    grp = tmp.groupby("_brand")["_logp"]
+    brand_med = grp.median()
+    brand_cnt = grp.count()
+
+    # Factor per brand in normal space
+    # exp(alpha*(global - brand_med)) pushes expensive brands down, cheap brands up.
+    delta = (global_med - brand_med).astype("float64")
+    factor = np.exp(alpha * delta.to_numpy(dtype=np.float64))
+
+    factor = pd.Series(factor, index=brand_med.index, dtype="float64")
+
+    # Optional per-brand deterministic noise (in log space)
+    if noise_sd > 0.0 and len(factor) > 0:
+        eps = rng.normal(loc=0.0, scale=noise_sd, size=len(factor))
+        factor = factor * np.exp(eps)
+
+    # Clamp factors
+    factor = factor.clip(lower=float(min_factor), upper=float(max_factor))
+
+    # Don’t adjust tiny brands
+    factor[brand_cnt < min_count] = 1.0
+
+    # Map factor onto rows
+    f_row = tmp["_brand"].map(factor).to_numpy(dtype=np.float64, copy=False)
+    f_row = np.where(np.isfinite(f_row), f_row, 1.0)
+
+    out["UnitPrice"] = up * f_row
+
+    # Re-apply bounds (still pre-cost-model)
+    if min_price is not None:
+        out["UnitPrice"] = out["UnitPrice"].clip(lower=min_price)
+    if max_price is not None:
+        out["UnitPrice"] = out["UnitPrice"].clip(upper=max_price)
+
+
 def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None = None) -> pd.DataFrame:
     """
     Products are the economic source of truth.
@@ -184,6 +298,17 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
         out["UnitPrice"] = out["UnitPrice"].clip(lower=min_price)
     if max_price is not None:
         out["UnitPrice"] = out["UnitPrice"].clip(upper=max_price)
+        
+    # ----------------------------
+    # Optional: brand-level normalization (pre-cost-model)
+    # ----------------------------
+    _apply_brand_price_normalization(
+        out=out,
+        brand_cfg=pricing_cfg.get("brand_normalization", {}) or {},
+        rng=rng,
+        min_price=min_price,
+        max_price=max_price,
+    )
 
     # ----------------------------
     # Cost model

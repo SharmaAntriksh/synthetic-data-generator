@@ -15,6 +15,35 @@ from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_OR
 # ===============================================================
 # Small utils (moved from sales_worker.py)
 # ===============================================================
+def _build_buckets_from_brand_key(brand_key: np.ndarray) -> list[np.ndarray]:
+    """
+    Returns buckets[b] = np.ndarray of product_np row indices belonging to brand b.
+    Expects brand_key to be int64, non-negative. Dense (0..B-1) is ideal; sparse works but
+    allocates up to max(brand_key)+1.
+    """
+    brand_key = np.asarray(brand_key, dtype=np.int64)
+    if brand_key.size == 0:
+        return []
+
+    if brand_key.min() < 0:
+        raise RuntimeError("product_brand_key must be non-negative ints")
+
+    max_b = int(brand_key.max())
+    B = max_b + 1
+
+    order = np.argsort(brand_key, kind="mergesort")
+    b_sorted = brand_key[order]
+
+    starts = np.flatnonzero(np.r_[True, b_sorted[1:] != b_sorted[:-1]])
+    ends = np.r_[starts[1:], b_sorted.size]
+
+    buckets: list[np.ndarray] = [np.empty(0, dtype=np.int64) for _ in range(B)]
+    for s, e in zip(starts, ends):
+        b = int(b_sorted[int(s)])
+        buckets[b] = order[int(s):int(e)].astype(np.int64, copy=False)
+
+    return buckets
+
 
 def _int_or(v: Any, default: int) -> int:
     try:
@@ -23,6 +52,15 @@ def _int_or(v: Any, default: int) -> int:
         return int(v)
     except Exception:
         return int(default)
+
+
+def _float_or(v: Any, default: float) -> float:
+    try:
+        if v is None or v == "":
+            return float(default)
+        return float(v)
+    except Exception:
+        return float(default)
 
 
 def _str_or(v: Any, default: str) -> str:
@@ -63,10 +101,95 @@ def _dense_map(mapping: Optional[dict]) -> Optional[np.ndarray]:
     return arr
 
 
+def _infer_T_from_date_pool(date_pool: Any) -> int:
+    """
+    Infer number of unique months in date_pool.
+    Returned T is the count of unique numpy datetime64[M] buckets.
+    """
+    dp = np.asarray(date_pool, dtype="datetime64[D]")
+    months = dp.astype("datetime64[M]")
+    # np.unique returns sorted unique values for datetime64
+    return int(np.unique(months).size)
+
+
+import numpy as np
+
+def _build_brand_prob_by_month_rotate_winner(
+    rng: np.random.Generator,
+    *,
+    T: int,
+    B: int,
+    winner_boost: float = 2.5,
+    noise_sd: float = 0.15,
+    min_share: float = 0.02,
+    year_len_months: int = 12,
+) -> np.ndarray:
+    """
+    Build (T, B) probability matrix where each block of `year_len_months` months
+    has a randomized 'winner' brand, deterministic under rng/seed.
+
+    - Winners are drawn as shuffled permutations of 0..B-1 (no repeats until exhausted),
+      then reshuffled if more blocks are needed.
+    - Avoids immediate repeats across permutation boundaries when B>1.
+    - Applies min_share as a probability floor (post-normalization).
+    """
+    T = int(max(1, T))
+    B = int(max(1, B))
+    year_len = int(max(1, year_len_months))
+
+    wb = float(max(1.0, winner_boost))
+    ns = float(max(0.0, noise_sd))
+    ms = float(max(0.0, min_share))
+
+    # prevent impossible floors (must be < 1/B)
+    if ms > 0.0:
+        ms = min(ms, 0.99 / B)
+
+    # how many winner-blocks do we need?
+    n_blocks = int((T + year_len - 1) // year_len)
+
+    # build randomized winner order: permutations stitched together
+    winners = []
+    prev = None
+    while len(winners) < n_blocks:
+        perm = list(range(B))
+        rng.shuffle(perm)
+        if prev is not None and B > 1 and perm[0] == prev:
+            # swap first with second to avoid consecutive repeat
+            perm[0], perm[1] = perm[1], perm[0]
+        winners.extend(perm)
+        prev = winners[-1]
+    winners = winners[:n_blocks]
+
+    out = np.empty((T, B), dtype=np.float64)
+
+    for t in range(T):
+        block = t // year_len
+        winner = int(winners[block])
+
+        w = np.ones(B, dtype=np.float64)
+        w[winner] *= wb
+
+        # multiplicative noise in log space
+        if ns > 0.0:
+            w *= np.exp(rng.normal(0.0, ns, size=B))
+
+        # normalize
+        s = float(w.sum())
+        p = (w / s) if s > 1e-12 else np.full(B, 1.0 / B, dtype=np.float64)
+
+        # true probability floor
+        if ms > 0.0:
+            p = np.maximum(p, ms)
+            p /= max(float(p.sum()), 1e-12)
+
+        out[t] = p
+
+    return out
+
 # ===============================================================
 # Worker initializer (runs once per process)
 # ===============================================================
-
 def init_sales_worker(worker_cfg: dict):
     """
     Initialize immutable worker state.
@@ -84,6 +207,10 @@ def init_sales_worker(worker_cfg: dict):
     try:
         product_np = worker_cfg["product_np"]
         store_keys = worker_cfg["store_keys"]
+
+        # brand sampling inputs (optional)
+        product_brand_key = worker_cfg.get("product_brand_key")  # optional
+        brand_prob_by_month = worker_cfg.get("brand_prob_by_month")  # optional
 
         promo_keys_all = worker_cfg["promo_keys_all"]
         promo_pct_all = worker_cfg["promo_pct_all"]
@@ -137,7 +264,13 @@ def init_sales_worker(worker_cfg: dict):
         partition_enabled = worker_cfg.get("partition_enabled", False)
         partition_cols = worker_cfg.get("partition_cols") or []
         models_cfg = worker_cfg.get("models_cfg")
-
+        # models_cfg may be the *root* YAML dict with {"tuning": ..., "models": {...}}.
+        # The generator expects the *leaf* dict: the content under "models:".
+        if isinstance(models_cfg, dict) and "models" in models_cfg:
+            models_cfg = models_cfg.get("models") or {}
+        elif models_cfg is None:
+            models_cfg = {}
+            
         # Optional (passed by sales.py; keep for future compatibility)
         write_pyarrow = worker_cfg.get("write_pyarrow", True)
 
@@ -166,6 +299,14 @@ def init_sales_worker(worker_cfg: dict):
     # Normalize arrays (dtype + shape checks)
     # -----------------------------------------------------------
     product_np = np.asarray(product_np)  # keep original dtype/shape
+
+    brand_to_row_idx = None
+    if product_brand_key is not None:
+        product_brand_key = _as_int64(product_brand_key)
+        if product_brand_key.shape[0] != product_np.shape[0]:
+            raise RuntimeError("product_brand_key must align with product_np row count")
+        brand_to_row_idx = _build_buckets_from_brand_key(product_brand_key)
+
     store_keys = _as_int64(store_keys)
 
     promo_keys_all = _as_int64(promo_keys_all)
@@ -194,6 +335,40 @@ def init_sales_worker(worker_cfg: dict):
         customer_base_weight = _as_f64(customer_base_weight)
         if customer_base_weight.shape[0] != customer_keys.shape[0]:
             raise RuntimeError("customer_base_weight must align with customer_keys length")
+
+    # -----------------------------------------------------------
+    # Build brand_prob_by_month (optional, deterministic, run-once)
+    #
+    # This enables "top brand rotates by year" when chunk_builder samples by month offset.
+    # If caller already provided brand_prob_by_month, we keep it as-is.
+    # -----------------------------------------------------------
+    if brand_prob_by_month is None and brand_to_row_idx is not None:
+        brand_cfg = None
+        if isinstance(models_cfg, dict):
+            brand_cfg = models_cfg.get("brand_popularity")
+
+        use_brand_popularity = bool(brand_cfg) and bool(brand_cfg.get("enabled", True)) if isinstance(brand_cfg, dict) else False
+
+        if use_brand_popularity:
+            B = int(len(brand_to_row_idx))
+            T = _infer_T_from_date_pool(date_pool)
+
+            seed = _int_or(brand_cfg.get("seed") if isinstance(brand_cfg, dict) else None, 123)
+            winner_boost = _float_or(brand_cfg.get("winner_boost") if isinstance(brand_cfg, dict) else None, 2.5)
+            noise_sd = _float_or(brand_cfg.get("noise_sd") if isinstance(brand_cfg, dict) else None, 0.15)
+            min_share = _float_or(brand_cfg.get("min_share") if isinstance(brand_cfg, dict) else None, 0.02)
+            year_len = _int_or(brand_cfg.get("year_len_months") if isinstance(brand_cfg, dict) else None, 12)
+
+            rng_bp = np.random.default_rng(int(seed))
+            brand_prob_by_month = _build_brand_prob_by_month_rotate_winner(
+                rng_bp,
+                T=T,
+                B=B,
+                winner_boost=winner_boost,
+                noise_sd=noise_sd,
+                min_share=min_share,
+                year_len_months=year_len,
+            )
 
     # -----------------------------------------------------------
     # Dense mapping helpers (fast lookup)
@@ -227,17 +402,14 @@ def init_sales_worker(worker_cfg: dict):
         pa.field("StoreKey", pa.int64()),
         pa.field("PromotionKey", pa.int64()),
         pa.field("CurrencyKey", pa.int64()),
-
         pa.field("OrderDate", pa.date32()),
         pa.field("DueDate", pa.date32()),
         pa.field("DeliveryDate", pa.date32()),
-
         pa.field("Quantity", pa.int64()),
         pa.field("NetPrice", pa.float64()),
         pa.field("UnitCost", pa.float64()),
         pa.field("UnitPrice", pa.float64()),
         pa.field("DiscountAmount", pa.float64()),
-
         pa.field("DeliveryStatus", pa.string()),
         pa.field("IsOrderDelayed", pa.int8()),
     ]
@@ -249,7 +421,7 @@ def init_sales_worker(worker_cfg: dict):
 
     delta_fields = [
         pa.field("Year", pa.int16()),
-        pa.field("Month", pa.int8()),
+        pa.field("Month", pa.int16()),
     ]
 
     schema_no_order = pa.schema(base_fields)
@@ -267,37 +439,24 @@ def init_sales_worker(worker_cfg: dict):
         sales_schema_gen = schema_no_order if skip_order_cols else schema_with_order
         sales_schema_out = schema_no_order if skip_order_cols_requested else schema_with_order
 
-    # --- SalesOrderDetail (SLIM, conventional) ---
-    # Conventional: header-level foreign keys + order dates live in Header, not Detail.
-    # DeliveryDate can vary per line -> keep in Detail.
     # --- SalesOrderDetail (LINE-GRAIN; matches static_schemas) ---
-    # StoreKey/PromotionKey/CurrencyKey/DueDate can vary per line -> keep in Detail.
     detail_fields = [
         pa.field("SalesOrderNumber", pa.int64()),
         pa.field("SalesOrderLineNumber", pa.int64()),
-
         pa.field("ProductKey", pa.int64()),
-
         pa.field("StoreKey", pa.int64()),
         pa.field("PromotionKey", pa.int64()),
         pa.field("CurrencyKey", pa.int64()),
-
         pa.field("DueDate", pa.date32()),
         pa.field("DeliveryDate", pa.date32()),
-
         pa.field("Quantity", pa.int64()),
         pa.field("NetPrice", pa.float64()),
         pa.field("UnitCost", pa.float64()),
         pa.field("UnitPrice", pa.float64()),
         pa.field("DiscountAmount", pa.float64()),
-
         pa.field("DeliveryStatus", pa.string()),
     ]
-    detail_schema = (
-        pa.schema(detail_fields + delta_fields)
-        if file_format == "deltaparquet"
-        else pa.schema(detail_fields)
-    )
+    detail_schema = pa.schema(detail_fields + delta_fields) if file_format == "deltaparquet" else pa.schema(detail_fields)
 
     # --- SalesOrderHeader (ORDER-GRAIN; minimal) ---
     header_fields = [
@@ -306,11 +465,7 @@ def init_sales_worker(worker_cfg: dict):
         pa.field("OrderDate", pa.date32()),
         pa.field("IsOrderDelayed", pa.int8()),
     ]
-    header_schema = (
-        pa.schema(header_fields + delta_fields)
-        if file_format == "deltaparquet"
-        else pa.schema(header_fields)
-    )
+    header_schema = pa.schema(header_fields + delta_fields) if file_format == "deltaparquet" else pa.schema(header_fields)
 
     schema_by_table = {
         TABLE_SALES: sales_schema_out,
@@ -320,9 +475,7 @@ def init_sales_worker(worker_cfg: dict):
 
     # Dictionary encoding: only for strings; keep exclusions consistent
     parquet_dict_exclude = {"SalesOrderNumber", "CustomerKey"}
-    parquet_dict_cols_by_table = {
-        t: schema_dict_cols(s, parquet_dict_exclude) for t, s in schema_by_table.items()
-    }
+    parquet_dict_cols_by_table = {t: schema_dict_cols(s, parquet_dict_exclude) for t, s in schema_by_table.items()}
 
     # Back-compat (old code expects these names)
     parquet_dict_cols = parquet_dict_cols_by_table[TABLE_SALES]
@@ -330,71 +483,65 @@ def init_sales_worker(worker_cfg: dict):
     # -----------------------------------------------------------
     # Bind immutable globals (ONCE)
     # -----------------------------------------------------------
-    bind_globals({
-        # core data
-        "product_np": product_np,
-        "store_keys": store_keys,
-
-        # Backward compat: keep 'customers' for any old codepaths
-        "customers": customers if customers is not None else customer_keys,
-
-        # New: lifecycle-aware customer arrays for chunk_builder
-        "customer_keys": customer_keys,
-        "customer_is_active_in_sales": customer_is_active_in_sales,
-        "customer_start_month": customer_start_month,
-        "customer_end_month": customer_end_month,
-        "customer_base_weight": customer_base_weight,
-
-        # promotions
-        "promo_keys_all": promo_keys_all,
-        "promo_pct_all": promo_pct_all,
-        "promo_start_all": promo_start_all,
-        "promo_end_all": promo_end_all,
-
-        # fast lookup arrays
-        "store_to_geo_arr": store_to_geo_arr,
-        "geo_to_currency_arr": geo_to_currency_arr,
-
-        # dates
-        "date_pool": date_pool,
-        "date_prob": date_prob,
-
-        # output config
-        "file_format": file_format,
-        "out_folder": out_folder,
-        "row_group_size": int(max(1, row_group_size)),
-        "compression": compression,
-        "output_paths": output_paths,
-        "sales_output": sales_output,
-
-        # preserve user intent for Sales, even if we force order cols for order tables
-        "skip_order_cols_requested": bool(skip_order_cols_requested),
-        "skip_order_cols": bool(skip_order_cols),
-
-        # delta
-        "delta_output_folder": os.path.normpath(delta_output_folder) if delta_output_folder else None,
-        "write_delta": bool(write_delta),
-
-        # behavior
-        "no_discount_key": no_discount_key,
-        "partition_enabled": bool(partition_enabled),
-        "partition_cols": list(partition_cols),
-        "models_cfg": models_cfg,
-        "write_pyarrow": bool(write_pyarrow),
-
-        # schemas
-        "schema_no_order": schema_no_order,
-        "schema_with_order": schema_with_order,
-        "schema_no_order_delta": schema_no_order_delta,
-        "schema_with_order_delta": schema_with_order_delta,
-        "sales_schema": sales_schema_gen,          # used by chunk_builder
-        "sales_schema_out": sales_schema_out,      # optional (debug / future use)
-        "schema_by_table": schema_by_table,
-        "parquet_dict_cols_by_table": parquet_dict_cols_by_table,
-
-        # parquet tuning
-        "parquet_dict_exclude": parquet_dict_exclude,
-        "parquet_dict_cols": parquet_dict_cols,
-    })
+    bind_globals(
+        {
+            # core data
+            "product_np": product_np,
+            "store_keys": store_keys,
+            "product_brand_key": product_brand_key,
+            "brand_to_row_idx": brand_to_row_idx,
+            "brand_prob_by_month": brand_prob_by_month,
+            # Backward compat: keep 'customers' for any old codepaths
+            "customers": customers if customers is not None else customer_keys,
+            # New: lifecycle-aware customer arrays for chunk_builder
+            "customer_keys": customer_keys,
+            "customer_is_active_in_sales": customer_is_active_in_sales,
+            "customer_start_month": customer_start_month,
+            "customer_end_month": customer_end_month,
+            "customer_base_weight": customer_base_weight,
+            # promotions
+            "promo_keys_all": promo_keys_all,
+            "promo_pct_all": promo_pct_all,
+            "promo_start_all": promo_start_all,
+            "promo_end_all": promo_end_all,
+            # fast lookup arrays
+            "store_to_geo_arr": store_to_geo_arr,
+            "geo_to_currency_arr": geo_to_currency_arr,
+            # dates
+            "date_pool": date_pool,
+            "date_prob": date_prob,
+            # output config
+            "file_format": file_format,
+            "out_folder": out_folder,
+            "row_group_size": int(max(1, row_group_size)),
+            "compression": compression,
+            "output_paths": output_paths,
+            "sales_output": sales_output,
+            # preserve user intent for Sales, even if we force order cols for order tables
+            "skip_order_cols_requested": bool(skip_order_cols_requested),
+            "skip_order_cols": bool(skip_order_cols),
+            # delta
+            "delta_output_folder": os.path.normpath(delta_output_folder) if delta_output_folder else None,
+            "write_delta": bool(write_delta),
+            # behavior
+            "no_discount_key": no_discount_key,
+            "partition_enabled": bool(partition_enabled),
+            "partition_cols": list(partition_cols),
+            "models_cfg": models_cfg,
+            "write_pyarrow": bool(write_pyarrow),
+            # schemas
+            "schema_no_order": schema_no_order,
+            "schema_with_order": schema_with_order,
+            "schema_no_order_delta": schema_no_order_delta,
+            "schema_with_order_delta": schema_with_order_delta,
+            "sales_schema": sales_schema_gen,  # used by chunk_builder
+            "sales_schema_out": sales_schema_out,  # optional (debug / future use)
+            "schema_by_table": schema_by_table,
+            "parquet_dict_cols_by_table": parquet_dict_cols_by_table,
+            # parquet tuning
+            "parquet_dict_exclude": parquet_dict_exclude,
+            "parquet_dict_cols": parquet_dict_cols,
+        }
+    )
 
     State.seal()

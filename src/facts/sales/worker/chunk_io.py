@@ -53,7 +53,7 @@ def _add_year_month(table: pa.Table) -> pa.Table:
 
     pc = _pa_compute()
     year = pc.cast(pc.year(table[date_col]), pa.int16())
-    month = pc.cast(pc.month(table[date_col]), pa.int8())
+    month = pc.cast(pc.month(table[date_col]), pa.int16())
 
     if "Year" not in table.schema.names:
         table = table.append_column("Year", year)

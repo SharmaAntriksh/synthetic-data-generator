@@ -29,18 +29,18 @@ models:
       - 0.86  # Feb
       - 0.96  # Mar
       - 1.00  # Apr
-      - 1.03  # May
-      - 1.05  # Jun
+      - 1.13  # May
+      - 1.25  # Jun
       - 1.04  # Jul
       - 1.02  # Aug
       - 0.99  # Sep
       - 1.06  # Oct
-      - 1.18  # Nov
-      - 1.16  # Dec
+      - 1.28  # Nov
+      - 1.46  # Dec
 
     volatility:
       # Higher => spikier months (try 0.02–0.08)
-      sigma: 0.01
+      sigma: 0.03
 
     row_noise:
       # Adds within-month variability; keep smaller for small datasets
@@ -52,12 +52,20 @@ models:
       small_dataset: { low: 0.82, high: 1.22 }
       large_dataset: { low: 0.82, high: 1.18 }
 
+  brand_popularity:
+    enabled: true
+    seed: 123
+    winner_boost: 3.0
+    noise_sd: 0.25
+    min_share: 0.02
+    year_len_months: 12
+
   # ============================================================
   # MACRO DEMAND (row allocation shape per month)
   # ============================================================
   macro_demand:
     base_level: 1.0
-    yearly_growth: 0.00            # keep low for stable yearly totals
+    yearly_growth: 0.08            # keep low for stable yearly totals
     seasonality_amplitude: 0.08
     seasonality_phase: 0.0
     noise_std: 0.06
@@ -71,7 +79,7 @@ models:
 
     yoy_growth_schedule:
       mode: "repeat"
-      values: [-0.06, -0.22, -0.18, 0.37, 0.14]
+      values: [0.06, 0.09, -0.18, 0.19, -0.09]
       # pattern: inc inc dec inc dec dec inc inc (then repeats)
       
     # Rare demand shocks to create “decline then recovery” windows
@@ -89,13 +97,13 @@ models:
   # This is the main knob for “some years down, next year up”
   # ============================================================
   customer_participation:
-    base_distinct_ratio: 0.35
+    base_distinct_ratio: 0.55
     min_distinct_customers: 250
     max_distinct_ratio: 0.70
 
     cycles:
       enabled: true
-      period_months: 36     # 3-year waves (24 = 2-year; 48 = 4-year)
+      period_months: 24     # 3-year waves (24 = 2-year; 48 = 4-year)
       amplitude: 0.35       # +/- swing in distinct customers
       phase: 0.0
       noise_std: 0.06
@@ -104,7 +112,7 @@ models:
   # QUANTITY / BASKET SIZE
   # ============================================================
   quantity:
-    base_poisson_lambda: 3.2
+    base_poisson_lambda: 1.8
     month_inertia: 0.82
 
     monthly_factors:
@@ -202,7 +210,7 @@ models:
 
       # Target: lots of clean 5/10/15/.../35 discounts
       ladder:
-        - { kind: none, value: 0.0,  weight: 0.35 }
+        - { kind: none, value: 0.0,  weight: 0.15 }
 
         # small % markdowns (kept light so you don't get huge discounts on high prices)
         - { kind: pct,  value: 0.02, weight: 0.08 }
@@ -211,13 +219,13 @@ models:
         - { kind: pct,  value: 0.08, weight: 0.04 }
 
         # fixed markdowns (main variety driver)
-        - { kind: amt,  value: 5.0,  weight: 0.09 }
+        - { kind: amt,  value: 5.0,  weight: 0.06 }
         - { kind: amt,  value: 10.0, weight: 0.08 }
-        - { kind: amt,  value: 15.0, weight: 0.07 }
-        - { kind: amt,  value: 20.0, weight: 0.06 }
-        - { kind: amt,  value: 25.0, weight: 0.04 }
-        - { kind: amt,  value: 30.0, weight: 0.03 }
-        - { kind: amt,  value: 35.0, weight: 0.02 }
+        - { kind: amt,  value: 35.0, weight: 0.07 }
+        - { kind: amt,  value: 49.0, weight: 0.06 }
+        - { kind: amt,  value: 79.0, weight: 0.04 }
+        - { kind: amt,  value: 90.0, weight: 0.03 }
+        - { kind: amt,  value: 100.0, weight: 0.02 }
 
       # Quantization inside compute_prices()
       appearance:
