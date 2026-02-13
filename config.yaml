@@ -61,7 +61,7 @@ sales:
     seed: null
 
   partitioning:
-    enabled: false
+    enabled: true
     columns: ["Year", "Month"]
 
 # ---------------------------------------------------------------------

@@ -110,6 +110,16 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # ------------------------------------------------------------
     stage("Generating Sales")
     t0 = time.time()
+    
+    # Partitioning / delta
+    partition_enabled = bool(sales_cfg.get("partition_enabled", False))
+
+    # Only provide partition cols when enabled; otherwise force None
+    partition_cols = sales_cfg.get("partition_cols")
+    if not partition_enabled:
+        partition_cols = None
+    elif partition_cols is None:
+        partition_cols = ["Year", "Month"]
 
     generate_sales_fact(
         cfg,
@@ -126,8 +136,8 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         chunk_size=sales_cfg.get("chunk_size", 1_000_000),
         workers=sales_cfg.get("workers"),
         # Partitioning / delta
-        partition_enabled=sales_cfg.get("partition_enabled", False),
-        partition_cols=sales_cfg.get("partition_cols", ["Year", "Month"]),
+        partition_enabled=partition_enabled,
+        partition_cols=partition_cols,
         delta_output_folder=str(sales_out_folder),
         skip_order_cols=skip_order_cols,
     )

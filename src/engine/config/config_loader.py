@@ -285,8 +285,30 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "workers" in sales_cfg and sales_cfg["workers"] is not None:
         sales_cfg["workers"] = int(sales_cfg["workers"])
 
+    # Support nested config: sales.partitioning.{enabled, columns}
+    # Map nested -> flat (but do NOT override explicit flat keys)
+    part = sales_cfg.get("partitioning")
+    if isinstance(part, dict):
+        if "partition_enabled" not in sales_cfg and part.get("enabled") is not None:
+            sales_cfg["partition_enabled"] = bool(part.get("enabled"))
+
+        # Use "columns in part" (not get != None) so explicit null is respected
+        if "partition_cols" not in sales_cfg and "columns" in part:
+            cols = part.get("columns")
+            if cols is None:
+                sales_cfg["partition_cols"] = None
+            else:
+                if not isinstance(cols, list):
+                    raise ValueError("sales.partitioning.columns must be a list of column names")
+                sales_cfg["partition_cols"] = [str(c) for c in cols]
+
+    # Normalize / validate flat keys (canonical internal form)
     if "partition_enabled" in sales_cfg:
         sales_cfg["partition_enabled"] = bool(sales_cfg["partition_enabled"])
+        if sales_cfg["partition_enabled"] is False:
+            # Disabled means "no partitioning", regardless of any columns present
+            sales_cfg["partition_cols"] = []
+
     if "partition_cols" in sales_cfg and sales_cfg["partition_cols"] is not None:
         if not isinstance(sales_cfg["partition_cols"], list):
             raise ValueError("sales.partition_cols must be a list of column names")
