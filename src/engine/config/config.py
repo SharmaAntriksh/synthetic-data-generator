@@ -210,6 +210,22 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
         sales_cfg["row_group_size"] = int(sales_cfg["row_group_size"])
     if "workers" in sales_cfg and sales_cfg["workers"] is not None:
         sales_cfg["workers"] = int(sales_cfg["workers"])
+        
+    # Support nested config: sales.partitioning.{enabled, columns}
+    # Map nested -> flat (but do NOT override explicit flat keys)
+    part = sales_cfg.get("partitioning")
+    if isinstance(part, dict):
+        if "partition_enabled" not in sales_cfg and part.get("enabled") is not None:
+            sales_cfg["partition_enabled"] = bool(part.get("enabled"))
+
+        if "partition_cols" not in sales_cfg and part.get("columns") is not None:
+            cols = part.get("columns")
+            if cols is None:
+                sales_cfg["partition_cols"] = None
+            else:
+                if not isinstance(cols, list):
+                    raise ValueError("sales.partitioning.columns must be a list of column names")
+                sales_cfg["partition_cols"] = [str(c) for c in cols]
 
     # Partition defaults for delta/parquet pipelines
     if "partition_enabled" in sales_cfg:
