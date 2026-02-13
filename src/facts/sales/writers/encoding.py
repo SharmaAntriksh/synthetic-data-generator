@@ -3,8 +3,12 @@ from __future__ import annotations
 from typing import Iterable, List, Optional, Set
 
 from .constants import DICT_EXCLUDE, REQUIRED_PRICING_COLS
-from .utils import _arrow
 from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL
+
+from src.facts.common.writers.encoding import (
+    schema_dict_cols as _common_schema_dict_cols,
+    validate_required_columns,
+)
 
 
 def required_pricing_cols_for_table(table_name: str | None) -> Set[str]:
@@ -26,13 +30,7 @@ def _validate_required(schema, *, table_name: str | None = None) -> None:
     Legacy name kept for compatibility with existing imports.
     """
     required = required_pricing_cols_for_table(table_name)
-    if not required:
-        return
-
-    names = set(schema.names)
-    missing = required - names
-    if missing:
-        raise RuntimeError(f"Missing required pricing columns: {sorted(missing)}")
+    validate_required_columns(schema, required, what="required pricing columns")
 
 
 def _schema_dict_cols(
@@ -48,24 +46,8 @@ def _schema_dict_cols(
     """
     _validate_required(schema, table_name=table_name)
 
-    pa, _, _ = _arrow()
-
     exclude_set = set(DICT_EXCLUDE)
     if exclude:
         exclude_set |= set(exclude)
 
-    out: List[str] = []
-    for f in schema:
-        if f.name in exclude_set:
-            continue
-
-        t = f.type
-        if (
-            pa.types.is_string(t)
-            or pa.types.is_large_string(t)
-            or pa.types.is_binary(t)
-            or pa.types.is_large_binary(t)
-        ):
-            out.append(f.name)
-
-    return out
+    return _common_schema_dict_cols(schema, exclude=exclude_set)

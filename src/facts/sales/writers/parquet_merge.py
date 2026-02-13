@@ -5,23 +5,25 @@ from typing import Iterable, Optional
 
 from .encoding import _schema_dict_cols, _validate_required, required_pricing_cols_for_table
 from .projection import _project_table_to_schema
-from .utils import _arrow, _ensure_dir_for_file
+from .utils import _arrow
+
+from src.facts.common.writers.parquet_merge import (
+    merge_parquet_files as _common_merge,
+    _build_canonical_schema as _common_build_canonical_schema,          # internal helper, reused
+    _restrict_schema_to_expected as _common_restrict_schema_to_expected,  # internal helper, reused
+)
 
 
 def _expected_cols_for_table(table_name: str | None) -> tuple[str, ...] | None:
     if not table_name:
         return None
 
-    # Normalize: remove underscores and case-fold
     norm = table_name.replace("_", "").replace(" ", "").casefold()
 
-    try:
-        from src.utils.static_schemas import (
-            _SALES_ORDER_HEADER_COLS,
-            _SALES_ORDER_DETAIL_COLS,
-        )
-    except Exception:
-        return None
+    from src.utils.static_schemas import (
+        _SALES_ORDER_HEADER_COLS,
+        _SALES_ORDER_DETAIL_COLS,
+    )
 
     if norm == "salesorderheader":
         return _SALES_ORDER_HEADER_COLS
@@ -30,96 +32,11 @@ def _expected_cols_for_table(table_name: str | None) -> tuple[str, ...] | None:
     return None
 
 
-def _restrict_schema_to_expected(schema, expected_cols: tuple[str, ...], pa, *, table_name: str) :
-    fields = {f.name: f for f in schema}
-    missing = [c for c in expected_cols if c not in fields]
-    if missing:
-        raise RuntimeError(
-            f"[{table_name}] canonical schema missing expected columns {missing}. "
-            f"This usually means wrong chunk files were passed to the merge."
-        )
-    # Keep exactly the expected order; preserve metadata
-    return pa.schema([fields[c] for c in expected_cols], metadata=getattr(schema, "metadata", None))
-
-
-def _open_parquet(path: str, pa, pq):
-    """
-    Open a parquet file in a way that lets us explicitly close resources.
-    This avoids keeping dozens/hundreds of files open during merges.
-    """
-    try:
-        source = pa.memory_map(path, "r")
-    except Exception:
-        # Fallback for environments where memory_map is problematic
-        source = pa.OSFile(path, "rb")
-    reader = pq.ParquetFile(source)
-    return source, reader
-
-
-def _schema_equals(a, b, *, check_metadata: bool) -> bool:
-    eq = getattr(a, "equals", None)
-    if callable(eq):
-        return a.equals(b, check_metadata=check_metadata)
-    # Fallback (older/other schema types)
-    return a == b
-
-
-def _build_canonical_schema(
-    parquet_files: list[str],
-    *,
-    schema_strategy: str,
-    pa,
-    pq,
-):
-    """
-    schema_strategy:
-      - "first": first file wins (current behavior)
-      - "union": keep first-file order, append new fields found later
-    """
-    src0, r0 = _open_parquet(parquet_files[0], pa, pq)
-    try:
-        base = r0.schema_arrow
-    finally:
-        try:
-            src0.close()
-        except Exception:
-            pass
-
-    if schema_strategy == "first":
-        return base
-
-    if schema_strategy != "union":
-        raise ValueError(f"Unknown schema_strategy={schema_strategy!r} (use 'first' or 'union')")
-
-    fields_by_name = {f.name: f for f in base}
-    ordered_names = [f.name for f in base]
-
-    for path in parquet_files[1:]:
-        src, r = _open_parquet(path, pa, pq)
-        try:
-            sch = r.schema_arrow
-        finally:
-            try:
-                src.close()
-            except Exception:
-                pass
-
-        for f in sch:
-            if f.name not in fields_by_name:
-                fields_by_name[f.name] = f
-                ordered_names.append(f.name)
-
-    # Preserve base metadata; projection will coerce incoming tables to this schema.
-    return pa.schema([fields_by_name[n] for n in ordered_names], metadata=getattr(base, "metadata", None))
-
-
 def _read_row_group_projected(reader, rg_index: int, schema, *, table_name: str | None):
     """
-    Read a row group and project it to the canonical schema,
-    tolerating missing OPTIONAL columns.
+    Kept for backward compatibility: sales_writer.py imports this symbol.
 
-    Required-column enforcement should be based on what the file actually has,
-    not what we chose to read.
+    Sales-specific required pricing columns enforcement + projection to canonical schema.
     """
     required = required_pricing_cols_for_table(table_name)
 
@@ -131,10 +48,8 @@ def _read_row_group_projected(reader, rg_index: int, schema, *, table_name: str 
             f"file={getattr(reader, 'path', '')}"
         )
 
-    # Read only the columns that exist in this file (in canonical order)
     cols_to_read = [c for c in schema.names if c in available]
     table = reader.read_row_group(rg_index, columns=cols_to_read)
-
     return _project_table_to_schema(table, schema)
 
 
@@ -144,117 +59,65 @@ def merge_parquet_files(
     delete_after: bool = False,
     *,
     compression: str = "snappy",
-    compression_level: int | None = None,  # useful for zstd
+    compression_level: int | None = None,
     write_statistics: bool = True,
     table_name: str | None = None,
-    schema_strategy: str = "union",  # "union" avoids dropping new columns
+    schema_strategy: str = "union",
 ) -> Optional[str]:
     """
-    Parquet merger:
-    - Streams row-groups (bounded memory)
-    - Projects mismatched schemas to a canonical schema
-    - Avoids keeping all chunk files open simultaneously (better perf, fewer FD issues)
+    Sales wrapper around the common Parquet merger.
 
-    table_name makes required pricing-column validation table-aware:
-      - Enforced for Sales / SalesOrderDetail
-      - Not enforced for SalesOrderHeader
+    Sales keeps:
+      - expected column sets for SalesOrderHeader/Detail
+      - schema validation via _validate_required
+      - dict encoding column selection via _schema_dict_cols
+      - required pricing columns policy per table
+
+    Common handles:
+      - FD-safe streaming merge
+      - row-group projection/casting
+      - writer setup and output file creation
     """
-    from src.utils.logging_utils import info, skip, done
+    from src.utils.logging_utils import skip
 
     pa, _, pq = _arrow()
 
-    parquet_files = [os.path.abspath(p) for p in parquet_files if p and os.path.exists(p)]
-    if not parquet_files:
+    files = [os.path.abspath(p) for p in parquet_files if p and os.path.exists(p)]
+    if not files:
         skip("No parquet chunk files to merge")
         return None
 
-    parquet_files = sorted(parquet_files)
-    merged_file = os.path.abspath(merged_file)
-    _ensure_dir_for_file(merged_file)
+    files.sort()
 
-    info(f"Merging {len(parquet_files)} chunks: {os.path.basename(merged_file)}")
+    # Build canonical schema here so Sales can run its existing schema validation + dict-col policy.
+    canonical_schema = _common_build_canonical_schema(files, schema_strategy=schema_strategy, pa=pa, pq=pq)
 
-    # Canonical schema
-    canonical_schema = _build_canonical_schema(
-        parquet_files, schema_strategy=schema_strategy, pa=pa, pq=pq
-    )
-    
     expected_cols = _expected_cols_for_table(table_name)
     if expected_cols:
-        # Force merged output schema to match static schema exactly
-        canonical_schema = _restrict_schema_to_expected(
-            canonical_schema, expected_cols, pa, table_name=table_name
+        canonical_schema = _common_restrict_schema_to_expected(
+            canonical_schema, expected_cols, pa, table_name=(table_name or "table")
         )
 
-    # Pricing-col validation: table-aware
     _validate_required(canonical_schema, table_name=table_name)
-
     dict_cols = _schema_dict_cols(canonical_schema, table_name=table_name)
 
-    writer_kwargs = dict(
+    required_cols = required_pricing_cols_for_table(table_name) or None
+
+    return _common_merge(
+        files,
+        merged_file,
+        delete_after=delete_after,
         compression=compression,
+        compression_level=compression_level,
+        write_statistics=write_statistics,
+        canonical_schema=canonical_schema,
+        expected_cols=expected_cols,
+        strict_expected=bool(expected_cols),
+        reject_extra_cols=bool(expected_cols),
+        required_cols=required_cols,
         use_dictionary=dict_cols,
-        write_statistics=bool(write_statistics),
+        sort_files=True,
     )
-    if compression_level is not None:
-        writer_kwargs["compression_level"] = int(compression_level)
 
-    try:
-        writer = pq.ParquetWriter(merged_file, canonical_schema, **writer_kwargs)
-    except TypeError:
-        # Older pyarrow may not accept compression_level; fall back cleanly.
-        writer_kwargs.pop("compression_level", None)
-        writer = pq.ParquetWriter(merged_file, canonical_schema, **writer_kwargs)
 
-    try:
-        for path in parquet_files:
-            src, reader = _open_parquet(path, pa, pq)
-            try:
-                # Fail fast for derived order tables: chunk schema must match static schema exactly
-                if expected_cols:
-                    expected_set = set(expected_cols)
-                    chunk_cols = set(reader.schema_arrow.names)
-
-                    missing = sorted(expected_set - chunk_cols)
-                    if missing:
-                        raise RuntimeError(
-                            f"[{table_name}] Chunk missing expected columns {missing}: {path}. "
-                            f"Wrong chunk list or wrong projection upstream."
-                        )
-
-                    extra = sorted(chunk_cols - expected_set)
-                    if extra:
-                        raise RuntimeError(
-                            f"[{table_name}] Chunk has unexpected columns {extra}: {path}. "
-                            f"Schema bleed: header/detail chunks are being mixed or written with extra fields."
-                        )
-
-                schema_exact = _schema_equals(reader.schema_arrow, canonical_schema, check_metadata=True)
-                schema_same_fields = _schema_equals(reader.schema_arrow, canonical_schema, check_metadata=False)
-
-                for i in range(reader.num_row_groups):
-                    if schema_exact:
-                        writer.write_table(reader.read_row_group(i))
-                    elif schema_same_fields:
-                        t = reader.read_row_group(i, columns=canonical_schema.names)
-                        writer.write_table(_project_table_to_schema(t, canonical_schema))
-                    else:
-                        t = _read_row_group_projected(reader, i, canonical_schema, table_name=table_name)
-                        writer.write_table(t)
-            finally:
-                try:
-                    src.close()
-                except Exception:
-                    pass
-    finally:
-        writer.close()
-
-    if delete_after:
-        for path in parquet_files:
-            try:
-                os.remove(path)
-            except Exception:
-                pass
-
-    done(f"Merged chunks: {os.path.basename(merged_file)}")
-    return merged_file
+__all__ = ["merge_parquet_files", "_read_row_group_projected"]
