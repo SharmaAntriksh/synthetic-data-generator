@@ -1,9 +1,14 @@
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, Union
 
 import pyarrow as pa
+
+from src.facts.common.worker.task import (
+    derive_chunk_seed,
+    normalize_tasks,
+    write_table_by_format,
+)
 
 from ..sales_logic import chunk_builder
 from ..sales_logic.globals import State
@@ -16,15 +21,6 @@ from .chunk_io import _write_csv, _write_parquet_table
 from .header_builder import build_header_from_detail
 
 
-def _int_or(v: Any, default: int) -> int:
-    try:
-        if v is None or v == "":
-            return int(default)
-        return int(v)
-    except Exception:
-        return int(default)
-
-
 def _drop_order_cols_for_sales(table: pa.Table) -> pa.Table:
     """
     Preserve existing 'Sales' behavior:
@@ -35,6 +31,7 @@ def _drop_order_cols_for_sales(table: pa.Table) -> pa.Table:
     return table.select(keep)
 
 
+# NOTE: This is Sales policy today. Later, make this dynamic from State.partition_cols.
 _DELTA_PART_COLS = {"Year", "Month"}
 
 
@@ -66,25 +63,18 @@ def _project_for_table(table_name: str, table: pa.Table) -> pa.Table:
 
 def _write_table(table_name: str, idx: int, table: pa.Table) -> Union[str, Dict[str, Any]]:
     """
-    Writes one logical table for this chunk.
-    Returns:
-      - csv/parquet: full path (str)
-      - deltaparquet: {"part": basename, "rows": n}
+    Sales wrapper over the common format switch.
+    Keeps table_name-aware writes (chunk_io handles Parquet options).
     """
-    if State.file_format == "deltaparquet":
-        path = State.output_paths.delta_part_path(table_name, int(idx))
-        _write_parquet_table(table, path, table_name=table_name)
-        return {"part": os.path.basename(path), "rows": table.num_rows}
-
-    if State.file_format == "csv":
-        path = State.output_paths.chunk_path(table_name, int(idx), "csv")
-        _write_csv(table, path, table_name=table_name)
-        return path
-
-    # parquet (default)
-    path = State.output_paths.chunk_path(table_name, int(idx), "parquet")
-    _write_parquet_table(table, path, table_name=table_name)
-    return path
+    return write_table_by_format(
+        file_format=State.file_format,
+        output_paths=State.output_paths,
+        table_name=table_name,
+        idx=int(idx),
+        table=table,
+        write_csv_fn=lambda t, p: _write_csv(t, p, table_name=table_name),
+        write_parquet_fn=lambda t, p: _write_parquet_table(t, p, table_name=table_name),
+    )
 
 
 def _worker_task(args):
@@ -93,18 +83,11 @@ def _worker_task(args):
       - single task: (idx, batch_size, seed)
       - batched tasks: [(idx, batch_size, seed), ...]
     """
-    if isinstance(args, tuple):
-        tasks = [args]
-        single = True
-    else:
-        tasks = list(args)
-        single = False
-
+    tasks, single = normalize_tasks(args)
     results = []
 
     for idx, batch_size, seed in tasks:
-        base_seed = _int_or(seed, 0)
-        chunk_seed = base_seed + int(idx) * 10_000
+        chunk_seed = derive_chunk_seed(seed, int(idx), stride=10_000)
 
         # Build one chunk (full "sales-shaped" table; includes order cols when enabled by init.py)
         detail_table = chunk_builder.build_chunk_table(

@@ -3,7 +3,9 @@ from __future__ import annotations
 import glob
 import os
 from math import ceil
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
+from src.facts.common.worker.pool import PoolRunSpec, iter_imap_unordered
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -693,19 +695,27 @@ def generate_sales_fact(
     total_units = len(tasks)
     completed_units = 0
 
-    with Pool(
+    pool_spec = PoolRunSpec(
         processes=n_workers,
+        chunksize=1,            # keep existing behavior; tune later if needed
+        maxtasksperchild=None,  # leave None; can set later for long runs
+        label="sales",
+    )
+
+    for result in iter_imap_unordered(
+        tasks=batched_tasks,
+        task_fn=_worker_task,
+        spec=pool_spec,
         initializer=init_sales_worker,
         initargs=(worker_cfg,),
-    ) as pool:
-        for result in pool.imap_unordered(_worker_task, batched_tasks):
-            if isinstance(result, list):
-                for r in result:
-                    completed_units += 1
-                    _record_chunk_result(r, completed_units, total_units)
-            else:
+    ):
+        if isinstance(result, list):
+            for r in result:
                 completed_units += 1
-                _record_chunk_result(result, completed_units, total_units)
+                _record_chunk_result(r, completed_units, total_units)
+        else:
+            completed_units += 1
+            _record_chunk_result(result, completed_units, total_units)
 
     done("All chunks completed.")
 

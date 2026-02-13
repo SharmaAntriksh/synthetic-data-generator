@@ -20,7 +20,6 @@ from .customer_sampling import (
     _sample_customers,
 )
 
-
 # ------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------
@@ -674,9 +673,46 @@ def build_chunk_table(
         # BUILD ARROW TABLE
         # --------------------------------------------------------
         arrays = []
+        EPOCH_D = np.datetime64("1970-01-01", "D")
+
+        def _as_datetime64_D(x):
+            x = np.asarray(x)
+
+            # Already a datetime64 -> normalize to day resolution
+            if np.issubdtype(x.dtype, np.datetime64):
+                return x.astype("datetime64[D]", copy=False)
+
+            # Integer -> interpret as epoch-based; handle both day-scale and ns-scale
+            if np.issubdtype(x.dtype, np.integer):
+                if x.size == 0:
+                    return x.astype("datetime64[D]")
+                mx = int(np.max(np.abs(x)))
+                # days for 2020s are ~ 18k–22k; ns timestamps are ~ 1e18
+                if mx > 10_000_000:  # too large to be "days"
+                    return x.astype("datetime64[ns]").astype("datetime64[D]")
+                return (EPOCH_D + x.astype("timedelta64[D]")).astype("datetime64[D]")
+
+            # Fallback
+            return np.asarray(x, dtype="datetime64[D]")
 
         def add(name, data):
-            arrays.append(pa.array(data, type=schema_types[name], safe=False))
+            t = schema_types[name]
+
+            # date32: build as timestamp first (inference), then cast to date32
+            if pa.types.is_date32(t):
+                dt = _as_datetime64_D(data)
+
+                # Force a temporal Arrow type (timestamp[ns]) to avoid int64->date32 kernel
+                arr = pa.array(dt.astype("datetime64[ns]"))
+
+                # Now cast temporal -> date32 (supported)
+                if arr.type != t:
+                    arr = arr.cast(t, safe=False)
+
+                arrays.append(arr)
+                return
+
+            arrays.append(pa.array(data, type=t, safe=False))
 
         if not skip_cols:
             add("SalesOrderNumber", order_ids_int)
@@ -688,9 +724,9 @@ def build_chunk_table(
         add("PromotionKey", promo_keys)
         add("CurrencyKey", currency_arr)
 
-        add("OrderDate", order_dates)
-        add("DueDate", dates["due_date"][keep_mask])
-        add("DeliveryDate", dates["delivery_date"][keep_mask])
+        add("OrderDate", _as_datetime64_D(order_dates))
+        add("DueDate", _as_datetime64_D(dates["due_date"][keep_mask]))
+        add("DeliveryDate", _as_datetime64_D(dates["delivery_date"][keep_mask]))
 
         add("Quantity", qty)
         add("NetPrice", price["final_net_price"])
