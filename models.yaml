@@ -268,3 +268,28 @@ models:
         bands:
           - { max: 5000,  step: 0.01 }
           - { max: 1e18,  step: 0.01 }
+
+  returns:
+    enabled: true
+
+    # ReturnReason dimension + sampling distribution
+    reasons:
+      # keys will become ReturnReasonKey in the dimension (1..N)
+      # weights should sum ~1.0
+      - { key: 1, label: "Damaged / Defective",   weight: 0.28 }
+      - { key: 2, label: "Wrong Item",           weight: 0.12 }
+      - { key: 3, label: "Not as Described",     weight: 0.14 }
+      - { key: 4, label: "Arrived Late",         weight: 0.08 }
+      - { key: 5, label: "Better Price Elsewhere", weight: 0.06 }
+      - { key: 6, label: "No Longer Needed",     weight: 0.20 }
+      - { key: 7, label: "Size / Fit",           weight: 0.07 }
+      - { key: 8, label: "Other",                weight: 0.05 }
+
+    # Lag distribution (shape), bounded by config.yaml min/max
+    lag_days:
+      distribution: triangular
+      mode: 7
+
+    # Partial returns vs full-line returns
+    quantity:
+      full_line_probability: 0.85   # otherwise return 1..Quantity

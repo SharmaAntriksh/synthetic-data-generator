@@ -16,7 +16,13 @@ from src.utils.logging_utils import done, info, skip, work
 from .sales_logic.globals import State
 from .sales_worker import _worker_task, init_sales_worker
 from .sales_writer import merge_parquet_files
-from .output_paths import OutputPaths, TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
+from .output_paths import (
+    OutputPaths,
+    TABLE_SALES,
+    TABLE_SALES_ORDER_DETAIL,
+    TABLE_SALES_ORDER_HEADER,
+    TABLE_SALES_RETURN,   # NEW
+)
 
 
 from dataclasses import dataclass
@@ -403,17 +409,52 @@ def generate_sales_fact(
         raise ValueError(f"Invalid sales_output: {sales_output}")
 
     needs_order_cols = sales_output in {"sales_order", "both"}
+    # ------------------------------------------------------------
+    # Returns (optional)
+    # ------------------------------------------------------------
+    facts_enabled = _cfg_get(cfg, ["facts", "enabled"], default=[])
+    facts_enabled = facts_enabled if isinstance(facts_enabled, list) else []
+
+    returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
+    returns_enabled = _bool_or(returns_cfg.get("enabled"), False)
+
+    # If facts.enabled is used, treat it as an additional “feature gate”
+    if facts_enabled:
+        returns_enabled = bool(returns_enabled and ("returns" in {str(x).lower() for x in facts_enabled}))
+
+    returns_rate = float(returns_cfg.get("return_rate", 0.0))
+    returns_max_lag_days = int(returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)))
 
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
     if sales_output == "both" and not bool(skip_order_cols):
         info("Config: both + skip_order_cols=false -> Sales includes order cols.")
         info("Note: output will be large; set skip_order_cols=true for slimmer Sales.")
 
+    # Keep "requested" vs "effective" separate so we can warn+continue.
+    returns_enabled_requested = bool(returns_enabled)
+    returns_enabled_effective = bool(returns_enabled)
+
+    # Allow returns for ALL modes (sales / sales_order / both),
+    # but if sales_output == "sales" and skip_order_cols == True, we cannot derive returns
+    # (no order identifiers), so disable returns and warn.
+    if returns_enabled_requested and sales_output == "sales" and bool(skip_order_cols):
+        info(
+            "WARNING: returns.enabled=true with sales_output='sales' and skip_order_cols=true "
+            "=> SalesReturn will be skipped (needs SalesOrderNumber/SalesOrderLineNumber). "
+            "Sales generation will continue."
+        )
+        returns_enabled_effective = False
+
     tables: list[str] = []
     if sales_output in {"sales", "both"}:
         tables.append(TABLE_SALES)
     if sales_output in {"sales_order", "both"}:
         tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
+
+    # Returns table is independent of which sales family tables you output
+    # (as long as returns_enabled_effective == True).
+    if returns_enabled_effective:
+        tables.append(TABLE_SALES_RETURN)
 
     for t in tables:
         output_paths.ensure_dirs(t)
@@ -654,6 +695,10 @@ def generate_sales_fact(
         partition_cols=partition_cols,
 
         models_cfg=State.models_cfg,
+        # Returns (optional)
+        returns_enabled=bool(returns_enabled_effective),
+        returns_rate=float(returns_rate),
+        returns_max_lag_days=int(returns_max_lag_days),
     )
 
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)

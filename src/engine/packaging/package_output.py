@@ -65,7 +65,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         facts_out = final_folder / "facts"
         facts_out.mkdir(parents=True, exist_ok=True)
 
-        tables = tables_from_sales_cfg(sales_cfg)
+        tables = tables_from_sales_cfg(sales_cfg, cfg)
 
         if file_format == "parquet":
             copy_parquet_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)

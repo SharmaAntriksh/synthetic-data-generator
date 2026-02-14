@@ -18,7 +18,7 @@ from src.dimensions.products.products import (
 )
 
 from src.utils.logging_utils import done, skip, info
-
+from src.dimensions.return_reasons import run_return_reasons
 
 # =========================================================
 # Helpers
@@ -36,6 +36,7 @@ DATE_DEPENDENT_DIMS = {
 STATIC_DIMS = {
     "geography",
     "products",
+    "return_reason",
 }
 
 
@@ -102,6 +103,18 @@ def _expand_force_for_date_dependencies(force_regenerate: Set[str]) -> Set[str]:
         return set(force_regenerate) | set(DATE_DEPENDENT_DIMS)
 
     return force_regenerate
+
+
+def _returns_enabled(cfg: Dict[str, Any]) -> bool:
+    returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
+    enabled = bool(returns_cfg.get("enabled", False))
+
+    facts = cfg.get("facts") if isinstance(cfg.get("facts"), dict) else {}
+    facts_enabled = facts.get("enabled", [])
+    if isinstance(facts_enabled, list) and facts_enabled:
+        enabled = enabled and ("returns" in {str(x).strip().lower() for x in facts_enabled})
+
+    return bool(enabled)
 
 
 # =========================================================
@@ -197,6 +210,23 @@ def generate_dimensions(
         parquet_dims_folder,
     )
     regenerated["promotions"] = _should_force("promotions", force_regenerate)
+
+    # -----------------------------------------------------
+    # 4.5 Return Reasons (static-ish; only if returns enabled)
+    # -----------------------------------------------------
+    force_rr = _should_force("return_reason", force_regenerate)
+    if _returns_enabled(cfg) or force_rr:
+        run_return_reasons(
+            _cfg_for_dimension(
+                cfg,
+                "return_reason",   # config section name; used only for _force_regenerate
+                force_rr,
+            ),
+            parquet_dims_folder,
+        )
+        regenerated["return_reason"] = force_rr
+    else:
+        regenerated["return_reason"] = False
 
     # -----------------------------------------------------
     # 5. Products (static)

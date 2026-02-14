@@ -71,6 +71,33 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         raise RuntimeError("sales.sales_output must be explicitly defined in config")
 
     skip_order_cols = bool(sales_cfg["skip_order_cols"])
+    # ------------------------------------------------------------
+    # Returns: compute "effective" enabled for THIS run
+    # ------------------------------------------------------------
+    returns_cfg = cfg.get("returns", {}) if isinstance(cfg, dict) else {}
+    returns_enabled_requested = bool(returns_cfg.get("enabled", False))
+
+    sales_output = str(sales_cfg["sales_output"]).strip().lower()
+    returns_enabled_effective = returns_enabled_requested
+
+    # Your rule:
+    # - Generate returns for sales / sales_order / both
+    # - BUT if sales_output == "sales" and skip_order_cols == True: warn + skip returns (do not fail)
+    if returns_enabled_requested and sales_output == "sales" and skip_order_cols:
+        info(
+            "WARNING: returns.enabled=true but sales_output='sales' with skip_order_cols=true "
+            "removes order identifiers. SalesReturn will be skipped. "
+            "Set skip_order_cols=false or use sales_output='sales_order'/'both' to generate returns."
+        )
+        returns_enabled_effective = False
+
+    # Make cfg consistent for downstream (sales.py + packaging)
+    cfg_for_run = cfg
+    if isinstance(cfg, dict) and (returns_enabled_effective != returns_enabled_requested):
+        cfg_for_run = dict(cfg)
+        rr = dict(cfg.get("returns", {}) or {})
+        rr["enabled"] = returns_enabled_effective
+        cfg_for_run["returns"] = rr
 
     # ------------------------------------------------------------
     # Load ACTIVE PRODUCTS ONLY (customers are no longer filtered here)
@@ -122,7 +149,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
         partition_cols = ["Year", "Month"]
 
     generate_sales_fact(
-        cfg,
+        cfg_for_run,
         parquet_folder=str(parquet_dims),
         out_folder=str(sales_out_folder),
         total_rows=sales_cfg["total_rows"],
@@ -149,7 +176,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):
     # ------------------------------------------------------------
     t1 = time.time()
 
-    final_folder = package_output(cfg, sales_cfg, parquet_dims, fact_out)
+    final_folder = package_output(cfg_for_run, sales_cfg, parquet_dims, fact_out)
 
     # PBIP templates now live under:
     #   samples/powerbi/templates/{csv|parquet}/{Sales|Orders|Sales and Orders}

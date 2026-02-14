@@ -9,7 +9,13 @@ import pyarrow as pa
 from ..sales_logic.globals import State, bind_globals
 from .schemas import schema_dict_cols
 from ..output_paths import OutputPaths
-from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
+from ..output_paths import (
+    TABLE_SALES,
+    TABLE_SALES_ORDER_DETAIL,
+    TABLE_SALES_ORDER_HEADER,
+    TABLE_SALES_RETURN,
+)
+
 
 # ===============================================================
 # Worker init helpers (shared across facts)
@@ -142,7 +148,17 @@ def init_sales_worker(worker_cfg: dict):
         # to generate Header/Detail.
         skip_order_cols_requested = bool(worker_cfg.get("skip_order_cols_requested", skip_order_cols))
 
-        # Effective behavior: Order tables require order keys, so chunk_builder must output them.
+        # Returns (optional) — MUST be extracted before any returns_enabled checks.
+        returns_enabled = bool(worker_cfg.get("returns_enabled", False))
+        returns_rate = float(worker_cfg.get("returns_rate", 0.0))
+        returns_max_lag_days = int(worker_cfg.get("returns_max_lag_days", 60))
+        returns_reason_keys = worker_cfg.get("returns_reason_keys")
+        returns_reason_probs = worker_cfg.get("returns_reason_probs")
+
+        # Effective behavior:
+        # - Order tables require order keys, so chunk_builder must output them.
+        # - Do NOT force order cols just because returns are enabled (your new requirement
+        #   is to warn/skip in Sales+skip_order_cols=true instead of changing behavior).
         if sales_output in {"sales_order", "both"}:
             skip_order_cols = False
 
@@ -154,6 +170,7 @@ def init_sales_worker(worker_cfg: dict):
         parquet_dict_exclude = worker_cfg.get("parquet_dict_exclude")
         parquet_dict_cols = worker_cfg.get("parquet_dict_cols")
         write_pyarrow = worker_cfg.get("write_pyarrow", True)
+
 
     except KeyError as e:
         raise RuntimeError(f"Missing worker_cfg key: {e}") from e
@@ -249,6 +266,8 @@ def init_sales_worker(worker_cfg: dict):
         tables.append(TABLE_SALES)
     if sales_output in {"sales_order", "both"}:
         tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
+    if returns_enabled:
+        tables.append(TABLE_SALES_RETURN)
 
     for t in tables:
         output_paths.ensure_dirs(t)
@@ -330,13 +349,69 @@ def init_sales_worker(worker_cfg: dict):
     ]
     header_schema = pa.schema(header_fields + delta_fields) if file_format == "deltaparquet" else pa.schema(header_fields)
 
+    # SalesReturn schema (derived from SalesOrderDetail)
+    return_fields = [
+        pa.field("SalesOrderNumber", pa.int64()),
+        pa.field("SalesOrderLineNumber", pa.int64()),
+        pa.field("CustomerKey", pa.int64()),
+        pa.field("ProductKey", pa.int64()),
+        pa.field("StoreKey", pa.int64()),
+        pa.field("PromotionKey", pa.int64()),
+        pa.field("CurrencyKey", pa.int64()),
+        pa.field("ReturnDate", pa.date32()),
+        pa.field("ReturnReasonKey", pa.int64()),
+        pa.field("ReturnQuantity", pa.int64()),
+        pa.field("ReturnUnitPrice", pa.float64()),
+        pa.field("ReturnDiscountAmount", pa.float64()),
+        pa.field("ReturnNetPrice", pa.float64()),
+        pa.field("ReturnUnitCost", pa.float64()),
+    ]
+    return_schema = (
+        pa.schema(return_fields + delta_fields)
+        if file_format == "deltaparquet"
+        else pa.schema(return_fields)
+    )
+
     schema_by_table = {
         TABLE_SALES: sales_schema_out,
         TABLE_SALES_ORDER_DETAIL: detail_schema,
         TABLE_SALES_ORDER_HEADER: header_schema,
     }
+    if returns_enabled:
+        schema_by_table[TABLE_SALES_RETURN] = return_schema
+    # -----------------------------------------------------------
+    # Per-table date column policy (for Year/Month derivation etc.)
+    # -----------------------------------------------------------
+    date_cols_by_table = {
+        # Sales family
+        TABLE_SALES: ["OrderDate", "DeliveryDate"],
+        TABLE_SALES_ORDER_DETAIL: ["DeliveryDate", "OrderDate"],
+        TABLE_SALES_ORDER_HEADER: ["OrderDate"],
 
-    parquet_dict_exclude = {"SalesOrderNumber", "CustomerKey"}
+        # New returns table (string key is fine until constant exists)
+        TABLE_SALES_RETURN: ["ReturnDate", "DeliveryDate", "OrderDate"],
+    }
+
+    # Optional: allow models.yaml override (non-blocking)
+    # Expected shape (example):
+    # models:
+    #   returns:
+    #     date_cols_by_table:
+    #       SalesReturn: [ReturnDate, DeliveryDate, OrderDate]
+    if models_cfg and isinstance(models_cfg, dict):
+        models_root = models_cfg.get("models") if isinstance(models_cfg.get("models"), dict) else models_cfg
+        overrides = None
+
+        # try a couple of reasonable locations; keep it permissive
+        if isinstance(models_root, dict) and isinstance(models_root.get("returns"), dict):
+            overrides = models_root["returns"].get("date_cols_by_table")
+
+        if isinstance(overrides, dict):
+            for k, v in overrides.items():
+                if isinstance(k, str) and isinstance(v, (list, tuple)) and v:
+                    date_cols_by_table[k] = [str(x) for x in v]
+
+    parquet_dict_exclude = set(parquet_dict_exclude) if parquet_dict_exclude else {"SalesOrderNumber", "CustomerKey"}
     parquet_dict_cols_by_table = {t: schema_dict_cols(s, parquet_dict_exclude) for t, s in schema_by_table.items()}
     parquet_dict_cols = parquet_dict_cols_by_table[TABLE_SALES]  # back-compat
 
@@ -383,6 +458,7 @@ def init_sales_worker(worker_cfg: dict):
             "models_cfg": models_cfg,
             "write_pyarrow": bool(write_pyarrow),
             # schemas
+            "date_cols_by_table": date_cols_by_table,
             "schema_no_order": schema_no_order,
             "schema_with_order": schema_with_order,
             "schema_no_order_delta": schema_no_order_delta,
@@ -394,5 +470,12 @@ def init_sales_worker(worker_cfg: dict):
             # parquet tuning
             "parquet_dict_exclude": parquet_dict_exclude,
             "parquet_dict_cols": parquet_dict_cols,
+            # returns
+            "returns_enabled": bool(returns_enabled),
+            "returns_rate": float(returns_rate),
+            "returns_max_lag_days": int(returns_max_lag_days),
+            "returns_reason_keys": returns_reason_keys,
+            "returns_reason_probs": returns_reason_probs,
+
         }
     )

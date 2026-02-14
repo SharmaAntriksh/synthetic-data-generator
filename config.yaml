@@ -16,13 +16,10 @@ defaults:
 
 packaging:
   reset_scratch_fact_out: true   # default current behavior
-  clean_scratch_fact_out: true   # default current behavior
+  clean_scratch_fact_out: true  # default current behavior
 
 facts:
   enabled: ["sales", "returns"]
-returns:
-  enabled: true
-  return_rate: 0.03
 
 # ---------------------------------------------------------------------
 # SALES FACT GENERATION
@@ -34,7 +31,7 @@ sales:
   total_rows: 102530
   chunk_size: 1000000
 
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -63,6 +60,14 @@ sales:
   partitioning:
     enabled: true
     columns: ["Year", "Month"]
+
+returns:
+  enabled: true
+  return_rate: 0.03          # fraction of Sales (line) rows that get a return
+  min_days_after_sale: 1     # hard cap (pipeline-level)
+  max_days_after_sale: 60    # hard cap (pipeline-level)
+  override:
+    seed: null               # null -> use defaults.seed
 
 # ---------------------------------------------------------------------
 # PRODUCTS
