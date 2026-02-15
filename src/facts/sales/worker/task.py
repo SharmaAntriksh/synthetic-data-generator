@@ -106,7 +106,7 @@ def _mode() -> str:
 def _require_cols(table: pa.Table, cols: Sequence[str], *, ctx: str) -> None:
     missing = sorted(set(cols).difference(table.schema.names))
     if missing:
-        raise RuntimeError(f"{ctx} missing columns: {missing}")
+        raise RuntimeError(f"{ctx} missing columns: {missing}. Available: {table.schema.names}")
 
 
 def _as_list(v: Any, default: Sequence[Any]) -> list[Any]:
@@ -180,6 +180,7 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
             "StoreKey",
             "PromotionKey",
             "CurrencyKey",
+            "OrderDate",
             "DeliveryDate",
             "Quantity",
             "UnitPrice",
@@ -303,7 +304,7 @@ def _worker_task(args):
         out[TABLE_SALES_ORDER_HEADER] = _write_table(TABLE_SALES_ORDER_HEADER, idx_i, header_out)
 
         # Optional: SalesReturn table (derived from SalesOrderDetail contract)
-        returns_table = _maybe_build_returns(detail_out, chunk_seed=int(chunk_seed))
+        returns_table = _maybe_build_returns(detail_table, chunk_seed=int(chunk_seed))
         if returns_table is not None:
             assert TABLE_SALES_RETURN is not None
             returns_out = _project_for_table(TABLE_SALES_RETURN, returns_table)
