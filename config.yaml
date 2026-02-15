@@ -28,11 +28,11 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 102530
+  total_rows: 1002053
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
-  sales_output: "sales"           # sales | sales_order | both
+  file_format: "deltaparquet"          # csv | parquet | deltaparquet
+  sales_output: "both"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -63,7 +63,7 @@ sales:
 
 returns:
   enabled: true
-  return_rate: 0.03          # fraction of Sales (line) rows that get a return
+  return_rate: 0.01          # fraction of Sales (line) rows that get a return
   min_days_after_sale: 1     # hard cap (pipeline-level)
   max_days_after_sale: 60    # hard cap (pipeline-level)
   override:
@@ -74,7 +74,7 @@ returns:
 # ---------------------------------------------------------------------
 products:
   use_contoso_products: false
-  num_products: 4160
+  num_products: 4100
   active_ratio: 0.94
   seed: 42
 
@@ -127,7 +127,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 28184
+  total_customers: 18433
   active_ratio: 0.90
 
   pct_india: 10
@@ -148,7 +148,27 @@ customers:
     seed: null
     paths: {}
     dates: {}
+    
+# ---------------------------------------------------------------------
+# CUSTOMER SEGMENTS
+# ---------------------------------------------------------------------
+customer_segments:
+  enabled: true
 
+  segment_count: 12
+  segments_per_customer_min: 1
+  segments_per_customer_max: 4
+
+  include_score: true
+  include_primary_flag: true
+  include_validity: true
+
+  validity:
+    grain: month          # recommend month for size/perf
+    churn_rate_qtr: 0.08  # % customers whose membership changes per quarter
+    new_customer_months: 2
+
+  seed: 123
 # ---------------------------------------------------------------------
 # GEOGRAPHY / LOCATIONS
 # ---------------------------------------------------------------------

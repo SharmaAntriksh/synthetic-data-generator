@@ -155,7 +155,7 @@ def run_return_reasons(cfg: Mapping[str, Any], parquet_dims_folder: Path) -> Non
     Dimension runner entrypoint (matches other dimension modules).
 
     Behavior:
-      - Writes ReturnReason.parquet to parquet_dims_folder
+      - Writes return_reason.parquet to parquet_dims_folder
       - Skips when up-to-date unless forced via cfg["return_reason"]["_force_regenerate"] == True
       - "Up-to-date" is determined by dimension_loader.load_dimension using expected_config.
       - Persists expected_config via save_version(...) so future runs can skip.
@@ -188,7 +188,7 @@ def run_return_reasons(cfg: Mapping[str, Any], parquet_dims_folder: Path) -> Non
             return
 
     table = build_return_reason_dimension(reasons=raw_reasons)
-    out_path = parquet_dims_folder / "ReturnReason.parquet"
+    out_path = parquet_dims_folder / "return_reason.parquet"
     pq.write_table(table, out_path)
 
     # Your version_store.save_version requires output_path in this repo version.

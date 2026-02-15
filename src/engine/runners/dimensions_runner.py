@@ -19,6 +19,7 @@ from src.dimensions.products.products import (
 
 from src.utils.logging_utils import done, skip, info
 from src.dimensions.return_reasons import run_return_reasons
+from src.dimensions.customer_segments import run_customer_segments
 
 # =========================================================
 # Helpers
@@ -31,6 +32,7 @@ DATE_DEPENDENT_DIMS = {
     "dates",
     "currency",
     "exchange_rates",
+    "customer_segments",
 }
 
 STATIC_DIMS = {
@@ -116,6 +118,10 @@ def _returns_enabled(cfg: Dict[str, Any]) -> bool:
 
     return bool(enabled)
 
+def _customer_segments_enabled(cfg: Dict[str, Any]) -> bool:
+    seg_cfg = cfg.get("customer_segments") if isinstance(cfg.get("customer_segments"), dict) else {}
+    return bool(seg_cfg.get("enabled", False))
+
 
 # =========================================================
 # Main Orchestrator
@@ -144,6 +150,9 @@ def generate_dimensions(
     """
     force_regenerate = set(force_regenerate or set())
     force_regenerate = _expand_force_for_date_dependencies(force_regenerate)
+    
+    if "customers" in force_regenerate:
+        force_regenerate.add("customer_segments")
 
     parquet_dims_folder = Path(parquet_dims_folder).resolve()
     parquet_dims_folder.mkdir(parents=True, exist_ok=True)
@@ -182,6 +191,20 @@ def generate_dimensions(
         parquet_dims_folder,
     )
     regenerated["customers"] = _should_force("customers", force_regenerate)
+    # -----------------------------------------------------
+    # 2.5 Customer Segments (depends on Customers; date-dependent if validity enabled)
+    # -----------------------------------------------------
+    force_segs = _should_force("customer_segments", force_regenerate)
+
+    if _customer_segments_enabled(cfg) or force_segs:
+        cfg_segs = _cfg_with_global_dates(cfg, "customer_segments", global_dates)
+        run_customer_segments(
+            _cfg_for_dimension(cfg_segs, "customer_segments", force_segs),
+            parquet_dims_folder,
+        )
+        regenerated["customer_segments"] = force_segs
+    else:
+        regenerated["customer_segments"] = False
 
     # -----------------------------------------------------
     # 3. Stores (date-dependent)
