@@ -16,6 +16,19 @@ from src.dimensions.exchange_rates import run_exchange_rates
 from src.dimensions.products.products import (
     generate_product_dimension as run_products,
 )
+from src.dimensions.lookups import (
+    run_sales_channels,
+    run_payment_methods,
+    run_fulfillment_methods,
+    run_order_statuses,
+    run_payment_statuses,
+    run_shipping_carriers,
+    run_delivery_service_levels,
+    run_discount_types,
+    run_loyalty_tiers,
+    run_customer_acquisition_channels,
+    run_time_buckets,
+)
 
 from src.utils.logging_utils import done, skip, info
 from src.dimensions.return_reasons import run_return_reasons
@@ -177,6 +190,79 @@ def generate_dimensions(
     )
     # run_geography doesn't consistently return status, so mark only when forced
     regenerated["geography"] = _should_force("geography", force_regenerate)
+
+    # -----------------------------------------------------
+    # 1.5 Lookups (static)
+    # -----------------------------------------------------
+    run_sales_channels(
+        _cfg_for_dimension(cfg, "sales_channels", _should_force("sales_channels", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["sales_channels"] = _should_force("sales_channels", force_regenerate)
+
+    run_payment_methods(
+        _cfg_for_dimension(cfg, "payment_methods", _should_force("payment_methods", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["payment_methods"] = _should_force("payment_methods", force_regenerate)
+
+    run_fulfillment_methods(
+        _cfg_for_dimension(cfg, "fulfillment_methods", _should_force("fulfillment_methods", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["fulfillment_methods"] = _should_force("fulfillment_methods", force_regenerate)
+
+    run_order_statuses(
+        _cfg_for_dimension(cfg, "order_statuses", _should_force("order_statuses", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["order_statuses"] = _should_force("order_statuses", force_regenerate)
+
+    run_payment_statuses(
+        _cfg_for_dimension(cfg, "payment_statuses", _should_force("payment_statuses", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["payment_statuses"] = _should_force("payment_statuses", force_regenerate)
+
+    run_shipping_carriers(
+        _cfg_for_dimension(cfg, "shipping_carriers", _should_force("shipping_carriers", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["shipping_carriers"] = _should_force("shipping_carriers", force_regenerate)
+
+    run_delivery_service_levels(
+        _cfg_for_dimension(cfg, "delivery_service_levels", _should_force("delivery_service_levels", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["delivery_service_levels"] = _should_force("delivery_service_levels", force_regenerate)
+
+    run_discount_types(
+        _cfg_for_dimension(cfg, "discount_types", _should_force("discount_types", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["discount_types"] = _should_force("discount_types", force_regenerate)
+
+    run_loyalty_tiers(
+        _cfg_for_dimension(cfg, "loyalty_tiers", _should_force("loyalty_tiers", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["loyalty_tiers"] = _should_force("loyalty_tiers", force_regenerate)
+
+    run_customer_acquisition_channels(
+        _cfg_for_dimension(
+            cfg,
+            "customer_acquisition_channels",
+            _should_force("customer_acquisition_channels", force_regenerate),
+        ),
+        parquet_dims_folder,
+    )
+    regenerated["customer_acquisition_channels"] = _should_force("customer_acquisition_channels", force_regenerate)
+
+    run_time_buckets(
+        _cfg_for_dimension(cfg, "time_buckets", _should_force("time_buckets", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["time_buckets"] = _should_force("time_buckets", force_regenerate)
 
     # -----------------------------------------------------
     # 2. Customers (NOW date-dependent due to lifecycle months)
