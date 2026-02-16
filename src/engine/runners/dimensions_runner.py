@@ -177,6 +177,9 @@ def generate_dimensions(
         force_regenerate.update({"employees", "employee_store_assignments"})
     if "employees" in force_regenerate:
         force_regenerate.add("employee_store_assignments")
+        
+    if "products" in force_regenerate:
+        force_regenerate.add("suppliers")
 
     parquet_dims_folder = Path(parquet_dims_folder).resolve()
     parquet_dims_folder.mkdir(parents=True, exist_ok=True)
