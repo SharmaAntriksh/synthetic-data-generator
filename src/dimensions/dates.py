@@ -1,10 +1,3 @@
-# ---------------------------------------------------------
-#  DATES DIMENSION (PIPELINE READY)
-#  - Keeps date columns as datetime64[ns] for fast generation
-#  - Writes Parquet date columns as Arrow date32 (when pyarrow is available)
-#    so Power Query imports them as Date (not DateTime) without transforms.
-# ---------------------------------------------------------
-
 from __future__ import annotations
 
 from dataclasses import dataclass

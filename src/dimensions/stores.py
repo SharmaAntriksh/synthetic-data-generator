@@ -1,12 +1,3 @@
-# ---------------------------------------------------------
-#  STORES DIMENSION (PIPELINE READY – OPTIMIZED)
-#  - Robust config parsing (handles seed: null)
-#  - Avoids double-reading geography.parquet
-#  - Generates dates at day granularity (date-only)
-#  - Writes OpeningDate/ClosingDate as Arrow date32 via write_parquet_with_date32()
-#  - Refactored SquareFootage + EmployeeCount to be type/status-aware and configurable
-# ---------------------------------------------------------
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,10 +22,135 @@ _CLOSE_REASONS = np.array(["Low Sales", "Lease Ended", "Renovation", "Moved Loca
 _STORE_TYPES_P = np.array([0.50, 0.30, 0.10, 0.10], dtype=float)
 _STORE_STATUS_P = np.array([0.85, 0.10, 0.05], dtype=float)
 
+# ----------------------------
+# Naming (demo-friendly)
+# ----------------------------
+
+_BRANDS = np.array(
+    [
+        "Northwind Market", "Contoso Mart", "Fabrikam Foods", "Woodgrove Grocers",
+        "Adventure Works Retail", "Tailspin Superstores", "Wingtip Fresh", "Proseware Market",
+        "CitySquare Grocers", "Harborview Market", "Summit Retail", "BlueSky Foods",
+    ],
+    dtype=object,
+)
+
+_AREAS = np.array(
+    [
+        "Downtown", "Uptown", "Midtown", "Riverside", "Lakeside", "Hillcrest",
+        "Old Town", "West End", "Eastside", "Northgate", "Southpark", "Harbor",
+        "Airport", "Market District", "Central", "University",
+    ],
+    dtype=object,
+)
+
+_MANAGER_FIRST = np.array(
+    [
+        "James","John","Robert","Michael","William","David","Richard","Joseph","Thomas","Charles",
+        "Christopher","Daniel","Matthew","Anthony","Mark","Steven","Paul","Andrew","Joshua","Ryan",
+        "Mary","Patricia","Jennifer","Linda","Elizabeth","Barbara","Susan","Jessica","Sarah","Karen",
+        "Nancy","Lisa","Margaret","Sandra","Ashley","Kimberly","Emily","Donna","Michelle","Laura",
+        "Alex","Jordan","Taylor","Casey","Morgan","Riley","Jamie","Avery","Cameron","Quinn",
+    ],
+    dtype=object,
+)
+
+_MANAGER_LAST = np.array(
+    [
+        "Smith","Johnson","Williams","Brown","Jones","Miller","Davis","Wilson","Anderson","Thomas",
+        "Taylor","Moore","Jackson","Martin","Lee","Perez","Thompson","White","Harris","Clark",
+        "Lewis","Robinson","Walker","Young","Allen","King","Wright","Scott","Green","Baker",
+        "Adams","Nelson","Hill","Campbell","Mitchell","Carter","Roberts","Turner","Phillips","Parker",
+    ],
+    dtype=object,
+)
+
+_ONLINE_SUFFIX = np.array(
+    ["Online", "Digital", "E-Commerce", "Web Store", "Direct"],
+    dtype=object,
+)
 
 # ---------------------------------------------------------
 # Internals
 # ---------------------------------------------------------
+def _safe_read_geography(geo_path: Path) -> pd.DataFrame:
+    """
+    Reads geography.parquet with best-effort columns.
+    Falls back to reading full file if column projection fails.
+    """
+    cols = [
+        "GeographyKey",
+        "City",
+        "StateProvinceName",
+        "CountryRegionName",
+        "Country",
+        "RegionCountryName",
+    ]
+    try:
+        return pd.read_parquet(geo_path, columns=cols)
+    except Exception:
+        return pd.read_parquet(geo_path)
+
+
+def _build_location_maps(geo: pd.DataFrame) -> tuple[dict[int, str], dict[int, str]]:
+    """
+    Returns (loc_short_map, loc_full_map) keyed by GeographyKey.
+    Uses whatever columns exist; always falls back to 'Geo <key>'.
+    """
+    geo = geo.copy()
+    if "GeographyKey" not in geo.columns:
+        raise ValueError("geography.parquet missing required column: GeographyKey")
+
+    def col(name: str) -> pd.Series | None:
+        return geo[name].astype(str) if name in geo.columns else None
+
+    city = col("City")
+    state = col("StateProvinceName")
+
+    country = col("CountryRegionName")
+    if country is None:
+        country = col("Country")
+    if country is None:
+        country = col("RegionCountryName")
+
+    gk = geo["GeographyKey"].astype("int64")
+
+    # Short = City else State else Country else Geo <key>
+    if city is not None:
+        loc_short = city
+    elif state is not None:
+        loc_short = state
+    elif country is not None:
+        loc_short = country
+    else:
+        loc_short = pd.Series([""] * len(geo))
+
+    # Full = "City, State, Country" from available parts
+    parts: list[pd.Series] = []
+    if city is not None:
+        parts.append(city)
+    if state is not None:
+        parts.append(state)
+    if country is not None:
+        parts.append(country)
+
+    if parts:
+        loc_full = parts[0]
+        for p in parts[1:]:
+            loc_full = loc_full + ", " + p
+    else:
+        loc_full = pd.Series([""] * len(geo))
+
+    short_map = {
+        int(k): (str(s).strip() if str(s).strip() else f"Geo {int(k)}")
+        for k, s in zip(gk, loc_short)
+    }
+    full_map = {
+        int(k): (str(s).strip() if str(s).strip() else f"Geo {int(k)}")
+        for k, s in zip(gk, loc_full)
+    }
+    return short_map, full_map
+
 
 def _require_cfg(cfg: Dict) -> Dict:
     if not isinstance(cfg, dict):
@@ -272,7 +388,6 @@ def _employee_count_from_cfg(
 # ---------------------------------------------------------
 # Generator
 # ---------------------------------------------------------
-
 def generate_store_table(
     *,
     geo_keys: np.ndarray,
@@ -283,6 +398,8 @@ def generate_store_table(
     seed: int = 42,
     square_footage_cfg: Optional[Dict] = None,
     employee_count_cfg: Optional[Dict] = None,
+    geo_loc_short: Optional[Dict[int, str]] = None,
+    geo_loc_full: Optional[Dict[int, str]] = None,
 ) -> pd.DataFrame:
     """
     Generate synthetic store dimension table.
@@ -304,18 +421,54 @@ def generate_store_table(
     # Base structure
     store_key = np.arange(1, num_stores + 1, dtype=np.int64)
     df = pd.DataFrame({"StoreKey": store_key})
+    sk = store_key.astype(np.int64)
 
-    # Vectorized names
-    key_str4 = pd.Series(store_key).astype(str).str.zfill(4)
-    df["StoreName"] = "Store #" + key_str4
-    df["StoreManager"] = "Manager " + key_str4
-
-    # Categories
+    # Categories (MUST come before name logic that depends on StoreType/Status)
     df["StoreType"] = rng.choice(_STORE_TYPES, size=num_stores, p=_STORE_TYPES_P)
     df["Status"] = rng.choice(_STORE_STATUS, size=num_stores, p=_STORE_STATUS_P)
 
-    # GeographyKey assignment
+    # GeographyKey assignment (MUST come before location-based naming)
     df["GeographyKey"] = rng.choice(geo_keys.astype(np.int64), size=num_stores, replace=True)
+
+    # Location strings (best-effort)
+    if geo_loc_short is None:
+        loc_short = df["GeographyKey"].astype(np.int64).map(lambda k: f"Geo {int(k)}")
+    else:
+        loc_short = df["GeographyKey"].astype(np.int64).map(lambda k: geo_loc_short.get(int(k), f"Geo {int(k)}"))
+
+    if geo_loc_full is None:
+        loc_full = loc_short
+    else:
+        loc_full = df["GeographyKey"].astype(np.int64).map(lambda k: geo_loc_full.get(int(k), f"Geo {int(k)}"))
+
+    # Manager names (deterministic per StoreKey)
+    mf = _MANAGER_FIRST[(sk * 5 + int(seed)) % len(_MANAGER_FIRST)]
+    ml = _MANAGER_LAST[(sk * 11 + int(seed) * 3) % len(_MANAGER_LAST)]
+    df["StoreManager"] = pd.Series(mf, dtype="object").astype(str) + " " + pd.Series(ml, dtype="object").astype(str)
+
+    # StoreName pattern (depends on StoreType)
+    brand = _BRANDS[(sk + int(seed)) % len(_BRANDS)]
+    area = _AREAS[(sk * 7 + int(seed) * 13) % len(_AREAS)]
+    stype = df["StoreType"].astype(str)
+    is_online = (stype.to_numpy() == "Online")
+
+    online_suffix = _ONLINE_SUFFIX[(sk * 3 + int(seed) * 17) % len(_ONLINE_SUFFIX)]
+
+    store_name = (
+        pd.Series(brand, dtype="object").astype(str)
+        + " "
+        + loc_short.astype(str)
+        + " "
+        + pd.Series(area, dtype="object").astype(str)
+    )
+    store_name_online = (
+        pd.Series(brand, dtype="object").astype(str)
+        + " "
+        + pd.Series(online_suffix, dtype="object").astype(str)
+    )
+
+    df["StoreName"] = store_name
+    df.loc[is_online, "StoreName"] = store_name_online.loc[is_online].to_numpy()
 
     # Date generation at DAY granularity
     open_start_d = _as_date64d(opening_start)
@@ -327,13 +480,13 @@ def generate_store_table(
 
     # ClosingDate only for Closed stores, always >= OpeningDate
     df["ClosingDate"] = pd.NaT
-    closed_mask = (df["Status"].to_numpy() == "Closed")
+    status = df["Status"].astype(str)
+    closed_mask = (status.to_numpy() == "Closed")
 
     if closed_mask.any():
         open_days = opening_d.astype("int64")[closed_mask]  # days since epoch
         close_end_day = close_end_d.astype("int64")
 
-        # ensure the end bound is >= start bound
         effective_end = np.maximum(open_days, close_end_day)
         close_days = rng.integers(open_days, effective_end + 1, dtype=np.int64)
 
@@ -362,7 +515,7 @@ def generate_store_table(
 
     # Phone (vectorized)
     first = (store_key % 900) + 100  # 100..999
-    second = store_key % 10000  # 0..9999
+    second = store_key % 10000       # 0..9999
     df["Phone"] = (
         "(555) "
         + pd.Series(first).astype(str).str.zfill(3)
@@ -370,11 +523,66 @@ def generate_store_table(
         + pd.Series(second).astype(str).str.zfill(4)
     )
 
-    df["StoreDescription"] = df["StoreType"].astype(str) + " located in GeographyKey " + df["GeographyKey"].astype(str)
-
+    # CloseReason must exist BEFORE StoreDescription references it
     df["CloseReason"] = ""
     if closed_mask.any():
         df.loc[closed_mask, "CloseReason"] = rng.choice(_CLOSE_REASONS, size=int(closed_mask.sum()))
+
+    # StoreDescription
+    opened = df["OpeningDate"].dt.strftime("%Y-%m-%d")
+    closed = df["ClosingDate"].dt.strftime("%Y-%m-%d").fillna("")
+    stype = df["StoreType"].astype(str)
+
+    base = (
+        df["StoreName"].astype(str)
+        + " is a "
+        + stype.str.lower()
+        + " ("
+        + status.str.lower()
+        + ") location in "
+        + loc_full.astype(str)
+        + ". Opened "
+        + opened
+        + ". Size "
+        + df["SquareFootage"].astype(str)
+        + " sqft; headcount "
+        + df["EmployeeCount"].astype(str)
+        + ". Manager: "
+        + df["StoreManager"].astype(str)
+        + "."
+    )
+
+    # Online phrasing
+    online_mask = (stype == "Online")
+    if online_mask.any():
+        base.loc[online_mask] = (
+            df.loc[online_mask, "StoreName"].astype(str)
+            + " operates as an online channel serving "
+            + loc_full.loc[online_mask].astype(str)
+            + ". Launched "
+            + opened.loc[online_mask]
+            + ". Estimated headcount "
+            + df.loc[online_mask, "EmployeeCount"].astype(str)
+            + "."
+        )
+
+    # Closed addendum
+    if closed_mask.any():
+        base.loc[closed_mask] = (
+            base.loc[closed_mask]
+            + " Closed "
+            + closed.loc[closed_mask]
+            + " ("
+            + df.loc[closed_mask, "CloseReason"].astype(str)
+            + ")."
+        )
+
+    # Renovating addendum
+    reno_mask = (status == "Renovating")
+    if reno_mask.any():
+        base.loc[reno_mask] = base.loc[reno_mask] + " Currently renovating; limited operations."
+
+    df["StoreDescription"] = base
 
     return df
 
@@ -404,10 +612,10 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     force = bool(store_cfg.get("_force_regenerate", False))
 
     # Load geography keys once (avoid re-read in generator)
-    geo = pd.read_parquet(geo_path, columns=["GeographyKey"])
-    if "GeographyKey" not in geo.columns:
-        raise ValueError("geography.parquet missing required column: GeographyKey")
+    geo = _safe_read_geography(geo_path)
     geo_keys = geo["GeographyKey"].astype(np.int64).to_numpy()
+    loc_short_map, loc_full_map = _build_location_maps(geo)
+
 
     # Pull optional nested configs
     sqft_cfg = _as_dict(store_cfg.get("square_footage"))
@@ -442,6 +650,8 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             seed=_pick_seed(cfg, store_cfg, fallback=42),
             square_footage_cfg=sqft_cfg,
             employee_count_cfg=emp_cfg,
+            geo_loc_short=loc_short_map,
+            geo_loc_full=loc_full_map,
         )
 
         # Cast only the intended date fields to Arrow date32

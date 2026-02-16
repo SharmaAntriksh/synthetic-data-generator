@@ -1,11 +1,3 @@
-# ---------------------------------------------------------
-#  CUSTOMERS DIMENSION (REALISTIC CONTOSO VERSION)
-#  - Adds timeline-aware lifecycle fields for acquisition/churn over time
-#  - Preserves customers.active_ratio as the global "eligible for sales" gate
-#  - FIX: warm-start cohort can be spread over early months (initial_spread_months)
-#  - FIX: optional even acquisition distribution for evenly split new customers
-# ---------------------------------------------------------
-
 import os
 from pathlib import Path
 from typing import Dict, Tuple

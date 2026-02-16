@@ -1,12 +1,3 @@
-# src/dimensions/suppliers.py
-# ---------------------------------------------------------
-#  SUPPLIERS DIMENSION (PIPELINE READY)
-#  - Optional config section: 'suppliers' (safe defaults if missing)
-#  - Deterministic generation via seed
-#  - Versioned via version_store
-#  - Parquet output: suppliers.parquet
-# ---------------------------------------------------------
-
 from __future__ import annotations
 
 from pathlib import Path

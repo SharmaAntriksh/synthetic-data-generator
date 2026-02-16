@@ -1,13 +1,3 @@
-# src/dimensions/employees.py
-# ---------------------------------------------------------
-#  EMPLOYEES DIMENSION (PARENT-CHILD HIERARCHY)
-#  - Reads stores.parquet
-#  - Generates org chart: CEO -> VP -> Region -> District -> Store -> Staff
-#  - Produces EmployeeKey + ParentEmployeeKey for DAX PATH/PATHITEM
-#  - Enriches with Contoso-like HR columns
-#  - Default staffing is intentionally small (demo-friendly)
-# ---------------------------------------------------------
-
 from __future__ import annotations
 
 from pathlib import Path

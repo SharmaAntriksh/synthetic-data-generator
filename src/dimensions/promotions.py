@@ -1,9 +1,3 @@
-# ---------------------------------------------------------
-#  PROMOTIONS DIMENSION (PIPELINE READY – OPTIMIZED)
-#  + Writes StartDate/EndDate as Arrow date32 (if pyarrow available)
-#    so Power Query imports them as Date (not DateTime).
-# ---------------------------------------------------------
-
 from __future__ import annotations
 
 from datetime import timedelta

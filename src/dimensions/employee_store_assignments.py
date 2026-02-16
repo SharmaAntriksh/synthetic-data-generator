@@ -1,4 +1,3 @@
-# src/dimensions/employee_store_assignments.py
 from __future__ import annotations
 
 from pathlib import Path

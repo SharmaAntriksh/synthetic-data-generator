@@ -1,11 +1,3 @@
-# src/dimensions/lookups.py
-# ---------------------------------------------------------
-#  LOOKUP DIMENSIONS (STATIC / LOW-CARDINALITY)
-#  - Deterministic keys
-#  - Versioned via version_store
-#  - Optional config overrides per dimension section
-# ---------------------------------------------------------
-
 from __future__ import annotations
 
 from pathlib import Path
