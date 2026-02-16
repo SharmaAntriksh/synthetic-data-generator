@@ -7,9 +7,9 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.engine.dimension_loader import load_dimension
 from src.utils.logging_utils import done, skip
-from src.versioning.version_store import save_version
+from src.versioning.version_store import should_regenerate, save_version
+
 
 # ---------------------------------------------------------------------
 # Canonical default reasons
@@ -152,47 +152,39 @@ def build_return_reason_dimension(
 
 def run_return_reasons(cfg: Mapping[str, Any], parquet_dims_folder: Path) -> None:
     """
-    Dimension runner entrypoint (matches other dimension modules).
-
-    Behavior:
-      - Writes return_reason.parquet to parquet_dims_folder
-      - Skips when up-to-date unless forced via cfg["return_reason"]["_force_regenerate"] == True
-      - "Up-to-date" is determined by dimension_loader.load_dimension using expected_config.
-      - Persists expected_config via save_version(...) so future runs can skip.
+    Writes return_reason.parquet to parquet_dims_folder.
+    Skips when up-to-date unless forced via cfg["return_reason"]["_force_regenerate"] == True.
+    Uses version_store (should_regenerate/save_version) like other dimensions.
     """
     parquet_dims_folder = Path(parquet_dims_folder)
     parquet_dims_folder.mkdir(parents=True, exist_ok=True)
 
-    # Forced regeneration flag is passed by dimensions_runner via _cfg_for_dimension(...)
     dim_cfg = cfg.get("return_reason") if isinstance(cfg, Mapping) else None
     dim_cfg = dim_cfg if isinstance(dim_cfg, Mapping) else {}
     forced = bool(dim_cfg.get("_force_regenerate", False))
 
-    # Determine reasons + stable expected_config for up-to-date checks
+    # Determine reasons + stable expected_config
     raw_reasons = _extract_reasons_from_cfg(cfg) if isinstance(cfg, Mapping) else None
     if raw_reasons is None:
         raw_reasons = RETURN_REASONS
 
     normalized = _normalize_reasons(raw_reasons)
 
-    # IMPORTANT: use JSON-stable structures (lists), not tuples, so version comparisons are stable.
     expected_config = {
+        "schema_version": 1,
+        "schema": "return_reason(v1)",
+        # JSON-stable structures (lists), not tuples
         "reasons": [[r.key, r.reason, r.category] for r in normalized],
-        "schema": "ReturnReason(v1)",
     }
 
-    if not forced:
-        _, changed = load_dimension("ReturnReason", parquet_dims_folder, expected_config)
-        if not changed:
-            skip("ReturnReason up-to-date; skipping.")
-            return
+    out_path = parquet_dims_folder / "return_reason.parquet"
+
+    if not forced and not should_regenerate("return_reason", expected_config, out_path):
+        skip("ReturnReason up-to-date; skipping.")
+        return
 
     table = build_return_reason_dimension(reasons=raw_reasons)
-    out_path = parquet_dims_folder / "return_reason.parquet"
     pq.write_table(table, out_path)
 
-    # Your version_store.save_version requires output_path in this repo version.
-    # Use the same folder load_dimension checks against.
-    save_version("ReturnReason", expected_config, parquet_dims_folder)
-
+    save_version("return_reason", expected_config, out_path)
     done("Generating ReturnReason completed")

@@ -29,6 +29,9 @@ from src.dimensions.lookups import (
     run_customer_acquisition_channels,
     run_time_buckets,
 )
+from src.dimensions.suppliers import run_suppliers
+from src.dimensions.employees import run_employees
+from src.dimensions.employee_store_assignments import run_employee_store_assignments
 
 from src.utils.logging_utils import done, skip, info
 from src.dimensions.return_reasons import run_return_reasons
@@ -46,6 +49,8 @@ DATE_DEPENDENT_DIMS = {
     "currency",
     "exchange_rates",
     "customer_segments",
+    "employees",
+    "employee_store_assignments",
 }
 
 STATIC_DIMS = {
@@ -167,6 +172,12 @@ def generate_dimensions(
     if "customers" in force_regenerate:
         force_regenerate.add("customer_segments")
 
+    # Stores -> Employees -> EmployeeStoreAssignments
+    if "stores" in force_regenerate:
+        force_regenerate.update({"employees", "employee_store_assignments"})
+    if "employees" in force_regenerate:
+        force_regenerate.add("employee_store_assignments")
+
     parquet_dims_folder = Path(parquet_dims_folder).resolve()
     parquet_dims_folder.mkdir(parents=True, exist_ok=True)
 
@@ -259,7 +270,11 @@ def generate_dimensions(
     regenerated["customer_acquisition_channels"] = _should_force("customer_acquisition_channels", force_regenerate)
 
     run_time_buckets(
-        _cfg_for_dimension(cfg, "time_buckets", _should_force("time_buckets", force_regenerate)),
+        _cfg_for_dimension(
+            cfg,
+            "time_buckets",
+            _should_force("time_buckets", force_regenerate),
+        ),
         parquet_dims_folder,
     )
     regenerated["time_buckets"] = _should_force("time_buckets", force_regenerate)
@@ -305,6 +320,28 @@ def generate_dimensions(
         parquet_dims_folder,
     )
     regenerated["stores"] = _should_force("stores", force_regenerate)
+    # -----------------------------------------------------
+    # 3.5 Employees (depends on Stores; date-dependent)
+    # -----------------------------------------------------
+    cfg_employees = _cfg_with_global_dates(cfg, "employees", global_dates)
+    run_employees(
+        _cfg_for_dimension(
+            cfg_employees,
+            "employees",
+            _should_force("employees", force_regenerate),
+        ),
+        parquet_dims_folder,
+    )
+    regenerated["employees"] = _should_force("employees", force_regenerate)
+    # -----------------------------------------------------
+    # 3.6 Employee Store Assignments 
+    # -----------------------------------------------------
+    cfg_assign = _cfg_with_global_dates(cfg, "employee_store_assignments", global_dates)
+    run_employee_store_assignments(
+        _cfg_for_dimension(cfg_assign, "employee_store_assignments", _should_force("employee_store_assignments", force_regenerate)),
+        parquet_dims_folder,
+    )
+    regenerated["employee_store_assignments"] = _should_force("employee_store_assignments", force_regenerate)
 
     # -----------------------------------------------------
     # 4. Promotions (date-dependent)
@@ -324,18 +361,50 @@ def generate_dimensions(
     # 4.5 Return Reasons (static-ish; only if returns enabled)
     # -----------------------------------------------------
     force_rr = _should_force("return_reason", force_regenerate)
+
+    # Be tolerant to output naming differences (module is return_reasons, config key is return_reason)
+    rr_candidates = [
+        parquet_dims_folder / "return_reasons.parquet",
+        parquet_dims_folder / "return_reason.parquet",
+    ]
+    rr_exists = any(p.exists() for p in rr_candidates)
+
     if _returns_enabled(cfg) or force_rr:
-        run_return_reasons(
+        if force_rr or not rr_exists:
+            run_return_reasons(
+                _cfg_for_dimension(
+                    cfg,
+                    "return_reason",   # config section name; used only for _force_regenerate
+                    force_rr,
+                ),
+                parquet_dims_folder,
+            )
+            regenerated["return_reason"] = True
+        else:
+            skip("Return Reasons up-to-date; skipping.")
+            regenerated["return_reason"] = False
+    else:
+        regenerated["return_reason"] = False
+
+    # -----------------------------------------------------
+    # 4.8 Suppliers (static-ish)
+    # -----------------------------------------------------
+    force_suppliers = _should_force("suppliers", force_regenerate)
+    suppliers_out = parquet_dims_folder / "suppliers.parquet"
+
+    if force_suppliers or not suppliers_out.exists():
+        run_suppliers(
             _cfg_for_dimension(
                 cfg,
-                "return_reason",   # config section name; used only for _force_regenerate
-                force_rr,
+                "suppliers",
+                force_suppliers,
             ),
             parquet_dims_folder,
         )
-        regenerated["return_reason"] = force_rr
+        regenerated["suppliers"] = True
     else:
-        regenerated["return_reason"] = False
+        skip("Suppliers up-to-date; skipping.")
+        regenerated["suppliers"] = False
 
     # -----------------------------------------------------
     # 5. Products (static)

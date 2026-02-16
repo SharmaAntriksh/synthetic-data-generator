@@ -28,7 +28,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 1002053
+  total_rows: 100205
   chunk_size: 1000000
 
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -213,7 +213,7 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 50
+  num_stores: 8
 
   opening:
     start: "1995-01-01"
@@ -221,10 +221,38 @@ stores:
 
   closing_end: "2025-12-31"
 
+  employee_count:
+    mode: by_type          # by_type | scaled_sqft
+    open_by_type:
+      Convenience: [4, 10]
+      Supermarket: [8, 16]
+      Hypermarket: [12, 24]
+      Online: [3, 8]
+    renovating_range: [0, 3]
+    closed_range: [0, 0]
+    clamp_min: 0
+    clamp_max: 40
+
   override:
     seed: null
     paths: {}
 
+# ---------------------------------------------------------------------
+# EMPLOYEES (Dimension)
+# ---------------------------------------------------------------------
+employees:
+  # sizing (demo-friendly defaults)
+  use_store_employee_count: false
+  min_staff_per_store: 3
+  max_staff_per_store: 8
+  staff_scale: 0.25         # only used if use_store_employee_count: true
+
+  # schema choice
+  include_store_cols: false # if you want DimEmployee NOT to include StoreKey/GeographyKey
+
+  # HR enrichment
+  hr:
+    email_domain: "contoso.com"
 
 # ---------------------------------------------------------------------
 # DATES (Dimension)
