@@ -325,12 +325,51 @@ def _df_time_buckets(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     """
     Modes:
       time_buckets:
-        mode: "4" | "24"
-    """
-    mode = str(dim_cfg.get("mode", "4")).strip()
+        mode: "4" | "24" | "30m" | "48"
+        # Optional alternative:
+        # bucket_minutes: 30
 
-    if mode == "24":
-        required = ["TimeBucketKey", "TimeBucket", "StartHour", "EndHour"]
+    Notes:
+      - Always returns required columns:
+          TimeBucketKey, TimeBucket, StartHour, EndHour
+      - For minute-based buckets (e.g. 30m), also returns:
+          StartMinute, EndMinute
+    """
+    required = ["TimeBucketKey", "TimeBucket", "StartHour", "EndHour"]
+
+    # Allow override rows for any mode
+    override = _maybe_override_rows(dim_cfg, required_cols=required)
+    if override is not None:
+        override["TimeBucketKey"] = override["TimeBucketKey"].astype(np.int16)
+        override["StartHour"] = override["StartHour"].astype(np.int16)
+        override["EndHour"] = override["EndHour"].astype(np.int16)
+        return override
+
+    mode_raw = str(dim_cfg.get("mode", "4")).strip().lower()
+
+    # Optional explicit minutes config
+    bucket_minutes = dim_cfg.get("bucket_minutes", None)
+    if bucket_minutes is not None:
+        bucket_minutes = int(bucket_minutes)
+
+    # Interpret mode
+    if bucket_minutes is None:
+        if mode_raw in {"4", "quarter"}:
+            bucket_minutes = None
+        elif mode_raw in {"24", "hour", "hourly"}:
+            bucket_minutes = 60
+        elif mode_raw in {"30m", "30"}:
+            bucket_minutes = 30
+        elif mode_raw == "48":
+            bucket_minutes = 30  # 1440 / 48
+        elif mode_raw.endswith("m") and mode_raw[:-1].isdigit():
+            bucket_minutes = int(mode_raw[:-1])
+        else:
+            # default: legacy 4 buckets
+            bucket_minutes = None
+
+    # ---- 24 hourly buckets ----
+    if bucket_minutes == 60:
         rows = []
         for h in range(24):
             rows.append((h, f"{h:02d}:00-{(h + 1) % 24:02d}:00", h, (h + 1) % 24))
@@ -340,15 +379,33 @@ def _df_time_buckets(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         df["EndHour"] = df["EndHour"].astype(np.int16)
         return df
 
-    # Default: 4 buckets
-    required = ["TimeBucketKey", "TimeBucket", "StartHour", "EndHour"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["TimeBucketKey"] = override["TimeBucketKey"].astype(np.int16)
-        override["StartHour"] = override["StartHour"].astype(np.int16)
-        override["EndHour"] = override["EndHour"].astype(np.int16)
-        return override
+    # ---- minute-based buckets (e.g. 30m => 48 buckets/day) ----
+    if isinstance(bucket_minutes, int) and bucket_minutes not in (None, 60):
+        if bucket_minutes <= 0 or bucket_minutes > 60:
+            raise ValueError("time_buckets.bucket_minutes must be between 1 and 60")
+        if (60 % bucket_minutes) != 0:
+            raise ValueError("time_buckets.bucket_minutes must evenly divide 60 (e.g., 5, 10, 15, 20, 30, 60)")
 
+        rows = []
+        key = 0
+        for start_min in range(0, 24 * 60, bucket_minutes):
+            end_min = start_min + bucket_minutes
+            sh, sm = divmod(start_min, 60)
+            eh, em = divmod(end_min % (24 * 60), 60)
+
+            label = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}"
+            rows.append((key, label, sh, eh, sm, em))
+            key += 1
+
+        df = pd.DataFrame(rows, columns=required + ["StartMinute", "EndMinute"])
+        df["TimeBucketKey"] = df["TimeBucketKey"].astype(np.int16)
+        df["StartHour"] = df["StartHour"].astype(np.int16)
+        df["EndHour"] = df["EndHour"].astype(np.int16)
+        df["StartMinute"] = df["StartMinute"].astype(np.int16)
+        df["EndMinute"] = df["EndMinute"].astype(np.int16)
+        return df
+
+    # ---- Default: 4 buckets ----
     rows = [
         (1, "Morning", 6, 12),
         (2, "Afternoon", 12, 17),
@@ -361,6 +418,51 @@ def _df_time_buckets(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     df["EndHour"] = df["EndHour"].astype(np.int16)
     return df
 
+
+def _df_delivery_performances(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
+    """
+    Delivery outcome / performance lookup (line-level).
+    Use DeliveryPerformanceKey on Sales lines; derive labels + IsDelayed via relationship.
+
+    Config:
+      delivery_performances:
+        include_exception: true|false
+        rows: [ ... ]  # optional override (must match required cols)
+    """
+    required = [
+        "DeliveryPerformanceKey",
+        "DeliveryPerformance",
+        "PerformanceGroup",
+        "IsDelayed",
+        "SortOrder",
+        "LateBucket",
+    ]
+
+    override = _maybe_override_rows(dim_cfg, required_cols=required)
+    if override is not None:
+        override["DeliveryPerformanceKey"] = override["DeliveryPerformanceKey"].astype(np.int16)
+        override["SortOrder"] = override["SortOrder"].astype(np.int16)
+        override["IsDelayed"] = override["IsDelayed"].astype(bool)
+        return override
+
+    include_exception = bool(dim_cfg.get("include_exception", True))
+
+    rows = [
+        (0, "NotApplicable", "NA", False, 0, "NA"),
+        (1, "Early", "Early", False, 1, "Early"),
+        (2, "OnTime", "OnTime", False, 2, "OnTime"),
+        (3, "Late (1-2 days)", "Late", True, 3, "Late1_2"),
+        (4, "Late (3-5 days)", "Late", True, 4, "Late3_5"),
+        (5, "Late (6+ days)", "Late", True, 5, "Late6plus"),
+    ]
+    if include_exception:
+        rows.append((6, "Delivery Exception", "Exception", True, 6, "Exception"))
+
+    df = pd.DataFrame(rows, columns=required)
+    df["DeliveryPerformanceKey"] = df["DeliveryPerformanceKey"].astype(np.int16)
+    df["SortOrder"] = df["SortOrder"].astype(np.int16)
+    df["IsDelayed"] = df["IsDelayed"].astype(bool)
+    return df
 
 # =========================================================
 # Pipeline entrypoints (run_* wrappers)
@@ -401,9 +503,9 @@ def run_delivery_service_levels(cfg: Dict[str, Any], parquet_folder: Path) -> No
                     build_df=_df_delivery_service_levels, parquet_folder=parquet_folder)
 
 
-def run_discount_types(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(cfg=cfg, dim_key="discount_types", out_name="discount_types.parquet",
-                    build_df=_df_discount_types, parquet_folder=parquet_folder)
+# def run_discount_types(cfg: Dict[str, Any], parquet_folder: Path) -> None:
+#     _run_lookup_dim(cfg=cfg, dim_key="discount_types", out_name="discount_types.parquet",
+#                     build_df=_df_discount_types, parquet_folder=parquet_folder)
 
 
 def run_loyalty_tiers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
@@ -421,6 +523,16 @@ def run_time_buckets(cfg: Dict[str, Any], parquet_folder: Path) -> None:
                     build_df=_df_time_buckets, parquet_folder=parquet_folder)
 
 
+def run_delivery_performances(cfg: Dict[str, Any], parquet_folder: Path) -> None:
+    _run_lookup_dim(
+        cfg=cfg,
+        dim_key="delivery_performances",
+        out_name="delivery_performances.parquet",
+        build_df=_df_delivery_performances,
+        parquet_folder=parquet_folder,
+    )
+
+
 def run_lookups(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     """
     Convenience function if you prefer a single call from dimensions_runner.
@@ -433,7 +545,9 @@ def run_lookups(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     run_payment_statuses(cfg, parquet_folder)
     run_shipping_carriers(cfg, parquet_folder)
     run_delivery_service_levels(cfg, parquet_folder)
-    run_discount_types(cfg, parquet_folder)
+    run_delivery_performances(cfg, parquet_folder)
+    # run_discount_types(cfg, parquet_folder)
     run_loyalty_tiers(cfg, parquet_folder)
     run_customer_acquisition_channels(cfg, parquet_folder)
     run_time_buckets(cfg, parquet_folder)
+

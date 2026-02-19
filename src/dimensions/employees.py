@@ -295,6 +295,7 @@ def _enrich_employee_hr_columns(
 
     # SalesPersonFlag
     df["SalesPersonFlag"] = title.isin(["Sales Associate", "Store Manager"]).astype(np.int8)
+    df["IsSalesPerson"] = df["SalesPersonFlag"].astype(np.int8)  # compat alias used by some fact loaders
 
     # DepartmentName
     dept = np.where(
@@ -503,6 +504,10 @@ def generate_employee_dimension(
 
         mgr_key = _store_mgr_key(sk)
         titles = rng.choice(_STAFF_TITLES, size=n_staff, p=_STAFF_TITLES_P)
+        # Ensure at least one Sales Associate per staffed store (keeps salesperson pools non-empty)
+        if n_staff > 0 and not np.any(titles == "Sales Associate"):
+            titles[0] = "Sales Associate"
+
         for j in range(1, n_staff + 1):
             rows.append(
                 dict(
@@ -593,7 +598,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     version_cfg = dict(emp_cfg)
     version_cfg.pop("_force_regenerate", None)
     # schema changed (names + sizing) => bump
-    version_cfg["schema_version"] = 2
+    version_cfg["schema_version"] = 3
     version_cfg["_stores_sig"] = _stores_signature(stores)
     version_cfg["_global_dates"] = {"start": str(global_start.date()), "end": str(global_end.date())}
 

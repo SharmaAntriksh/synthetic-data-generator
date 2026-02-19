@@ -24,7 +24,8 @@ from src.dimensions.lookups import (
     run_payment_statuses,
     run_shipping_carriers,
     run_delivery_service_levels,
-    run_discount_types,
+    run_delivery_performances,
+    # run_discount_types,
     run_loyalty_tiers,
     run_customer_acquisition_channels,
     run_time_buckets,
@@ -249,12 +250,22 @@ def generate_dimensions(
         parquet_dims_folder,
     )
     regenerated["delivery_service_levels"] = _should_force("delivery_service_levels", force_regenerate)
-
-    run_discount_types(
-        _cfg_for_dimension(cfg, "discount_types", _should_force("discount_types", force_regenerate)),
+    
+    run_delivery_performances(
+        _cfg_for_dimension(
+            cfg,
+            "delivery_performances",
+            _should_force("delivery_performances", force_regenerate),
+        ),
         parquet_dims_folder,
     )
-    regenerated["discount_types"] = _should_force("discount_types", force_regenerate)
+    regenerated["delivery_performances"] = _should_force("delivery_performances", force_regenerate)
+
+    # run_discount_types(
+    #     _cfg_for_dimension(cfg, "discount_types", _should_force("discount_types", force_regenerate)),
+    #     parquet_dims_folder,
+    # )
+    # regenerated["discount_types"] = _should_force("discount_types", force_regenerate)
 
     run_loyalty_tiers(
         _cfg_for_dimension(cfg, "loyalty_tiers", _should_force("loyalty_tiers", force_regenerate)),
