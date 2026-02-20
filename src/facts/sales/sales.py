@@ -791,7 +791,7 @@ def generate_sales_fact(
     # Final assembly (TABLE-AWARE)
     # ------------------------------------------------------------
     if file_format == "deltaparquet":
-        from .writers.sales_delta import write_delta_partitioned
+        from .sales_worker import write_delta_partitioned
 
         missing_parts = []
         wrote = 0
@@ -825,7 +825,7 @@ def generate_sales_fact(
 
     if file_format == "parquet":
         if merge_parquet:
-            from .writers.parquet_merge import merge_parquet_files
+            from .sales_writer import merge_parquet_files
 
             for t in tables:
                 chunks = sorted(
