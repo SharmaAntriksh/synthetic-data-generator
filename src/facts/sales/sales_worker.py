@@ -22,8 +22,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union, Calla
 import numpy as np
 import pyarrow as pa
 
-from .sales_logic import chunk_builder
-from .sales_logic.globals import State, bind_globals
+from .sales_logic import State, bind_globals, build_chunk_table
 from .output_paths import (
     OutputPaths,
     TABLE_SALES,
@@ -1460,7 +1459,7 @@ def _worker_task(args):
 
         chunk_seed = derive_chunk_seed(seed, idx_i, stride=10_000)
 
-        detail_table = chunk_builder.build_chunk_table(
+        detail_table = build_chunk_table(
             batch_i,
             int(chunk_seed),
             no_discount_key=State.no_discount_key,

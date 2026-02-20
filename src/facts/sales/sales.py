@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils.logging_utils import done, info, skip, work
-from .sales_logic.globals import State
+from .sales_logic import State
 from .sales_worker import _worker_task, init_sales_worker
 from .sales_writer import merge_parquet_files
 from .output_paths import (

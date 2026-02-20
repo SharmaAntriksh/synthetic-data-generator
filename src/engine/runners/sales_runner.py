@@ -8,7 +8,7 @@ from src.utils.logging_utils import stage, info, done
 from src.engine.packaging import package_output
 from src.engine.powerbi_packaging import maybe_attach_pbip_project
 from src.facts.sales.sales import generate_sales_fact
-from src.facts.sales.sales_logic.globals import bind_globals, State
+from src.facts.sales.sales_logic import bind_globals, State
 
 
 def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg):

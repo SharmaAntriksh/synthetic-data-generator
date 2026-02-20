@@ -178,7 +178,7 @@ def run_pipeline(
         # ----------------------------
         # Attach models config to runtime state
         # ----------------------------
-        from src.facts.sales.sales_logic.globals import State
+        from src.facts.sales.sales_logic import State
         State.models_cfg = models_cfg
 
         # ----------------------------
