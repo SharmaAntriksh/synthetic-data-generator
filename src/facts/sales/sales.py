@@ -606,6 +606,55 @@ def generate_sales_fact(
         promo_pct_all = _as_np(promo_df["DiscountPct"], np.float64)
         promo_start_all = _as_np(promo_start, "datetime64[D]")
         promo_end_all = _as_np(promo_end, "datetime64[D]")
+        
+    # ------------------------------------------------------------
+    # Employees / store assignments -> SalesPersonEmployeeKey
+    # ------------------------------------------------------------
+    emp_assign_path = parquet_folder_p / "employee_store_assignments.parquet"
+
+    employee_assign_store_key = None
+    employee_assign_employee_key = None
+    employee_assign_start_date = None
+    employee_assign_end_date = None
+    employee_assign_fte = None
+    employee_assign_is_primary = None
+
+    if emp_assign_path.exists():
+        emp_assign_df = load_parquet_df(
+            emp_assign_path,
+            cols=[
+                "EmployeeKey",
+                "StoreKey",
+                "StartDate",
+                "EndDate",
+                "FTE",
+                "IsPrimary",
+                "RoleAtStore",
+            ],
+        )
+
+        # Keep only salespeople roles (matches employees.py SalesPersonFlag)
+        if "RoleAtStore" in emp_assign_df.columns:
+            emp_assign_df = emp_assign_df[
+                emp_assign_df["RoleAtStore"].isin(["Sales Associate", "Store Manager"])
+            ].copy()
+
+        if not emp_assign_df.empty:
+            end_dt = pd.to_datetime(end_date, errors="coerce").normalize()
+
+            start_dt = pd.to_datetime(emp_assign_df["StartDate"], errors="coerce").dt.normalize()
+            end_dt_col = pd.to_datetime(emp_assign_df["EndDate"], errors="coerce").dt.normalize()
+            end_dt_col = end_dt_col.fillna(end_dt)
+
+            employee_assign_store_key = _as_np(emp_assign_df["StoreKey"], np.int64)
+            employee_assign_employee_key = _as_np(emp_assign_df["EmployeeKey"], np.int64)
+            employee_assign_start_date = _as_np(start_dt, "datetime64[D]")
+            employee_assign_end_date = _as_np(end_dt_col, "datetime64[D]")
+
+            if "FTE" in emp_assign_df.columns:
+                employee_assign_fte = _as_np(emp_assign_df["FTE"], np.float64)
+            if "IsPrimary" in emp_assign_df.columns:
+                employee_assign_is_primary = _as_np(emp_assign_df["IsPrimary"], bool)
 
     # Weighted date pool (deterministic)
     date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
@@ -699,6 +748,19 @@ def generate_sales_fact(
         returns_enabled=bool(returns_enabled_effective),
         returns_rate=float(returns_rate),
         returns_max_lag_days=int(returns_max_lag_days),
+
+        # deterministic employee assignment lookup
+        seed_master= int(seed),
+        employee_salesperson_seed= int(seed) + 99173,
+        employee_primary_boost= 2.0,
+
+        # employee-store assignment pools
+        employee_assign_store_key= employee_assign_store_key,
+        employee_assign_employee_key= employee_assign_employee_key,
+        employee_assign_start_date= employee_assign_start_date,
+        employee_assign_end_date= employee_assign_end_date,
+        employee_assign_fte= employee_assign_fte,
+        employee_assign_is_primary= employee_assign_is_primary,
     )
 
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)

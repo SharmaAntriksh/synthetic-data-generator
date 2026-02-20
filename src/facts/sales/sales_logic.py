@@ -2587,7 +2587,18 @@ def build_chunk_table(
         currency_arr = _take(currency_arr)
         order_dates = _take(order_dates)
         promo_keys = _take(promo_keys)
-
+        # --------------------------------------------------------
+        # EMPLOYEE (SalesPersonEmployeeKey) - store x month lookup
+        # --------------------------------------------------------
+        sp_map = getattr(State, "salesperson_by_store_month", None)
+        if sp_map is None:
+            salesperson_key_arr = (np.int64(30_000_000) + store_key_arr.astype(np.int64, copy=False))
+        else:
+            salesperson_key_arr = sp_map[store_key_arr, int(m_offset)]
+            missing = salesperson_key_arr < 0
+            if np.any(missing):
+                salesperson_key_arr = salesperson_key_arr.copy()
+                salesperson_key_arr[missing] = np.int64(30_000_000) + store_key_arr[missing]
         if not skip_cols:
             order_ids_int = _take(order_ids_int)
             line_num = _take(line_num)
@@ -2672,6 +2683,7 @@ def build_chunk_table(
         add("CustomerKey", customer_keys_out)
         add("ProductKey", product_keys)
         add("StoreKey", store_key_arr)
+        add("SalesPersonEmployeeKey", salesperson_key_arr)
         add("PromotionKey", promo_keys)
         add("CurrencyKey", currency_arr)
 

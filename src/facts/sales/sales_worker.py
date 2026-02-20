@@ -190,6 +190,128 @@ def _infer_T_from_date_pool(date_pool: Any) -> int:
     return infer_T_from_date_pool(date_pool)
 
 
+def _build_salesperson_by_store_month(
+    *,
+    store_keys: np.ndarray,
+    date_pool: Any,
+    assign_store: Any,
+    assign_emp: Any,
+    assign_start: Any,
+    assign_end: Any,
+    assign_fte: Any = None,
+    assign_is_primary: Any = None,
+    primary_boost: float = 2.0,
+    seed: int = 12345,
+) -> Optional[np.ndarray]:
+    """
+    Dense lookup:
+      salesperson_by_store_month[StoreKey, month_offset] -> EmployeeKey
+
+    Fallback for missing:
+      30_000_000 + StoreKey   (Store Manager key scheme used by employees.py)
+
+    Notes:
+      - month_offset is relative to the first month in date_pool
+      - assignment activity is based on StartDate/EndDate month buckets (inclusive)
+    """
+    if assign_store is None or assign_emp is None or assign_start is None or assign_end is None:
+        return None
+
+    assign_store = np.asarray(assign_store, dtype=np.int64)
+    assign_emp = np.asarray(assign_emp, dtype=np.int64)
+    if assign_store.size == 0 or assign_emp.size == 0:
+        return None
+    if assign_store.shape[0] != assign_emp.shape[0]:
+        raise RuntimeError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
+
+    assign_start = np.asarray(assign_start, dtype="datetime64[D]")
+    assign_end = np.asarray(assign_end, dtype="datetime64[D]")
+    if assign_start.shape[0] != assign_store.shape[0] or assign_end.shape[0] != assign_store.shape[0]:
+        raise RuntimeError("employee assignment arrays must align (dates vs keys)")
+
+    if assign_fte is None:
+        assign_fte = np.ones(assign_store.shape[0], dtype=np.float64)
+    else:
+        assign_fte = np.asarray(assign_fte, dtype=np.float64)
+        if assign_fte.shape[0] != assign_store.shape[0]:
+            raise RuntimeError("employee_assign_fte must align with employee_assign_store_key")
+
+    if assign_is_primary is None:
+        assign_is_primary = np.zeros(assign_store.shape[0], dtype=bool)
+    else:
+        assign_is_primary = np.asarray(assign_is_primary, dtype=bool)
+        if assign_is_primary.shape[0] != assign_store.shape[0]:
+            raise RuntimeError("employee_assign_is_primary must align with employee_assign_store_key")
+
+    store_keys = np.asarray(store_keys, dtype=np.int64)
+    if store_keys.size == 0:
+        return None
+
+    dp = np.asarray(date_pool, dtype="datetime64[D]")
+    if dp.size == 0:
+        return None
+
+    months_int = dp.astype("datetime64[M]").astype(np.int64)
+    month0_int = int(months_int.min())
+    T = int(np.unique(months_int).size)
+    if T <= 0:
+        return None
+
+    start_off = assign_start.astype("datetime64[M]").astype(np.int64) - month0_int
+    end_off = assign_end.astype("datetime64[M]").astype(np.int64) - month0_int
+
+    start_off = np.clip(start_off, 0, T - 1).astype(np.int64, copy=False)
+    end_off = np.clip(end_off, 0, T - 1).astype(np.int64, copy=False)
+
+    max_store_key = int(store_keys.max())
+    out = np.full((max_store_key + 1, T), -1, dtype=np.int64)
+
+    manager_base = np.int64(30_000_000)
+    out[:] = (manager_base + np.arange(max_store_key + 1, dtype=np.int64))[:, None]
+
+    order = np.argsort(assign_store, kind="mergesort")
+    store_sorted = assign_store[order]
+    starts = np.flatnonzero(np.r_[True, store_sorted[1:] != store_sorted[:-1]])
+    ends = np.r_[starts[1:], store_sorted.size]
+
+    rng = np.random.default_rng(int(seed))
+
+    for s, e in zip(starts, ends):
+        store = int(store_sorted[int(s)])
+        if store < 0 or store > max_store_key:
+            continue
+
+        idxs = order[int(s):int(e)]
+        if idxs.size == 0:
+            continue
+
+        active: List[List[int]] = [[] for _ in range(T)]
+        for ii in idxs:
+            so = int(start_off[int(ii)])
+            eo = int(end_off[int(ii)])
+            if eo < so:
+                continue
+            for m in range(so, eo + 1):
+                active[m].append(int(ii))
+
+        for m in range(T):
+            cand = active[m]
+            if not cand:
+                continue
+
+            w = assign_fte[cand] * np.where(assign_is_primary[cand], float(primary_boost), 1.0)
+            sw = float(w.sum())
+            if sw <= 1e-12:
+                pick = 0
+            else:
+                w = w / sw
+                pick = int(rng.choice(len(cand), p=w))
+
+            out[store, m] = int(assign_emp[cand[pick]])
+
+    return out
+
+
 # ============================================================================
 # common/worker/task.py (inlined)
 # ============================================================================
@@ -984,6 +1106,15 @@ def init_sales_worker(worker_cfg: dict):
         date_pool = worker_cfg["date_pool"]
         date_prob = worker_cfg["date_prob"]
 
+        employee_assign_store_key = worker_cfg.get("employee_assign_store_key")
+        employee_assign_employee_key = worker_cfg.get("employee_assign_employee_key")
+        employee_assign_start_date = worker_cfg.get("employee_assign_start_date")
+        employee_assign_end_date = worker_cfg.get("employee_assign_end_date")
+        employee_assign_fte = worker_cfg.get("employee_assign_fte")
+        employee_assign_is_primary = worker_cfg.get("employee_assign_is_primary")
+        employee_primary_boost = float(worker_cfg.get("employee_primary_boost", 2.0))
+        employee_seed = int(worker_cfg.get("employee_salesperson_seed", worker_cfg.get("seed_master", 12345)))
+
         op = worker_cfg["output_paths"]
         if not isinstance(op, dict):
             raise RuntimeError("output_paths must be a dict")
@@ -1043,7 +1174,18 @@ def init_sales_worker(worker_cfg: dict):
         brand_to_row_idx = _build_buckets_from_brand_key(product_brand_key)
 
     store_keys = _as_int64(store_keys)
-
+    salesperson_by_store_month = _build_salesperson_by_store_month(
+        store_keys=store_keys,
+        date_pool=date_pool,
+        assign_store=employee_assign_store_key,
+        assign_emp=employee_assign_employee_key,
+        assign_start=employee_assign_start_date,
+        assign_end=employee_assign_end_date,
+        assign_fte=employee_assign_fte,
+        assign_is_primary=employee_assign_is_primary,
+        primary_boost=employee_primary_boost,
+        seed=employee_seed,
+    )
     promo_keys_all = _as_int64(promo_keys_all)
     promo_pct_all = _as_f64(promo_pct_all)
     promo_start_all = np.asarray(promo_start_all, dtype="datetime64[D]")
@@ -1123,6 +1265,7 @@ def init_sales_worker(worker_cfg: dict):
         pa.field("CustomerKey", pa.int64()),
         pa.field("ProductKey", pa.int64()),
         pa.field("StoreKey", pa.int64()),
+        pa.field("SalesPersonEmployeeKey", pa.int64()),
         pa.field("PromotionKey", pa.int64()),
         pa.field("CurrencyKey", pa.int64()),
         pa.field("OrderDate", pa.date32()),
@@ -1167,6 +1310,7 @@ def init_sales_worker(worker_cfg: dict):
         pa.field("SalesOrderLineNumber", pa.int64()),
         pa.field("ProductKey", pa.int64()),
         pa.field("StoreKey", pa.int64()),
+        pa.field("SalesPersonEmployeeKey", pa.int64()),
         pa.field("PromotionKey", pa.int64()),
         pa.field("CurrencyKey", pa.int64()),
         pa.field("DueDate", pa.date32()),
@@ -1304,6 +1448,8 @@ def init_sales_worker(worker_cfg: dict):
             "returns_max_lag_days": int(returns_max_lag_days),
             "returns_reason_keys": returns_reason_keys,
             "returns_reason_probs": returns_reason_probs,
+
+            "salesperson_by_store_month": salesperson_by_store_month,
         }
     )
 
