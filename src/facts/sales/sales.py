@@ -4,7 +4,7 @@ import glob
 import os
 from math import ceil
 from multiprocessing import cpu_count
-from src.facts.common.worker.pool import PoolRunSpec, iter_imap_unordered
+from src.facts.sales.sales_worker import PoolRunSpec, iter_imap_unordered
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union

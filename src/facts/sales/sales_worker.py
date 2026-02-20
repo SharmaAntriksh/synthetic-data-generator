@@ -1,15 +1,15 @@
 """
-Backward-compatible *single-file* worker module.
+Single-file Sales worker module (source of truth).
 
-This replaces the prior shim:
+This file intentionally combines:
+  - src/facts/sales/sales_worker.py
+  - src/facts/common/worker/{init,task,pool,chunk_io,return_builder}.py
 
-  from .worker.init import init_sales_worker
-  from .worker.task import _worker_task
+Goal: during the ongoing refactor, keep all Sales worker mechanics + shared worker
+utilities in one place so you don't have to navigate many small files. You can
+split again later once the design for adding new fact tables stabilizes.
 
-by inlining the implementation previously under:
-  src/facts/sales/worker/{init,task,chunk_io,header_builder,returns_builder,schemas}.py
-
-Keep this module stable so older imports still work:
+Backwards compatible imports (keep stable):
   from src.facts.sales.sales_worker import init_sales_worker, _worker_task
 """
 
@@ -17,34 +17,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union, Callable, Iterator, Iterable
 
 import numpy as np
 import pyarrow as pa
-
-from src.facts.common.worker.init import (
-    _as_f64,
-    _as_int64,
-    _build_buckets_from_brand_key,
-    _dense_map,
-    _float_or,
-    _infer_T_from_date_pool,
-    _int_or,
-    _str_or,
-)
-from src.facts.common.worker.task import (
-    derive_chunk_seed,
-    normalize_tasks,
-    write_table_by_format,
-)
-
-from ..common.worker.chunk_io import (
-    ChunkIOConfig,
-    add_year_month_from_date,
-    write_csv_table,
-    write_parquet_table,
-)
 
 from .sales_logic import chunk_builder
 from .sales_logic.globals import State, bind_globals
@@ -62,9 +38,629 @@ except Exception:
     TABLE_SALES_RETURN = None  # type: ignore
 
 
-__all__ = ["init_sales_worker", "_worker_task"]
+# ============================================================================
+# common/worker/init.py (inlined)
+# ============================================================================
+from typing import Any, Optional
+
+import numpy as np
 
 
+def build_buckets_from_key(key: Any) -> list[np.ndarray]:
+    """
+    Build index buckets for a dense-ish non-negative integer key.
+
+    Returns:
+        buckets[k] = np.ndarray of row indices i where key[i] == k
+
+    Notes:
+      - Keys are coerced to int64.
+      - Keys must be non-negative (0..K). Sparse keys are supported but allocate up to max(key)+1.
+      - Stable grouping (uses mergesort).
+    """
+    key_np = np.asarray(key, dtype=np.int64)
+    if key_np.size == 0:
+        return []
+
+    if key_np.min() < 0:
+        raise RuntimeError("Key values must be non-negative integers")
+
+    max_k = int(key_np.max())
+    K = max_k + 1
+
+    order = np.argsort(key_np, kind="mergesort")
+    k_sorted = key_np[order]
+
+    starts = np.flatnonzero(np.r_[True, k_sorted[1:] != k_sorted[:-1]])
+    ends = np.r_[starts[1:], k_sorted.size]
+
+    buckets: list[np.ndarray] = [np.empty(0, dtype=np.int64) for _ in range(K)]
+    for s, e in zip(starts, ends):
+        k = int(k_sorted[int(s)])
+        buckets[k] = order[int(s) : int(e)].astype(np.int64, copy=False)
+
+    return buckets
+
+
+def int_or(v: Any, default: int) -> int:
+    """Parse int with a safe default for None/empty/invalid."""
+    try:
+        if v is None or v == "":
+            return int(default)
+        return int(v)
+    except Exception:
+        return int(default)
+
+
+def float_or(v: Any, default: float) -> float:
+    """Parse float with a safe default for None/empty/invalid."""
+    try:
+        if v is None or v == "":
+            return float(default)
+        return float(v)
+    except Exception:
+        return float(default)
+
+
+def str_or(v: Any, default: str) -> str:
+    """Parse/normalize string with a safe default for None/empty."""
+    if v is None:
+        return default
+    s = str(v).strip()
+    return s if s else default
+
+
+def as_int64(x: Any) -> np.ndarray:
+    """Coerce array-like to int64 ndarray."""
+    return np.asarray(x, dtype=np.int64)
+
+
+def as_f64(x: Any) -> np.ndarray:
+    """Coerce array-like to float64 ndarray."""
+    return np.asarray(x, dtype=np.float64)
+
+
+def dense_map(mapping: Optional[dict]) -> Optional[np.ndarray]:
+    """
+    Build a dense lookup array: arr[key] -> value, missing -> -1.
+
+    - Keys/values coerced to int64.
+    - Returns None for empty/invalid mapping.
+    """
+    if not mapping:
+        return None
+
+    keys = np.fromiter((int(k) for k in mapping.keys()), dtype=np.int64)
+    vals = np.fromiter((int(v) for v in mapping.values()), dtype=np.int64)
+
+    if keys.size == 0:
+        return None
+
+    max_key = int(keys.max())
+    if max_key < 0:
+        return None
+
+    arr = np.full(max_key + 1, -1, dtype=np.int64)
+    arr[keys] = vals
+    return arr
+
+
+def infer_T_from_date_pool(date_pool: Any) -> int:
+    """
+    Infer number of unique months in a date pool.
+
+    Returned T is count of unique numpy datetime64[M] buckets.
+    """
+    dp = np.asarray(date_pool, dtype="datetime64[D]")
+    months = dp.astype("datetime64[M]")
+    return int(np.unique(months).size)
+
+
+# ------------------------------------------------------------------
+# Backward-compatible aliases (Sales worker init historically used _*)
+# ------------------------------------------------------------------
+def _build_buckets_from_brand_key(brand_key: Any) -> list[np.ndarray]:
+    return build_buckets_from_key(brand_key)
+
+
+def _int_or(v: Any, default: int) -> int:
+    return int_or(v, default)
+
+
+def _float_or(v: Any, default: float) -> float:
+    return float_or(v, default)
+
+
+def _str_or(v: Any, default: str) -> str:
+    return str_or(v, default)
+
+
+def _as_int64(x: Any) -> np.ndarray:
+    return as_int64(x)
+
+
+def _as_f64(x: Any) -> np.ndarray:
+    return as_f64(x)
+
+
+def _dense_map(mapping: Optional[dict]) -> Optional[np.ndarray]:
+    return dense_map(mapping)
+
+
+def _infer_T_from_date_pool(date_pool: Any) -> int:
+    return infer_T_from_date_pool(date_pool)
+
+
+# ============================================================================
+# common/worker/task.py (inlined)
+# ============================================================================
+import os
+from typing import Any, Callable, Dict, Iterable, List, Sequence, Tuple, Union
+
+import pyarrow as pa
+
+
+
+Task = Tuple[int, int, Any]  # (idx, batch_size, seed)
+TaskArgs = Union[Task, Sequence[Task]]
+
+
+def normalize_tasks(args: TaskArgs) -> Tuple[List[Task], bool]:
+    """
+    Supports:
+      - single task: (idx, batch_size, seed)
+      - batched tasks: [(idx, batch_size, seed), ...]
+    Returns: (tasks, single)
+    """
+    if isinstance(args, tuple):
+        # single task
+        if len(args) != 3:
+            raise ValueError(f"Task tuple must be (idx,batch_size,seed), got len={len(args)}")
+        return [args], True
+
+    tasks = list(args)
+    return tasks, False
+
+
+def derive_chunk_seed(seed: Any, idx: int, *, stride: int = 10_000) -> int:
+    """
+    Deterministic per-chunk seed derivation.
+    """
+    base_seed = int_or(seed, 0)
+    return int(base_seed) + int(idx) * int(stride)
+
+
+def write_table_by_format(
+    *,
+    file_format: str,
+    output_paths: Any,
+    table_name: str,
+    idx: int,
+    table: pa.Table,
+    write_csv_fn: Callable[[pa.Table, str], None],
+    write_parquet_fn: Callable[[pa.Table, str], None],
+) -> Union[str, Dict[str, Any]]:
+    """
+    Generic writer shim used by worker tasks.
+
+    Requires output_paths to provide:
+      - delta_part_path(table_name, idx) -> str   (deltaparquet only)
+      - chunk_path(table_name, idx, ext) -> str   (csv/parquet)
+
+    Returns:
+      - csv/parquet: full path (str)
+      - deltaparquet: {"part": basename, "rows": n}
+    """
+    ff = (file_format or "").strip().lower()
+    if ff == "deltaparquet":
+        if not hasattr(output_paths, "delta_part_path"):
+            raise RuntimeError("output_paths must implement delta_part_path() for deltaparquet")
+        path = output_paths.delta_part_path(table_name, int(idx))
+        write_parquet_fn(table, path)
+        return {"part": os.path.basename(path), "rows": table.num_rows}
+
+    if ff == "csv":
+        if not hasattr(output_paths, "chunk_path"):
+            raise RuntimeError("output_paths must implement chunk_path() for csv")
+        path = output_paths.chunk_path(table_name, int(idx), "csv")
+        write_csv_fn(table, path)
+        return path
+
+    # parquet (default)
+    if not hasattr(output_paths, "chunk_path"):
+        raise RuntimeError("output_paths must implement chunk_path() for parquet")
+    path = output_paths.chunk_path(table_name, int(idx), "parquet")
+    write_parquet_fn(table, path)
+    return path
+
+
+# ============================================================================
+# common/worker/pool.py (inlined)
+# ============================================================================
+from dataclasses import dataclass
+from multiprocessing import Pool
+from typing import Any, Callable, Iterable, Iterator, Optional, Sequence, Tuple
+
+
+@dataclass(frozen=True)
+class PoolRunSpec:
+    processes: int
+    chunksize: int = 1
+    maxtasksperchild: Optional[int] = None
+    label: str = ""
+
+
+def iter_imap_unordered(
+    *,
+    tasks: Sequence[Any],
+    task_fn: Callable[[Any], Any],
+    spec: PoolRunSpec,
+    initializer: Optional[Callable[..., Any]] = None,
+    initargs: Tuple[Any, ...] = (),
+) -> Iterator[Any]:
+    """
+    Generic multiprocessing runner.
+
+    - 'tasks' must be pickleable (dict/tuple/list of primitives is ideal)
+    - 'task_fn' and 'initializer' must be top-level functions (importable) for Windows spawn
+    - yields results from Pool.imap_unordered(task_fn, tasks)
+
+    This is mechanics only: no assumptions about the task payload or return type.
+    """
+    if spec.processes <= 0:
+        raise ValueError("spec.processes must be >= 1")
+
+    with Pool(
+        processes=spec.processes,
+        initializer=initializer,
+        initargs=initargs,
+        maxtasksperchild=spec.maxtasksperchild,
+    ) as pool:
+        # NOTE: Pool.imap_unordered chunksize is an int >= 1
+        for result in pool.imap_unordered(task_fn, tasks, chunksize=max(1, int(spec.chunksize))):
+            yield result
+
+
+# ============================================================================
+# common/worker/chunk_io.py (inlined)
+# ============================================================================
+import os
+from dataclasses import dataclass
+from typing import Callable, Optional, Sequence
+
+import pyarrow as pa
+
+
+# -------------------------
+# Lazy imports
+# -------------------------
+def _pa_compute():
+    import pyarrow.compute as pc  # type: ignore
+    return pc
+
+
+def _pa_csv():
+    import pyarrow.csv as pacsv  # type: ignore
+    return pacsv
+
+
+def _pa_parquet():
+    import pyarrow.parquet as pq  # type: ignore
+    return pq
+
+
+# -------------------------
+# Config + hooks
+# -------------------------
+@dataclass(frozen=True)
+class ChunkIOConfig:
+    compression: str = "snappy"
+    row_group_size: int = 1_000_000
+    write_statistics: bool = True
+
+
+# Hook types (policy injected by fact modules)
+EnsureColsFn = Callable[[pa.Table], pa.Table]
+CsvPostprocessFn = Callable[[pa.Table], pa.Table]
+
+
+# -------------------------
+# Generic helpers
+# -------------------------
+def add_year_month_from_date(
+    table: pa.Table,
+    *,
+    date_cols: Sequence[str] = ("OrderDate", "DeliveryDate"),
+    year_col: str = "Year",
+    month_col: str = "Month",
+    year_type: pa.DataType = pa.int16(),
+    month_type: pa.DataType = pa.int16(),
+) -> pa.Table:
+    """
+    Generic helper: derive Year/Month from the first available date column.
+    Useful for delta partition columns.
+    """
+    date_col = None
+    for c in date_cols:
+        if c in table.schema.names:
+            date_col = c
+            break
+    if not date_col:
+        return table
+
+    pc = _pa_compute()
+    year = pc.cast(pc.year(table[date_col]), year_type)
+    month = pc.cast(pc.month(table[date_col]), month_type)
+
+    if year_col not in table.schema.names:
+        table = table.append_column(year_col, year)
+    if month_col not in table.schema.names:
+        table = table.append_column(month_col, month)
+    return table
+
+
+def normalize_to_schema(
+    table: pa.Table,
+    expected: pa.Schema,
+    *,
+    table_name: Optional[str] = None,
+    ensure_cols: Optional[Sequence[str]] = None,
+    ensure_cols_fn: Optional[EnsureColsFn] = None,
+) -> pa.Table:
+    """
+    Strict normalization:
+      - optionally ensure/derive columns (e.g., Year/Month) if expected schema wants them
+      - require exact column-name match (set equality)
+      - reorder + cast columns exactly to expected
+
+    Policy is external:
+      - which columns to ensure
+      - how to derive them (ensure_cols_fn)
+    """
+    expected = expected.remove_metadata()
+
+    # Optional auto-add / derive of partition columns
+    if ensure_cols and ensure_cols_fn:
+        wants = all(c in expected.names for c in ensure_cols)
+        missing_any = any(c not in table.schema.names for c in ensure_cols)
+        if wants and missing_any:
+            table = ensure_cols_fn(table)
+
+    got_names = set(table.schema.names)
+    exp_names = set(expected.names)
+    if got_names != exp_names:
+        missing = sorted(exp_names - got_names)
+        extra = sorted(got_names - exp_names)
+        raise RuntimeError(
+            "Schema mismatch in writer.\n"
+            f"Table: {table_name or 'unknown'}\n"
+            f"Missing: {missing}\n"
+            f"Extra: {extra}\n\n"
+            f"Expected:\n{expected}\n\nGot:\n{table.schema}"
+        )
+
+    # Reorder + cast columns exactly
+    pc = _pa_compute()
+    arrays = []
+    for field in expected:
+        col = table[field.name]
+        if col.type != field.type:
+            try:
+                col = pc.cast(col, field.type, safe=False)
+            except Exception as ex:
+                raise RuntimeError(
+                    f"[{table_name or 'unknown'}] Failed cast '{field.name}': {col.type} -> {field.type}: {ex}"
+                ) from ex
+        arrays.append(col)
+
+    return pa.Table.from_arrays(arrays, schema=expected)
+
+
+def write_parquet_table(
+    table: pa.Table,
+    path: str,
+    *,
+    expected_schema: pa.Schema,
+    cfg: ChunkIOConfig,
+    use_dictionary: Optional[Sequence[str]] = None,
+    table_name: Optional[str] = None,
+    ensure_cols: Optional[Sequence[str]] = None,
+    ensure_cols_fn: Optional[EnsureColsFn] = None,
+) -> None:
+    pq = _pa_parquet()
+
+    table = normalize_to_schema(
+        table,
+        expected_schema,
+        table_name=table_name,
+        ensure_cols=ensure_cols,
+        ensure_cols_fn=ensure_cols_fn,
+    )
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    writer = pq.ParquetWriter(
+        path,
+        table.schema,
+        compression=cfg.compression,
+        use_dictionary=list(use_dictionary) if use_dictionary else False,
+        write_statistics=bool(cfg.write_statistics),
+    )
+    try:
+        writer.write_table(table, row_group_size=int(max(1, cfg.row_group_size)))
+    finally:
+        writer.close()
+
+
+def write_csv_table(
+    table: pa.Table,
+    path: str,
+    *,
+    expected_schema: pa.Schema,
+    table_name: Optional[str] = None,
+    ensure_cols: Optional[Sequence[str]] = None,
+    ensure_cols_fn: Optional[EnsureColsFn] = None,
+    postprocess: Optional[CsvPostprocessFn] = None,
+) -> None:
+    pacsv = _pa_csv()
+
+    table = normalize_to_schema(
+        table,
+        expected_schema,
+        table_name=table_name,
+        ensure_cols=ensure_cols,
+        ensure_cols_fn=ensure_cols_fn,
+    )
+
+    if postprocess is not None:
+        table = postprocess(table)
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    pacsv.write_csv(
+        table,
+        path,
+        write_options=pacsv.WriteOptions(include_header=True, quoting_style="none"),
+    )
+
+
+# ============================================================================
+# common/worker/return_builder.py (inlined)
+# ============================================================================
+from dataclasses import dataclass
+from typing import Sequence
+
+import numpy as np
+import pyarrow as pa
+
+
+@dataclass(frozen=True)
+class ReturnsConfig:
+    enabled: bool = False
+    return_rate: float = 0.0  # probability per SalesOrderDetail line
+    max_lag_days: int = 60    # return date = delivery date + lag_days
+    reason_keys: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8)
+    reason_probs: Sequence[float] = (0.20, 0.12, 0.14, 0.10, 0.14, 0.08, 0.07, 0.15)
+
+
+def _as_np_i64(x) -> np.ndarray:
+    arr = np.asarray(x)
+    return arr if arr.dtype == np.int64 else arr.astype(np.int64, copy=False)
+
+
+def _as_np_f64(x) -> np.ndarray:
+    arr = np.asarray(x)
+    return arr if arr.dtype == np.float64 else arr.astype(np.float64, copy=False)
+
+
+def _col_np(table: pa.Table, name: str) -> np.ndarray:
+    if name not in table.column_names:
+        raise RuntimeError(f"Returns builder: missing required column {name!r}")
+    return table[name].combine_chunks().to_numpy(zero_copy_only=False)
+
+
+def build_sales_returns_from_detail(
+    detail: pa.Table,
+    *,
+    chunk_seed: int,
+    cfg: ReturnsConfig,
+) -> pa.Table:
+    """
+    Build a SalesReturn-like fact table from SalesOrderDetail lines.
+
+    Deterministic per chunk (seeded by chunk_seed). Returns are sampled per line.
+
+    Required input columns (from raw detail table):
+      SalesOrderNumber, SalesOrderLineNumber, CustomerKey, ProductKey, StoreKey,
+      PromotionKey, CurrencyKey, DeliveryDate, Quantity, UnitPrice, DiscountAmount,
+      NetPrice, UnitCost
+    """
+    if not cfg.enabled or cfg.return_rate <= 0:
+        return pa.table({})[:0]
+
+    n = int(detail.num_rows)
+    if n <= 0:
+        return pa.table({})[:0]
+
+    rng = np.random.default_rng(int(chunk_seed) ^ 0xA5A5_F00D)
+
+    mask = rng.random(n) < float(cfg.return_rate)
+    if not bool(mask.any()):
+        return pa.table({})[:0]
+
+    so = _as_np_i64(_col_np(detail, "SalesOrderNumber"))[mask]
+    line = _as_np_i64(_col_np(detail, "SalesOrderLineNumber"))[mask]
+    cust = _as_np_i64(_col_np(detail, "CustomerKey"))[mask]
+    prod = _as_np_i64(_col_np(detail, "ProductKey"))[mask]
+    store = _as_np_i64(_col_np(detail, "StoreKey"))[mask]
+    promo = _as_np_i64(_col_np(detail, "PromotionKey"))[mask]
+    curr = _as_np_i64(_col_np(detail, "CurrencyKey"))[mask]
+
+    delivery = _col_np(detail, "DeliveryDate")[mask].astype("datetime64[D]", copy=False)
+
+    qty = _as_np_i64(_col_np(detail, "Quantity"))[mask]
+    if np.any(qty <= 0):
+        keep = qty > 0
+        so, line, cust, prod, store, promo, curr = (
+            so[keep], line[keep], cust[keep], prod[keep], store[keep], promo[keep], curr[keep]
+        )
+        delivery, qty = delivery[keep], qty[keep]
+        if qty.size == 0:
+            return pa.table({})[:0]
+
+    unit_price = _as_np_f64(_col_np(detail, "UnitPrice"))[mask][: qty.size]
+    disc_amt = _as_np_f64(_col_np(detail, "DiscountAmount"))[mask][: qty.size]
+    net_price = _as_np_f64(_col_np(detail, "NetPrice"))[mask][: qty.size]
+    unit_cost = _as_np_f64(_col_np(detail, "UnitCost"))[mask][: qty.size]
+
+    # ReturnQuantity: integer in [1, qty]
+    u = rng.random(qty.size)
+    ret_qty = (np.floor(u * qty).astype(np.int64) + 1).clip(1, qty)
+
+    frac = ret_qty.astype(np.float64) / qty.astype(np.float64)
+
+    max_lag = max(1, int(cfg.max_lag_days))
+    lag = rng.integers(1, max_lag + 1, size=qty.size, dtype=np.int32).astype("timedelta64[D]")
+    ret_date = (delivery + lag).astype("datetime64[D]", copy=False)
+
+    reason_keys = _as_np_i64(list(cfg.reason_keys))
+    probs = _as_np_f64(list(cfg.reason_probs))
+
+    if reason_keys.size == 0:
+        reason_keys = np.array([1], dtype=np.int64)
+        probs = np.array([1.0], dtype=np.float64)
+
+    if probs.size != reason_keys.size:
+        raise RuntimeError("ReturnsConfig reason_probs must match reason_keys length")
+
+    s = float(probs.sum())
+    probs = (probs / s) if s > 0 else np.full_like(probs, 1.0 / probs.size, dtype=np.float64)
+
+    reason = rng.choice(reason_keys, size=qty.size, p=probs).astype(np.int64)
+
+    return pa.table(
+        {
+            "SalesOrderNumber": so,
+            "SalesOrderLineNumber": line,
+            "CustomerKey": cust,
+            "ProductKey": prod,
+            "StoreKey": store,
+            "PromotionKey": promo,
+            "CurrencyKey": curr,
+            "ReturnDate": ret_date,
+            "ReturnReasonKey": reason,
+            "ReturnQuantity": ret_qty,
+            "ReturnUnitPrice": unit_price,
+            "ReturnDiscountAmount": disc_amt * frac,
+            "ReturnNetPrice": net_price * frac,
+            "ReturnUnitCost": unit_cost,
+        }
+    )
+
+
+# ============================================================================
+# sales_worker (sales-specific logic; previously inlined sections)
+# ============================================================================
 # ===============================================================
 # schemas.py (inlined)
 # ===============================================================
@@ -86,189 +682,9 @@ def schema_dict_cols(schema: pa.Schema, exclude: Optional[Set[str]] = None) -> L
 
 
 # ===============================================================
-# returns_builder.py (inlined)
+# returns_builder.py (inlined from common/worker/return_builder.py)
 # ===============================================================
-@dataclass(frozen=True)
-class ReturnsConfig:
-    enabled: bool = True
-    return_rate: float = 0.08
-    max_lag_days: int = 60
-    reason_keys: Sequence[int] = (1,)
-    reason_probs: Sequence[float] = (1.0,)
-
-
-def _returns_require_cols(t: pa.Table, cols: Sequence[str], *, ctx: str) -> None:
-    missing = [c for c in cols if c not in t.schema.names]
-    if missing:
-        raise RuntimeError(f"{ctx} missing columns: {missing}. Available: {t.schema.names}")
-
-
-def _returns_normalize_probs(keys: Sequence[int], probs: Sequence[float]) -> tuple[np.ndarray, np.ndarray]:
-    k = np.asarray(list(keys), dtype=np.int64)
-    if k.size == 0:
-        k = np.asarray([1], dtype=np.int64)
-
-    p = np.asarray(list(probs), dtype=np.float64)
-    if p.size != k.size or p.size == 0:
-        p = np.ones(k.size, dtype=np.float64)
-
-    s = float(p.sum())
-    if s <= 0:
-        p = np.ones(k.size, dtype=np.float64)
-        s = float(p.sum())
-    p = p / s
-    return k, p
-
-
-def _returns_to_py_dates(col: pa.ChunkedArray | pa.Array) -> list:
-    if isinstance(col, pa.ChunkedArray):
-        return col.combine_chunks().to_pylist()
-    return col.to_pylist()
-
-
-def _returns_to_np_f64(arr: pa.ChunkedArray | pa.Array) -> np.ndarray:
-    if isinstance(arr, pa.ChunkedArray):
-        arr = arr.combine_chunks()
-    return np.asarray(arr.to_numpy(zero_copy_only=False), dtype=np.float64)
-
-
-def _returns_to_np_i64(arr: pa.ChunkedArray | pa.Array) -> np.ndarray:
-    if isinstance(arr, pa.ChunkedArray):
-        arr = arr.combine_chunks()
-    return np.asarray(arr.to_numpy(zero_copy_only=False), dtype=np.int64)
-
-
-def build_sales_returns_from_detail(
-    detail: pa.Table,
-    *,
-    chunk_seed: int,
-    cfg: ReturnsConfig,
-) -> Optional[pa.Table]:
-    """
-    Build SalesReturn from a line-grain source table.
-
-    Required input columns:
-      SalesOrderNumber, SalesOrderLineNumber,
-      CustomerKey, ProductKey, StoreKey, PromotionKey, CurrencyKey,
-      OrderDate, DeliveryDate,
-      Quantity, UnitPrice, DiscountAmount, NetPrice, UnitCost
-
-    Output includes:
-      SalesReturnKey
-      SalesOrderNumber, SalesOrderLineNumber
-      CustomerKey, ProductKey, StoreKey, PromotionKey, CurrencyKey
-      OrderDate, DeliveryDate, ReturnDate
-      ReturnReasonKey
-      ReturnQuantity
-      ReturnUnitPrice, ReturnDiscountAmount, ReturnNetPrice, ReturnUnitCost
-      ReturnAmount, ReturnCost
-    """
-    if not cfg.enabled or cfg.return_rate <= 0:
-        return None
-
-    n = int(detail.num_rows)
-    if n <= 0:
-        return None
-
-    _returns_require_cols(
-        detail,
-        [
-            "SalesOrderNumber",
-            "SalesOrderLineNumber",
-            "CustomerKey",
-            "ProductKey",
-            "StoreKey",
-            "PromotionKey",
-            "CurrencyKey",
-            "OrderDate",
-            "DeliveryDate",
-            "Quantity",
-            "UnitPrice",
-            "DiscountAmount",
-            "NetPrice",
-            "UnitCost",
-        ],
-        ctx="SalesReturn build requires",
-    )
-
-    rng = np.random.default_rng(int(chunk_seed))
-
-    # Decide which lines return
-    mask = rng.random(n) < float(cfg.return_rate)
-    idxs = np.nonzero(mask)[0]
-    k = int(idxs.size)
-    if k == 0:
-        return None
-
-    # Take returned lines
-    take_idx = pa.array(idxs.astype(np.int64), type=pa.int64())
-    d = detail.take(take_idx)
-
-    # Quantities (return 1..Quantity)
-    qty = _returns_to_np_i64(d["Quantity"])
-    qty = np.where(qty < 1, 1, qty).astype(np.int64)
-    return_qty = rng.integers(1, qty + 1, size=k, dtype=np.int64)
-
-    # Reasons
-    reason_keys, reason_probs = _returns_normalize_probs(cfg.reason_keys, cfg.reason_probs)
-    reason = rng.choice(reason_keys, size=k, replace=True, p=reason_probs).astype(np.int64)
-
-    # ReturnDate = DeliveryDate + lag
-    lag = rng.integers(0, int(cfg.max_lag_days) + 1, size=k, dtype=np.int64)
-    delivery_dates = _returns_to_py_dates(d["DeliveryDate"])
-    return_dates = []
-    for dd, lag_days in zip(delivery_dates, lag.tolist()):
-        base = dd.date() if hasattr(dd, "date") else dd
-        return_dates.append(base + timedelta(days=int(lag_days)))
-
-    # Per-unit economics
-    unit_price = _returns_to_np_f64(d["UnitPrice"])
-    unit_cost = _returns_to_np_f64(d["UnitCost"])
-    disc_total = _returns_to_np_f64(d["DiscountAmount"])
-    net_total = _returns_to_np_f64(d["NetPrice"])
-
-    qty_f = np.maximum(qty.astype(np.float64), 1.0)
-    per_unit_disc = disc_total / qty_f
-    per_unit_net = net_total / qty_f
-
-    rq_f = return_qty.astype(np.float64)
-
-    return_unit_price = unit_price
-    return_unit_cost = unit_cost
-    return_discount = per_unit_disc * rq_f
-    return_net = per_unit_net * rq_f
-
-    # Keep these consistent (ReturnAmount == ReturnNetPrice)
-    return_amount = return_net
-    return_cost = return_unit_cost * rq_f
-
-    # Deterministic SalesReturnKey per chunk
-    base = (np.int64(chunk_seed) & np.int64(0xFFFF_FFFF)) << np.int64(32)
-    return_key = base + (np.arange(1, k + 1, dtype=np.int64))
-
-    cols = {
-        "SalesReturnKey": pa.array(return_key, type=pa.int64()),
-        "SalesOrderNumber": d["SalesOrderNumber"],
-        "SalesOrderLineNumber": d["SalesOrderLineNumber"],
-        "CustomerKey": d["CustomerKey"],
-        "ProductKey": d["ProductKey"],
-        "StoreKey": d["StoreKey"],
-        "PromotionKey": d["PromotionKey"],
-        "CurrencyKey": d["CurrencyKey"],
-        "OrderDate": d["OrderDate"],
-        "DeliveryDate": d["DeliveryDate"],
-        "ReturnDate": pa.array(return_dates, type=pa.date32()),
-        "ReturnReasonKey": pa.array(reason, type=pa.int64()),
-        "ReturnQuantity": pa.array(return_qty, type=pa.int64()),
-        "ReturnUnitPrice": pa.array(return_unit_price, type=pa.float64()),
-        "ReturnDiscountAmount": pa.array(return_discount, type=pa.float64()),
-        "ReturnNetPrice": pa.array(return_net, type=pa.float64()),
-        "ReturnUnitCost": pa.array(return_unit_cost, type=pa.float64()),
-        "ReturnAmount": pa.array(return_amount, type=pa.float64()),
-        "ReturnCost": pa.array(return_cost, type=pa.float64()),
-    }
-
-    return pa.table(cols)
+# NOTE: see ReturnsConfig + build_sales_returns_from_detail above.
 
 
 # ===============================================================
@@ -994,7 +1410,6 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
             "StoreKey",
             "PromotionKey",
             "CurrencyKey",
-            "OrderDate",
             "DeliveryDate",
             "Quantity",
             "UnitPrice",
@@ -1020,11 +1435,14 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
 
     returns_seed = int(chunk_seed) ^ 0x5A5A_1234
 
-    return build_sales_returns_from_detail(
+    returns_table = build_sales_returns_from_detail(
         source_table,
         chunk_seed=int(returns_seed),
         cfg=cfg,
     )
+
+    # common builder returns an empty table when no rows are sampled
+    return returns_table if int(returns_table.num_rows) > 0 else None
 
 
 def _worker_task(args):
@@ -1112,3 +1530,51 @@ def _worker_task(args):
         results.append(out)
 
     return results[0] if single else results
+
+# ============================================================================
+# Public exports
+# ============================================================================
+__all__ = [
+    # Sales worker entrypoints
+    "init_sales_worker",
+    "_worker_task",
+
+    # Common worker utilities (now hosted here as source-of-truth)
+    "ChunkIOConfig",
+    "add_year_month_from_date",
+    "normalize_to_schema",
+    "write_parquet_table",
+    "write_csv_table",
+
+    "PoolRunSpec",
+    "iter_imap_unordered",
+
+    "normalize_tasks",
+    "derive_chunk_seed",
+    "write_table_by_format",
+
+    "ReturnsConfig",
+    "build_sales_returns_from_detail",
+
+    "build_buckets_from_key",
+    "int_or",
+    "float_or",
+    "str_or",
+    "as_int64",
+    "as_f64",
+    "dense_map",
+    "infer_T_from_date_pool",
+
+    # legacy/back-compat names used across older worker code
+    "_build_buckets_from_brand_key",
+    "_int_or",
+    "_float_or",
+    "_str_or",
+    "_as_int64",
+    "_as_f64",
+    "_dense_map",
+    "_infer_T_from_date_pool",
+
+    # sales-specific helper
+    "schema_dict_cols",
+]
