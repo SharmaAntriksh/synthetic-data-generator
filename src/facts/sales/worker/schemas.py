@@ -131,18 +131,10 @@ def build_worker_schemas(
         return_fields = [
             pa.field("SalesOrderNumber", pa.int64()),
             pa.field("SalesOrderLineNumber", pa.int64()),
-            pa.field("CustomerKey", pa.int64()),
-            pa.field("ProductKey", pa.int64()),
-            pa.field("StoreKey", pa.int64()),
-            pa.field("PromotionKey", pa.int64()),
-            pa.field("CurrencyKey", pa.int64()),
             pa.field("ReturnDate", pa.date32()),
             pa.field("ReturnReasonKey", pa.int64()),
             pa.field("ReturnQuantity", pa.int64()),
-            pa.field("ReturnUnitPrice", pa.float64()),
-            pa.field("ReturnDiscountAmount", pa.float64()),
             pa.field("ReturnNetPrice", pa.float64()),
-            pa.field("ReturnUnitCost", pa.float64()),
         ]
         return_schema = pa.schema(return_fields + delta_fields) if ff == "deltaparquet" else pa.schema(return_fields)
         schema_by_table[TABLE_SALES_RETURN] = return_schema
@@ -153,7 +145,7 @@ def build_worker_schemas(
         TABLE_SALES_ORDER_HEADER: ["OrderDate"],
     }
     if returns_enabled and TABLE_SALES_RETURN is not None:
-        date_cols_by_table[TABLE_SALES_RETURN] = ["ReturnDate", "DeliveryDate", "OrderDate"]
+        date_cols_by_table[TABLE_SALES_RETURN] = ["ReturnDate"]
 
     # Optional models.yaml override (same behavior as before)
     if models_cfg and isinstance(models_cfg, dict):

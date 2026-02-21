@@ -37,6 +37,7 @@ _SALES_SCHEMA: Schema = (
     ("CustomerKey",          "INT NOT NULL"),
     ("ProductKey",           "INT NOT NULL"),
     ("StoreKey",             "INT NOT NULL"),
+    ("SalesPersonEmployeeKey","INT NOT NULL"),  
     ("PromotionKey",         "INT NOT NULL"),
     ("CurrencyKey",          "INT NOT NULL"),
 
@@ -67,6 +68,7 @@ _SALES_ORDER_DETAIL_COLS: Tuple[str, ...] = (
     "SalesOrderLineNumber",
     "ProductKey",
     "StoreKey",
+    "SalesPersonEmployeeKey",
     "PromotionKey",
     "CurrencyKey",
     "DueDate",
@@ -277,6 +279,15 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
     "SalesOrderHeader": _SALES_ORDER_HEADER_SCHEMA,
     "SalesOrderDetail": _SALES_ORDER_DETAIL_SCHEMA,
 
+    # NEW: thin SalesReturn fact (order line grain)
+    "SalesReturn": (
+        ("SalesOrderNumber",     "BIGINT NOT NULL"),
+        ("SalesOrderLineNumber", "INT NOT NULL"),
+        ("ReturnDate",           "DATE NOT NULL"),
+        ("ReturnReasonKey",      "INT NOT NULL"),
+        ("ReturnQuantity",       "INT NOT NULL"),
+        ("ReturnNetPrice",       "DECIMAL(8, 2) NOT NULL"),
+    ),
     "ExchangeRates": (
         ("Date",         "DATE NOT NULL"),
         ("FromCurrency", "VARCHAR(10) NOT NULL"),
