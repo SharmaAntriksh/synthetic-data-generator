@@ -33,6 +33,7 @@ from src.dimensions.lookups import (
 from src.dimensions.suppliers import run_suppliers
 from src.dimensions.employees import run_employees
 from src.dimensions.employee_store_assignments import run_employee_store_assignments
+from src.dimensions.superpowers import run_superpowers
 
 from src.utils.logging_utils import done, skip, info
 from src.dimensions.return_reasons import run_return_reasons
@@ -50,6 +51,7 @@ DATE_DEPENDENT_DIMS = {
     "currency",
     "exchange_rates",
     "customer_segments",
+    "superpowers",
     "employees",
     "employee_store_assignments",
 }
@@ -141,7 +143,9 @@ def _customer_segments_enabled(cfg: Dict[str, Any]) -> bool:
     seg_cfg = cfg.get("customer_segments") if isinstance(cfg.get("customer_segments"), dict) else {}
     return bool(seg_cfg.get("enabled", False))
 
-
+def _superpowers_enabled(cfg: Dict[str, Any]) -> bool:
+    sp_cfg = cfg.get("superpowers") if isinstance(cfg.get("superpowers"), dict) else {}
+    return bool(sp_cfg.get("enabled", False))
 # =========================================================
 # Main Orchestrator
 # =========================================================
@@ -171,7 +175,7 @@ def generate_dimensions(
     force_regenerate = _expand_force_for_date_dependencies(force_regenerate)
     
     if "customers" in force_regenerate:
-        force_regenerate.add("customer_segments")
+        force_regenerate.update({"customer_segments", "superpowers"})
 
     # Stores -> Employees -> EmployeeStoreAssignments
     if "stores" in force_regenerate:
@@ -320,7 +324,20 @@ def generate_dimensions(
         regenerated["customer_segments"] = force_segs
     else:
         regenerated["customer_segments"] = False
+    # -----------------------------------------------------
+    # 2.6 Superpowers (depends on Customers; date-dependent)
+    # -----------------------------------------------------
+    force_sp = _should_force("superpowers", force_regenerate)
 
+    if _superpowers_enabled(cfg) or force_sp:
+        cfg_sp = _cfg_with_global_dates(cfg, "superpowers", global_dates)
+        run_superpowers(
+            _cfg_for_dimension(cfg_sp, "superpowers", force_sp),
+            parquet_dims_folder,
+        )
+        regenerated["superpowers"] = force_sp
+    else:
+        regenerated["superpowers"] = False
     # -----------------------------------------------------
     # 3. Stores (date-dependent)
     # -----------------------------------------------------

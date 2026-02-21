@@ -861,7 +861,7 @@ def generate_sales_fact(
     # Final assembly (TABLE-AWARE)
     # ------------------------------------------------------------
     if file_format == "deltaparquet":
-        from .sales_worker import write_delta_partitioned
+        from .sales_writer import write_delta_partitioned
 
         missing_parts = []
         wrote = 0
