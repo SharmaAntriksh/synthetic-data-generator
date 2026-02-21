@@ -40,7 +40,9 @@ _SALES_SCHEMA: Schema = (
     ("SalesPersonEmployeeKey","INT NOT NULL"),  
     ("PromotionKey",         "INT NOT NULL"),
     ("CurrencyKey",          "INT NOT NULL"),
+    ("SalesChannelKey",           "INT NOT NULL"),
 
+    ("TimeKey",              "INT NOT NULL"),
     ("OrderDate",            "DATE NOT NULL"),
     ("DueDate",              "DATE NOT NULL"),
     ("DeliveryDate",         "DATE NOT NULL"),
@@ -60,6 +62,8 @@ _SALES_ORDER_HEADER_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
     "CustomerKey",
     "OrderDate",
+    "TimeKey",
+    "SalesChannelKey",
     "IsOrderDelayed",
 )
 

@@ -108,21 +108,185 @@ def _run_lookup_dim(
 # =========================================================
 
 def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    required = ["SalesChannelKey", "SalesChannel", "ChannelGroup"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        return override
+    """
+    Sales channel lookup.
 
-    rows = [
-        (1, "Store", "Physical"),
-        (2, "Online", "Digital"),
-        (3, "Marketplace", "Digital"),
-        (4, "B2B", "Business"),
-        (5, "CallCenter", "Assisted"),
+    Backward-compatible override:
+      sales_channels:
+        rows:
+          - {SalesChannelKey: 1, SalesChannel: Store, ChannelGroup: Physical}
+          - ...
+
+    If override rows are provided, only the 3 base columns are required; all new columns are derived/fill-defaulted.
+    """
+
+    base_required = ["SalesChannelKey", "SalesChannel", "ChannelGroup"]
+
+    # Expanded schema (stable output columns order)
+    cols = base_required + [
+        "SalesChannelCode",
+        "SortOrder",
+        "IsDigital",
+        "IsPhysical",
+        "IsThirdParty",
+        "IsB2B",
+        "IsAssisted",
+        "IsOwnedChannel",
+        "TimeProfile",
+        "Is24x7",
+        "OpenMinute",
+        "CloseMinute",
     ]
-    df = pd.DataFrame(rows, columns=required)
-    df["SalesChannelKey"] = df["SalesChannelKey"].astype(np.int16)
-    return df
+
+    def _normalize_code(name: str) -> str:
+        s = str(name).strip().upper()
+        s = "".join(ch if ch.isalnum() else "_" for ch in s)
+        while "__" in s:
+            s = s.replace("__", "_")
+        return s.strip("_") or "UNKNOWN"
+
+    def _derive_flags(df: pd.DataFrame) -> pd.DataFrame:
+        # Ensure base types
+        df["SalesChannelKey"] = df["SalesChannelKey"].astype(np.int16)
+
+        # Defaults
+        if "SalesChannelCode" not in df.columns:
+            df["SalesChannelCode"] = df["SalesChannel"].map(_normalize_code)
+
+        if "SortOrder" not in df.columns:
+            df["SortOrder"] = df["SalesChannelKey"].astype(np.int16)
+
+        # Derive based on ChannelGroup + name heuristics
+        grp = df["ChannelGroup"].astype(str).str.strip().str.lower()
+        nm = df["SalesChannel"].astype(str).str.strip().str.lower()
+
+        if "IsDigital" not in df.columns:
+            df["IsDigital"] = (grp == "digital")
+        if "IsPhysical" not in df.columns:
+            df["IsPhysical"] = (grp == "physical")
+        if "IsB2B" not in df.columns:
+            df["IsB2B"] = (grp == "business") | nm.str.contains("b2b", na=False)
+        if "IsAssisted" not in df.columns:
+            df["IsAssisted"] = (grp == "assisted") | nm.str.contains("call|phone|agent", na=False)
+
+        if "IsThirdParty" not in df.columns:
+            df["IsThirdParty"] = nm.str.contains("market|reseller|partner", na=False)
+
+        if "IsOwnedChannel" not in df.columns:
+            df["IsOwnedChannel"] = ~df["IsThirdParty"].astype(bool)
+
+        if "TimeProfile" not in df.columns:
+            # canonical mapping by group
+            mp = {
+                "physical": "Retail",
+                "digital": "Digital",
+                "business": "Business",
+                "assisted": "Assisted",
+                "na": "NA",
+            }
+            df["TimeProfile"] = grp.map(mp).fillna("Digital")
+
+        if "Is24x7" not in df.columns:
+            # Digital defaults to 24x7; others not
+            df["Is24x7"] = df["IsDigital"].astype(bool)
+
+        # Open/Close minutes: -1 means N/A / 24x7 / unknown
+        if "OpenMinute" not in df.columns:
+            df["OpenMinute"] = np.int16(-1)
+        if "CloseMinute" not in df.columns:
+            df["CloseMinute"] = np.int16(-1)
+
+        # Hard-cast
+        df["SortOrder"] = df["SortOrder"].astype(np.int16)
+        for c in ["IsDigital", "IsPhysical", "IsThirdParty", "IsB2B", "IsAssisted", "IsOwnedChannel", "Is24x7"]:
+            df[c] = df[c].astype(bool)
+        df["OpenMinute"] = df["OpenMinute"].astype(np.int16)
+        df["CloseMinute"] = df["CloseMinute"].astype(np.int16)
+
+        return df
+
+    # ---- Override support (base_required only) ----
+    override_rows = dim_cfg.get("rows")
+    if isinstance(override_rows, list) and override_rows:
+        df = pd.DataFrame(override_rows)
+        missing = [c for c in base_required if c not in df.columns]
+        if missing:
+            raise ValueError(f"Override rows missing required columns: {missing}")
+
+        df = _derive_flags(df)
+
+        # Ensure all expected cols exist (fill if override omitted)
+        for c in cols:
+            if c not in df.columns:
+                df[c] = None
+
+        return df[cols].copy()
+
+    include_unknown = bool(dim_cfg.get("include_unknown", True))
+    include_extended = bool(dim_cfg.get("include_extended", True))
+
+    rows = []
+    if include_unknown:
+        rows.append(
+            dict(
+                SalesChannelKey=0,
+                SalesChannel="Unknown",
+                ChannelGroup="NA",
+                SalesChannelCode="UNKNOWN",
+                SortOrder=0,
+                IsDigital=False,
+                IsPhysical=False,
+                IsThirdParty=False,
+                IsB2B=False,
+                IsAssisted=False,
+                IsOwnedChannel=False,
+                TimeProfile="NA",
+                Is24x7=False,
+                OpenMinute=-1,
+                CloseMinute=-1,
+            )
+        )
+
+    # Core (keep your existing 1..5 stable) :contentReference[oaicite:2]{index=2}
+    rows += [
+        dict(SalesChannelKey=1, SalesChannel="Store",       ChannelGroup="Physical", SalesChannelCode="STORE",
+             SortOrder=1, IsDigital=False, IsPhysical=True,  IsThirdParty=False, IsB2B=False, IsAssisted=False,
+             IsOwnedChannel=True, TimeProfile="Retail",   Is24x7=False, OpenMinute=9*60,  CloseMinute=21*60),
+        dict(SalesChannelKey=2, SalesChannel="Online",      ChannelGroup="Digital",  SalesChannelCode="ONLINE",
+             SortOrder=2, IsDigital=True,  IsPhysical=False, IsThirdParty=False, IsB2B=False, IsAssisted=False,
+             IsOwnedChannel=True, TimeProfile="Digital",  Is24x7=True,  OpenMinute=-1,   CloseMinute=-1),
+        dict(SalesChannelKey=3, SalesChannel="Marketplace", ChannelGroup="Digital",  SalesChannelCode="MARKETPLACE",
+             SortOrder=3, IsDigital=True,  IsPhysical=False, IsThirdParty=True,  IsB2B=False, IsAssisted=False,
+             IsOwnedChannel=False, TimeProfile="Digital", Is24x7=True,  OpenMinute=-1,   CloseMinute=-1),
+        dict(SalesChannelKey=4, SalesChannel="B2B",         ChannelGroup="Business", SalesChannelCode="B2B",
+             SortOrder=4, IsDigital=False, IsPhysical=False, IsThirdParty=False, IsB2B=True,  IsAssisted=False,
+             IsOwnedChannel=True, TimeProfile="Business", Is24x7=False, OpenMinute=8*60,  CloseMinute=18*60),
+        dict(SalesChannelKey=5, SalesChannel="CallCenter",  ChannelGroup="Assisted", SalesChannelCode="CALLCENTER",
+             SortOrder=5, IsDigital=False, IsPhysical=False, IsThirdParty=False, IsB2B=False, IsAssisted=True,
+             IsOwnedChannel=True, TimeProfile="Assisted", Is24x7=False, OpenMinute=8*60,  CloseMinute=20*60),
+    ]
+
+    if include_extended:
+        rows += [
+            dict(SalesChannelKey=6, SalesChannel="Web",          ChannelGroup="Digital",  SalesChannelCode="WEB",
+                 SortOrder=6, IsDigital=True,  IsPhysical=False, IsThirdParty=False, IsB2B=False, IsAssisted=False,
+                 IsOwnedChannel=True, TimeProfile="Digital",  Is24x7=True,  OpenMinute=-1, CloseMinute=-1),
+            dict(SalesChannelKey=7, SalesChannel="MobileApp",    ChannelGroup="Digital",  SalesChannelCode="APP",
+                 SortOrder=7, IsDigital=True,  IsPhysical=False, IsThirdParty=False, IsB2B=False, IsAssisted=False,
+                 IsOwnedChannel=True, TimeProfile="Digital",  Is24x7=True,  OpenMinute=-1, CloseMinute=-1),
+            dict(SalesChannelKey=8, SalesChannel="SocialCommerce", ChannelGroup="Digital", SalesChannelCode="SOCIAL",
+                 SortOrder=8, IsDigital=True,  IsPhysical=False, IsThirdParty=True,  IsB2B=False, IsAssisted=False,
+                 IsOwnedChannel=False, TimeProfile="Digital", Is24x7=True,  OpenMinute=-1, CloseMinute=-1),
+            dict(SalesChannelKey=9, SalesChannel="PartnerReseller", ChannelGroup="Business", SalesChannelCode="PARTNER",
+                 SortOrder=9, IsDigital=False, IsPhysical=False, IsThirdParty=True,  IsB2B=True,  IsAssisted=False,
+                 IsOwnedChannel=False, TimeProfile="Business", Is24x7=False, OpenMinute=8*60, CloseMinute=18*60),
+            dict(SalesChannelKey=10, SalesChannel="Kiosk",       ChannelGroup="Physical", SalesChannelCode="KIOSK",
+                 SortOrder=10, IsDigital=False, IsPhysical=True, IsThirdParty=False, IsB2B=False, IsAssisted=False,
+                 IsOwnedChannel=True, TimeProfile="Retail",   Is24x7=False, OpenMinute=10*60, CloseMinute=20*60),
+        ]
+
+    df = pd.DataFrame(rows, columns=cols)
+    return _derive_flags(df)[cols].copy()
 
 
 def _df_payment_methods(dim_cfg: Dict[str, Any]) -> pd.DataFrame:

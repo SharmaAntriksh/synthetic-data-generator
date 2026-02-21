@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, Callable
 
+import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
+
+try:
+    import pyarrow.parquet as pq
+except Exception:  # pragma: no cover
+    pq = None  # type: ignore
 
 from ..sales_logic import State, build_chunk_table
 from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
 
 try:
     from ..output_paths import TABLE_SALES_RETURN  # type: ignore
-except Exception:
+except Exception:  # pragma: no cover
     TABLE_SALES_RETURN = None  # type: ignore
 
 from .init import int_or
@@ -163,14 +171,274 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
     return returns_table if int(returns_table.num_rows) > 0 else None
 
 
+# -----------------------------
+# SalesChannelKey + TimeKey
+# -----------------------------
+
+def _dims_parquet_folder() -> Optional[Path]:
+    for attr in ("parquet_folder_p", "parquet_folder", "dimensions_parquet_folder", "dims_parquet_folder"):
+        v = getattr(State, attr, None)
+        if v:
+            return Path(v)
+    return None
+
+
+def _sales_channels_spec() -> tuple[np.ndarray, np.ndarray]:
+    """
+    Returns (keys:int16[], p:float64[]) for sampling SalesChannelKey.
+    Tries sales_channels.parquet; falls back to [1..5].
+    Cached on State.
+    """
+    cached = getattr(State, "_sales_channel_spec", None)
+    if cached is not None:
+        return cached
+
+    keys: Optional[np.ndarray] = None
+
+    folder = _dims_parquet_folder()
+    if pq is not None and folder is not None:
+        pth = folder / "sales_channels.parquet"
+        if pth.exists():
+            tab = pq.read_table(pth, columns=["SalesChannelKey"])
+            arr = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int16)
+            arr = arr[arr != np.int16(0)]  # don’t sample Unknown
+            if arr.size:
+                keys = arr
+
+    if keys is None or keys.size == 0:
+        # fallback matches your current lookup dim
+        keys = np.array([1, 2, 3, 4, 5], dtype=np.int16)
+
+    p = np.full(keys.shape[0], 1.0 / keys.shape[0], dtype=np.float64)
+    State._sales_channel_spec = (keys, p)
+    return State._sales_channel_spec
+
+
+def _ensure_sales_channel_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
+    """Add SalesChannelKey to a line-level table; constant within SalesOrderNumber if present."""
+    if "SalesChannelKey" in table.column_names:
+        return table
+
+    keys, p = _sales_channels_spec()
+    rng = np.random.default_rng(seed)
+
+    if "SalesOrderNumber" in table.column_names:
+        order_col = table["SalesOrderNumber"]
+        if isinstance(order_col, pa.ChunkedArray):
+            order_col = order_col.combine_chunks()
+
+        enc = pc.dictionary_encode(order_col)  # DictionaryArray
+        n_orders = len(enc.dictionary)
+
+        per_order = rng.choice(keys, size=n_orders, p=p).astype(np.int16, copy=False)
+        per_order_arr = pa.array(per_order, type=pa.int16())
+        col = pc.take(per_order_arr, enc.indices)
+    else:
+        per_row = rng.choice(keys, size=table.num_rows, p=p).astype(np.int16, copy=False)
+        col = pa.array(per_row, type=pa.int16())
+
+    return table.append_column("SalesChannelKey", col)
+
+
+# Hour weights per channel group profile (Retail/Digital/Business/Assisted)
+_RETAIL_HOUR_W = np.array(
+    [0.002, 0.001, 0.001, 0.001, 0.002, 0.004,
+     0.010, 0.020, 0.050, 0.080, 0.100, 0.110,
+     0.110, 0.105, 0.095, 0.090, 0.085, 0.090,
+     0.100, 0.095, 0.070, 0.040, 0.015, 0.006],
+    dtype=np.float64,
+)
+_DIGITAL_HOUR_W = np.array(
+    [0.030, 0.025, 0.020, 0.020, 0.022, 0.026,
+     0.030, 0.040, 0.050, 0.055, 0.060, 0.065,
+     0.070, 0.070, 0.065, 0.060, 0.060, 0.065,
+     0.080, 0.090, 0.090, 0.070, 0.050, 0.040],
+    dtype=np.float64,
+)
+_BUSINESS_HOUR_W = np.array(
+    [0.001, 0.001, 0.001, 0.001, 0.001, 0.002,
+     0.006, 0.020, 0.060, 0.090, 0.110, 0.120,
+     0.120, 0.110, 0.100, 0.090, 0.070, 0.040,
+     0.020, 0.010, 0.006, 0.003, 0.002, 0.001],
+    dtype=np.float64,
+)
+_ASSISTED_HOUR_W = np.array(
+    [0.002, 0.001, 0.001, 0.001, 0.001, 0.003,
+     0.010, 0.030, 0.060, 0.090, 0.110, 0.120,
+     0.120, 0.110, 0.100, 0.090, 0.070, 0.040,
+     0.020, 0.010, 0.006, 0.004, 0.003, 0.002],
+    dtype=np.float64,
+)
+
+
+def _normalize_prob(w: np.ndarray) -> np.ndarray:
+    w = np.asarray(w, dtype=np.float64)
+    w = np.where(np.isfinite(w) & (w > 0), w, 0.0)
+    s = float(w.sum())
+    if s <= 1e-12:
+        return np.full(w.shape[0], 1.0 / w.shape[0], dtype=np.float64)
+    return w / s
+
+
+def _sample_hour_weighted_minute(rng: np.random.Generator, size: int, hour_w: np.ndarray) -> np.ndarray:
+    size = int(size)
+    if size <= 0:
+        return np.empty(0, dtype=np.int16)
+    p = _normalize_prob(hour_w)
+    hours = rng.choice(24, size=size, p=p).astype(np.int32)
+    mins = rng.integers(0, 60, size=size, dtype=np.int32)
+    return (hours * 60 + mins).astype(np.int16, copy=False)
+
+
+def _profile_lut_from_dim() -> Optional[np.ndarray]:
+    """
+    profile_lut[key] -> profile_code:
+      0 Retail, 1 Digital, 2 Business, 3 Assisted
+    Cached on State.
+    """
+    cached = getattr(State, "_sales_channel_profile_lut", None)
+    if cached is not None:
+        return cached
+
+    folder = _dims_parquet_folder()
+    if pq is None or folder is None:
+        return None
+
+    pth = folder / "sales_channels.parquet"
+    if not pth.exists():
+        return None
+
+    tab = pq.read_table(pth, columns=["SalesChannelKey", "ChannelGroup"])
+    keys = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int64)
+    groups = np.asarray(tab["ChannelGroup"].to_numpy(), dtype=object)
+
+    if keys.size == 0:
+        return None
+
+    maxk = int(keys.max())
+    lut = np.full(maxk + 1, 1, dtype=np.int8)  # default Digital
+
+    def prof_for_group(g: str) -> int:
+        gg = (g or "").strip().lower()
+        if gg == "physical":
+            return 0
+        if gg == "digital":
+            return 1
+        if gg == "business":
+            return 2
+        if gg == "assisted":
+            return 3
+        return 1
+
+    for k, g in zip(keys, groups):
+        if k < 0:
+            continue
+        lut[int(k)] = np.int8(prof_for_group(str(g)))
+
+    State._sales_channel_profile_lut = lut
+    return lut
+
+
+def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
+    """Add TimeKey to a line-level table; constant within SalesOrderNumber if present."""
+    if "TimeKey" in table.column_names:
+        return table
+
+    rng = np.random.default_rng(seed)
+
+    profile_lut = _profile_lut_from_dim()
+    has_channel = "SalesChannelKey" in table.column_names and profile_lut is not None
+
+    if "SalesOrderNumber" in table.column_names:
+        order_col = table["SalesOrderNumber"]
+        if isinstance(order_col, pa.ChunkedArray):
+            order_col = order_col.combine_chunks()
+        enc = pc.dictionary_encode(order_col)
+        n_orders = len(enc.dictionary)
+
+        if has_channel:
+            sc_col = table["SalesChannelKey"]
+            if isinstance(sc_col, pa.ChunkedArray):
+                sc_col = sc_col.combine_chunks()
+            sc_np = np.asarray(sc_col.to_numpy(zero_copy_only=False), dtype=np.int16)
+
+            inv = np.asarray(enc.indices.to_numpy(zero_copy_only=False), dtype=np.int64)
+            first = np.full(n_orders, -1, dtype=np.int64)
+            for i in range(inv.shape[0]):
+                j = inv[i]
+                if first[j] == -1:
+                    first[j] = i
+            per_order_sc = sc_np[first]
+            # map channel -> profile
+            prof = profile_lut[np.clip(per_order_sc.astype(np.int64), 0, profile_lut.shape[0] - 1)]
+
+            per_order_time = np.empty(n_orders, dtype=np.int16)
+            m0 = prof == 0
+            if m0.any():
+                per_order_time[m0] = _sample_hour_weighted_minute(rng, int(m0.sum()), _RETAIL_HOUR_W)
+            m1 = prof == 1
+            if m1.any():
+                per_order_time[m1] = _sample_hour_weighted_minute(rng, int(m1.sum()), _DIGITAL_HOUR_W)
+            m2 = prof == 2
+            if m2.any():
+                per_order_time[m2] = _sample_hour_weighted_minute(rng, int(m2.sum()), _BUSINESS_HOUR_W)
+            m3 = prof == 3
+            if m3.any():
+                per_order_time[m3] = _sample_hour_weighted_minute(rng, int(m3.sum()), _ASSISTED_HOUR_W)
+
+            per_order_arr = pa.array(per_order_time, type=pa.int16())
+            time_col = pc.take(per_order_arr, enc.indices)
+        else:
+            per_order = rng.integers(0, 1440, size=n_orders, dtype=np.int32).astype(np.int16, copy=False)
+            per_order_arr = pa.array(per_order, type=pa.int16())
+            time_col = pc.take(per_order_arr, enc.indices)
+    else:
+        if has_channel:
+            sc_col = table["SalesChannelKey"]
+            if isinstance(sc_col, pa.ChunkedArray):
+                sc_col = sc_col.combine_chunks()
+            sc_np = np.asarray(sc_col.to_numpy(zero_copy_only=False), dtype=np.int16)
+            prof = profile_lut[np.clip(sc_np.astype(np.int64), 0, profile_lut.shape[0] - 1)]
+            out = np.empty(table.num_rows, dtype=np.int16)
+
+            m0 = prof == 0
+            if m0.any():
+                out[m0] = _sample_hour_weighted_minute(rng, int(m0.sum()), _RETAIL_HOUR_W)
+            m1 = prof == 1
+            if m1.any():
+                out[m1] = _sample_hour_weighted_minute(rng, int(m1.sum()), _DIGITAL_HOUR_W)
+            m2 = prof == 2
+            if m2.any():
+                out[m2] = _sample_hour_weighted_minute(rng, int(m2.sum()), _BUSINESS_HOUR_W)
+            m3 = prof == 3
+            if m3.any():
+                out[m3] = _sample_hour_weighted_minute(rng, int(m3.sum()), _ASSISTED_HOUR_W)
+
+            time_col = pa.array(out, type=pa.int16())
+        else:
+            per_row = rng.integers(0, 1440, size=table.num_rows, dtype=np.int32).astype(np.int16, copy=False)
+            time_col = pa.array(per_row, type=pa.int16())
+
+    return table.append_column("TimeKey", time_col)
+
+
 def build_header_from_detail(detail: pa.Table) -> pa.Table:
     gb = detail.group_by(["SalesOrderNumber"])
-    out = gb.aggregate([("CustomerKey", "min"), ("OrderDate", "min"), ("IsOrderDelayed", "max")])
+
+    aggs = [("CustomerKey", "min"), ("OrderDate", "min"), ("IsOrderDelayed", "max")]
+    if "SalesChannelKey" in detail.column_names:
+        aggs.append(("SalesChannelKey", "min"))
+    if "TimeKey" in detail.column_names:
+        aggs.append(("TimeKey", "min"))
+
+    out = gb.aggregate(aggs)
 
     rename_map = {
         "CustomerKey_min": "CustomerKey",
         "OrderDate_min": "OrderDate",
         "IsOrderDelayed_max": "IsOrderDelayed",
+        "SalesChannelKey_min": "SalesChannelKey",
+        "TimeKey_min": "TimeKey",
     }
 
     cols, names = [], []
@@ -198,6 +466,11 @@ def _worker_task(args):
             chunk_idx=idx_i,
             chunk_capacity_orders=int(getattr(State, "chunk_size", batch_i)),
         )
+
+        # Ensure FKs exist even if Sales schema hasn’t been updated yet
+        detail_table = _ensure_sales_channel_key_on_lines(detail_table, seed=int(chunk_seed) ^ 0xA11CE)
+        detail_table = _ensure_time_key_on_lines(detail_table, seed=int(chunk_seed) ^ 0xC0FFEE)
+
         if not isinstance(detail_table, pa.Table):
             raise TypeError("chunk_builder must return pyarrow.Table")
 
@@ -207,17 +480,25 @@ def _worker_task(args):
             _task_require_cols(detail_table, ["SalesOrderNumber", "SalesOrderLineNumber"], ctx=f"sales_output={mode} requires")
             _task_require_cols(detail_table, ["SalesOrderNumber", "CustomerKey", "OrderDate", "IsOrderDelayed"], ctx="Header build requires")
 
+            expected_header = State.schema_by_table[TABLE_SALES_ORDER_HEADER]
+            if "SalesChannelKey" in expected_header.names:
+                _task_require_cols(detail_table, ["SalesChannelKey"], ctx="Header build requires SalesChannelKey")
+            if "TimeKey" in expected_header.names:
+                _task_require_cols(detail_table, ["TimeKey"], ctx="Header build requires TimeKey")
+
         if mode == "sales":
             sales_table = detail_table
             if bool(getattr(State, "skip_order_cols_requested", False)):
                 sales_table = _drop_order_cols_for_sales(sales_table)
 
             returns_table = _maybe_build_returns(detail_table, chunk_seed=int(chunk_seed))
+            sales_out = _project_for_table(TABLE_SALES, sales_table)
+
             if returns_table is None:
-                results.append(_write_table(TABLE_SALES, idx_i, sales_table))
+                results.append(_write_table(TABLE_SALES, idx_i, sales_out))
                 continue
 
-            out: Dict[str, Any] = {TABLE_SALES: _write_table(TABLE_SALES, idx_i, sales_table)}
+            out: Dict[str, Any] = {TABLE_SALES: _write_table(TABLE_SALES, idx_i, sales_out)}
             returns_out = _project_for_table(TABLE_SALES_RETURN, returns_table)  # type: ignore[arg-type]
             out[TABLE_SALES_RETURN] = _write_table(TABLE_SALES_RETURN, idx_i, returns_out)  # type: ignore[arg-type]
             results.append(out)
@@ -233,12 +514,18 @@ def _worker_task(args):
 
         header_table = build_header_from_detail(detail_table)
 
-        out[TABLE_SALES_ORDER_DETAIL] = _write_table(TABLE_SALES_ORDER_DETAIL, idx_i, _project_for_table(TABLE_SALES_ORDER_DETAIL, detail_table))
-        out[TABLE_SALES_ORDER_HEADER] = _write_table(TABLE_SALES_ORDER_HEADER, idx_i, _project_for_table(TABLE_SALES_ORDER_HEADER, header_table))
+        out[TABLE_SALES_ORDER_DETAIL] = _write_table(
+            TABLE_SALES_ORDER_DETAIL, idx_i, _project_for_table(TABLE_SALES_ORDER_DETAIL, detail_table)
+        )
+        out[TABLE_SALES_ORDER_HEADER] = _write_table(
+            TABLE_SALES_ORDER_HEADER, idx_i, _project_for_table(TABLE_SALES_ORDER_HEADER, header_table)
+        )
 
         returns_table = _maybe_build_returns(detail_table, chunk_seed=int(chunk_seed))
         if returns_table is not None:
-            out[TABLE_SALES_RETURN] = _write_table(TABLE_SALES_RETURN, idx_i, _project_for_table(TABLE_SALES_RETURN, returns_table))  # type: ignore[arg-type]
+            out[TABLE_SALES_RETURN] = _write_table(
+                TABLE_SALES_RETURN, idx_i, _project_for_table(TABLE_SALES_RETURN, returns_table)  # type: ignore[arg-type]
+            )
 
         results.append(out)
 
