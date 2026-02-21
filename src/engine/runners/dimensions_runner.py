@@ -19,7 +19,7 @@ from src.dimensions.exchange_rates import run_exchange_rates
 from src.dimensions.suppliers import run_suppliers
 from src.dimensions.employees import run_employees
 from src.dimensions.employee_store_assignments import run_employee_store_assignments
-
+from src.dimensions.time import run_time_table
 from src.dimensions.products.products import generate_product_dimension as run_products
 
 from src.dimensions.lookups import (
@@ -33,7 +33,6 @@ from src.dimensions.lookups import (
     run_delivery_performances,
     run_loyalty_tiers,
     run_customer_acquisition_channels,
-    run_time_buckets,
 )
 
 from src.dimensions.return_reasons import run_return_reasons
@@ -173,7 +172,6 @@ DIM_SPECS: List[DimensionSpec] = [
     DimensionSpec(name="delivery_performances", cfg_key="delivery_performances", run_fn=run_delivery_performances, outputs_all=("delivery_performances.parquet",)),
     DimensionSpec(name="loyalty_tiers", cfg_key="loyalty_tiers", run_fn=run_loyalty_tiers, outputs_all=("loyalty_tiers.parquet",)),
     DimensionSpec(name="customer_acquisition_channels", cfg_key="customer_acquisition_channels", run_fn=run_customer_acquisition_channels, outputs_all=("customer_acquisition_channels.parquet",)),
-    DimensionSpec(name="time_buckets", cfg_key="time_buckets", run_fn=run_time_buckets, outputs_all=("time_buckets.parquet",)),
 
     # 2) Customers
     DimensionSpec(
@@ -311,6 +309,14 @@ DIM_SPECS: List[DimensionSpec] = [
         date_dependent=True,
         inject_global_dates=True,
         outputs_all=("exchange_rates.parquet",),
+    ),
+
+    #9) Time
+    DimensionSpec(
+        name="time",
+        cfg_key="time",
+        run_fn=run_time_table,
+        outputs_all=("time.parquet",),
     ),
 ]
 

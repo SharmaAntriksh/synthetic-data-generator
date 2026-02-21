@@ -122,7 +122,24 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("CustomerSegment",     "VARCHAR(30) NOT NULL"),
         ("CustomerChurnBias",   "FLOAT NOT NULL"),  # lognormal > 0
     ),
+    "CustomerSegment": (
+        ("SegmentKey",    "INT NOT NULL"),
+        ("SegmentName",   "VARCHAR(200) NOT NULL"),
+        ("SegmentType",   "VARCHAR(50) NOT NULL"),
+        ("Definition",    "VARCHAR(400) NOT NULL"),
+        ("IsActiveFlag",  "TINYINT NOT NULL"),
+    ),
 
+    "CustomerSegmentMembership": (
+        ("CustomerKey",   "INT NOT NULL"),
+        ("SegmentKey",    "INT NOT NULL"),
+        ("ValidFromDate", "DATETIME2(7) NOT NULL"),
+        ("ValidToDate",   "DATETIME2(7) NOT NULL"),
+
+        # Present by default; optional in config
+        ("IsPrimaryFlag", "TINYINT NOT NULL"),
+        ("Score",         "REAL NOT NULL"),
+    ),
     "Geography": (
         ("GeographyKey", "INT NOT NULL"),
         ("City",         "VARCHAR(100) NOT NULL"),
@@ -264,12 +281,113 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("CurrentDayOffset",         "INT NOT NULL"),
     ),
 
+    "Time": (
+        ("TimeKey",        "INT NOT NULL"),        # 0..1439 minute-of-day
+        ("Hour",           "INT NOT NULL"),        # 0..23
+        ("Minute",         "INT NOT NULL"),        # 0..59
+        ("TimeText",       "VARCHAR(5) NOT NULL"), # "HH:MM"
+
+        # PQ/SQL-friendly time representations (include if present in parquet)
+        ("TimeSeconds",    "INT NOT NULL"),        # seconds since midnight
+        ("TimeOfDay",      "TIME(0) NOT NULL"),    # "HH:MM:SS"
+
+        # Rollup bins
+        ("TimeKey15",      "INT NOT NULL"),
+        ("Bin15Label",     "VARCHAR(11) NOT NULL"),  # "HH:MM-HH:MM"
+        ("TimeKey30",      "INT NOT NULL"),
+        ("Bin30Label",     "VARCHAR(11) NOT NULL"),
+        ("TimeKey60",      "INT NOT NULL"),
+        ("Bin60Label",     "VARCHAR(11) NOT NULL"),
+        ("TimeKey360",     "INT NOT NULL"),
+        ("Bin6hLabel",     "VARCHAR(11) NOT NULL"),  # "HH:MM-HH:MM" (inclusive end style OK too)
+        ("TimeKey720",     "INT NOT NULL"),
+        ("Bin12hLabel",    "VARCHAR(11) NOT NULL"),
+
+        # Coarse “4 bucket” grouping
+        ("TimeBucketKey4", "INT NOT NULL"),
+        ("TimeBucket4",    "VARCHAR(10) NOT NULL"),  # Night/Morning/Afternoon/Evening
+    ),
+    
     "Currency": (
         ("CurrencyKey",     "INT NOT NULL"),
         ("ToCurrency",      "VARCHAR(10) NOT NULL"),
         ("CurrencyName",    "VARCHAR(50) NOT NULL"),
     ),
 
+    "Employees": (
+        # Base hierarchy / placement (dict insertion order)
+        ("EmployeeKey",        "BIGINT NOT NULL"),
+        ("ParentEmployeeKey",  "BIGINT NULL"),
+        ("EmployeeName",       "VARCHAR(200) NOT NULL"),
+        ("Title",              "VARCHAR(100) NOT NULL"),
+        ("OrgLevel",           "INT NOT NULL"),
+        ("OrgUnitType",        "VARCHAR(20) NOT NULL"),
+        ("RegionId",           "INT NULL"),
+        ("DistrictId",         "INT NULL"),
+        ("StoreKey",           "BIGINT NULL"),
+        ("GeographyKey",       "BIGINT NULL"),
+
+        # Dates / status (appended next)
+        ("HireDate",           "DATE NOT NULL"),
+        ("TerminationDate",    "DATE NULL"),
+        ("IsActive",           "BIT NOT NULL"),
+
+        # Deterministic names (appended next)
+        ("FirstName",          "VARCHAR(100) NOT NULL"),
+        ("LastName",           "VARCHAR(100) NOT NULL"),
+        ("MiddleName",         "VARCHAR(10) NULL"),
+
+        # HR enrichment (appended in this order)
+        ("Gender",                 "CHAR(1) NOT NULL"),
+        ("BirthDate",              "DATE NOT NULL"),
+        ("MaritalStatus",          "CHAR(1) NOT NULL"),
+        ("EmailAddress",           "VARCHAR(200) NOT NULL"),
+        ("Phone",                  "VARCHAR(20) NOT NULL"),
+        ("EmergencyContactName",   "VARCHAR(200) NOT NULL"),
+        ("EmergencyContactPhone",  "VARCHAR(20) NOT NULL"),
+        ("SalariedFlag",           "BIT NOT NULL"),
+        ("PayFrequency",           "INT NOT NULL"),
+        ("BaseRate",               "DECIMAL(10, 2) NOT NULL"),
+        ("VacationHours",          "INT NOT NULL"),
+        ("CurrentFlag",            "BIT NOT NULL"),
+        ("StartDate",              "DATE NOT NULL"),
+        ("EndDate",                "DATE NULL"),
+        ("Status",                 "VARCHAR(20) NOT NULL"),
+        ("SalesPersonFlag",        "BIT NOT NULL"),
+        ("IsSalesPerson",          "BIT NOT NULL"),
+        ("DepartmentName",         "VARCHAR(50) NOT NULL"),
+    ),
+
+    "EmployeeStoreAssignments": (
+        ("EmployeeKey",        "BIGINT NOT NULL"),
+        ("StoreKey",           "BIGINT NOT NULL"),
+        ("StartDate",          "DATE NOT NULL"),
+        ("EndDate",            "DATE NULL"),
+        ("FTE",                "DECIMAL(4, 2) NOT NULL"),
+        ("RoleAtStore",        "VARCHAR(100) NOT NULL"),
+        ("IsPrimary",          "BIT NOT NULL"),
+        ("AssignmentSequence", "INT NOT NULL"),
+    ),
+
+    "Superpowers": (
+        ("SuperpowerKey",   "INT NOT NULL"),
+        ("SuperpowerName",  "VARCHAR(200) NOT NULL"),
+        ("PowerType",       "VARCHAR(50) NOT NULL"),
+        ("Universe",        "VARCHAR(50) NOT NULL"),
+        ("Rarity",          "VARCHAR(20) NOT NULL"),
+        ("IconicExamples",  "VARCHAR(400) NOT NULL"),
+        ("IsActiveFlag",    "TINYINT NOT NULL"),
+    ),
+
+    "CustomerSuperpowers": (
+        ("CustomerKey",     "INT NOT NULL"),
+        ("SuperpowerKey",   "INT NOT NULL"),
+        ("ValidFromDate",   "DATETIME2(7) NOT NULL"),
+        ("ValidToDate",     "DATETIME2(7) NOT NULL"),
+        ("PowerLevel",      "TINYINT NOT NULL"),
+        ("IsPrimaryFlag",   "BIT NOT NULL"),
+        ("AcquiredDate",    "DATETIME2(7) NOT NULL"),
+    ),
     # -----------------------
     # FACTS
     # -----------------------

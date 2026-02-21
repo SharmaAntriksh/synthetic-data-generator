@@ -257,27 +257,6 @@ def _df_shipping_carriers(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     return df
 
 
-def _df_discount_types(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    required = ["DiscountTypeKey", "DiscountType", "DiscountGroup"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["DiscountTypeKey"] = override["DiscountTypeKey"].astype(np.int16)
-        return override
-
-    rows = [
-        (1, "None", "None"),
-        (2, "Promo", "Promotion"),
-        (3, "Coupon", "Promotion"),
-        (4, "Markdown", "Pricing"),
-        (5, "Bundle", "Pricing"),
-        (6, "Employee", "Internal"),
-        (7, "PriceMatch", "Pricing"),
-    ]
-    df = pd.DataFrame(rows, columns=required)
-    df["DiscountTypeKey"] = df["DiscountTypeKey"].astype(np.int16)
-    return df
-
-
 def _df_loyalty_tiers(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     required = ["LoyaltyTierKey", "LoyaltyTier", "TierRank", "PointsMultiplier"]
     override = _maybe_override_rows(dim_cfg, required_cols=required)
@@ -546,7 +525,6 @@ def run_lookups(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     run_shipping_carriers(cfg, parquet_folder)
     run_delivery_service_levels(cfg, parquet_folder)
     run_delivery_performances(cfg, parquet_folder)
-    # run_discount_types(cfg, parquet_folder)
     run_loyalty_tiers(cfg, parquet_folder)
     run_customer_acquisition_channels(cfg, parquet_folder)
     run_time_buckets(cfg, parquet_folder)
