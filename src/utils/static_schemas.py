@@ -114,6 +114,8 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("CustomerType",       "VARCHAR(20) NOT NULL"),
         ("CompanyName",        "VARCHAR(200)"),
         ("GeographyKey",       "INT NOT NULL"),
+        ("LoyaltyTierKey",       "INT NOT NULL"),
+        ("CustomerAcquisitionChannelKey",       "INT NOT NULL"),
         ("IsActiveInSales",    "INT NOT NULL"),
 
         ("CustomerStartMonth", "INT NOT NULL"),     # 0..T-1 month index
@@ -126,6 +128,13 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("CustomerSegment",     "VARCHAR(30) NOT NULL"),
         ("CustomerChurnBias",   "FLOAT NOT NULL"),  # lognormal > 0
     ),
+
+    "CustomerAcquisitionChannels": (
+        ("CustomerAcquisitionChannelKey", "SMALLINT"),
+        ("AcquisitionChannel", "VARCHAR(50)"),
+        ("ChannelGroup", "VARCHAR(50)"),       
+    ),
+
     "CustomerSegment": (
         ("SegmentKey",    "INT NOT NULL"),
         ("SegmentName",   "VARCHAR(200) NOT NULL"),
@@ -168,6 +177,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("UnitPrice",               "DECIMAL(10,2) NOT NULL"),
         ("BaseProductKey",          "INT NOT NULL"),
         ("VariantIndex",            "INT NOT NULL"),
+        ("SupplierKey",            "INT NOT NULL"),
         ("IsActiveInSales",         "INT NOT NULL"),
     ),
 
@@ -198,19 +208,19 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
 
     "Stores": (
         ("StoreKey",         "INT NOT NULL"),
-        ("StoreName",        "VARCHAR(100) NOT NULL"),
-        ("StoreManager",     "VARCHAR(20)"),
         ("StoreType",        "VARCHAR(20) NOT NULL"),
         ("Status",           "VARCHAR(10)"),
         ("GeographyKey",     "INT NOT NULL"),
+        ("StoreManager",     "VARCHAR(20)"),
+        ("StoreName",        "VARCHAR(100) NOT NULL"),
         ("OpenDate",         "DATETIME"),
         ("CloseDate",        "DATETIME"),
         ("OpenFlag",         "BIT"),
         ("SquarFootage",     "INT"),
         ("EmployeeCount",    "INT"),
         ("Phone",            "VARCHAR(20)"),
-        ("StoreDescription", "VARCHAR(MAX)"),
         ("CloseReason",      "VARCHAR(MAX)"),
+        ("StoreDescription", "VARCHAR(MAX)"),
     ),
 
     "Dates": (
@@ -290,11 +300,6 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("Hour",           "INT NOT NULL"),        # 0..23
         ("Minute",         "INT NOT NULL"),        # 0..59
         ("TimeText",       "VARCHAR(5) NOT NULL"), # "HH:MM"
-
-        # PQ/SQL-friendly time representations (include if present in parquet)
-        ("TimeSeconds",    "INT NOT NULL"),        # seconds since midnight
-        ("TimeOfDay",      "TIME(0) NOT NULL"),    # "HH:MM:SS"
-
         # Rollup bins
         ("TimeKey15",      "INT NOT NULL"),
         ("Bin15Label",     "VARCHAR(11) NOT NULL"),  # "HH:MM-HH:MM"
@@ -310,6 +315,10 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         # Coarse “4 bucket” grouping
         ("TimeBucketKey4", "INT NOT NULL"),
         ("TimeBucket4",    "VARCHAR(10) NOT NULL"),  # Night/Morning/Afternoon/Evening
+        
+        # PQ/SQL-friendly time representations (include if present in parquet)
+        ("TimeSeconds",    "INT NOT NULL"),        # seconds since midnight
+        ("TimeOfDay",      "TIME(0) NOT NULL"),    # "HH:MM:SS"
     ),
     
     "Currency": (
@@ -328,8 +337,6 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("OrgUnitType",        "VARCHAR(20) NOT NULL"),
         ("RegionId",           "INT NULL"),
         ("DistrictId",         "INT NULL"),
-        ("StoreKey",           "BIGINT NULL"),
-        ("GeographyKey",       "BIGINT NULL"),
 
         # Dates / status (appended next)
         ("HireDate",           "DATE NOT NULL"),
@@ -367,12 +374,18 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("StoreKey",           "BIGINT NOT NULL"),
         ("StartDate",          "DATE NOT NULL"),
         ("EndDate",            "DATE NULL"),
-        ("FTE",                "DECIMAL(4, 2) NOT NULL"),
+        ("FTE",                "DECIMAL(18, 2) NOT NULL"),
         ("RoleAtStore",        "VARCHAR(100) NOT NULL"),
-        ("IsPrimary",          "BIT NOT NULL"),
+        ("IsPrimary",          "BIT NULL"),
         ("AssignmentSequence", "INT NOT NULL"),
     ),
-
+    "Suppliers": (
+        ("SupplierKey",       "INT NOT NULL"),
+        ("SupplierName",      "VARCHAR(200) NOT NULL"),
+        ("SupplierType",      "VARCHAR(50) NOT NULL"),
+        ("Country",           "VARCHAR(100) NULL"),
+        ("ReliabilityScore",  "DECIMAL(4, 3) NULL"),
+    ),
     "Superpowers": (
         ("SuperpowerKey",   "INT NOT NULL"),
         ("SuperpowerName",  "VARCHAR(200) NOT NULL"),
@@ -380,7 +393,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("Universe",        "VARCHAR(50) NOT NULL"),
         ("Rarity",          "VARCHAR(20) NOT NULL"),
         ("IconicExamples",  "VARCHAR(400) NOT NULL"),
-        ("IsActiveFlag",    "TINYINT NOT NULL"),
+        ("IsActiveFlag",    "BIT NOT NULL"),
     ),
 
     "CustomerSuperpowers": (
@@ -391,6 +404,38 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("PowerLevel",      "TINYINT NOT NULL"),
         ("IsPrimaryFlag",   "BIT NOT NULL"),
         ("AcquiredDate",    "DATETIME2(7) NOT NULL"),
+    ),
+    "LoyaltyTiers": (
+        ("LoyaltyTierKey", "INT NOT NULL"),
+        ("LoyaltyTier",    "VARCHAR(50) NOT NULL"),
+        ("TierRank",    "TINYINT NOT NULL"),
+        ("PointsMultiplier",    "DECIMAL(4, 2) NOT NULL"),
+    ),
+
+    "SalesChannels": (
+        ("SalesChannelKey", "INT NOT NULL"),
+        ("SalesChannel", "VARCHAR(50)"),
+        ("ChannelGroup", "VARCHAR(50)"),
+
+        ("SalesChannelCode", "VARCHAR(30)"),
+        ("SortOrder", "SMALLINT"),
+
+        ("IsDigital", "BIT"),
+        ("IsPhysical", "BIT"),
+        ("IsThirdParty", "BIT"),
+        ("IsB2B", "BIT"),
+        ("IsAssisted", "BIT"),
+        ("IsOwnedChannel", "BIT"),
+
+        ("TimeProfile", "VARCHAR(20)"),
+        ("Is24x7", "BIT"),
+        ("OpenMinute", "SMALLINT"),
+        ("CloseMinute", "SMALLINT"),
+    ),
+    "ReturnReason": (
+        ("ReturnReasonKey",      "BIGINT NOT NULL"),
+        ("ReturnReason",         "VARCHAR(200) NOT NULL"),
+        ("ReturnReasonCategory", "VARCHAR(100) NOT NULL"),
     ),
     # -----------------------
     # FACTS
@@ -416,6 +461,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("ToCurrency",   "VARCHAR(10) NOT NULL"),
         ("Rate",         "DECIMAL(10, 6) NOT NULL"),
     ),
+
 }
 
 

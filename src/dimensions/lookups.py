@@ -289,138 +289,6 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     return _derive_flags(df)[cols].copy()
 
 
-def _df_payment_methods(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    required = ["PaymentMethodKey", "PaymentMethod", "PaymentType", "IsInstant"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["PaymentMethodKey"] = override["PaymentMethodKey"].astype(np.int16)
-        override["IsInstant"] = override["IsInstant"].astype(bool)
-        return override
-
-    rows = [
-        (1, "Cash", "Cash", True),
-        (2, "Card", "Card", True),
-        (3, "UPI/Wallet", "Digital", True),
-        (4, "NetBanking", "Digital", False),
-        (5, "CashOnDelivery", "Cash", False),
-        (6, "GiftCard", "StoredValue", True),
-        (7, "BNPL", "Credit", False),
-    ]
-    df = pd.DataFrame(rows, columns=required)
-    df["PaymentMethodKey"] = df["PaymentMethodKey"].astype(np.int16)
-    df["IsInstant"] = df["IsInstant"].astype(bool)
-    return df
-
-
-def _df_fulfillment_methods(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    required = ["FulfillmentMethodKey", "FulfillmentMethod", "RequiresShipping"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["FulfillmentMethodKey"] = override["FulfillmentMethodKey"].astype(np.int16)
-        override["RequiresShipping"] = override["RequiresShipping"].astype(bool)
-        return override
-
-    rows = [
-        (1, "Takeaway", False),
-        (2, "StorePickup", False),
-        (3, "ShipFromStore", True),
-        (4, "ShipFromWarehouse", True),
-        (5, "DigitalDelivery", False),
-    ]
-    df = pd.DataFrame(rows, columns=required)
-    df["FulfillmentMethodKey"] = df["FulfillmentMethodKey"].astype(np.int16)
-    df["RequiresShipping"] = df["RequiresShipping"].astype(bool)
-    return df
-
-
-def _df_order_statuses(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    required = ["OrderStatusKey", "OrderStatus", "IsFinal", "StatusGroup"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["OrderStatusKey"] = override["OrderStatusKey"].astype(np.int16)
-        override["IsFinal"] = override["IsFinal"].astype(bool)
-        return override
-
-    rows = [
-        (1, "Placed", False, "Placed"),
-        (2, "Packed", False, "Fulfillment"),
-        (3, "Shipped", False, "Fulfillment"),
-        (4, "Delivered", True, "Terminal"),
-        (5, "Cancelled", True, "Terminal"),
-        (6, "Returned", True, "Terminal"),
-        (7, "Refunded", True, "Terminal"),
-    ]
-    df = pd.DataFrame(rows, columns=required)
-    df["OrderStatusKey"] = df["OrderStatusKey"].astype(np.int16)
-    df["IsFinal"] = df["IsFinal"].astype(bool)
-    return df
-
-
-def _df_payment_statuses(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    required = ["PaymentStatusKey", "PaymentStatus", "IsFinal"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["PaymentStatusKey"] = override["PaymentStatusKey"].astype(np.int16)
-        override["IsFinal"] = override["IsFinal"].astype(bool)
-        return override
-
-    rows = [
-        (1, "Authorized", False),
-        (2, "Captured", True),
-        (3, "Failed", True),
-        (4, "RefundInitiated", False),
-        (5, "Refunded", True),
-        (6, "Chargeback", True),
-    ]
-    df = pd.DataFrame(rows, columns=required)
-    df["PaymentStatusKey"] = df["PaymentStatusKey"].astype(np.int16)
-    df["IsFinal"] = df["IsFinal"].astype(bool)
-    return df
-
-
-def _df_delivery_service_levels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    required = ["DeliveryServiceLevelKey", "DeliveryServiceLevel", "SortOrder"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["DeliveryServiceLevelKey"] = override["DeliveryServiceLevelKey"].astype(np.int16)
-        override["SortOrder"] = override["SortOrder"].astype(np.int16)
-        return override
-
-    rows = [
-        (1, "Standard", 1),
-        (2, "Express", 2),
-        (3, "SameDay", 3),
-        (4, "Scheduled", 4),
-    ]
-    df = pd.DataFrame(rows, columns=required)
-    df["DeliveryServiceLevelKey"] = df["DeliveryServiceLevelKey"].astype(np.int16)
-    df["SortOrder"] = df["SortOrder"].astype(np.int16)
-    return df
-
-
-def _df_shipping_carriers(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    required = ["ShippingCarrierKey", "CarrierName", "CarrierType"]
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["ShippingCarrierKey"] = override["ShippingCarrierKey"].astype(np.int16)
-        return override
-
-    # Generic carriers (intentionally not country-specific).
-    rows = [
-        (1, "FastShip", "Courier"),
-        (2, "BlueDart", "Courier"),
-        (3, "DHL", "Courier"),
-        (4, "FedEx", "Courier"),
-        (5, "UPS", "Courier"),
-        (6, "PostalService", "Postal"),
-        (7, "LocalCourier", "Courier"),
-        (8, "SameDayRunners", "SameDay"),
-    ]
-    df = pd.DataFrame(rows, columns=required)
-    df["ShippingCarrierKey"] = df["ShippingCarrierKey"].astype(np.int16)
-    return df
-
-
 def _df_loyalty_tiers(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     required = ["LoyaltyTierKey", "LoyaltyTier", "TierRank", "PointsMultiplier"]
     override = _maybe_override_rows(dim_cfg, required_cols=required)
@@ -463,103 +331,6 @@ def _df_customer_acquisition_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     df["CustomerAcquisitionChannelKey"] = df["CustomerAcquisitionChannelKey"].astype(np.int16)
     return df
 
-
-def _df_time_buckets(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    """
-    Modes:
-      time_buckets:
-        mode: "4" | "24" | "30m" | "48"
-        # Optional alternative:
-        # bucket_minutes: 30
-
-    Notes:
-      - Always returns required columns:
-          TimeBucketKey, TimeBucket, StartHour, EndHour
-      - For minute-based buckets (e.g. 30m), also returns:
-          StartMinute, EndMinute
-    """
-    required = ["TimeBucketKey", "TimeBucket", "StartHour", "EndHour"]
-
-    # Allow override rows for any mode
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["TimeBucketKey"] = override["TimeBucketKey"].astype(np.int16)
-        override["StartHour"] = override["StartHour"].astype(np.int16)
-        override["EndHour"] = override["EndHour"].astype(np.int16)
-        return override
-
-    mode_raw = str(dim_cfg.get("mode", "4")).strip().lower()
-
-    # Optional explicit minutes config
-    bucket_minutes = dim_cfg.get("bucket_minutes", None)
-    if bucket_minutes is not None:
-        bucket_minutes = int(bucket_minutes)
-
-    # Interpret mode
-    if bucket_minutes is None:
-        if mode_raw in {"4", "quarter"}:
-            bucket_minutes = None
-        elif mode_raw in {"24", "hour", "hourly"}:
-            bucket_minutes = 60
-        elif mode_raw in {"30m", "30"}:
-            bucket_minutes = 30
-        elif mode_raw == "48":
-            bucket_minutes = 30  # 1440 / 48
-        elif mode_raw.endswith("m") and mode_raw[:-1].isdigit():
-            bucket_minutes = int(mode_raw[:-1])
-        else:
-            # default: legacy 4 buckets
-            bucket_minutes = None
-
-    # ---- 24 hourly buckets ----
-    if bucket_minutes == 60:
-        rows = []
-        for h in range(24):
-            rows.append((h, f"{h:02d}:00-{(h + 1) % 24:02d}:00", h, (h + 1) % 24))
-        df = pd.DataFrame(rows, columns=required)
-        df["TimeBucketKey"] = df["TimeBucketKey"].astype(np.int16)
-        df["StartHour"] = df["StartHour"].astype(np.int16)
-        df["EndHour"] = df["EndHour"].astype(np.int16)
-        return df
-
-    # ---- minute-based buckets (e.g. 30m => 48 buckets/day) ----
-    if isinstance(bucket_minutes, int) and bucket_minutes not in (None, 60):
-        if bucket_minutes <= 0 or bucket_minutes > 60:
-            raise ValueError("time_buckets.bucket_minutes must be between 1 and 60")
-        if (60 % bucket_minutes) != 0:
-            raise ValueError("time_buckets.bucket_minutes must evenly divide 60 (e.g., 5, 10, 15, 20, 30, 60)")
-
-        rows = []
-        key = 0
-        for start_min in range(0, 24 * 60, bucket_minutes):
-            end_min = start_min + bucket_minutes
-            sh, sm = divmod(start_min, 60)
-            eh, em = divmod(end_min % (24 * 60), 60)
-
-            label = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}"
-            rows.append((key, label, sh, eh, sm, em))
-            key += 1
-
-        df = pd.DataFrame(rows, columns=required + ["StartMinute", "EndMinute"])
-        df["TimeBucketKey"] = df["TimeBucketKey"].astype(np.int16)
-        df["StartHour"] = df["StartHour"].astype(np.int16)
-        df["EndHour"] = df["EndHour"].astype(np.int16)
-        df["StartMinute"] = df["StartMinute"].astype(np.int16)
-        df["EndMinute"] = df["EndMinute"].astype(np.int16)
-        return df
-
-    # ---- Default: 4 buckets ----
-    rows = [
-        (1, "Morning", 6, 12),
-        (2, "Afternoon", 12, 17),
-        (3, "Evening", 17, 22),
-        (4, "Night", 22, 6),
-    ]
-    df = pd.DataFrame(rows, columns=required)
-    df["TimeBucketKey"] = df["TimeBucketKey"].astype(np.int16)
-    df["StartHour"] = df["StartHour"].astype(np.int16)
-    df["EndHour"] = df["EndHour"].astype(np.int16)
-    return df
 
 
 def _df_delivery_performances(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
@@ -616,40 +387,6 @@ def run_sales_channels(cfg: Dict[str, Any], parquet_folder: Path) -> None:
                     build_df=_df_sales_channels, parquet_folder=parquet_folder)
 
 
-def run_payment_methods(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(cfg=cfg, dim_key="payment_methods", out_name="payment_methods.parquet",
-                    build_df=_df_payment_methods, parquet_folder=parquet_folder)
-
-
-def run_fulfillment_methods(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(cfg=cfg, dim_key="fulfillment_methods", out_name="fulfillment_methods.parquet",
-                    build_df=_df_fulfillment_methods, parquet_folder=parquet_folder)
-
-
-def run_order_statuses(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(cfg=cfg, dim_key="order_statuses", out_name="order_statuses.parquet",
-                    build_df=_df_order_statuses, parquet_folder=parquet_folder)
-
-
-def run_payment_statuses(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(cfg=cfg, dim_key="payment_statuses", out_name="payment_statuses.parquet",
-                    build_df=_df_payment_statuses, parquet_folder=parquet_folder)
-
-
-def run_shipping_carriers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(cfg=cfg, dim_key="shipping_carriers", out_name="shipping_carriers.parquet",
-                    build_df=_df_shipping_carriers, parquet_folder=parquet_folder)
-
-
-def run_delivery_service_levels(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(cfg=cfg, dim_key="delivery_service_levels", out_name="delivery_service_levels.parquet",
-                    build_df=_df_delivery_service_levels, parquet_folder=parquet_folder)
-
-
-# def run_discount_types(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-#     _run_lookup_dim(cfg=cfg, dim_key="discount_types", out_name="discount_types.parquet",
-#                     build_df=_df_discount_types, parquet_folder=parquet_folder)
-
 
 def run_loyalty_tiers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     _run_lookup_dim(cfg=cfg, dim_key="loyalty_tiers", out_name="loyalty_tiers.parquet",
@@ -661,20 +398,6 @@ def run_customer_acquisition_channels(cfg: Dict[str, Any], parquet_folder: Path)
                     build_df=_df_customer_acquisition_channels, parquet_folder=parquet_folder)
 
 
-def run_time_buckets(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(cfg=cfg, dim_key="time_buckets", out_name="time_buckets.parquet",
-                    build_df=_df_time_buckets, parquet_folder=parquet_folder)
-
-
-def run_delivery_performances(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    _run_lookup_dim(
-        cfg=cfg,
-        dim_key="delivery_performances",
-        out_name="delivery_performances.parquet",
-        build_df=_df_delivery_performances,
-        parquet_folder=parquet_folder,
-    )
-
 
 def run_lookups(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     """
@@ -682,14 +405,6 @@ def run_lookups(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     You can also call individual run_* functions if you want per-dim force control.
     """
     run_sales_channels(cfg, parquet_folder)
-    run_payment_methods(cfg, parquet_folder)
-    run_fulfillment_methods(cfg, parquet_folder)
-    run_order_statuses(cfg, parquet_folder)
-    run_payment_statuses(cfg, parquet_folder)
-    run_shipping_carriers(cfg, parquet_folder)
-    run_delivery_service_levels(cfg, parquet_folder)
-    run_delivery_performances(cfg, parquet_folder)
     run_loyalty_tiers(cfg, parquet_folder)
     run_customer_acquisition_channels(cfg, parquet_folder)
-    run_time_buckets(cfg, parquet_folder)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from src.utils.logging_utils import info, skip
 
@@ -24,13 +24,6 @@ from src.dimensions.products.products import generate_product_dimension as run_p
 
 from src.dimensions.lookups import (
     run_sales_channels,
-    run_payment_methods,
-    run_fulfillment_methods,
-    run_order_statuses,
-    run_payment_statuses,
-    run_shipping_carriers,
-    run_delivery_service_levels,
-    run_delivery_performances,
     run_loyalty_tiers,
     run_customer_acquisition_channels,
 )
@@ -148,10 +141,6 @@ class DimensionSpec:
     regenerated_from_return_key: Optional[str] = None  # e.g. "_regenerated" for products
 
 
-def _always(_: Dict[str, Any]) -> bool:
-    return True
-
-
 DIM_SPECS: List[DimensionSpec] = [
     # 1) Geography (upstream for stores)
     DimensionSpec(
@@ -161,15 +150,8 @@ DIM_SPECS: List[DimensionSpec] = [
         outputs_all=("geography.parquet",),
     ),
 
-    # 1.5) Lookups
+    # 1.5) Lookups (trimmed)
     DimensionSpec(name="sales_channels", cfg_key="sales_channels", run_fn=run_sales_channels, outputs_all=("sales_channels.parquet",)),
-    DimensionSpec(name="payment_methods", cfg_key="payment_methods", run_fn=run_payment_methods, outputs_all=("payment_methods.parquet",)),
-    DimensionSpec(name="fulfillment_methods", cfg_key="fulfillment_methods", run_fn=run_fulfillment_methods, outputs_all=("fulfillment_methods.parquet",)),
-    DimensionSpec(name="order_statuses", cfg_key="order_statuses", run_fn=run_order_statuses, outputs_all=("order_statuses.parquet",)),
-    DimensionSpec(name="payment_statuses", cfg_key="payment_statuses", run_fn=run_payment_statuses, outputs_all=("payment_statuses.parquet",)),
-    DimensionSpec(name="shipping_carriers", cfg_key="shipping_carriers", run_fn=run_shipping_carriers, outputs_all=("shipping_carriers.parquet",)),
-    DimensionSpec(name="delivery_service_levels", cfg_key="delivery_service_levels", run_fn=run_delivery_service_levels, outputs_all=("delivery_service_levels.parquet",)),
-    DimensionSpec(name="delivery_performances", cfg_key="delivery_performances", run_fn=run_delivery_performances, outputs_all=("delivery_performances.parquet",)),
     DimensionSpec(name="loyalty_tiers", cfg_key="loyalty_tiers", run_fn=run_loyalty_tiers, outputs_all=("loyalty_tiers.parquet",)),
     DimensionSpec(name="customer_acquisition_channels", cfg_key="customer_acquisition_channels", run_fn=run_customer_acquisition_channels, outputs_all=("customer_acquisition_channels.parquet",)),
 
@@ -311,7 +293,7 @@ DIM_SPECS: List[DimensionSpec] = [
         outputs_all=("exchange_rates.parquet",),
     ),
 
-    #9) Time
+    # 9) Time
     DimensionSpec(
         name="time",
         cfg_key="time",
@@ -355,7 +337,6 @@ def _stable_toposort(specs: Sequence[DimensionSpec]) -> List[DimensionSpec]:
                 queue.append(m)
 
     if len(result) != len(specs):
-        # cycle or disconnected due to bad deps
         remaining = [k for k, v in indeg.items() if v > 0]
         raise RuntimeError(f"Cycle detected in dimension dependency graph. Remaining: {remaining}")
 
@@ -502,7 +483,6 @@ def generate_dimensions(
 
         # Optional: if not forced and we saw no changes, emit a consistent skip message
         if not forced and not regen:
-            # Many run_* functions already log skip; this keeps it consistent for ones that don't.
             skip(f"{spec.name} up-to-date; skipping.")
 
     return {

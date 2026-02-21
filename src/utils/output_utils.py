@@ -269,9 +269,32 @@ def create_final_output_folder(
             import pandas as pd
 
             for f in parquet_dims.glob("*.parquet"):
-                df = pd.read_parquet(f)
+                # Prefer nullable backend (also helps with your Int columns staying Int)
+                try:
+                    df = pd.read_parquet(f, dtype_backend="numpy_nullable")
+                except TypeError:
+                    df = pd.read_parquet(f)
+
+                # 1) bool/boolean -> 0/1 (Int8)
+                bool_cols = list(df.select_dtypes(include=["bool", "boolean"]).columns)
+                for c in bool_cols:
+                    df[c] = df[c].astype("Int8")  # writes 0/1 in CSV
+
+                # 2) (optional but recommended) integer-like floats -> Int64 to avoid "10001.0"
+                float_cols = list(df.select_dtypes(include=["float"]).columns)
+                for c in float_cols:
+                    s = pd.to_numeric(df[c], errors="coerce")
+                    if not s.dropna().empty and ((s.dropna() % 1) == 0).all():
+                        df[c] = s.astype("Int64")
+
                 out_csv = dims_out / f"{f.stem}.csv"
-                df.to_csv(out_csv, index=False, encoding="utf-8", quoting=csv.QUOTE_MINIMAL)
+                df.to_csv(
+                    out_csv,
+                    index=False,
+                    encoding="utf-8",
+                    quoting=csv.QUOTE_MINIMAL,
+                    na_rep="",
+                )
 
         elif ff == "deltaparquet":
             try:
