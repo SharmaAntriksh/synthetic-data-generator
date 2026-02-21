@@ -16,6 +16,10 @@ except Exception:
 from .schemas import build_worker_schemas
 
 
+# ---------------------------------------------------------------------
+# Small helpers (kept close to monolith behavior for compatibility)
+# ---------------------------------------------------------------------
+
 def build_buckets_from_key(key: Any) -> list[np.ndarray]:
     key_np = np.asarray(key, dtype=np.int64)
     if key_np.size == 0:
@@ -91,7 +95,7 @@ def infer_T_from_date_pool(date_pool: Any) -> int:
     return int(np.unique(dp.astype("datetime64[M]")).size)
 
 
-# back-compat aliases
+# back-compat aliases (keep older imports stable)
 def _build_buckets_from_brand_key(brand_key: Any) -> list[np.ndarray]:
     return build_buckets_from_key(brand_key)
 
@@ -124,6 +128,137 @@ def _infer_T_from_date_pool(date_pool: Any) -> int:
     return infer_T_from_date_pool(date_pool)
 
 
+# ---------------------------------------------------------------------
+# Employee salesperson assignment
+# Canonical: day-accurate effective-dated bridge index
+# ---------------------------------------------------------------------
+
+def _build_salesperson_effective_by_store(
+    *,
+    store_keys: np.ndarray,
+    assign_store: Any,
+    assign_emp: Any,
+    assign_start: Any,
+    assign_end: Any,
+    assign_fte: Any = None,
+    assign_is_primary: Any = None,
+    primary_boost: float = 2.0,
+) -> Optional[dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]]:
+    """
+    Canonical structure for Sales employee assignment.
+
+    Returns:
+      { store_key: (emp_keys, start_dates[D], end_dates[D], weights[f64]) }
+
+    - Enforces StartDate/EndDate at DAY granularity.
+    - Treats missing EndDate as open-ended.
+    - Treats missing StartDate as FAR_PAST (always eligible until EndDate).
+    """
+    if assign_store is None or assign_emp is None or assign_start is None or assign_end is None:
+        return None
+
+    store_keys = np.asarray(store_keys, dtype=np.int64)
+    if store_keys.size == 0:
+        return None
+    max_store_key = int(store_keys.max())
+
+    assign_store = np.asarray(assign_store, dtype=np.int64)
+    assign_emp = np.asarray(assign_emp, dtype=np.int64)
+    if assign_store.size == 0 or assign_emp.size == 0:
+        return None
+    if assign_store.shape[0] != assign_emp.shape[0]:
+        raise RuntimeError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
+
+    start_raw = np.asarray(assign_start, dtype="datetime64[D]")
+    end_raw = np.asarray(assign_end, dtype="datetime64[D]")
+    if start_raw.shape[0] != assign_store.shape[0] or end_raw.shape[0] != assign_store.shape[0]:
+        raise RuntimeError("employee assignment arrays must align (dates vs keys)")
+
+    # Normalize missing dates
+    FAR_FUTURE = np.datetime64("2262-04-11", "D")
+    FAR_PAST = np.datetime64("1900-01-01", "D")
+
+    start_fixed = start_raw.copy()
+    end_fixed = end_raw.copy()
+
+    nat_s = np.isnat(start_fixed)
+    if nat_s.any():
+        start_fixed[nat_s] = FAR_PAST
+
+    nat_e = np.isnat(end_fixed)
+    if nat_e.any():
+        end_fixed[nat_e] = FAR_FUTURE
+
+    # Optional: filter to plausible store range
+    valid_store = (assign_store >= 0) & (assign_store <= max_store_key)
+    if not valid_store.all():
+        assign_store = assign_store[valid_store]
+        assign_emp = assign_emp[valid_store]
+        start_fixed = start_fixed[valid_store]
+        end_fixed = end_fixed[valid_store]
+        if assign_store.size == 0:
+            return None
+        if assign_fte is not None:
+            assign_fte = np.asarray(assign_fte, dtype=np.float64)[valid_store]
+        if assign_is_primary is not None:
+            assign_is_primary = np.asarray(assign_is_primary, dtype=bool)[valid_store]
+
+    # Filter invalid windows (start > end)
+    ok_window = start_fixed <= end_fixed
+    if not ok_window.all():
+        assign_store = assign_store[ok_window]
+        assign_emp = assign_emp[ok_window]
+        start_fixed = start_fixed[ok_window]
+        end_fixed = end_fixed[ok_window]
+        if assign_store.size == 0:
+            return None
+        if assign_fte is not None:
+            assign_fte = np.asarray(assign_fte, dtype=np.float64)[ok_window]
+        if assign_is_primary is not None:
+            assign_is_primary = np.asarray(assign_is_primary, dtype=bool)[ok_window]
+
+    if assign_fte is None:
+        fte = np.ones(assign_store.shape[0], dtype=np.float64)
+    else:
+        fte = np.asarray(assign_fte, dtype=np.float64)
+        if fte.shape[0] != assign_store.shape[0]:
+            raise RuntimeError("employee_assign_fte must align with employee assignments")
+
+    if assign_is_primary is None:
+        is_primary = np.zeros(assign_store.shape[0], dtype=bool)
+    else:
+        is_primary = np.asarray(assign_is_primary, dtype=bool)
+        if is_primary.shape[0] != assign_store.shape[0]:
+            raise RuntimeError("employee_assign_is_primary must align with employee assignments")
+
+    weights = fte * np.where(is_primary, float(primary_boost), 1.0)
+
+    # Group by store
+    order = np.argsort(assign_store, kind="mergesort")
+    s_sorted = assign_store[order]
+    starts = np.flatnonzero(np.r_[True, s_sorted[1:] != s_sorted[:-1]])
+    ends = np.r_[starts[1:], s_sorted.size]
+
+    out: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+    for s, e in zip(starts, ends):
+        idx = order[int(s) : int(e)]
+        store = int(s_sorted[int(s)])
+        out[store] = (
+            assign_emp[idx].astype(np.int64, copy=False),
+            start_fixed[idx].astype("datetime64[D]", copy=False),
+            end_fixed[idx].astype("datetime64[D]", copy=False),
+            weights[idx].astype(np.float64, copy=False),
+        )
+
+    return out
+
+
+# ---------------------------------------------------------------------
+# Optional legacy: month-rounded single salesperson per store-month
+# (kept only for backward-compat; OFF by default)
+# ---------------------------------------------------------------------
+
+
 def _build_salesperson_by_store_month(
     *,
     store_keys: np.ndarray,
@@ -137,6 +272,10 @@ def _build_salesperson_by_store_month(
     primary_boost: float = 2.0,
     seed: int = 12345,
 ) -> Optional[np.ndarray]:
+    """
+    Legacy behavior: chooses ONE employee per (StoreKey, Month).
+    Cannot enforce EndDate within a month (rounds to month buckets).
+    """
     if assign_store is None or assign_emp is None or assign_start is None or assign_end is None:
         return None
 
@@ -151,6 +290,34 @@ def _build_salesperson_by_store_month(
     assign_end = np.asarray(assign_end, dtype="datetime64[D]")
     if assign_start.shape[0] != assign_store.shape[0] or assign_end.shape[0] != assign_store.shape[0]:
         raise RuntimeError("employee assignment arrays must align (dates vs keys)")
+
+    # --- FIX: normalize NaT dates ---
+    # NaT StartDate => far past (always eligible until EndDate)
+    # NaT EndDate   => far future (open-ended)
+    FAR_PAST = np.datetime64("1900-01-01", "D")
+    FAR_FUTURE = np.datetime64("2262-04-11", "D")  # max safe day for numpy datetime64
+
+    if np.isnat(assign_start).any():
+        assign_start = assign_start.copy()
+        assign_start[np.isnat(assign_start)] = FAR_PAST
+
+    if np.isnat(assign_end).any():
+        assign_end = assign_end.copy()
+        assign_end[np.isnat(assign_end)] = FAR_FUTURE
+
+    # Optional: drop invalid windows
+    ok = assign_start <= assign_end
+    if not np.all(ok):
+        assign_store = assign_store[ok]
+        assign_emp = assign_emp[ok]
+        assign_start = assign_start[ok]
+        assign_end = assign_end[ok]
+        if assign_fte is not None:
+            assign_fte = np.asarray(assign_fte, dtype=np.float64)[ok]
+        if assign_is_primary is not None:
+            assign_is_primary = np.asarray(assign_is_primary, dtype=bool)[ok]
+        if assign_store.size == 0:
+            return None
 
     if assign_fte is None:
         assign_fte = np.ones(assign_store.shape[0], dtype=np.float64)
@@ -188,9 +355,6 @@ def _build_salesperson_by_store_month(
     max_store_key = int(store_keys.max())
     out = np.full((max_store_key + 1, T), -1, dtype=np.int64)
 
-    manager_base = np.int64(30_000_000)
-    out[:] = (manager_base + np.arange(max_store_key + 1, dtype=np.int64))[:, None]
-
     order = np.argsort(assign_store, kind="mergesort")
     store_sorted = assign_store[order]
     starts = np.flatnonzero(np.r_[True, store_sorted[1:] != store_sorted[:-1]])
@@ -202,7 +366,7 @@ def _build_salesperson_by_store_month(
         if store < 0 or store > max_store_key:
             continue
 
-        idxs = order[int(s):int(e)]
+        idxs = order[int(s): int(e)]
         if idxs.size == 0:
             continue
 
@@ -226,6 +390,10 @@ def _build_salesperson_by_store_month(
 
     return out
 
+
+# ---------------------------------------------------------------------
+# Brand popularity model helper (unchanged)
+# ---------------------------------------------------------------------
 
 def _build_brand_prob_by_month_rotate_winner(
     rng: np.random.Generator,
@@ -257,8 +425,12 @@ def _build_brand_prob_by_month_rotate_winner(
     return out
 
 
+# ---------------------------------------------------------------------
+# Main entrypoint
+# ---------------------------------------------------------------------
+
 def init_sales_worker(worker_cfg: dict) -> None:
-    # parse required config (same as monolith)
+    # parse required config
     try:
         product_np = worker_cfg["product_np"]
         product_brand_key = worker_cfg.get("product_brand_key")
@@ -281,6 +453,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         date_pool = worker_cfg["date_pool"]
         date_prob = worker_cfg["date_prob"]
 
+        # employee store assignments (bridge)
         employee_assign_store_key = worker_cfg.get("employee_assign_store_key")
         employee_assign_employee_key = worker_cfg.get("employee_assign_employee_key")
         employee_assign_start_date = worker_cfg.get("employee_assign_start_date")
@@ -289,6 +462,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
         employee_assign_is_primary = worker_cfg.get("employee_assign_is_primary")
         employee_primary_boost = float(worker_cfg.get("employee_primary_boost", 2.0))
         employee_seed = int(worker_cfg.get("employee_salesperson_seed", worker_cfg.get("seed_master", 12345)))
+        employee_assign_role = worker_cfg.get("employee_assign_role")  # array[str], same length as employee_assign_employee_key
+        salesperson_roles = worker_cfg.get("salesperson_roles", ["Sales Associate"])
 
         op = worker_cfg["output_paths"]
         if not isinstance(op, dict):
@@ -307,7 +482,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         write_delta = worker_cfg.get("write_delta", False)
 
         skip_order_cols = worker_cfg["skip_order_cols"]
-        sales_output = _str_or(worker_cfg.get("sales_output"), "sales").lower()
+        sales_output = str_or(worker_cfg.get("sales_output"), "sales").lower()
         if sales_output not in {"sales", "sales_order", "both"}:
             raise RuntimeError(f"Invalid sales_output: {sales_output}")
 
@@ -329,6 +504,9 @@ def init_sales_worker(worker_cfg: dict) -> None:
         parquet_dict_exclude = worker_cfg.get("parquet_dict_exclude")
         write_pyarrow = worker_cfg.get("write_pyarrow", True)
 
+        # optional legacy toggle
+        legacy_salesperson_by_store_month = bool(worker_cfg.get("legacy_salesperson_by_store_month", False))
+
     except KeyError as e:
         raise RuntimeError(f"Missing worker_cfg key: {e}") from e
 
@@ -336,15 +514,46 @@ def init_sales_worker(worker_cfg: dict) -> None:
 
     brand_to_row_idx = None
     if product_brand_key is not None:
-        product_brand_key = _as_int64(product_brand_key)
+        product_brand_key = as_int64(product_brand_key)
         if product_brand_key.shape[0] != product_np.shape[0]:
             raise RuntimeError("product_brand_key must align with product_np row count")
         brand_to_row_idx = _build_buckets_from_brand_key(product_brand_key)
 
-    store_keys = _as_int64(store_keys)
-    salesperson_by_store_month = _build_salesperson_by_store_month(
+    store_keys = as_int64(store_keys)
+
+    # ------------------------------------------------------------
+    # Filter employee assignment rows to sales-eligible roles
+    # (so Store Manager / Fulfillment etc never appear in SalesPersonEmployeeKey)
+    # ------------------------------------------------------------
+    if employee_assign_employee_key is not None and employee_assign_store_key is not None:
+        emp_key = np.asarray(employee_assign_employee_key, dtype=np.int64)
+
+        if employee_assign_role is not None:
+            role_arr = np.asarray(employee_assign_role).astype(str)
+            allowed = np.asarray(list(salesperson_roles), dtype=str)
+            mask = np.isin(role_arr, allowed)
+        else:
+            # fallback if role not provided: at least exclude Store Manager key range (30M..40M)
+            mask = emp_key >= 40_000_000
+
+        # Apply mask consistently across all assignment arrays
+        employee_assign_store_key = np.asarray(employee_assign_store_key, dtype=np.int64)[mask]
+        employee_assign_employee_key = emp_key[mask]
+        employee_assign_start_date = np.asarray(employee_assign_start_date, dtype="datetime64[D]")[mask]
+        employee_assign_end_date = np.asarray(employee_assign_end_date, dtype="datetime64[D]")[mask]
+
+        if employee_assign_fte is not None:
+            employee_assign_fte = np.asarray(employee_assign_fte, dtype=np.float64)[mask]
+        if employee_assign_is_primary is not None:
+            employee_assign_is_primary = np.asarray(employee_assign_is_primary, dtype=bool)[mask]
+
+        salesperson_global_pool = np.unique(employee_assign_employee_key).astype(np.int64, copy=False)
+    else:
+        salesperson_global_pool = None
+
+    # Canonical (day-accurate)
+    salesperson_effective_by_store = _build_salesperson_effective_by_store(
         store_keys=store_keys,
-        date_pool=date_pool,
         assign_store=employee_assign_store_key,
         assign_emp=employee_assign_employee_key,
         assign_start=employee_assign_start_date,
@@ -352,28 +561,43 @@ def init_sales_worker(worker_cfg: dict) -> None:
         assign_fte=employee_assign_fte,
         assign_is_primary=employee_assign_is_primary,
         primary_boost=employee_primary_boost,
-        seed=employee_seed,
     )
 
-    promo_keys_all = _as_int64(promo_keys_all)
-    promo_pct_all = _as_f64(promo_pct_all)
+    # Optional legacy (month-rounded)
+    salesperson_by_store_month = None
+    if legacy_salesperson_by_store_month:
+        salesperson_by_store_month = _build_salesperson_by_store_month(
+            store_keys=store_keys,
+            date_pool=date_pool,
+            assign_store=employee_assign_store_key,
+            assign_emp=employee_assign_employee_key,
+            assign_start=employee_assign_start_date,
+            assign_end=employee_assign_end_date,
+            assign_fte=employee_assign_fte,
+            assign_is_primary=employee_assign_is_primary,
+            primary_boost=employee_primary_boost,
+            seed=employee_seed,
+        )
+
+    promo_keys_all = as_int64(promo_keys_all)
+    promo_pct_all = as_f64(promo_pct_all)
     promo_start_all = np.asarray(promo_start_all, dtype="datetime64[D]")
     promo_end_all = np.asarray(promo_end_all, dtype="datetime64[D]")
 
-    customer_keys = _as_int64(customer_keys)
+    customer_keys = as_int64(customer_keys)
 
     if customer_is_active_in_sales is not None:
-        customer_is_active_in_sales = _as_int64(customer_is_active_in_sales)
+        customer_is_active_in_sales = as_int64(customer_is_active_in_sales)
         if customer_is_active_in_sales.shape[0] != customer_keys.shape[0]:
             raise RuntimeError("customer_is_active_in_sales must align with customer_keys length")
 
     if customer_start_month is not None:
-        customer_start_month = _as_int64(customer_start_month)
+        customer_start_month = as_int64(customer_start_month)
         if customer_start_month.shape[0] != customer_keys.shape[0]:
             raise RuntimeError("customer_start_month must align with customer_keys length")
 
     if customer_end_month is not None:
-        customer_end_month = _as_int64(customer_end_month)
+        customer_end_month = as_int64(customer_end_month)
         if customer_end_month.shape[0] != customer_keys.shape[0]:
             raise RuntimeError("customer_end_month must align with customer_keys length")
 
@@ -387,21 +611,21 @@ def init_sales_worker(worker_cfg: dict) -> None:
         models_root = models_cfg.get("models") if isinstance(models_cfg.get("models"), dict) else models_cfg
         brand_cfg = models_root.get("brand_popularity") if isinstance(models_root, dict) else None
         if brand_cfg:
-            T = _infer_T_from_date_pool(date_pool)
+            T = infer_T_from_date_pool(date_pool)
             B = int(product_brand_key.max()) + 1 if product_brand_key is not None and product_brand_key.size else 0
-            rng_bp = np.random.default_rng(int(_int_or(brand_cfg.get("seed"), 1234)))
+            rng_bp = np.random.default_rng(int(int_or(brand_cfg.get("seed"), 1234)))
             brand_prob_by_month = _build_brand_prob_by_month_rotate_winner(
                 rng_bp,
                 T=T,
                 B=B,
-                winner_boost=_float_or(brand_cfg.get("winner_boost"), 2.5),
-                noise_sd=_float_or(brand_cfg.get("noise_sd"), 0.15),
-                min_share=_float_or(brand_cfg.get("min_share"), 0.02),
-                year_len_months=_int_or(brand_cfg.get("year_len_months"), 12),
+                winner_boost=float_or(brand_cfg.get("winner_boost"), 2.5),
+                noise_sd=float_or(brand_cfg.get("noise_sd"), 0.15),
+                min_share=float_or(brand_cfg.get("min_share"), 0.02),
+                year_len_months=int_or(brand_cfg.get("year_len_months"), 12),
             )
 
-    store_to_geo_arr = _dense_map(store_to_geo) if isinstance(store_to_geo, dict) else None
-    geo_to_currency_arr = _dense_map(geo_to_currency) if isinstance(geo_to_currency, dict) else None
+    store_to_geo_arr = dense_map(store_to_geo) if isinstance(store_to_geo, dict) else None
+    geo_to_currency_arr = dense_map(geo_to_currency) if isinstance(geo_to_currency, dict) else None
 
     output_paths = OutputPaths(
         out_folder=out_folder,
@@ -480,6 +704,9 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "returns_max_lag_days": int(returns_max_lag_days),
             "returns_reason_keys": returns_reason_keys,
             "returns_reason_probs": returns_reason_probs,
+            # EMPLOYEE assignment (canonical + optional legacy)
+            "salesperson_effective_by_store": salesperson_effective_by_store,
             "salesperson_by_store_month": salesperson_by_store_month,
+            "salesperson_global_pool": salesperson_global_pool,
         }
     )

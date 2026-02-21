@@ -618,6 +618,13 @@ def generate_sales_fact(
     employee_assign_end_date = None
     employee_assign_fte = None
     employee_assign_is_primary = None
+    employee_assign_role = None
+
+    # config-driven allowlist: which RoleAtStore can appear as SalesPersonEmployeeKey
+    salesperson_roles = _cfg_get(cfg, ["sales", "salesperson_roles"], default=None)
+    if not (isinstance(salesperson_roles, list) and salesperson_roles):
+        primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")
+        salesperson_roles = [str(primary)]
 
     if emp_assign_path.exists():
         emp_assign_df = load_parquet_df(
@@ -633,11 +640,9 @@ def generate_sales_fact(
             ],
         )
 
-        # Keep only salespeople roles (matches employees.py SalesPersonFlag)
+        # Keep only allowed salespeople roles
         if "RoleAtStore" in emp_assign_df.columns:
-            emp_assign_df = emp_assign_df[
-                emp_assign_df["RoleAtStore"].isin(["Sales Associate", "Store Manager"])
-            ].copy()
+            emp_assign_df = emp_assign_df[emp_assign_df["RoleAtStore"].isin(salesperson_roles)].copy()
 
         if not emp_assign_df.empty:
             end_dt = pd.to_datetime(end_date, errors="coerce").normalize()
@@ -650,6 +655,7 @@ def generate_sales_fact(
             employee_assign_employee_key = _as_np(emp_assign_df["EmployeeKey"], np.int64)
             employee_assign_start_date = _as_np(start_dt, "datetime64[D]")
             employee_assign_end_date = _as_np(end_dt_col, "datetime64[D]")
+            employee_assign_role = _as_np(emp_assign_df["RoleAtStore"].astype(str))
 
             if "FTE" in emp_assign_df.columns:
                 employee_assign_fte = _as_np(emp_assign_df["FTE"], np.float64)
@@ -761,6 +767,8 @@ def generate_sales_fact(
         employee_assign_end_date= employee_assign_end_date,
         employee_assign_fte= employee_assign_fte,
         employee_assign_is_primary= employee_assign_is_primary,
+        employee_assign_role=employee_assign_role,
+        salesperson_roles=salesperson_roles,
     )
 
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)

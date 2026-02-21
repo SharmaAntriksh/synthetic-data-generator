@@ -2587,22 +2587,127 @@ def build_chunk_table(
         currency_arr = _take(currency_arr)
         order_dates = _take(order_dates)
         promo_keys = _take(promo_keys)
-        # --------------------------------------------------------
-        # EMPLOYEE (SalesPersonEmployeeKey) - store x month lookup
-        # --------------------------------------------------------
-        sp_map = getattr(State, "salesperson_by_store_month", None)
-        if sp_map is None:
-            salesperson_key_arr = (np.int64(30_000_000) + store_key_arr.astype(np.int64, copy=False))
-        else:
-            salesperson_key_arr = sp_map[store_key_arr, int(m_offset)]
-            missing = salesperson_key_arr < 0
-            if np.any(missing):
-                salesperson_key_arr = salesperson_key_arr.copy()
-                salesperson_key_arr[missing] = np.int64(30_000_000) + store_key_arr[missing]
+
+        # Ensure order ids/line nums stay aligned after thinning
         if not skip_cols:
             order_ids_int = _take(order_ids_int)
             line_num = _take(line_num)
+            
+        # --------------------------------------------------------
+        # EMPLOYEE (SalesPersonEmployeeKey)
+        # - Prefer DAY-accurate effective-dated bridge:
+        #     State.salesperson_effective_by_store[store] =
+        #       (emp_keys[int64], start_dates[D], end_dates[D], weights[f64])
+        # - Fallback: State.salesperson_by_store_month (values may be -1)
+        # - Final fallback: State.salesperson_global_pool (sales-role only)
+        # IMPORTANT: Never emit Store Manager keys (30_000_000 + StoreKey).
+        # --------------------------------------------------------
 
+        global_pool = getattr(State, "salesperson_global_pool", None)
+
+        def _ensure_global_pool():
+            nonlocal global_pool
+            if global_pool is None or len(global_pool) == 0:
+                # Try to infer from effective map (union of emp_keys) if present
+                eff2 = getattr(State, "salesperson_effective_by_store", None)
+                if isinstance(eff2, dict) and eff2:
+                    acc = []
+                    for _store, entry in eff2.items():
+                        if entry is None:
+                            continue
+                        emp_keys = entry[0]
+                        if emp_keys is not None and len(emp_keys):
+                            acc.append(np.asarray(emp_keys, dtype=np.int64))
+                    if acc:
+                        global_pool = np.unique(np.concatenate(acc)).astype(np.int64, copy=False)
+
+            if global_pool is None or len(global_pool) == 0:
+                raise RuntimeError(
+                    "No eligible salespeople found. "
+                    "Bind State.salesperson_global_pool (Sales Associate only) in init.py, "
+                    "or ensure salesperson_effective_by_store contains eligible emp_keys."
+                )
+
+        _ensure_global_pool()
+
+        eff = getattr(State, "salesperson_effective_by_store", None)
+
+        if isinstance(eff, dict) and eff:
+            # Day-accurate assignment by (StoreKey, OrderDate)
+            salesperson_key_arr = np.empty(store_key_arr.shape[0], dtype=np.int64)
+
+            FAR_PAST = np.datetime64("1900-01-01", "D")
+            FAR_FUTURE = np.datetime64("2262-04-11", "D")
+
+            for store in np.unique(store_key_arr):
+                store_i = int(store)
+                idx_store = (store_key_arr == store)
+                n_store = int(idx_store.sum())
+
+                entry = eff.get(store_i)
+                if entry is None:
+                    # store has no effective mapping -> sample from global pool
+                    salesperson_key_arr[idx_store] = rng.choice(global_pool, size=n_store, replace=True)
+                    continue
+
+                emp_keys, start_d, end_d, weights = entry
+                emp_keys = np.asarray(emp_keys, dtype=np.int64)
+                start_d = np.asarray(start_d, dtype="datetime64[D]")
+                end_d = np.asarray(end_d, dtype="datetime64[D]")
+                weights = np.asarray(weights, dtype=np.float64)
+
+                # Normalize missing dates defensively (ideally already done in init.py)
+                if np.isnat(start_d).any():
+                    start_d = start_d.copy()
+                    start_d[np.isnat(start_d)] = FAR_PAST
+                if np.isnat(end_d).any():
+                    end_d = end_d.copy()
+                    end_d[np.isnat(end_d)] = FAR_FUTURE
+
+                d_store = order_dates[idx_store].astype("datetime64[D]", copy=False)
+
+                # Cache by unique day to avoid per-row scans
+                u_dates, inv = np.unique(d_store, return_inverse=True)
+                out_store = np.empty(d_store.shape[0], dtype=np.int64)
+
+                for j, d in enumerate(u_dates):
+                    sel = (inv == j)
+                    sel_n = int(sel.sum())
+
+                    active = (start_d <= d) & (d <= end_d)
+                    if not np.any(active):
+                        out_store[sel] = rng.choice(global_pool, size=sel_n, replace=True)
+                        continue
+
+                    w = weights[active]
+                    sw = float(w.sum())
+                    if sw <= 1e-12:
+                        out_store[sel] = rng.choice(global_pool, size=sel_n, replace=True)
+                        continue
+
+                    p = (w / sw).astype(np.float64, copy=False)
+                    out_store[sel] = rng.choice(emp_keys[active], size=sel_n, replace=True, p=p)
+
+                salesperson_key_arr[idx_store] = out_store
+
+        else:
+            # No effective map -> fallback to month map (still no manager fallback)
+            sp_map = getattr(State, "salesperson_by_store_month", None)
+            if sp_map is not None:
+                salesperson_key_arr = sp_map[store_key_arr, int(m_offset)]
+                missing = salesperson_key_arr < 0
+                if np.any(missing):
+                    salesperson_key_arr = salesperson_key_arr.copy()
+                    salesperson_key_arr[missing] = rng.choice(global_pool, size=int(missing.sum()), replace=True)
+            else:
+                # Last resort: sample from global pool for all rows
+                salesperson_key_arr = rng.choice(global_pool, size=store_key_arr.shape[0], replace=True)
+
+        # Keep these AFTER thinning (do not _take twice)
+        if not skip_cols:
+            order_ids_int = _take(order_ids_int)
+            line_num = _take(line_num)
+                            
         # --------------------------------------------------------
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------

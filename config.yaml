@@ -28,10 +28,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 1002050
+  total_rows: 100205
   chunk_size: 1000000
 
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -213,7 +213,7 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 8
+  num_stores: 10
 
   opening:
     start: "1995-01-01"
@@ -253,7 +253,51 @@ employees:
   # HR enrichment
   hr:
     email_domain: "contoso.com"
+    
+  store_assignments:
+    enabled: true
 
+    mover_share: 0.10
+    pool_scope: district
+    allow_store_revisit: true
+    part_time_multiplier: 1.5
+
+    primary_sales_role: "Sales Associate"
+
+    max_non_sales_multiplier_frac: 0.35
+    max_non_sales_episodes_frac: 0.50
+
+    secondary_fte_min: 0.10
+    secondary_fte_max: 0.40
+
+    role_profiles:
+      default:
+        role_multiplier: 0.20
+        episodes_min: 0
+        episodes_max: 1
+        duration_days_min: 60
+        duration_days_max: 180
+
+      Sales Associate:
+        role_multiplier: 2.50
+        episodes_min: 1
+        episodes_max: 4
+        duration_days_min: 60
+        duration_days_max: 240
+
+      Cashier:
+        role_multiplier: 1.10
+        episodes_min: 1
+        episodes_max: 3
+        duration_days_min: 14
+        duration_days_max: 120
+
+      Fulfillment Associate:
+        role_multiplier: 0.15
+        episodes_min: 0
+        episodes_max: 1
+        duration_days_min: 90
+        duration_days_max: 240
 # ---------------------------------------------------------------------
 # DATES (Dimension)
 # ---------------------------------------------------------------------
