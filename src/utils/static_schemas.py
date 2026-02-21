@@ -37,7 +37,7 @@ _SALES_SCHEMA: Schema = (
     ("CustomerKey",          "INT NOT NULL"),
     ("ProductKey",           "INT NOT NULL"),
     ("StoreKey",             "INT NOT NULL"),
-    ("SalesPersonEmployeeKey","INT NOT NULL"),  
+    ("SalesPersonEmployeeKey","BIGINT NOT NULL"),  
     ("PromotionKey",         "INT NOT NULL"),
     ("CurrencyKey",          "INT NOT NULL"),
     ("SalesChannelKey",           "INT NOT NULL"),
@@ -130,7 +130,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
     ),
 
     "CustomerAcquisitionChannels": (
-        ("CustomerAcquisitionChannelKey", "SMALLINT"),
+        ("CustomerAcquisitionChannelKey", "INT NOT NULL"),
         ("AcquisitionChannel", "VARCHAR(50)"),
         ("ChannelGroup", "VARCHAR(50)"),       
     ),
@@ -371,7 +371,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
 
     "EmployeeStoreAssignments": (
         ("EmployeeKey",        "BIGINT NOT NULL"),
-        ("StoreKey",           "BIGINT NOT NULL"),
+        ("StoreKey",           "INT NOT NULL"),
         ("StartDate",          "DATE NOT NULL"),
         ("EndDate",            "DATE NULL"),
         ("FTE",                "DECIMAL(18, 2) NOT NULL"),
@@ -433,7 +433,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("CloseMinute", "SMALLINT"),
     ),
     "ReturnReason": (
-        ("ReturnReasonKey",      "BIGINT NOT NULL"),
+        ("ReturnReasonKey",      "INT NOT NULL"),
         ("ReturnReason",         "VARCHAR(200) NOT NULL"),
         ("ReturnReasonCategory", "VARCHAR(100) NOT NULL"),
     ),
