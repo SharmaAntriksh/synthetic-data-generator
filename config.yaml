@@ -28,10 +28,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 500
+  total_rows: 5001234
   chunk_size: 1000000
 
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   sales_output: "both"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -231,8 +231,8 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 10
-
+  num_stores: 20
+  ensure_currency_coverage: true
   opening:
     start: "1995-01-01"
     end: "2020-12-31"
@@ -261,8 +261,8 @@ stores:
 employees:
   # sizing (demo-friendly defaults)
   use_store_employee_count: false
-  min_staff_per_store: 3
-  max_staff_per_store: 8
+  min_staff_per_store: 2
+  max_staff_per_store: 6
   staff_scale: 0.25         # only used if use_store_employee_count: true
 
   # schema choice

@@ -70,6 +70,7 @@ _ONLINE_SUFFIX = np.array(
     dtype=object,
 )
 
+
 # ---------------------------------------------------------
 # Internals
 # ---------------------------------------------------------
@@ -85,6 +86,7 @@ def _safe_read_geography(geo_path: Path) -> pd.DataFrame:
         "CountryRegionName",
         "Country",
         "RegionCountryName",
+        "ISOCode",
     ]
     try:
         return pd.read_parquet(geo_path, columns=cols)
@@ -153,139 +155,124 @@ def _build_location_maps(geo: pd.DataFrame) -> tuple[dict[int, str], dict[int, s
 
 
 def _require_cfg(cfg: Dict) -> Dict:
-    if not isinstance(cfg, dict):
-        raise TypeError("cfg must be a dict")
-    stores = cfg.get("stores")
-    if not isinstance(stores, dict):
-        raise KeyError("Missing required config section: 'stores'")
-    return stores
+    stores_cfg = cfg.get("stores")
+    if not isinstance(stores_cfg, dict):
+        raise ValueError("config missing required block: stores")
+    return stores_cfg
 
 
-def _as_dict(x: Any) -> Dict:
-    return x if isinstance(x, dict) else {}
+def _as_dict(v: Any) -> Dict:
+    return v if isinstance(v, dict) else {}
 
 
-def _int_or(value: Any, default: int) -> int:
-    """Safe int parsing: handles None, '', and non-numeric values."""
+def _int_or(v: Any, default: int) -> int:
     try:
-        if value is None or value == "":
-            return int(default)
-        return int(value)
-    except (TypeError, ValueError):
-        return int(default)
+        if v is None:
+            return default
+        return int(v)
+    except Exception:
+        return default
 
 
-def _float_or(value: Any, default: float) -> float:
-    """Safe float parsing: handles None, '', and non-numeric values."""
+def _float_or(v: Any, default: float) -> float:
     try:
-        if value is None or value == "":
-            return float(default)
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
+        if v is None:
+            return default
+        return float(v)
+    except Exception:
+        return default
 
 
-def _pick_seed(cfg: Dict, store_cfg: Dict, fallback: int = 42) -> int:
+def _pick_seed(cfg: Dict, local_cfg: Dict, fallback: int = 42) -> int:
+    # Prefer local override, else global seed, else fallback
+    if "seed" in local_cfg and local_cfg["seed"] is not None:
+        return _int_or(local_cfg["seed"], fallback)
+    if "seed" in cfg and cfg["seed"] is not None:
+        return _int_or(cfg["seed"], fallback)
+    return fallback
+
+
+def _as_date64d(s: Union[str, np.datetime64]) -> np.datetime64:
+    if isinstance(s, np.datetime64):
+        return s.astype("datetime64[D]")
+    # pandas handles many formats reliably
+    return np.datetime64(pd.to_datetime(str(s)).date(), "D")
+
+
+def _rand_dates_d(rng: np.random.Generator, start_d: np.datetime64, end_d: np.datetime64, n: int) -> np.ndarray:
     """
-    Seed precedence (robust to nulls):
-      stores.override.seed -> stores.seed -> defaults.seed -> fallback
+    Returns np.datetime64[D] array in [start_d, end_d], inclusive.
     """
-    override = _as_dict(store_cfg.get("override"))
-    seed = override.get("seed")
-    if seed is None:
-        seed = store_cfg.get("seed")
-    if seed is None:
-        seed = _as_dict(cfg.get("defaults")).get("seed")
-    return _int_or(seed, fallback)
-
-
-def _as_date64d(x: Union[str, pd.Timestamp]) -> np.datetime64:
-    """Convert to numpy datetime64[D] (date-only)."""
-    ts = pd.to_datetime(x).normalize()
-    return np.datetime64(ts.date(), "D")
-
-
-def _rand_dates_d(
-    rng: np.random.Generator,
-    start_d: np.datetime64,
-    end_d: np.datetime64,
-    size: int,
-) -> np.ndarray:
-    """
-    Random date-only array in [start_d, end_d] inclusive.
-    Returns numpy datetime64[D].
-    """
-    if end_d < start_d:
-        raise ValueError(f"Invalid date range: {start_d}..{end_d}")
-
     start_i = start_d.astype("int64")
     end_i = end_d.astype("int64")
-
-    days = rng.integers(start_i, end_i + 1, size=size, dtype=np.int64)
+    if end_i < start_i:
+        start_i, end_i = end_i, start_i
+    days = rng.integers(start_i, end_i + 1, size=n, dtype=np.int64)
     return days.astype("datetime64[D]")
 
 
-def _geography_signature(keys: np.ndarray) -> Dict:
-    """
-    Lightweight signature so changes in geography trigger regeneration.
-    Uses row count + min/max GeographyKey.
-    """
-    if keys.size == 0:
-        return {"rows": 0, "min_key": None, "max_key": None}
-    return {
-        "rows": int(keys.size),
-        "min_key": int(keys.min()),
-        "max_key": int(keys.max()),
-    }
+def _geography_signature(geo_keys: np.ndarray) -> str:
+    # Stable, cheap signature to detect upstream geography changes
+    arr = np.asarray(geo_keys, dtype=np.int64)
+    if arr.size == 0:
+        return "empty"
+    return f"{int(arr.size)}:{int(arr.min())}:{int(arr.max())}:{int(arr[: min(5, arr.size)].sum())}"
 
 
-def _range2(x: Any, default_lo: int, default_hi: int) -> Tuple[int, int]:
-    if isinstance(x, (list, tuple)) and len(x) == 2:
-        return _int_or(x[0], default_lo), _int_or(x[1], default_hi)
-    return int(default_lo), int(default_hi)
+def _range2(v: Any, default_lo: float, default_hi: float) -> tuple[float, float]:
+    """
+    Parse a 2-tuple/list like [lo, hi]. Returns (lo, hi) where hi >= lo.
+    """
+    lo = default_lo
+    hi = default_hi
+    if isinstance(v, (list, tuple)) and len(v) >= 2:
+        lo = _float_or(v[0], default_lo)
+        hi = _float_or(v[1], default_hi)
+    if hi < lo:
+        lo, hi = hi, lo
+    return lo, hi
 
 
 def _square_footage_from_cfg(
+    *,
     rng: np.random.Generator,
     store_type: pd.Series,
     sqft_cfg: Dict,
     n: int,
 ) -> np.ndarray:
     """
-    Generates SquareFootage with optional by-type ranges.
+    Config shape (optional):
+      stores:
+        square_footage:
+          default: [5000, 60000]
+          Supermarket: [15000, 80000]
+          Convenience: [1200, 8000]
+          Hypermarket: [50000, 200000]
+          Online: [200, 2000]
     """
-    sqft_cfg = _as_dict(sqft_cfg)
+    default_lo, default_hi = _range2(sqft_cfg.get("default"), 5000.0, 60000.0)
 
-    # Defaults tuned to look realistic and to support employee scaling later.
-    by_type = _as_dict(sqft_cfg.get("by_type")) or {
-        "Convenience": [800, 2500],
-        "Supermarket": [3000, 9000],
-        "Hypermarket": [10000, 30000],
-        "Online": [1500, 6000],
-    }
-
-    clamp_min = _int_or(sqft_cfg.get("clamp_min"), 500)
-    clamp_max = _int_or(sqft_cfg.get("clamp_max"), 40000)
-
-    st = store_type.astype(str).to_numpy()
     out = np.empty(n, dtype=np.int64)
+    st = store_type.astype(str).to_numpy()
 
-    # Fill known types
-    for t, r in by_type.items():
-        lo, hi = _range2(r, 2000, 10000)
-        m = st == str(t)
-        if m.any():
-            out[m] = rng.integers(lo, hi + 1, size=int(m.sum()), dtype=np.int64)
+    for t in np.unique(st):
+        lo, hi = _range2(sqft_cfg.get(t), default_lo, default_hi)
+        mask = st == t
+        if mask.any():
+            vals = rng.uniform(lo, hi, size=int(mask.sum()))
+            out[mask] = np.maximum(1, np.round(vals)).astype(np.int64)
 
-    # Unknown type fallback
-    unk = ~np.isin(st, np.array(list(by_type.keys()), dtype=object))
-    if unk.any():
-        out[unk] = rng.integers(2000, 10000 + 1, size=int(unk.sum()), dtype=np.int64)
+    # Any gaps -> default
+    missing = out == 0
+    if missing.any():
+        vals = rng.uniform(default_lo, default_hi, size=int(missing.sum()))
+        out[missing] = np.maximum(1, np.round(vals)).astype(np.int64)
 
-    return np.clip(out, clamp_min, clamp_max).astype(np.int64)
+    return out
 
 
 def _employee_count_from_cfg(
+    *,
     rng: np.random.Generator,
     store_type: pd.Series,
     status: pd.Series,
@@ -293,101 +280,117 @@ def _employee_count_from_cfg(
     emp_cfg: Dict,
 ) -> np.ndarray:
     """
-    EmployeeCount semantics:
-      - total headcount for the store (includes store manager)
-      - Closed stores: usually 0
-      - Renovating stores: small crew (0..3 default)
-      - Open stores: type-aware small ranges (demo-friendly)
-
-    Config (optional) under stores.employee_count:
-      mode: by_type | scaled_sqft
-      open_by_type: { Convenience: [4,10], Supermarket: [8,16], Hypermarket: [12,24], Online: [3,8] }
-      renovating_range: [0,3]
-      closed_range: [0,0]
-      clamp_min, clamp_max
-      sqft_per_employee: mapping used by scaled_sqft
-      noise_sd: float used by scaled_sqft
+    Config shape (optional):
+      stores:
+        employee_count:
+          base_per_1000_sqft: 0.35
+          online_base: [5, 60]
+          closed_multiplier: 0.15
+          renovating_multiplier: 0.6
+          min: 3
+          max: 800
     """
-    emp_cfg = _as_dict(emp_cfg)
+    base_rate = _float_or(emp_cfg.get("base_per_1000_sqft"), 0.35)
+    online_lo, online_hi = _range2(emp_cfg.get("online_base"), 5.0, 60.0)
 
-    mode = str(emp_cfg.get("mode") or "by_type").strip().lower()
-    open_by_type = _as_dict(emp_cfg.get("open_by_type")) or {
-        "Convenience": [4, 10],
-        "Supermarket": [8, 16],
-        "Hypermarket": [12, 24],
-        "Online": [3, 8],
-    }
+    closed_mult = _float_or(emp_cfg.get("closed_multiplier"), 0.15)
+    reno_mult = _float_or(emp_cfg.get("renovating_multiplier"), 0.60)
 
-    renovating_lo, renovating_hi = _range2(emp_cfg.get("renovating_range"), 0, 3)
-    closed_lo, closed_hi = _range2(emp_cfg.get("closed_range"), 0, 0)
-    clamp_min = _int_or(emp_cfg.get("clamp_min"), 0)
-    clamp_max = _int_or(emp_cfg.get("clamp_max"), 40)
-
-    n = len(store_type)
-    out = np.zeros(n, dtype=np.int64)
+    emp_min = _int_or(emp_cfg.get("min"), 3)
+    emp_max = _int_or(emp_cfg.get("max"), 800)
 
     st = store_type.astype(str).to_numpy()
     ss = status.astype(str).to_numpy()
+    sqft = square_footage.to_numpy(dtype=np.float64)
 
-    open_mask = ss == "Open"
-    reno_mask = ss == "Renovating"
+    # baseline by sqft
+    baseline = np.maximum(1.0, (sqft / 1000.0) * base_rate)
+
+    # online override (small ops)
+    online_mask = st == "Online"
+    if online_mask.any():
+        baseline[online_mask] = rng.uniform(online_lo, online_hi, size=int(online_mask.sum()))
+
+    # status scaling
     closed_mask = ss == "Closed"
-
-    # Closed / Renovating first
     if closed_mask.any():
-        out[closed_mask] = rng.integers(closed_lo, closed_hi + 1, size=int(closed_mask.sum()), dtype=np.int64)
+        baseline[closed_mask] = baseline[closed_mask] * closed_mult
+
+    reno_mask = ss == "Renovating"
     if reno_mask.any():
-        out[reno_mask] = rng.integers(renovating_lo, renovating_hi + 1, size=int(reno_mask.sum()), dtype=np.int64)
+        baseline[reno_mask] = baseline[reno_mask] * reno_mult
 
-    # Open stores
-    if open_mask.any():
-        if mode == "scaled_sqft":
-            sqft_per_employee = _as_dict(emp_cfg.get("sqft_per_employee")) or {
-                "Convenience": 900,
-                "Supermarket": 550,
-                "Hypermarket": 380,
-                "Online": 1200,
-            }
-            noise_sd = _float_or(emp_cfg.get("noise_sd"), 1.5)
+    # jitter + clamp
+    jitter = rng.normal(loc=1.0, scale=0.10, size=baseline.size)
+    baseline = baseline * np.clip(jitter, 0.7, 1.4)
 
-            sqft = square_footage.astype(np.float64).to_numpy()
-            for t, r in open_by_type.items():
-                lo, hi = _range2(r, 4, 10)
-                m = open_mask & (st == str(t))
-                if not m.any():
-                    continue
-                spe = float(sqft_per_employee.get(t, 700))
-                base = np.rint(sqft[m] / max(spe, 50.0) + rng.normal(0.0, noise_sd, size=int(m.sum())))
-                base = np.clip(base, lo, hi).astype(np.int64)
-                out[m] = base
-
-            # Unknown types fallback
-            unk = open_mask & ~np.isin(st, np.array(list(open_by_type.keys()), dtype=object))
-            if unk.any():
-                out[unk] = rng.integers(4, 10 + 1, size=int(unk.sum()), dtype=np.int64)
-        else:
-            # by_type (default)
-            for t, r in open_by_type.items():
-                lo, hi = _range2(r, 4, 10)
-                m = open_mask & (st == str(t))
-                if not m.any():
-                    continue
-                out[m] = rng.integers(lo, hi + 1, size=int(m.sum()), dtype=np.int64)
-
-            # Unknown types fallback
-            unk = open_mask & ~np.isin(st, np.array(list(open_by_type.keys()), dtype=object))
-            if unk.any():
-                out[unk] = rng.integers(4, 10 + 1, size=int(unk.sum()), dtype=np.int64)
-
-        # ensure open stores have at least 1 (so a manager conceptually exists)
-        out[open_mask] = np.maximum(out[open_mask], 1)
-
-    return np.clip(out, clamp_min, clamp_max).astype(np.int64)
+    out = np.round(baseline).astype(np.int64)
+    out = np.clip(out, emp_min, emp_max)
+    return out
 
 
 # ---------------------------------------------------------
 # Generator
 # ---------------------------------------------------------
+
+
+def _sample_geography_keys(
+    *,
+    rng: np.random.Generator,
+    geo_keys: np.ndarray,
+    n: int,
+    iso_by_geo: Optional[dict[int, str]] = None,
+    ensure_iso_coverage: bool = False,
+) -> np.ndarray:
+    """
+    Sample GeographyKey values for Stores.
+
+    Default behavior: uniform random choice with replacement (backwards compatible).
+
+    If ensure_iso_coverage is True and iso_by_geo is provided, attempt to cover as many distinct
+    ISOCode groups as possible by ensuring at least one store per group (up to n groups).
+    """
+    keys = np.asarray(geo_keys, dtype=np.int64)
+    if keys.size == 0:
+        raise ValueError("geo_keys empty")
+
+    if n <= 0:
+        raise ValueError(f"n must be > 0, got {n}")
+
+    # Backwards compatible default.
+    if not ensure_iso_coverage or not iso_by_geo:
+        return rng.choice(keys, size=n, replace=True)
+
+    iso_arr = np.array([iso_by_geo.get(int(k), "") for k in keys], dtype=object)
+    valid = iso_arr != ""
+    if not np.any(valid):
+        return rng.choice(keys, size=n, replace=True)
+
+    uniq_iso = sorted(set(iso_arr[valid].tolist()))
+    if not uniq_iso:
+        return rng.choice(keys, size=n, replace=True)
+
+    # Choose which ISO groups to cover (if n is small, cover n random groups).
+    if n < len(uniq_iso):
+        chosen_iso = rng.choice(np.array(uniq_iso, dtype=object), size=n, replace=False).tolist()
+    else:
+        chosen_iso = uniq_iso
+
+    first: list[int] = []
+    for code in chosen_iso:
+        pool = keys[iso_arr == code]
+        if pool.size:
+            first.append(int(rng.choice(pool, size=1)[0]))
+
+    first_arr = np.asarray(first, dtype=np.int64)
+    remaining = n - int(first_arr.size)
+    rest = rng.choice(keys, size=remaining, replace=True) if remaining > 0 else np.empty(0, dtype=np.int64)
+
+    out = np.concatenate([first_arr, rest])
+    rng.shuffle(out)
+    return out
+
+
 def generate_store_table(
     *,
     geo_keys: np.ndarray,
@@ -400,6 +403,8 @@ def generate_store_table(
     employee_count_cfg: Optional[Dict] = None,
     geo_loc_short: Optional[Dict[int, str]] = None,
     geo_loc_full: Optional[Dict[int, str]] = None,
+    iso_by_geo: Optional[dict[int, str]] = None,
+    ensure_currency_coverage: bool = False,
 ) -> pd.DataFrame:
     """
     Generate synthetic store dimension table.
@@ -428,7 +433,13 @@ def generate_store_table(
     df["Status"] = rng.choice(_STORE_STATUS, size=num_stores, p=_STORE_STATUS_P)
 
     # GeographyKey assignment (MUST come before location-based naming)
-    df["GeographyKey"] = rng.choice(geo_keys.astype(np.int64), size=num_stores, replace=True)
+    df["GeographyKey"] = _sample_geography_keys(
+        rng=rng,
+        geo_keys=geo_keys.astype(np.int64),
+        n=num_stores,
+        iso_by_geo=iso_by_geo,
+        ensure_iso_coverage=bool(ensure_currency_coverage),
+    )
 
     # Location strings (best-effort)
     if geo_loc_short is None:
@@ -616,6 +627,19 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     geo_keys = geo["GeographyKey"].astype(np.int64).to_numpy()
     loc_short_map, loc_full_map = _build_location_maps(geo)
 
+    # Optional: ensure currency diversity even with small num_stores.
+    # This affects GeographyKey sampling only; output schema/columns remain unchanged.
+    ensure_currency_coverage = bool(store_cfg.get("ensure_currency_coverage", False))
+
+    iso_by_geo: Optional[dict[int, str]] = None
+    if ensure_currency_coverage and "ISOCode" in geo.columns:
+        g = geo[["GeographyKey", "ISOCode"]].dropna()
+        iso_by_geo = dict(
+            zip(
+                g["GeographyKey"].astype(np.int64).to_numpy(),
+                g["ISOCode"].astype(str).to_numpy(),
+            )
+        )
 
     # Pull optional nested configs
     sqft_cfg = _as_dict(store_cfg.get("square_footage"))
@@ -652,6 +676,8 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             employee_count_cfg=emp_cfg,
             geo_loc_short=loc_short_map,
             geo_loc_full=loc_full_map,
+            iso_by_geo=iso_by_geo,
+            ensure_currency_coverage=ensure_currency_coverage,
         )
 
         # Cast only the intended date fields to Arrow date32

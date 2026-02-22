@@ -77,143 +77,148 @@ def _stores_signature(stores: pd.DataFrame) -> Dict[str, Any]:
 
 _FIRST = np.array(
     [
-        # Common US/UK
+        # --------------------------
+        # UK / US (majority)
+        # --------------------------
         "James","John","Robert","Michael","William","David","Richard","Joseph","Thomas","Charles",
-        "Christopher","Daniel","Matthew","Anthony","Mark","Donald","Steven","Paul","Andrew","Joshua",
-        "Kevin","Brian","George","Edward","Ronald","Timothy","Jason","Jeffrey","Ryan","Jacob",
-        "Gary","Nicholas","Eric","Stephen","Jonathan","Larry","Justin","Scott","Brandon","Benjamin",
-        "Samuel","Gregory","Frank","Alexander","Raymond","Patrick","Jack","Dennis","Jerry","Tyler",
+        "Christopher","Daniel","Matthew","Anthony","Mark","Steven","Paul","Andrew","Joshua","Kevin",
+        "George","Harry","Jack","Oliver","Jacob","Noah","Charlie","Oscar","Alfie","Leo",
+        "Henry","Arthur","Freddie","Theo","Archie","Liam","Ethan","Isaac","Samuel","Benjamin",
+        "Alexander","Edward","Lewis","Ryan","Nathan","Adam","Luke","Connor","Callum","Jake",
+        "Jamie","Tom","Scott","Sean","Bradley","Kieran","Rhys","Owen","Dylan","Cameron",
+        "Finley","Hugo","Mason","Logan","Max","Reece","Toby","Harrison","Ellis","Miles",
 
-        # Common female US/UK
-        "Mary","Patricia","Jennifer","Linda","Elizabeth","Barbara","Susan","Jessica","Sarah","Karen",
-        "Nancy","Lisa","Margaret","Betty","Sandra","Ashley","Kimberly","Emily","Donna","Michelle",
-        "Dorothy","Carol","Amanda","Melissa","Deborah","Stephanie","Rebecca","Laura","Sharon","Cynthia",
-        "Kathleen","Amy","Shirley","Angela","Helen","Anna","Brenda","Pamela","Nicole","Emma",
-        "Samantha","Katherine","Christine","Debra","Rachel","Catherine","Carolyn","Janet","Ruth","Maria",
+        "Emma","Olivia","Amelia","Isla","Ava","Sophia","Mia","Isabella","Grace","Lily",
+        "Freya","Emily","Ella","Poppy","Charlotte","Daisy","Sienna","Phoebe","Alice","Jessica",
+        "Chloe","Millie","Evie","Ruby","Rosie","Hannah","Zoe","Lucy","Megan","Katie",
+        "Sophie","Laura","Sarah","Rachel","Rebecca","Abigail","Molly","Erin","Bethany","Lauren",
+        "Eleanor","Victoria","Harriet","Florence","Nancy","Georgia","Matilda","Leah","Amber","Naomi",
+        "Clara","Imogen","Ivy","Elsie","Lola",
 
-        # Modern / neutral
-        "Alex","Jordan","Taylor","Casey","Morgan","Riley","Jamie","Avery","Cameron","Quinn",
-        "Peyton","Reese","Rowan","Skyler","Dakota","Finley","Harper","Hayden","Charlie","Emerson",
+        # US-leaning common
+        "Aiden","Jackson","Carter","Grayson","Wyatt","Caleb","Hunter","Jordan","Austin","Evan",
+        "Hailey","Madison","Addison","Avery","Brooklyn","Savannah","Samantha","Natalie","Kaitlyn","Sydney",
 
-        # European mix
-        "Luca","Matteo","Marco","Giovanni","Francesco","Alessandro","Sofia","Giulia","Francesca","Chiara",
-        "Mateo","Diego","Carlos","Javier","Miguel","Lucia","Carmen","Elena","Isabella","Valentina",
-        "Louis","Hugo","Arthur","Camille","Chloe","Julien","Nicolas","Amelie","Lea","Manon",
-        "Noah","Leon","Elias","Felix","Mia","Lina","Hannah","Anna","Leonie","Marie",
+        # --------------------------
+        # Spanish / South American
+        # --------------------------
+        "Juan","Carlos","Diego","Luis","Javier","Miguel","Pedro","Sergio","Andres","Fernando",
+        "Ricardo","Manuel","Francisco","Rafael","Alejandro","Mateo","Nicolas","Santiago","Emilio","Adrian",
+        "Camila","Daniela","Valentina","Sofia","Gabriela","Lucia","Paula","Maria","Ana","Isabella",
+        "Carolina","Juliana","Renata","Mariana","Florencia","Victoria","Natalia","Catalina","Alejandra","Claudia",
 
-        # Nordics / misc
-        "Oskar","Emil","Oliver","Lucas","Ella","Freya","Ida","Astrid","Signe","Ingrid",
-        "Ethan","Logan","Mason","Liam","Noah","Aiden","Sebastian","Nathan","Dylan","Caleb",
+        # --------------------------
+        # French
+        # --------------------------
+        "Pierre","Jean","Louis","Hugo","Lucas","Arthur","Paul","Julien","Antoine","Thomas",
+        "Nicolas","Alexandre","Maxime","Sebastien","Romain","Theo","Gabriel","Nathan","Mathieu","Baptiste",
+        "Marie","Julie","Camille","Charlotte","Sophie","Chloe","Manon","Sarah","Alice","Lucie",
+        "Lea","Clara","Eva","Emilie","Margot","Helene","Aurelie","Pauline","Elise","Nina",
     ],
     dtype=object,
 )
 
 _LAST = np.array(
     [
-        # US/UK common
-        "Smith","Johnson","Williams","Brown","Jones","Garcia","Miller","Davis","Rodriguez","Martinez",
-        "Hernandez","Lopez","Gonzalez","Wilson","Anderson","Thomas","Taylor","Moore","Jackson","Martin",
-        "Lee","Perez","Thompson","White","Harris","Sanchez","Clark","Ramirez","Lewis","Robinson",
-        "Walker","Young","Allen","King","Wright","Scott","Torres","Nguyen","Hill","Flores",
-        "Green","Adams","Nelson","Baker","Hall","Rivera","Campbell","Mitchell","Carter","Roberts",
+        # --------------------------
+        # UK / US (majority)
+        # --------------------------
+        "Smith","Jones","Taylor","Brown","Williams","Wilson","Johnson","Davies","Robinson","Wright",
+        "Thompson","Evans","Walker","White","Roberts","Green","Hall","Wood","Jackson","Clarke",
+        "Harris","Lewis","Young","King","Lee","Martin","Moore","Hill","Scott","Cooper",
+        "Ward","Turner","Parker","Edwards","Collins","Stewart","Morris","Murphy","Cook","Rogers",
+        "Morgan","Bell","Bailey","Cox","Richardson","Howard","Hughes","Watson","Gray","James",
+        "Bennett","Carter","Mitchell","Phillips","Campbell","Anderson","Henderson","Graham","Foster","Powell",
+        "Russell","Reid","Murray","Shaw","Holmes","Mason","Hunt","Palmer","Reynolds","Fisher",
+        "Ellis","Harrison","Gibson","Spencer","Webb","Simpson","Marshall","Barrett","Pearce","Gardner",
+        "Stone","Wells","Fletcher","Chapman","Harvey","Lawrence","Knight","Armstrong","Barker","Fox",
+        "Hawkins","Jenkins","Matthews","Payne","Porter","Saunders",
 
-        # UK/IE
-        "Murphy","Kelly","OBrien","ONeill","Walsh","Ryan","Byrne","Doyle","McCarthy","Gallagher",
-        "Campbell","Stewart","Murray","Reid","Graham","Watson","Hunter","Ross","Ferguson","Gibson",
+        # --------------------------
+        # Spanish / South American
+        # --------------------------
+        "Garcia","Martinez","Lopez","Gonzalez","Rodriguez","Sanchez","Ramirez","Torres","Flores","Rivera",
+        "Gomez","Diaz","Vargas","Castro","Romero","Herrera","Alvarez","Mendoza","Silva","Morales",
+        "Ortega","Delgado","Rojas","Navarro","Cruz","Reyes","Pena","Soto","Guerrero","Medina",
+        "Suarez","Ibarra","Campos","Vega","Fuentes","Carrasco","Paredes","Salazar","Benitez","Arias",
 
-        # Spanish/Portuguese
-        "Silva","Santos","Ferreira","Pereira","Oliveira","Costa","Ribeiro","Alves","Carvalho","Gomes",
-        "Fernandez","Ruiz","Diaz","Vazquez","Castro","Romero","Mendez","Ramos","Morales","Ortega",
-
+        # --------------------------
         # French
-        "Dubois","Durand","Moreau","Laurent","Simon","Michel","Lefevre","Garner","Petit","Roux",
-        "Fournier","Girard","Lambert","Bonnet","Francois","Martins","Henry","Chevalier","Gauthier","Perrin",
-
-        # Italian
-        "Rossi","Russo","Ferrari","Esposito","Bianchi","Romano","Colombo","Ricci","Marino","Greco",
-        "Bruno","Gallo","Conti","DeLuca","Mancini","Costa","Giordano","Rizzo","Lombardi","Moretti",
-
-        # German/Dutch/Scandi
-        "Schmidt","Mueller","Schneider","Fischer","Weber","Meyer","Wagner","Becker","Hoffmann","Schaefer",
-        "Jansen","DeVries","VanDijk","Bakker","Visser","Andersen","Nielsen","Larsen","Johansson","Lindberg",
-
-        # Eastern Europe / misc
-        "Nowak","Kowalski","Wisniewski","Wojcik","Kovac","Novak","Horvat","Ilic","Popescu","Ionescu",
-        "Ivanov","Petrov","Smirnov","Sokolov","Volkov","Kuznetsov","Orlov","Morozov","Pavlov","Fedorov",
+        # --------------------------
+        "Dubois","Moreau","Lefevre","Laurent","Simon","Michel","Bernard","Robert","Petit","Durand",
+        "Leroy","Roux","Fournier","Girard","Lambert","Bonnet","Francois","Martins","Fontaine","Gauthier",
+        "Chevalier","Perrin","Boucher","Caron","Lemoine","Marchand","Guerin","Bouvier","Duval","Loiseau",
     ],
     dtype=object,
 )
-
 
 _STAFF_TITLES = np.array(
     ["Sales Associate", "Cashier", "Stock Associate", "Customer Support", "Fulfillment Associate"],
     dtype=object,
 )
-_STAFF_TITLES_P = np.array([0.40, 0.18, 0.18, 0.12, 0.12], dtype=float)
+_STAFF_TITLES_P = np.array([0.35, 0.25, 0.20, 0.10, 0.10], dtype=float)
 
 
 def _parse_global_dates(cfg: Dict[str, Any], emp_cfg: Dict[str, Any]) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    gd = _as_dict(emp_cfg.get("global_dates"))
-    if gd:
-        start = pd.to_datetime(gd.get("start")).normalize()
-        end = pd.to_datetime(gd.get("end")).normalize()
-        if pd.isna(start) or pd.isna(end):
-            raise ValueError(f"Invalid employees.global_dates: {gd}")
-        return start, end
-
-    defaults_dates = _as_dict((_as_dict(cfg.get("defaults")) or _as_dict(cfg.get("_defaults"))).get("dates"))
-    if defaults_dates:
-        start = pd.to_datetime(defaults_dates.get("start")).normalize()
-        end = pd.to_datetime(defaults_dates.get("end")).normalize()
-        if not pd.isna(start) and not pd.isna(end):
-            return start, end
-
-    return pd.Timestamp("2021-01-01"), pd.Timestamp("2026-12-31")
+    defaults = _as_dict(cfg.get("defaults"))
+    start = emp_cfg.get("start_date") or defaults.get("start_date") or "2010-01-01"
+    end = emp_cfg.get("end_date") or defaults.get("end_date") or "2012-12-31"
+    global_start = pd.to_datetime(start).normalize()
+    global_end = pd.to_datetime(end).normalize()
+    if global_end < global_start:
+        global_start, global_end = global_end, global_start
+    return global_start, global_end
 
 
 def _rand_dates_between(
-    rng: np.random.Generator,
-    start: pd.Timestamp,
-    end: pd.Timestamp,
-    n: int,
+    rng: np.random.Generator, start: pd.Timestamp, end: pd.Timestamp, n: int
 ) -> pd.Series:
-    start_i = start.value // 10**9
-    end_i = end.value // 10**9
-    if end_i < start_i:
-        start_i, end_i = end_i, start_i
+    start = pd.to_datetime(start).normalize()
+    end = pd.to_datetime(end).normalize()
+    if end < start:
+        start, end = end, start
 
-    secs = rng.integers(start_i, end_i + 1, size=n, dtype=np.int64)
-    dt = pd.to_datetime(secs, unit="s")
+    start_i = int(start.value // 86_400_000_000_000)  # days since epoch
+    end_i = int(end.value // 86_400_000_000_000)
 
-    # ndarray -> DatetimeIndex
-    if isinstance(dt, pd.DatetimeIndex):
-        return pd.Series(dt.normalize())
+    days = rng.integers(start_i, end_i + 1, size=int(n), dtype=np.int64)
 
-    return dt.dt.normalize()
+    # pd.to_datetime(...) here returns a DatetimeIndex -> use .normalize(), then wrap as Series
+    dt = pd.to_datetime(days.astype("datetime64[D]")).normalize()
+    return pd.Series(dt, dtype="datetime64[ns]")
 
 
 def _apply_deterministic_names(df: pd.DataFrame, seed: int) -> None:
     """
     Stable names per EmployeeKey (no dependence on row order).
-    Ensures EmployeeName is always a real person name (not role labels).
+
+    Changes vs earlier:
+      - Removes the (EmployeeKey // 97) bucketing that caused long blocks of identical surnames.
+      - MiddleName is always a non-null middle initial (e.g., 'K.') to avoid nulls in BI tools.
     """
     ek = df["EmployeeKey"].astype(np.int64).to_numpy()
-    first = _FIRST[(ek + seed) % len(_FIRST)]
-    last = _LAST[((ek // 97) + seed * 3) % len(_LAST)]
+    ek_u = ek.astype(np.uint64)
 
-    # ~30% have middle initial, deterministic
-    mid_mask = ((ek + seed) % 10) < 3
-    mid_initial = np.where(
-        mid_mask,
-        np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), dtype=object)[(ek + seed) % 26],
-        pd.NA,
-    )
-    middle = np.where(pd.isna(mid_initial), pd.NA, (pd.Series(mid_initial).astype(str) + "."))
+    # Deterministic hash; spreads adjacent keys across name pools
+    h1 = ek_u * np.uint64(2654435761) + np.uint64(seed) * np.uint64(1013904223)
+    h2 = (ek_u ^ (h1 >> np.uint64(13))) * np.uint64(2246822519) + np.uint64(seed) * np.uint64(3266489917)
+
+    first_idx = (h1 % np.uint64(len(_FIRST))).astype(np.int64)
+    last_idx = (h2 % np.uint64(len(_LAST))).astype(np.int64)
+
+    first = _FIRST[first_idx]
+    last = _LAST[last_idx]
+
+    # Always present middle initial (non-null)
+    letters = np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), dtype=object)
+    mid = letters[(h1 % np.uint64(26)).astype(np.int64)]
+    middle = pd.Series(mid, dtype="object").astype(str) + "."
 
     df["FirstName"] = pd.Series(first, dtype="object").astype(str)
     df["LastName"] = pd.Series(last, dtype="object").astype(str)
-    df["MiddleName"] = pd.Series(middle, dtype="object")
+    df["MiddleName"] = middle.astype(object)
 
+    # Keep EmployeeName backwards compatible (First + Last)
     df["EmployeeName"] = df["FirstName"] + " " + df["LastName"]
 
 
@@ -306,6 +311,49 @@ def _enrich_employee_hr_columns(
                           np.where(title.isin(["Fulfillment Associate"]), "Fulfillment", "Corporate"))),
     )
     df["DepartmentName"] = pd.Series(dept, dtype="object")
+
+    return df
+
+
+def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Force specific columns to be written as *integer* types in parquet.
+
+    Power BI / Power Query will sometimes infer decimal types when a column contains nulls.
+    To keep these columns as true integers, we fill missing with 0 and cast to fixed-width ints.
+
+    Notes:
+      - ParentEmployeeKey uses 0 to mean 'no parent' (CEO).
+      - StoreKey/GeographyKey/RegionId/DistrictId use 0 for corporate-level rows.
+    """
+    if df.empty:
+        return df
+
+    def _to_int(col: str, dtype) -> None:
+        if col not in df.columns:
+            return
+        s = df[col]
+        if pd.api.types.is_bool_dtype(s):
+            s = s.astype(np.int8)
+        s = pd.to_numeric(s, errors="coerce")
+        df[col] = s.fillna(0).astype(dtype)
+
+    _to_int("EmployeeKey", np.int64)
+    _to_int("ParentEmployeeKey", np.int64)
+    _to_int("OrgLevel", np.int16)
+
+    _to_int("SalesPersonFlag", np.int8)
+    _to_int("IsSalesPerson", np.int8)
+    _to_int("SalariedFlag", np.int8)
+    _to_int("CurrentFlag", np.int8)
+    _to_int("IsActive", np.int8)
+
+    _to_int("RegionId", np.int16)
+    _to_int("DistrictId", np.int16)
+    _to_int("StoreKey", np.int64)
+    _to_int("GeographyKey", np.int64)
+
+    _to_int("PayFrequency", np.int16)
 
     return df
 
@@ -553,14 +601,15 @@ def generate_employee_dimension(
     # --- Names (always person names)
     _apply_deterministic_names(df, seed=int(seed))
 
-    # --- Types
-    df["EmployeeKey"] = df["EmployeeKey"].astype(np.int64)
-    df["ParentEmployeeKey"] = df["ParentEmployeeKey"].astype("Int64")
-    df["OrgLevel"] = df["OrgLevel"].astype(np.int16)
-    df["RegionId"] = df["RegionId"].astype("Int16")
-    df["DistrictId"] = df["DistrictId"].astype("Int16")
-    df["StoreKey"] = df["StoreKey"].astype("Int64")
-    df["GeographyKey"] = df["GeographyKey"].astype("Int64")
+    # --- Types (ensure integer columns stay integer even with corporate-level blanks)
+    df["EmployeeKey"] = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
+    df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
+    df["OrgLevel"] = pd.to_numeric(df["OrgLevel"], errors="coerce").fillna(0).astype(np.int16)
+
+    df["RegionId"] = pd.to_numeric(df["RegionId"], errors="coerce").fillna(0).astype(np.int16)
+    df["DistrictId"] = pd.to_numeric(df["DistrictId"], errors="coerce").fillna(0).astype(np.int16)
+    df["StoreKey"] = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int64)
+    df["GeographyKey"] = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(0).astype(np.int64)
 
     # Optional: drop StoreKey/GeographyKey from DimEmployee output
     if not include_store_cols:
@@ -597,8 +646,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     version_cfg = dict(emp_cfg)
     version_cfg.pop("_force_regenerate", None)
-    # schema changed (names + sizing) => bump
-    version_cfg["schema_version"] = 3
+    # schema changed (names + integer enforcement) => bump
+    version_cfg["schema_version"] = 4
     version_cfg["_stores_sig"] = _stores_signature(stores)
     version_cfg["_global_dates"] = {"start": str(global_start.date()), "end": str(global_end.date())}
 
@@ -634,6 +683,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             global_end=global_end,
             email_domain=str(email_domain),
         )
+
+        df = _finalize_employee_integer_cols(df)
 
         compression = emp_cfg.get("parquet_compression", "snappy")
         compression_level = emp_cfg.get("parquet_compression_level", None)
