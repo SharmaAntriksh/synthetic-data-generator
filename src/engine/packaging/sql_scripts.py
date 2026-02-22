@@ -1,8 +1,12 @@
 import os
 import shutil
 from pathlib import Path
+from typing import Optional, Set
 
-from src.tools.sql.generate_bulk_insert_sql import generate_bulk_insert_script
+from src.tools.sql.generate_bulk_insert_sql import (
+    generate_bulk_insert_script,
+    _allowed_fact_tables_from_cfg,
+)
 from src.tools.sql.generate_create_table_scripts import generate_all_create_tables
 from src.utils.logging_utils import stage, skip, done
 
@@ -70,6 +74,44 @@ def _sales_mode(sales_cfg: dict) -> str:
     """
     mode = str(sales_cfg.get("sales_output") or "").strip().lower()
     return mode or "sales"
+
+
+def _detect_fact_tables_from_output(facts_out: Path) -> Set[str]:
+    """
+    Infer which fact tables exist based on subfolders/files in the packaged facts output.
+
+    This is used as a safety net when the caller doesn't pass full cfg into
+    write_bulk_insert_scripts().
+
+    Folder -> table mapping (case-insensitive):
+      facts/sales                -> Sales
+      facts/sales_return         -> SalesReturn
+      facts/sales_order_header   -> SalesOrderHeader
+      facts/sales_order_detail   -> SalesOrderDetail
+    """
+    out: Set[str] = set()
+    if not facts_out.exists():
+        return out
+
+    # Only consider folders that contain at least one CSV
+    for child in facts_out.iterdir():
+        if not child.is_dir():
+            continue
+        has_csv = any(p.is_file() and p.suffix.lower() == ".csv" for p in child.rglob("*"))
+        if not has_csv:
+            continue
+
+        name = child.name.strip().lower()
+        if name in {"sales"}:
+            out.add("Sales")
+        elif name in {"sales_return", "salesreturn", "returns"}:
+            out.add("SalesReturn")
+        elif name in {"sales_order_header", "salesorderheader", "order_header", "header"}:
+            out.add("SalesOrderHeader")
+        elif name in {"sales_order_detail", "salesorderdetail", "order_detail", "detail"}:
+            out.add("SalesOrderDetail")
+
+    return out
 
 
 # ------------------------------------------------------------
@@ -205,7 +247,27 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
 # SQL generation from packaged CSVs
 # ------------------------------------------------------------
 
-def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, sales_cfg: dict) -> None:
+def write_bulk_insert_scripts(
+    *,
+    dims_out: Path,
+    facts_out: Path,
+    sql_root: Path,
+    sales_cfg: Optional[dict] = None,
+    cfg: Optional[dict] = None,
+) -> None:
+    """
+    Generate BULK INSERT scripts for dims and facts.
+
+    Key fix:
+      - Facts allowlist must be computed from full cfg (facts.enabled + returns.enabled),
+        not only from sales_cfg. Otherwise SalesReturn gets filtered out when sales_output=sales.
+
+    Backward compatibility:
+      - Older call sites may pass only sales_cfg. In that case we:
+          - start from tables_from_sales_cfg(sales_cfg)
+          - then auto-include any detected fact tables from facts_out folder structure,
+            so sales_return/*.csv will still generate SalesReturn BULK INSERT.
+    """
     with stage("Generating BULK INSERT Scripts"):
         dims_csv = sorted(dims_out.glob("*.csv"))
         facts_csv = sorted(facts_out.rglob("*.csv"))
@@ -226,16 +288,28 @@ def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path
             mode="csv",
         )
 
-        # facts (single script, recursive scan; filtered by sales_output)
+        # facts allowlist:
+        allowed_tables: Optional[Set[str]] = None
+
+        if cfg is not None:
+            # Preferred: compute from full cfg (includes returns)
+            allowed_tables = _allowed_fact_tables_from_cfg(cfg)
+        else:
+            # Back-compat: start from sales_cfg and then include detected folders
+            sales_cfg = sales_cfg or {}
+            allowed_tables = set(tables_from_sales_cfg(sales_cfg))
+            allowed_tables |= _detect_fact_tables_from_output(facts_out)
+
+        # facts (single script, recursive scan)
         out_sql = load_root / "02_bulk_insert_facts.sql"
         generate_bulk_insert_script(
-            csv_folder=str(facts_out),
+            csv_folder=str(facts_out),      # MUST be root facts folder to include sales_return/
             table_name=None,
             output_sql_file=str(out_sql),
             mode="legacy",
             row_terminator="0x0a",
             recursive=True,
-            allowed_tables=set(tables_from_sales_cfg(sales_cfg)),
+            allowed_tables=allowed_tables,
         )
 
 

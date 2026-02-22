@@ -106,12 +106,109 @@ def _infer_table_from_filename(csv_file: str) -> str:
     base = _CHUNK_SUFFIX_RE.sub("", base)
     # snake_case -> PascalCase
     return base.replace("_", " ").title().replace(" ", "")
+# Folder name -> canonical fact table name (PascalCase) for facts/<folder>/*.csv
+_FOLDER_TABLE_ALIASES: dict[str, str] = {
+    # facts
+    "sales": "Sales",
+    "sales_order_header": "SalesOrderHeader",
+    "salesorderheader": "SalesOrderHeader",
+    "sales_order_detail": "SalesOrderDetail",
+    "salesorderdetail": "SalesOrderDetail",
+
+    # returns
+    "sales_return": "SalesReturn",
+    "salesreturn": "SalesReturn",
+    "returns": "SalesReturn",
+    "sales_returns": "SalesReturn",
+    "salesreturns": "SalesReturn",
+}
+
+def _allowed_lookup(allowed_tables: Optional[Set[str]]) -> Optional[dict[str, str]]:
+    """Map lower(table) -> canonical(table) for case-insensitive membership checks."""
+    if not allowed_tables:
+        return None
+    return {str(t).strip().lower(): t for t in allowed_tables}
+
+def _pick_target_table(csv_path: Path, *, allowed_tables: Optional[Set[str]]) -> Optional[str]:
+    """
+    Determine the target table for a csv_path.
+    Prefer folder-based mapping (facts/<table_folder>/file.csv), then fallback to filename inference.
+    Applies allowed_tables filter case-insensitively.
+    """
+    allowed_map = _allowed_lookup(allowed_tables)
+
+    # 1) folder-based mapping (best for files like sales_return_chunk0000.csv)
+    folder_key = csv_path.parent.name.strip().lower()
+    candidate = _FOLDER_TABLE_ALIASES.get(folder_key)
+
+    # 2) fallback: filename inference
+    if candidate is None:
+        candidate = _infer_table_from_filename(csv_path.name)
+
+    if allowed_map is None:
+        return candidate
+
+    return allowed_map.get(str(candidate).strip().lower())
+
+
+def _returns_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
+    """
+    Enable SalesReturn BULK INSERT if returns are enabled in config.
+
+    Supports:
+      - facts: ['sales','returns']
+      - facts: { enabled: ['sales','returns'] }
+      - facts: { returns: true/false }
+      - facts: { enabled: { returns: true/false } }
+
+    If no explicit selection is present, defaults to True.
+    """
+    if cfg is None:
+        return True
+
+    facts_cfg = cfg.get("facts")
+
+    def _list_has_returns(v) -> bool:
+        norm = {str(x).strip().lower() for x in (v or [])}
+        return (
+            "returns" in norm
+            or "salesreturn" in norm
+            or "sales_return" in norm
+            or "salesreturns" in norm
+            or "sales_returns" in norm
+        )
+
+    # facts: [..]
+    if isinstance(facts_cfg, list):
+        return _list_has_returns(facts_cfg)
+
+    # missing or non-dict -> default enable
+    if facts_cfg is None or not isinstance(facts_cfg, Mapping):
+        return True
+
+    # facts: { returns: bool }
+    if isinstance(facts_cfg.get("returns"), (bool, int)):
+        return bool(facts_cfg.get("returns"))
+
+    enabled_cfg = facts_cfg.get("enabled")
+
+    # facts: { enabled: [..] }
+    if isinstance(enabled_cfg, list):
+        return _list_has_returns(enabled_cfg)
+
+    # facts: { enabled: { returns: bool } }
+    if isinstance(enabled_cfg, Mapping) and isinstance(enabled_cfg.get("returns"), (bool, int)):
+        return bool(enabled_cfg.get("returns"))
+
+    return True
 
 
 def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     """
-    Build the set of fact tables we want in the facts bulk insert script,
-    based on cfg['sales']['sales_output'].
+    Build the set of fact tables we want in the facts bulk insert script.
+
+    - sales.sales_output drives Sales vs SalesOrderHeader/Detail
+    - facts/returns flags (or facts.enabled list) control SalesReturn
 
     Returns None if cfg is None (meaning: don't filter; include all inferred tables).
     """
@@ -130,14 +227,22 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
         allowed.add("SalesOrderHeader")
         allowed.add("SalesOrderDetail")
 
+    if _returns_enabled_from_cfg(cfg):
+        allowed.add("SalesReturn")
+
     return allowed
-
-
 def _iter_csv_files(csv_folder: Path, *, recursive: bool) -> Iterable[Path]:
+    """Yield .csv files (case-insensitive on suffix) from a folder (optionally recursive)."""
     if recursive:
-        yield from sorted(csv_folder.rglob("*.csv"))
+        yield from sorted(
+            p for p in csv_folder.rglob("*")
+            if p.is_file() and p.suffix.lower() == ".csv"
+        )
     else:
-        yield from sorted(p for p in csv_folder.iterdir() if p.is_file() and p.suffix.lower() == ".csv")
+        yield from sorted(
+            p for p in csv_folder.iterdir()
+            if p.is_file() and p.suffix.lower() == ".csv"
+        )
 
 
 def generate_bulk_insert_script(
@@ -211,12 +316,13 @@ def generate_bulk_insert_script(
     emitted = 0
 
     for csv_path in csv_paths:
-        inferred = _infer_table_from_filename(csv_path.name)
-        target_table = table_name or inferred
-
-        # Optional filtering (config-driven)
-        if allowed_tables is not None and target_table not in allowed_tables:
-            continue
+        if table_name is not None:
+            target_table = table_name
+        else:
+            target_table = _pick_target_table(csv_path, allowed_tables=allowed_tables)
+            if target_table is None:
+                # filtered out by allowed_tables (case-insensitive) or unknown mapping
+                continue
 
         quoted_table = _quote_multipart_name_sqlserver(str(target_table))
 
