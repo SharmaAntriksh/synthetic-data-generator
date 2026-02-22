@@ -34,32 +34,35 @@ def resolve_csv_table_dir(fact_out: Path, table: str) -> Optional[Path]:
 
 
 def copy_csv_facts(*, fact_out: Path, facts_out: Path, tables: list[str]) -> None:
+    """
+    Copy CSV fact chunk files into the packaged facts folder.
+
+    Logging:
+      - 1 INFO line with total + per-table counts
+      - 1 DONE line with total copied
+      - No per-table "Copying ..." spam
+    """
     copied_files = 0
     missing_dirs: list[str] = []
+
+    multi_table = len(tables) > 1
+
+    # Build a copy plan first so we can print one summary line
+    plan: list[tuple[str, Path, list[Path], Path]] = []  # (table, src_dir, files, dst_dir)
 
     for t in tables:
         src_dir = resolve_csv_table_dir(fact_out, t)
         if src_dir is None:
             missing_dirs.append(t)
-            info(f"No CSV folder found for {t}; expected under {fact_out / 'csv'}.")
             continue
 
-        multi_table = len(tables) > 1
         if t == TABLE_SALES:
             dst_dir = (facts_out / table_dir_name(t)) if multi_table else facts_out
         else:
             dst_dir = facts_out / table_dir_name(t)
 
-        dst_dir.mkdir(parents=True, exist_ok=True)
         csv_files = sorted(src_dir.glob("*.csv"))
-        info(f"Copying {len(csv_files)} CSV file(s) for {t} from: {src_dir}")
-
-        for f in csv_files:
-            target = dst_dir / f.name
-            if target.exists():
-                raise RuntimeError(f"Duplicate CSV filename during packaging: {target}")
-            shutil.copy2(f, target)
-            copied_files += 1
+        plan.append((t, src_dir, csv_files, dst_dir))
 
     if missing_dirs:
         raise RuntimeError(
@@ -67,5 +70,33 @@ def copy_csv_facts(*, fact_out: Path, facts_out: Path, tables: list[str]) -> Non
             + ", ".join(missing_dirs)
             + f". Expected under: {fact_out / 'csv'}"
         )
+
+    # Short, stable names in the log (based on destination dir names)
+    short = {
+        "sales": "sales",
+        "sales_order_detail": "detail",
+        "sales_order_header": "header",
+        "sales_return": "return",
+    }
+
+    counts = [(short.get(table_dir_name(t), table_dir_name(t)), len(files)) for (t, _src, files, _dst) in plan]
+    total = sum(n for _name, n in counts)
+
+    if counts and len({n for _name, n in counts}) == 1:
+        n = counts[0][1]
+        info(f"Copy CSV facts: {total} files ({n} each) -> " + ", ".join(name for name, _ in counts))
+    else:
+        info("Copy CSV facts: " + ", ".join(f"{name}={n}" for name, n in counts) + f" (total={total})")
+
+    # Execute copy
+    for _t, _src_dir, csv_files, dst_dir in plan:
+        dst_dir.mkdir(parents=True, exist_ok=True)
+
+        for f in csv_files:
+            target = dst_dir / f.name
+            if target.exists():
+                raise RuntimeError(f"Duplicate CSV filename during packaging: {target}")
+            shutil.copy2(f, target)
+            copied_files += 1
 
     done(f"Copied {copied_files} CSV fact file(s).")
