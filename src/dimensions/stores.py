@@ -9,7 +9,12 @@ import pandas as pd
 from src.utils.logging_utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
-
+from src.utils.name_pools import (
+    assign_person_names,
+    hash_u64,
+    load_people_pools,
+    resolve_people_folder,
+)
 
 # ---------------------------------------------------------
 # Constants (kept local for clarity)
@@ -329,6 +334,30 @@ def _employee_count_from_cfg(
     return out
 
 
+def _region_from_iso_code(code: str) -> str:
+    """
+    Map geography ISOCode (often currency code in this project) to name pool region.
+    Defaults to 'EU' if unknown.
+    """
+    c = (code or "").strip().upper()
+
+    if c in {"INR"}:
+        return "IN"
+
+    # Americas -> US pool
+    if c in {"USD", "CAD", "MXN", "BRL", "ARS", "CLP", "COP", "PEN"}:
+        return "US"
+
+    # Europe -> EU pool
+    if c in {"EUR", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON"}:
+        return "EU"
+
+    # Asia-Pacific -> AS pool
+    if c in {"AUD", "NZD", "JPY", "CNY", "HKD", "SGD", "KRW", "TWD", "THB", "IDR", "PHP", "VND", "MYR"}:
+        return "AS"
+
+    return "EU"
+
 # ---------------------------------------------------------
 # Generator
 # ---------------------------------------------------------
@@ -405,6 +434,7 @@ def generate_store_table(
     geo_loc_full: Optional[Dict[int, str]] = None,
     iso_by_geo: Optional[dict[int, str]] = None,
     ensure_currency_coverage: bool = False,
+    people_pools=None,
 ) -> pd.DataFrame:
     """
     Generate synthetic store dimension table.
@@ -453,9 +483,36 @@ def generate_store_table(
         loc_full = df["GeographyKey"].astype(np.int64).map(lambda k: geo_loc_full.get(int(k), f"Geo {int(k)}"))
 
     # Manager names (deterministic per StoreKey)
-    mf = _MANAGER_FIRST[(sk * 5 + int(seed)) % len(_MANAGER_FIRST)]
-    ml = _MANAGER_LAST[(sk * 11 + int(seed) * 3) % len(_MANAGER_LAST)]
-    df["StoreManager"] = pd.Series(mf, dtype="object").astype(str) + " " + pd.Series(ml, dtype="object").astype(str)
+    if people_pools is not None:
+        # Derive per-store region using GeographyKey -> ISOCode (best effort)
+        if iso_by_geo:
+            gk_arr = df["GeographyKey"].to_numpy(dtype=np.int64)
+            iso_arr = np.array([iso_by_geo.get(int(k), "") for k in gk_arr], dtype=object)
+            region = np.array([_region_from_iso_code(x) for x in iso_arr], dtype=object)
+        else:
+            region = np.full(num_stores, "US", dtype=object)
+
+        # Deterministic gender per StoreKey
+        h = hash_u64(sk.astype(np.uint64), int(seed), 7001)
+        gender = np.where((h & np.uint64(1)) == 0, "Male", "Female").astype(object)
+
+        first, last, _ = assign_person_names(
+            keys=sk,
+            region=region,
+            gender=gender,
+            is_org=np.zeros(num_stores, dtype=bool),
+            pools=people_pools,
+            seed=int(seed),
+            include_middle=False,
+            default_region="US",
+        )
+        df["StoreManager"] = pd.Series(first, dtype="object").astype(str) + " " + pd.Series(last, dtype="object").astype(str)
+
+    else:
+        # Fallback (old behavior)
+        mf = _MANAGER_FIRST[(sk * 5 + int(seed)) % len(_MANAGER_FIRST)]
+        ml = _MANAGER_LAST[(sk * 11 + int(seed) * 3) % len(_MANAGER_LAST)]
+        df["StoreManager"] = pd.Series(mf, dtype="object").astype(str) + " " + pd.Series(ml, dtype="object").astype(str)
 
     # StoreName pattern (depends on StoreType)
     brand = _BRANDS[(sk + int(seed)) % len(_BRANDS)]
@@ -632,7 +689,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     ensure_currency_coverage = bool(store_cfg.get("ensure_currency_coverage", False))
 
     iso_by_geo: Optional[dict[int, str]] = None
-    if ensure_currency_coverage and "ISOCode" in geo.columns:
+    if "ISOCode" in geo.columns:
         g = geo[["GeographyKey", "ISOCode"]].dropna()
         iso_by_geo = dict(
             zip(
@@ -664,6 +721,15 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
 
     opening_cfg = _as_dict(store_cfg.get("opening"))
 
+    use_name_pools = bool(store_cfg.get("use_name_pools", True))
+    people_pools = None
+    if use_name_pools:
+        people_folder = resolve_people_folder(cfg)  # uses names.people_folder
+        # auto-enable AS only if files exist
+        pf = Path(people_folder)
+        enable_asia = (pf / "asia_male_first.csv").exists() and (pf / "asia_female_first.csv").exists() and (pf / "asia_last.csv").exists()
+        people_pools = load_people_pools(people_folder, enable_asia=enable_asia, legacy_support=True)
+
     with stage("Generating Stores"):
         df = generate_store_table(
             geo_keys=geo_keys,
@@ -678,6 +744,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             geo_loc_full=loc_full_map,
             iso_by_geo=iso_by_geo,
             ensure_currency_coverage=ensure_currency_coverage,
+            people_pools=people_pools,
         )
 
         # Cast only the intended date fields to Arrow date32

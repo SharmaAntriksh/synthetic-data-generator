@@ -10,7 +10,12 @@ from src.utils.logging_utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 
-
+from src.utils.name_pools import (
+    assign_person_names,
+    load_people_pools,
+    resolve_people_folder,
+    hash_u64,
+)
 # ---------------------------------------------------------
 # Internals
 # ---------------------------------------------------------
@@ -73,6 +78,30 @@ def _stores_signature(stores: pd.DataFrame) -> Dict[str, Any]:
         "max_store": int(np.max(sk)),
         "emp_sum": emp_sum,
     }
+
+
+def _region_from_iso_code(code: str) -> str:
+    """
+    Map geography ISOCode (often currency code in this project) to name pool region.
+    """
+    c = (code or "").strip().upper()
+
+    if c in {"INR"}:
+        return "IN"
+
+    # Americas -> US pool
+    if c in {"USD", "CAD", "MXN", "BRL", "ARS", "CLP", "COP", "PEN"}:
+        return "US"
+
+    # Europe -> EU pool
+    if c in {"EUR", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON"}:
+        return "EU"
+
+    # Asia-Pacific -> AS pool
+    if c in {"AUD", "NZD", "JPY", "CNY", "HKD", "SGD", "KRW", "TWD", "THB", "IDR", "PHP", "VND", "MYR"}:
+        return "AS"
+
+    return "US"
 
 
 _FIRST = np.array(
@@ -188,37 +217,72 @@ def _rand_dates_between(
     return pd.Series(dt, dtype="datetime64[ns]")
 
 
-def _apply_deterministic_names(df: pd.DataFrame, seed: int) -> None:
+def _apply_deterministic_names(
+    df: pd.DataFrame,
+    seed: int,
+    *,
+    people_pools=None,
+    iso_by_geo: dict[int, str] | None = None,
+    default_region: str = "US",
+) -> None:
     """
-    Stable names per EmployeeKey (no dependence on row order).
+    Stable names per EmployeeKey (no dependence on row order), using shared name pools.
 
-    Changes vs earlier:
-      - Removes the (EmployeeKey // 97) bucketing that caused long blocks of identical surnames.
-      - MiddleName is always a non-null middle initial (e.g., 'K.') to avoid nulls in BI tools.
+    - Assigns deterministic Gender (M/F/O) *once* here so names can match.
+    - Uses GeographyKey -> ISOCode -> region pool when available; defaults to default_region.
+    - MiddleName is always a deterministic middle initial (non-null).
     """
     ek = df["EmployeeKey"].astype(np.int64).to_numpy()
-    ek_u = ek.astype(np.uint64)
+    ek_u64 = ek.astype(np.uint64)
 
-    # Deterministic hash; spreads adjacent keys across name pools
-    h1 = ek_u * np.uint64(2654435761) + np.uint64(seed) * np.uint64(1013904223)
-    h2 = (ek_u ^ (h1 >> np.uint64(13))) * np.uint64(2246822519) + np.uint64(seed) * np.uint64(3266489917)
+    # Deterministic Gender distribution ~ 49/49/2 (M/F/O) based on hash
+    h = hash_u64(ek_u64, int(seed), 9101)
+    u = (h % np.uint64(10_000)).astype(np.float64) / 10_000.0
+    gender_code = np.where(u < 0.02, "O", np.where(u < 0.51, "F", "M")).astype(object)
 
-    first_idx = (h1 % np.uint64(len(_FIRST))).astype(np.int64)
-    last_idx = (h2 % np.uint64(len(_LAST))).astype(np.int64)
+    # Set Gender here; downstream enrichment must NOT overwrite if present
+    df["Gender"] = gender_code
 
-    first = _FIRST[first_idx]
-    last = _LAST[last_idx]
+    # If pools not provided, fall back to old behavior (safety)
+    if people_pools is None:
+        first = _FIRST[(ek + int(seed)) % len(_FIRST)]
+        last = _LAST[((ek // 97) + int(seed) * 3) % len(_LAST)]
 
-    # Always present middle initial (non-null)
-    letters = np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), dtype=object)
-    mid = letters[(h1 % np.uint64(26)).astype(np.int64)]
-    middle = pd.Series(mid, dtype="object").astype(str) + "."
+        letters = np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), dtype=object)
+        mid = letters[(h % np.uint64(26)).astype(np.int64)]
+        middle = pd.Series(mid, dtype="object").astype(str) + "."
+
+        df["FirstName"] = pd.Series(first, dtype="object").astype(str)
+        df["LastName"] = pd.Series(last, dtype="object").astype(str)
+        df["MiddleName"] = middle.astype(object)
+        df["EmployeeName"] = df["FirstName"] + " " + df["LastName"]
+        return
+
+    # Region per row from GeographyKey -> ISOCode -> region code
+    if "GeographyKey" in df.columns and iso_by_geo:
+        gk = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(-1).astype(np.int64).to_numpy()
+        iso = np.array([iso_by_geo.get(int(k), "") if k >= 0 else "" for k in gk], dtype=object)
+        region = np.array([_region_from_iso_code(x) if x else default_region for x in iso], dtype=object)
+    else:
+        region = np.full(len(df), default_region, dtype=object)
+
+    # Map employee gender codes to name_pools gender labels
+    gender_label = np.where(gender_code == "M", "Male", np.where(gender_code == "F", "Female", "Other")).astype(object)
+
+    first, last, mid = assign_person_names(
+        keys=ek,
+        region=region,
+        gender=gender_label,
+        is_org=np.zeros(len(df), dtype=bool),
+        pools=people_pools,
+        seed=int(seed),
+        include_middle=True,
+        default_region=default_region,
+    )
 
     df["FirstName"] = pd.Series(first, dtype="object").astype(str)
     df["LastName"] = pd.Series(last, dtype="object").astype(str)
-    df["MiddleName"] = middle.astype(object)
-
-    # Keep EmployeeName backwards compatible (First + Last)
+    df["MiddleName"] = pd.Series(mid, dtype="object").astype(str)  # always present (e.g. 'K.')
     df["EmployeeName"] = df["FirstName"] + " " + df["LastName"]
 
 
@@ -242,7 +306,8 @@ def _enrich_employee_hr_columns(
     title = df["Title"].astype(str)
 
     # Gender / MaritalStatus
-    df["Gender"] = rng.choice(["M", "F", "O"], size=n, p=[0.49, 0.49, 0.02]).astype(object)
+    if "Gender" not in df.columns or df["Gender"].isna().all():
+        df["Gender"] = rng.choice(["M", "F", "O"], size=n, p=[0.49, 0.49, 0.02]).astype(object)
 
     # BirthDate: infer age-at-hire by level (staff younger, management older)
     age_mean = np.where(org_level >= 6, 27, np.where(org_level >= 5, 34, 42))
@@ -339,7 +404,9 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
         df[col] = s.fillna(0).astype(dtype)
 
     _to_int("EmployeeKey", np.int64)
-    _to_int("ParentEmployeeKey", np.int64)
+    # ParentEmployeeKey must stay NULL-able for DAX PATH()
+    if "ParentEmployeeKey" in df.columns:
+        df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").astype("Int64")
     _to_int("OrgLevel", np.int16)
 
     _to_int("SalesPersonFlag", np.int8)
@@ -372,11 +439,13 @@ def generate_employee_dimension(
     districts_per_region: int = 8,
     max_staff_per_store: int = 10,
     termination_rate: float = 0.08,
-    # new knobs (safe defaults)
     use_store_employee_count: bool = False,
     min_staff_per_store: int = 3,
     staff_scale: float = 0.25,
     include_store_cols: bool = True,
+    people_pools=None,
+    iso_by_geo: dict[int, str] | None = None,
+    default_region: str = "US",
 ) -> pd.DataFrame:
     """
     Build a parent-child employee hierarchy with stable keys.
@@ -599,11 +668,17 @@ def generate_employee_dimension(
     df["IsActive"] = (df["TerminationDate"].isna() | (df["TerminationDate"] > global_end)).astype(np.int8)
 
     # --- Names (always person names)
-    _apply_deterministic_names(df, seed=int(seed))
+    _apply_deterministic_names(
+        df,
+        seed=int(seed),
+        people_pools=people_pools,
+        iso_by_geo=iso_by_geo,
+        default_region=default_region,
+    )
 
     # --- Types (ensure integer columns stay integer even with corporate-level blanks)
     df["EmployeeKey"] = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
-    df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
+    df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").astype("Int64")
     df["OrgLevel"] = pd.to_numeric(df["OrgLevel"], errors="coerce").fillna(0).astype(np.int16)
 
     df["RegionId"] = pd.to_numeric(df["RegionId"], errors="coerce").fillna(0).astype(np.int16)
@@ -654,6 +729,20 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     if not force and not should_regenerate("employees", version_cfg, out_path):
         skip("Employees up-to-date; skipping.")
         return
+    
+    people_folder = resolve_people_folder(cfg)
+    pf = Path(people_folder)
+
+    enable_asia = (pf / "asia_male_first.csv").exists() and (pf / "asia_female_first.csv").exists() and (pf / "asia_last.csv").exists()
+    people_pools = load_people_pools(people_folder, enable_asia=enable_asia, legacy_support=False)
+
+    iso_by_geo: dict[int, str] = {}
+    geo_path = parquet_folder / "geography.parquet"
+    if geo_path.exists():
+        geo_df = pd.read_parquet(geo_path, columns=["GeographyKey", "ISOCode"])
+        gk = pd.to_numeric(geo_df["GeographyKey"], errors="coerce").dropna().astype(np.int64).to_numpy()
+        iso = geo_df.loc[geo_df["GeographyKey"].notna(), "ISOCode"].astype(str).to_numpy()
+        iso_by_geo = dict(zip(gk, iso))
 
     with stage("Generating Employees"):
         df = generate_employee_dimension(
@@ -663,14 +752,15 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             global_end=global_end,
             district_size=_int_or(emp_cfg.get("district_size"), 15),
             districts_per_region=_int_or(emp_cfg.get("districts_per_region"), 8),
-            # reduced default if not set
             max_staff_per_store=_int_or(emp_cfg.get("max_staff_per_store"), 10),
             termination_rate=_float_or(emp_cfg.get("termination_rate"), 0.08),
-            # new knobs
             use_store_employee_count=_bool_or(emp_cfg.get("use_store_employee_count"), False),
             min_staff_per_store=_int_or(emp_cfg.get("min_staff_per_store"), 3),
             staff_scale=_float_or(emp_cfg.get("staff_scale"), 0.25),
             include_store_cols=_bool_or(emp_cfg.get("include_store_cols"), True),
+            people_pools=people_pools,
+            iso_by_geo=iso_by_geo,
+            default_region="US",
         )
 
         hr_cfg = _as_dict(emp_cfg.get("hr"))
