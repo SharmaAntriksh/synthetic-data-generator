@@ -184,6 +184,7 @@ def _merge_parquet_files_common(
     cast_safe: bool = True,
     sort_files: bool = True,
     log_prefix: str = "",
+    log: bool = True,
 ) -> Optional[str]:
     pa, pc, pq = _arrow()
 
@@ -196,7 +197,8 @@ def _merge_parquet_files_common(
             files.append(fp)
 
     if not files:
-        skip(f"{log_prefix}No parquet chunk files to merge".strip())
+        if log:
+            skip(f"{log_prefix}No parquet chunk files to merge".strip())
         return None
 
     if sort_files:
@@ -205,7 +207,8 @@ def _merge_parquet_files_common(
     merged_file_abs = os.path.abspath(os.fspath(merged_file))
     _ensure_dir_for_file(merged_file_abs)
 
-    info(f"{log_prefix}Merging {len(files)} chunks: {os.path.basename(merged_file_abs)}".strip())
+    if log:
+        info(f"{log_prefix}Merging {len(files)} chunks: {os.path.basename(merged_file_abs)}".strip())
 
     schema = canonical_schema
     if schema is None:
@@ -291,7 +294,8 @@ def _merge_parquet_files_common(
             except Exception:
                 pass
 
-    done(f"{log_prefix}Merged chunks: {os.path.basename(merged_file_abs)}".strip())
+    if log:
+        done(f"{log_prefix}Merged chunks: {os.path.basename(merged_file_abs)}".strip())
     return merged_file_abs
 
 
@@ -344,12 +348,14 @@ def merge_parquet_files(
     write_statistics: bool = True,
     table_name: str | None = None,
     schema_strategy: str = "union",
+    log: bool = True,
 ) -> Optional[str]:
     pa, _, pq = _arrow()
 
     files = [os.path.abspath(p) for p in parquet_files if p and os.path.exists(p)]
     if not files:
-        skip("No parquet chunk files to merge")
+        if log:
+            skip("No parquet chunk files to merge")
         return None
 
     files.sort()
@@ -381,4 +387,5 @@ def merge_parquet_files(
         required_cols=required_cols,
         use_dictionary=dict_cols,
         sort_files=True,
+        log=log,
     )

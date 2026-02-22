@@ -775,32 +775,74 @@ def generate_sales_fact(
     created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
     created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
 
+
     def _record_chunk_result(r: Any, completed_units: int, total_units: int) -> None:
         """
         r can be:
-          - str (legacy 'sales' mode): path
-          - dict(table_name -> write_result): multi-table modes
-              write_result is str for csv/parquet, or {"part":..., "rows":...} for delta
+        - str (legacy 'sales' mode): path
+        - dict(table_name -> write_result): multi-table modes
+            write_result is str for csv/parquet, or {"part":..., "rows":...} for delta
         """
+
+        def _chunk_tag(path_like: str) -> str:
+            b = os.path.basename(path_like)
+            i = b.find("chunk")
+            if i < 0:
+                return b
+            j = i + 5
+            while j < len(b) and b[j].isdigit():
+                j += 1
+            return b[i:j]  # e.g. "chunk0004"
+
+        short = {
+            TABLE_SALES: "sales",
+            TABLE_SALES_ORDER_DETAIL: "detail",
+            TABLE_SALES_ORDER_HEADER: "header",
+            TABLE_SALES_RETURN: "return",
+        }
+
         if isinstance(r, str):
             created_by_table.setdefault(TABLE_SALES, []).append(r)
             created_files.append(r)
-            work(f"[{completed_units}/{total_units}] -> {os.path.basename(r)}")
+            work(f"[{completed_units}/{total_units}] {_chunk_tag(r)} -> sales")
             return
 
         if isinstance(r, dict):
-            for table_name, val in r.items():
+            # stable display order: configured tables first, then any extras
+            ordered_keys = [t for t in tables if t in r] + [k for k in r.keys() if k not in set(tables)]
+
+            # pick any string path to extract the chunk tag (parquet/csv)
+            tag = None
+            for k in ordered_keys:
+                v = r.get(k)
+                if isinstance(v, str):
+                    tag = _chunk_tag(v)
+                    break
+
+            produced: list[str] = []
+
+            for table_name in ordered_keys:
+                val = r.get(table_name)
+
+                # record outputs (preserve manifest + created_files behavior)
                 created_by_table.setdefault(table_name, []).append(val)
+
                 if isinstance(val, str):
                     created_files.append(val)
-                    work(f"[{completed_units}/{total_units}] -> {os.path.basename(val)}")
+                    produced.append(short.get(table_name, table_name))
                 elif isinstance(val, dict) and "part" in val:
-                    work(f"[{completed_units}/{total_units}] -> {table_name}:{val['part']}")
+                    # delta mode: no file name spam; just note table produced a part
+                    produced.append(short.get(table_name, table_name))
+
+            if produced:
+                if tag is None:
+                    tag = "chunk"
+                work(f"[{completed_units}/{total_units}] {tag} -> " + ", ".join(produced))
             return
 
         # Unknown / unexpected return type: ignore quietly
         return
-
+    
     # ------------------------------------------------------------
     # Multiprocessing (batched)
     # ------------------------------------------------------------
@@ -897,21 +939,45 @@ def generate_sales_fact(
         if merge_parquet:
             from .sales_writer import merge_parquet_files
 
+            merge_jobs: list[tuple[str, list[str], str]] = []
+            skipped: list[str] = []
+
             for t in tables:
                 chunks = sorted(
                     f for f in glob.glob(output_paths.chunk_glob(t, "parquet"))
                     if os.path.isfile(f)
                 )
                 if not chunks:
-                    info(f"No parquet chunks found for {t}; skipping merge")
+                    skipped.append(t)
                     continue
+                merge_jobs.append((t, chunks, output_paths.merged_path(t)))
 
-                merge_parquet_files(
-                    chunks,
-                    output_paths.merged_path(t),
-                    delete_after=bool(delete_chunks),
-                    table_name=t,
-                )
+            if merge_jobs:
+                short = {
+                    TABLE_SALES: "sales",
+                    TABLE_SALES_ORDER_DETAIL: "detail",
+                    TABLE_SALES_ORDER_HEADER: "header",
+                    TABLE_SALES_RETURN: "return",
+                }
+
+                counts = [(short.get(t, t), len(chunks)) for (t, chunks, _out) in merge_jobs]
+
+                if len({c for _, c in counts}) == 1:
+                    n = counts[0][1]
+                    info(f"Merge parquet: {n} chunks -> " + ", ".join(name for name, _ in counts))
+                else:
+                    info("Merge parquet: " + ", ".join(f"{name}={n}" for name, n in counts))
+
+                for t, chunks, out in merge_jobs:
+                    merge_parquet_files(
+                        chunks,
+                        out,
+                        delete_after=bool(delete_chunks),
+                        table_name=t,
+                        log=False,   # if you added log support
+                    )
+            else:
+                info("Merge parquet: none")
 
         manifest = _build_sales_manifest()
         return (created_files, manifest) if return_manifest else created_files

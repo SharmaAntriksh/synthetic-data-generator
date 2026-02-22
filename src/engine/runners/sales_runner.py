@@ -267,6 +267,6 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             sales_output=ctx.sales_cfg["sales_output"],
         )
 
-    _run_step("Creating Final Output Folder", _do_package)
+    _run_step("Packaging Output", _do_package)
 
     return None

@@ -481,10 +481,6 @@ def generate_dimensions(
         # Forced means “we requested regen” even if output detection is inconclusive
         regenerated[spec.name] = bool(regen or forced)
 
-        # Optional: if not forced and we saw no changes, emit a consistent skip message
-        if not forced and not regen:
-            skip(f"{spec.name} up-to-date; skipping.")
-
     return {
         "global_dates": global_dates,
         "folder": str(parquet_dims_folder),

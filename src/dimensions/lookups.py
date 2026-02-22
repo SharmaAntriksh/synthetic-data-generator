@@ -89,19 +89,20 @@ def _run_lookup_dim(
 
     compression = str(dim_cfg.get("parquet_compression", "snappy"))
 
-    with stage(f"Generating {dim_key}"):
-        df = build_df(dim_cfg)
-
+    # Build df silently first (very cheap for lookups); avoids noisy stage logs on skip.
+    df = build_df(dim_cfg)
     version_cfg = _build_version_cfg(cfg, dim_key, df)
 
     if not force and not should_regenerate(dim_key, version_cfg, out_path):
         skip(f"{dim_key} up-to-date; skipping.")
         return
 
-    _write_parquet(df, out_path, compression=compression)
+    # Only log "Generating ..." when we actually write output
+    with stage(f"Generating {dim_key}"):
+        _write_parquet(df, out_path, compression=compression)
+
     save_version(dim_key, version_cfg, out_path)
     info(f"{dim_key} written: {out_path}")
-
 
 # =========================================================
 # Default row sets
