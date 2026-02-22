@@ -1,4 +1,5 @@
-import os
+from __future__ import annotations
+
 import re
 from datetime import datetime
 from pathlib import Path
@@ -6,114 +7,149 @@ from typing import Iterable, Mapping, Optional, Set
 
 from src.utils.logging_utils import work, skip
 
+# -----------------------------
+# Small SQL helpers
+# -----------------------------
 
 def _sql_escape_literal(value: str) -> str:
     """Escape a string for use inside a single-quoted SQL literal."""
     return value.replace("'", "''")
 
 
-def _split_multipart_name(name: str) -> list[str]:
+def _quote_ident(part: str) -> str:
+    """Bracket-quote an identifier; escape closing brackets."""
+    raw = str(part).strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        raw = raw[1:-1]
+    if raw.startswith('"') and raw.endswith('"'):
+        raw = raw[1:-1]
+    return f"[{raw.replace(']', ']]')}]"
+
+
+def _quote_table(name: str) -> str:
     """
-    Split a multipart SQL Server name on dots, but ignore dots inside
-    [brackets] or "double quotes".
-    Examples:
-      dbo.Sales -> ["dbo", "Sales"]
-      [dbo].[Sales] -> ["[dbo]", "[Sales]"]
-      "dbo"."Sales" -> ['"dbo"', '"Sales"']
+    Quote a table name. Supports:
+      - Sales
+      - dbo.Sales
+      - [dbo].[Sales]
+    Does NOT attempt to parse exotic cases (dots inside brackets), which we don't use in this repo.
     """
-    s = name.strip()
-    if not s:
-        return []
-
-    parts: list[str] = []
-    buf: list[str] = []
-    in_brackets = False
-    in_dquotes = False
-
-    for ch in s:
-        if ch == "[" and not in_dquotes:
-            in_brackets = True
-            buf.append(ch)
-            continue
-        if ch == "]" and in_brackets and not in_dquotes:
-            in_brackets = False
-            buf.append(ch)
-            continue
-        if ch == '"' and not in_brackets:
-            in_dquotes = not in_dquotes
-            buf.append(ch)
-            continue
-
-        if ch == "." and not in_brackets and not in_dquotes:
-            part = "".join(buf).strip()
-            if part:
-                parts.append(part)
-            buf = []
-        else:
-            buf.append(ch)
-
-    tail = "".join(buf).strip()
-    if tail:
-        parts.append(tail)
-
-    return parts
-
-
-def _unquote_identifier(part: str) -> str:
-    """Remove surrounding [] or "" if present; return raw identifier text."""
-    p = part.strip()
-    if len(p) >= 2 and p[0] == "[" and p[-1] == "]":
-        return p[1:-1]
-    if len(p) >= 2 and p[0] == '"' and p[-1] == '"':
-        # SQL Server escapes a double quote inside quoted identifiers as ""
-        return p[1:-1].replace('""', '"')
-    return p
-
-
-def _quote_identifier_sqlserver(part: str) -> str:
-    """Bracket-quote an identifier part; escape closing brackets."""
-    raw = _unquote_identifier(part)
-    raw = raw.replace("]", "]]")
-    return f"[{raw}]"
-
-
-def _quote_multipart_name_sqlserver(name: str) -> str:
-    """
-    Quote a potentially multipart SQL Server object name.
-    Accepts 1-3 parts (table, schema.table, db.schema.table).
-    """
-    parts = _split_multipart_name(name)
+    parts = [p for p in str(name).strip().split(".") if p]
     if not parts:
         raise ValueError("Empty table name.")
     if len(parts) > 3:
-        raise ValueError(f"Too many name parts in table name: {name!r}")
-    return ".".join(_quote_identifier_sqlserver(p) for p in parts)
+        raise ValueError(f"Too many name parts: {name!r}")
+    return ".".join(_quote_ident(p) for p in parts)
 
+
+# -----------------------------
+# Table inference
+# -----------------------------
 
 _CHUNK_SUFFIX_RE = re.compile(r"(?:_chunk\d+|_part\d+)$", flags=re.IGNORECASE)
 
+# facts/<folder>/*.csv -> canonical table
+_FOLDER_TABLE_ALIASES: dict[str, str] = {
+    # facts
+    "sales": "Sales",
+    "sales_order_header": "SalesOrderHeader",
+    "sales_order_detail": "SalesOrderDetail",
+
+    # returns
+    "sales_return": "SalesReturn",
+    "salesreturn": "SalesReturn",
+    "returns": "SalesReturn",
+}
 
 def _infer_table_from_filename(csv_file: str) -> str:
     """
     Infer PascalCase table name from a chunked snake_case filename.
-
     Examples:
-      sales_chunk0001.csv                 -> Sales
-      sales_order_detail_chunk0001.csv    -> SalesOrderDetail
-      sales_order_header_chunk0001.csv    -> SalesOrderHeader
+      sales_chunk0001.csv              -> Sales
+      sales_order_detail_chunk0001.csv -> SalesOrderDetail
     """
     base = Path(csv_file).stem
     base = _CHUNK_SUFFIX_RE.sub("", base)
-    # snake_case -> PascalCase
     return base.replace("_", " ").title().replace(" ", "")
+
+
+def _allowed_lookup(allowed_tables: Optional[Set[str]]) -> Optional[dict[str, str]]:
+    """Map lower(table) -> canonical(table) for case-insensitive membership checks."""
+    if not allowed_tables:
+        return None
+    return {str(t).strip().lower(): str(t).strip() for t in allowed_tables}
+
+
+def _pick_target_table(csv_path: Path, *, allowed_tables: Optional[Set[str]]) -> Optional[str]:
+    """
+    Pick target table for a CSV file.
+    - Prefer folder mapping (facts/<folder>/file.csv)
+    - Fallback to filename inference
+    - Apply allowed_tables filter (case-insensitive)
+    """
+    allowed_map = _allowed_lookup(allowed_tables)
+
+    folder_key = csv_path.parent.name.strip().lower()
+    candidate = _FOLDER_TABLE_ALIASES.get(folder_key) or _infer_table_from_filename(csv_path.name)
+
+    if allowed_map is None:
+        return candidate
+
+    return allowed_map.get(candidate.strip().lower())
+
+
+# -----------------------------
+# Config-driven allowlist
+# -----------------------------
+
+def _returns_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
+    """
+    Returns True if returns are enabled. Supports:
+      - facts: ['sales','returns']
+      - facts: { enabled: ['sales','returns'] }
+      - facts: { returns: true/false }
+      - facts: { enabled: { returns: true/false } }
+    Default: True when unspecified.
+    """
+    if cfg is None:
+        return True
+
+    facts_cfg = cfg.get("facts")
+
+    def _list_has_returns(v) -> bool:
+        norm = {str(x).strip().lower() for x in (v or [])}
+        return (
+            "returns" in norm
+            or "salesreturn" in norm
+            or "sales_return" in norm
+            or "salesreturns" in norm
+            or "sales_returns" in norm
+        )
+
+    if isinstance(facts_cfg, list):
+        return _list_has_returns(facts_cfg)
+
+    if facts_cfg is None or not isinstance(facts_cfg, Mapping):
+        return True
+
+    if isinstance(facts_cfg.get("returns"), (bool, int)):
+        return bool(facts_cfg.get("returns"))
+
+    enabled_cfg = facts_cfg.get("enabled")
+    if isinstance(enabled_cfg, list):
+        return _list_has_returns(enabled_cfg)
+
+    if isinstance(enabled_cfg, Mapping) and isinstance(enabled_cfg.get("returns"), (bool, int)):
+        return bool(enabled_cfg.get("returns"))
+
+    return True
 
 
 def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     """
-    Build the set of fact tables we want in the facts bulk insert script,
-    based on cfg['sales']['sales_output'].
-
-    Returns None if cfg is None (meaning: don't filter; include all inferred tables).
+    Allowed fact tables for facts bulk insert.
+    - sales.sales_output drives Sales vs SalesOrderHeader/Detail
+    - returns flags (above) controls SalesReturn
     """
     if cfg is None:
         return None
@@ -130,68 +166,48 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
         allowed.add("SalesOrderHeader")
         allowed.add("SalesOrderDetail")
 
+    if _returns_enabled_from_cfg(cfg):
+        allowed.add("SalesReturn")
+
     return allowed
 
 
-def _iter_csv_files(csv_folder: Path, *, recursive: bool) -> Iterable[Path]:
+# -----------------------------
+# Script generator
+# -----------------------------
+
+def _iter_csv_files(folder: Path, *, recursive: bool) -> Iterable[Path]:
     if recursive:
-        yield from sorted(csv_folder.rglob("*.csv"))
+        yield from sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() == ".csv")
     else:
-        yield from sorted(p for p in csv_folder.iterdir() if p.is_file() and p.suffix.lower() == ".csv")
+        yield from sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".csv")
 
 
 def generate_bulk_insert_script(
     csv_folder,
-    table_name=None,
-    output_sql_file="bulk_insert.sql",
-    field_terminator=",",
-    row_terminator="0x0a",
-    codepage="65001",
-    mode="legacy",  # "legacy" | "csv"
     *,
-    first_row=2,
-    csv_field_quote=None,
-    csv_row_terminator=None,
-    csv_field_terminator=None,
-    max_errors=None,
-    error_file=None,
-    keep_nulls=False,
+    output_sql_file: str = "bulk_insert.sql",
+    table_name: Optional[str] = None,
+    mode: str = "legacy",            # "legacy" | "csv"
+    first_row: int = 2,
+    field_terminator: str = ",",
+    row_terminator: str = "0x0a",
+    codepage: str = "65001",
     recursive: bool = False,
     allowed_tables: Optional[Set[str]] = None,
-):
+) -> Optional[str]:
     """
-    Generate a BULK INSERT SQL script for CSV files in a folder.
-
-    Enhancements vs previous version:
-      - recursive=True scans subfolders (needed for facts layout)
-      - filename inference strips _chunkNNNN suffixes
-      - allowed_tables lets you filter inserts conditionally (based on config)
-
-    Notes:
-    - BULK INSERT file paths are resolved on the SQL Server machine.
-      If your SQL Server is remote, you likely need a UNC path (\\\\server\\share\\file.csv)
-      or another server-accessible location.
-    - mode="csv" requires SQL Server 2017+ (FORMAT='CSV').
-
-    Backward-compat:
-    - If output_sql_file is a bare filename (no directories), the script is written to:
-        <csv_folder>/../load/<output_sql_file>
-    - If output_sql_file includes a directory (relative or absolute), that path is honored.
+    Generate a BULK INSERT script.
+    - If table_name is None, table is inferred per file.
+    - recursive=True is required for facts/<table>/*.csv layout.
+    - allowed_tables filters inferred tables (case-insensitive).
     """
-
     csv_folder = Path(csv_folder)
     if not csv_folder.exists() or not csv_folder.is_dir():
         skip(f"CSV folder not found or not a directory: {csv_folder}")
         return None
 
-    out_path = Path(output_sql_file)
-
-    # Honor explicit paths; keep legacy behavior only for a bare filename.
-    if out_path.is_absolute() or out_path.parent != Path("."):
-        target_sql = out_path
-    else:
-        target_sql = csv_folder.parent / "load" / out_path.name
-
+    target_sql = Path(output_sql_file)
     target_sql.parent.mkdir(parents=True, exist_ok=True)
 
     csv_paths = list(_iter_csv_files(csv_folder, recursive=recursive))
@@ -199,72 +215,57 @@ def generate_bulk_insert_script(
         skip(f"No CSV files found in {csv_folder}. Skipping BULK INSERT script.")
         return None
 
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines: list[str] = [
         "-- Auto-generated BULK INSERT script",
-        f"-- Generated on: {timestamp}",
+        f"-- Generated on: {ts}",
         "-- NOTE: 'FROM <path>' is evaluated on the SQL Server host.",
         "SET NOCOUNT ON;",
         "",
     ]
 
+    allowed_map = _allowed_lookup(allowed_tables)
     emitted = 0
 
     for csv_path in csv_paths:
-        inferred = _infer_table_from_filename(csv_path.name)
-        target_table = table_name or inferred
-
-        # Optional filtering (config-driven)
-        if allowed_tables is not None and target_table not in allowed_tables:
-            continue
-
-        quoted_table = _quote_multipart_name_sqlserver(str(target_table))
-
-        csv_full_path = str(csv_path.resolve())
-        csv_full_path_sql = _sql_escape_literal(csv_full_path)
-
-        with_options: list[str] = []
-        with_options.append(f"FIRSTROW = {int(first_row)}")
-
-        # Optional diagnostics
-        if max_errors is not None:
-            with_options.append(f"MAXERRORS = {int(max_errors)}")
-        if error_file is not None:
-            with_options.append(f"ERRORFILE = '{_sql_escape_literal(str(error_file))}'")
-
-        if keep_nulls:
-            with_options.append("KEEPNULLS")
-
-        if mode == "csv":
-            with_options.insert(0, "FORMAT = 'CSV'")
-            with_options.append(f"CODEPAGE = '{codepage}'")
-
-            if csv_field_quote is not None:
-                with_options.append(f"FIELDQUOTE = '{_sql_escape_literal(str(csv_field_quote))}'")
-            if csv_row_terminator is not None:
-                with_options.append(f"ROWTERMINATOR = '{_sql_escape_literal(str(csv_row_terminator))}'")
-            if csv_field_terminator is not None:
-                with_options.append(f"FIELDTERMINATOR = '{_sql_escape_literal(str(csv_field_terminator))}'")
-
-            with_options.append("TABLOCK")
+        if table_name is not None:
+            tgt = table_name
         else:
-            with_options.append(f"FIELDTERMINATOR = '{_sql_escape_literal(str(field_terminator))}'")
-            with_options.append(f"ROWTERMINATOR = '{_sql_escape_literal(str(row_terminator))}'")
-            with_options.append(f"CODEPAGE = '{codepage}'")
-            with_options.append("TABLOCK")
+            tgt = _pick_target_table(csv_path, allowed_tables=allowed_tables)
+            if tgt is None:
+                continue
 
-        opts_sql = ",\n    ".join(with_options)
+        # (Extra safety) if caller passes allowed_tables and explicit table_name, filter too.
+        if allowed_map is not None and table_name is not None:
+            if table_name.strip().lower() not in allowed_map:
+                continue
 
+        quoted_table = _quote_table(tgt)
+
+        csv_full_path_sql = _sql_escape_literal(str(csv_path.resolve()))
         rel_hint = str(csv_path.relative_to(csv_folder)) if recursive else csv_path.name
 
-        stmt = f"""-- Source file: {rel_hint}
-BULK INSERT {quoted_table}
-FROM '{csv_full_path_sql}'
-WITH (
-    {opts_sql}
-);
-"""
-        lines.append(stmt.strip())
+        with_opts: list[str] = [f"FIRSTROW = {int(first_row)}"]
+
+        if mode == "csv":
+            # SQL Server 2017+
+            with_opts.insert(0, "FORMAT = 'CSV'")
+            with_opts.append(f"CODEPAGE = '{codepage}'")
+            with_opts.append("TABLOCK")
+        else:
+            with_opts.append(f"FIELDTERMINATOR = '{_sql_escape_literal(field_terminator)}'")
+            with_opts.append(f"ROWTERMINATOR = '{_sql_escape_literal(row_terminator)}'")
+            with_opts.append(f"CODEPAGE = '{codepage}'")
+            with_opts.append("TABLOCK")
+
+        opts_sql = ",\n    ".join(with_opts)
+
+        lines.append(f"-- Source file: {rel_hint}")
+        lines.append(f"BULK INSERT {quoted_table}")
+        lines.append(f"FROM '{csv_full_path_sql}'")
+        lines.append("WITH (")
+        lines.append(f"    {opts_sql}")
+        lines.append(");")
         lines.append("")
         emitted += 1
 
@@ -288,14 +289,14 @@ def generate_dims_and_facts_bulk_insert_scripts(
     dims_mode: str = "csv",
     facts_mode: str = "legacy",
     row_terminator: str = "0x0a",
-):
+) -> tuple[str, str]:
     """
     Convenience wrapper that ALWAYS writes exactly two files:
       01_bulk_insert_dims.sql
-      02_bulk_insert_facts.sql  (conditional by cfg['sales']['sales_output'])
+      02_bulk_insert_facts.sql
 
     - dims: flat folder
-    - facts: recursive scan (handles facts/<table>/*.csv layout)
+    - facts: recursive scan (facts/<table>/*.csv)
     """
     load_output_folder = Path(load_output_folder)
     load_output_folder.mkdir(parents=True, exist_ok=True)
@@ -304,22 +305,23 @@ def generate_dims_and_facts_bulk_insert_scripts(
     facts_sql = load_output_folder / facts_sql_name
 
     generate_bulk_insert_script(
-        csv_folder=str(dims_folder),
-        table_name=None,
+        dims_folder,
         output_sql_file=str(dims_sql),
         mode=dims_mode,
+        table_name=None,
+        recursive=False,
     )
 
-    allowed_tables = _allowed_fact_tables_from_cfg(cfg)
+    allowed = _allowed_fact_tables_from_cfg(cfg)
 
     generate_bulk_insert_script(
-        csv_folder=str(facts_folder),
-        table_name=None,
+        facts_folder,
         output_sql_file=str(facts_sql),
         mode=facts_mode,
+        table_name=None,
         row_terminator=row_terminator,
         recursive=True,
-        allowed_tables=allowed_tables,
+        allowed_tables=allowed,
     )
 
     return str(dims_sql), str(facts_sql)

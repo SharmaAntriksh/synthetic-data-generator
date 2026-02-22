@@ -16,14 +16,14 @@ defaults:
 
 packaging:
   reset_scratch_fact_out: true   # default current behavior
-  clean_scratch_fact_out: true   # default current behavior
+  clean_scratch_fact_out: true  # default current behavior
 
 facts:
   enabled: ["sales", "returns"]
-returns:
-  enabled: true
-  return_rate: 0.03
 
+names:
+  people_folder: "./data/name_pools/people"
+  
 # ---------------------------------------------------------------------
 # SALES FACT GENERATION
 # ---------------------------------------------------------------------
@@ -31,10 +31,10 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 1025301
+  total_rows: 5001230
   chunk_size: 1000000
 
-  file_format: "deltaparquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -61,15 +61,23 @@ sales:
     seed: null
 
   partitioning:
-    enabled: true
+    enabled: false
     columns: ["Year", "Month"]
+
+returns:
+  enabled: true
+  return_rate: 0.01          # fraction of Sales (line) rows that get a return
+  min_days_after_sale: 1     # hard cap (pipeline-level)
+  max_days_after_sale: 60    # hard cap (pipeline-level)
+  override:
+    seed: null               # null -> use defaults.seed
 
 # ---------------------------------------------------------------------
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
   use_contoso_products: false
-  num_products: 4160
+  num_products: 4100
   active_ratio: 0.94
   seed: 42
 
@@ -122,7 +130,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 28184
+  total_customers: 18433
   active_ratio: 0.90
 
   pct_india: 10
@@ -143,6 +151,44 @@ customers:
     seed: null
     paths: {}
     dates: {}
+    
+# ---------------------------------------------------------------------
+# CUSTOMER SEGMENTS
+# ---------------------------------------------------------------------
+customer_segments:
+  enabled: true
+
+  segment_count: 12
+  segments_per_customer_min: 1
+  segments_per_customer_max: 4
+
+  include_score: true
+  include_primary_flag: true
+  include_validity: true
+
+  validity:
+    grain: month          # recommend month for size/perf
+    churn_rate_qtr: 0.08  # % customers whose membership changes per quarter
+    new_customer_months: 2
+
+  seed: 123
+
+# ---------------------------------------------------------------------
+# SUPERPOWERS (Customers <-> Superpowers)
+# ---------------------------------------------------------------------
+superpowers:
+  enabled: true
+
+  powers_count: 40              # <= catalog size in the script
+  powers_per_customer_min: 1
+  powers_per_customer_max: 4
+
+  include_power_level: true
+  include_primary_flag: true
+  include_acquired_date: true
+  include_validity: false
+
+  seed: 123
 
 # ---------------------------------------------------------------------
 # GEOGRAPHY / LOCATIONS
@@ -188,19 +234,91 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 50
-
+  num_stores: 20
+  ensure_currency_coverage: true
   opening:
     start: "1995-01-01"
     end: "2020-12-31"
 
   closing_end: "2025-12-31"
 
+  employee_count:
+    mode: by_type          # by_type | scaled_sqft
+    open_by_type:
+      Convenience: [4, 10]
+      Supermarket: [8, 16]
+      Hypermarket: [12, 24]
+      Online: [3, 8]
+    renovating_range: [0, 3]
+    closed_range: [0, 0]
+    clamp_min: 0
+    clamp_max: 40
+
   override:
     seed: null
     paths: {}
 
+# ---------------------------------------------------------------------
+# EMPLOYEES (Dimension)
+# ---------------------------------------------------------------------
+employees:
+  # sizing (demo-friendly defaults)
+  use_store_employee_count: false
+  min_staff_per_store: 2
+  max_staff_per_store: 6
+  staff_scale: 0.25         # only used if use_store_employee_count: true
 
+  # schema choice
+  include_store_cols: false # if you want DimEmployee NOT to include StoreKey/GeographyKey
+
+  # HR enrichment
+  hr:
+    email_domain: "contoso.com"
+    
+  store_assignments:
+    enabled: true
+
+    mover_share: 0.10
+    pool_scope: district
+    allow_store_revisit: true
+    part_time_multiplier: 1.5
+
+    primary_sales_role: "Sales Associate"
+
+    max_non_sales_multiplier_frac: 0.35
+    max_non_sales_episodes_frac: 0.50
+
+    secondary_fte_min: 0.10
+    secondary_fte_max: 0.40
+
+    role_profiles:
+      default:
+        role_multiplier: 0.20
+        episodes_min: 0
+        episodes_max: 1
+        duration_days_min: 60
+        duration_days_max: 180
+
+      Sales Associate:
+        role_multiplier: 2.50
+        episodes_min: 1
+        episodes_max: 4
+        duration_days_min: 60
+        duration_days_max: 240
+
+      Cashier:
+        role_multiplier: 1.10
+        episodes_min: 1
+        episodes_max: 3
+        duration_days_min: 14
+        duration_days_max: 120
+
+      Fulfillment Associate:
+        role_multiplier: 0.15
+        episodes_min: 0
+        episodes_max: 1
+        duration_days_min: 90
+        duration_days_max: 240
 # ---------------------------------------------------------------------
 # DATES (Dimension)
 # ---------------------------------------------------------------------

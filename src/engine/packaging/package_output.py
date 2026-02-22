@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from src.utils.output_utils import create_final_output_folder
-from src.utils.logging_utils import stage, info
+from src.utils.logging_utils import info
 
 from .paths import get_first_existing_path, tables_from_sales_cfg
 from .parquet_packager import copy_parquet_facts
@@ -39,47 +39,46 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         cfg,
         keys=["model_yaml_path", "model_path", "model_file", "model_yaml", "model"],
     )
-
-    with stage("Creating Final Output Folder"):
-        final_folder = create_final_output_folder(
-            final_folder_root=final_root,
-            parquet_dims=parquet_dims,
-            fact_folder=fact_out,
-            sales_cfg=sales_cfg,
-            file_format=file_format,
-            sales_rows_expected=sales_cfg["total_rows"],
-            cfg=cfg,
-            config_yaml_path=config_yaml_path,
-            model_yaml_path=model_yaml_path,
-            package_facts=False,
-        )
-
-        # Remove URL-encoded duplicate run folder (%20)
-        parent = final_folder.parent
-        real_name = final_folder.name
-        for sibling in parent.iterdir():
-            if sibling.is_dir() and "%20" in sibling.name and unquote(sibling.name) == real_name:
-                shutil.rmtree(sibling, ignore_errors=True)
-
-        dims_out = final_folder / "dimensions"
-        facts_out = final_folder / "facts"
-        facts_out.mkdir(parents=True, exist_ok=True)
-
-        tables = tables_from_sales_cfg(sales_cfg)
-
-        if file_format == "parquet":
-            copy_parquet_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)
-            return final_folder
-
-        if file_format == "deltaparquet":
-            copy_delta_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)
-            return final_folder
-
-        if file_format != "csv":
-            raise ValueError(f"Unsupported file_format in packaging: {file_format!r}")
-
-        copy_csv_facts(fact_out=fact_out, facts_out=facts_out, tables=tables)
     
+    final_folder = create_final_output_folder(
+        final_folder_root=final_root,
+        parquet_dims=parquet_dims,
+        fact_folder=fact_out,
+        sales_cfg=sales_cfg,
+        file_format=file_format,
+        sales_rows_expected=sales_cfg["total_rows"],
+        cfg=cfg,
+        config_yaml_path=config_yaml_path,
+        model_yaml_path=model_yaml_path,
+        package_facts=False,
+    )
+
+    # Remove URL-encoded duplicate run folder (%20)
+    parent = final_folder.parent
+    real_name = final_folder.name
+    for sibling in parent.iterdir():
+        if sibling.is_dir() and "%20" in sibling.name and unquote(sibling.name) == real_name:
+            shutil.rmtree(sibling, ignore_errors=True)
+
+    dims_out = final_folder / "dimensions"
+    facts_out = final_folder / "facts"
+    facts_out.mkdir(parents=True, exist_ok=True)
+
+    tables = tables_from_sales_cfg(sales_cfg, cfg)
+
+    if file_format == "parquet":
+        copy_parquet_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)
+        return final_folder
+
+    if file_format == "deltaparquet":
+        copy_delta_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)
+        return final_folder
+
+    if file_format != "csv":
+        raise ValueError(f"Unsupported file_format in packaging: {file_format!r}")
+
+    copy_csv_facts(fact_out=fact_out, facts_out=facts_out, tables=tables)
+        
     # SQL SCRIPT GENERATION — CSV ONLY
     if is_csv:
         sql_root = final_folder / "sql"
@@ -90,7 +89,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         copy_views_sql(sql_root=sql_root)
 
         # Load scripts
-        write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, sales_cfg=sales_cfg)
+        write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
 
         # Index helpers
         copy_static_sql_assets(sql_root=sql_root)

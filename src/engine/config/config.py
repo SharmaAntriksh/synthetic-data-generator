@@ -2,45 +2,178 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 import pandas as pd
 
+# ------------------------------------------------------------
+# Section normalization registry (single source of truth)
+# ------------------------------------------------------------
+
+SectionNormalizer = Callable[[Dict[str, Any]], Dict[str, Any]]
+
+# Sections that must be mappings if present but do not have a normalizer.
+# Keep this small; normalizer keys are automatically treated as mapping sections.
+_SECTION_MAPPING_ONLY_KEYS: set[str] = {
+    "customers",
+}
+
+# Sections that get normalized if present.
+# Add new table/config section normalizers here (pipeline loader will pick them up automatically).
+_SECTION_NORMALIZERS: Dict[str, SectionNormalizer] = {}
+
+# For config files that intentionally don't have defaults (e.g. models.yaml),
+# we keep normalization deliberately narrow to avoid surprising validation failures.
+_CONFIG_FILE_NORMALIZE_KEYS: set[str] = {
+    "customer_segments",
+}
 
 # ------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------
 
+def load_pipeline_config(path: str | Path = "config.yaml") -> dict:
+    """
+    Load the *pipeline* config (config.yaml) and normalize safely.
+
+    This loader REQUIRES defaults (or _defaults) to exist because the pipeline
+    depends on a global date window for lifecycle-aware generation.
+    """
+    return _load_and_normalize(
+        path=path,
+        require_defaults=True,
+        normalize_keys=None,  # normalize all registered sections
+    )
+
+
 def load_config(path: str | Path = "config.yaml") -> dict:
     """
-    Load a config file (YAML preferred, JSON supported) and normalize safely.
-
-    Goals:
-    - Support config.yaml / config.yml / config.json
-    - Canonicalize defaults vs _defaults (both supported)
-    - Validate defaults.dates.start/end
-    - Normalize sales config without deleting user keys
+    Backward-compatible alias of load_pipeline_config().
     """
-    path = Path(path)
+    return load_pipeline_config(path)
 
+
+def load_config_file(path: str | Path) -> dict:
+    """
+    Load a config file (YAML/JSON) that intentionally does NOT contain defaults,
+    e.g. models.yaml (top-level 'models' only).
+
+    This applies only very safe, non-default-dependent transforms:
+      - tuning -> models mapping (if present)
+      - customer_segments normalization (if present)
+    """
+    return _load_and_normalize(
+        path=path,
+        require_defaults=False,
+        normalize_keys=_CONFIG_FILE_NORMALIZE_KEYS,
+    )
+
+
+# ------------------------------------------------------------
+# High-level acquisition tuning
+# ------------------------------------------------------------
+
+def apply_acquisition_tuning(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Translate high-level acquisition tuning knobs into detailed model parameters.
+
+    Expected config shape:
+      tuning:
+        acquisition_intensity: 0..1   (higher => more new customers)
+        acquisition_smoothness: 0..1  (higher => flatter / fewer dead months)
+        acquisition_cycles: 0..1      (higher => stronger multi-year waves)
+
+    Notes:
+      - Does NOT require pipeline defaults, so safe for models.yaml too.
+      - Mutates only the 'models' subtree and only when 'tuning' exists.
+    """
+    tuning = cfg.get("tuning")
+    if not isinstance(tuning, dict):
+        return cfg
+
+    cfg = dict(cfg)  # shallow copy
+    models = cfg.get("models")
+    if models is None:
+        models = {}
+        cfg["models"] = models
+    if not isinstance(models, dict):
+        raise KeyError("Invalid 'models' section in config (expected mapping)")
+
+    discovery = models.setdefault("customer_discovery", {})
+    participation = models.setdefault("customer_participation", {})
+    cycles = participation.setdefault("cycles", {})
+
+    def _clamp01(x: float) -> float:
+        return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
+
+    intensity = _clamp01(float(tuning.get("acquisition_intensity", 0.5)))
+    smoothness = _clamp01(float(tuning.get("acquisition_smoothness", 0.5)))
+    cycle_strength = _clamp01(float(tuning.get("acquisition_cycles", 0.3)))
+
+    # Discovery mapping
+    discovery["orders_per_new_customer"] = int(round(40 - 30 * intensity))  # 40..10
+    discovery["min_new_customers_per_month"] = int(round(30 + 200 * smoothness))  # 30..230
+    discovery.setdefault("max_fraction_per_month", 0.03)
+    discovery["seasonal_amplitude"] = 0.0
+
+    # Participation mapping
+    cycles.setdefault("enabled", True)
+    cycles["amplitude"] = round(0.05 + 0.30 * cycle_strength, 3)  # 0.05..0.35
+
+    return cfg
+
+
+# ------------------------------------------------------------
+# Load + normalize (shared implementation)
+# ------------------------------------------------------------
+
+def _load_and_normalize(
+    path: str | Path,
+    *,
+    require_defaults: bool,
+    normalize_keys: Optional[set[str]],
+) -> Dict[str, Any]:
+    path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
-    cfg = _load_any(path)
+    cfg: Dict[str, Any] = _load_any(path)
 
-    # Canonicalize defaults / _defaults and validate timeline
-    cfg = normalize_defaults(cfg)
+    # Safe, defaults-independent mapping of high-level tuning knobs (if present)
+    cfg = apply_acquisition_tuning(cfg)
 
-    # Normalize sections (only those we can validate safely)
-    if "sales" in cfg:
-        if not isinstance(cfg["sales"], dict):
-            raise KeyError("Invalid 'sales' section in config (expected mapping)")
-        cfg["sales"] = normalize_sales_config(cfg["sales"])
+    # Pipeline config requires defaults for global date window
+    if require_defaults:
+        cfg = normalize_defaults(cfg)
 
-    # Customers section is validated in customers dimension generator,
-    # but we keep a light sanity pass for common keys.
-    if "customers" in cfg and not isinstance(cfg["customers"], dict):
-        raise KeyError("Invalid 'customers' section in config (expected mapping)")
+    # Normalize/validate known sections
+    cfg = _normalize_sections(cfg, normalize_keys=normalize_keys)
+
+    return cfg
+
+
+def _normalize_sections(cfg: Dict[str, Any], *, normalize_keys: Optional[set[str]]) -> Dict[str, Any]:
+    """Validate section shapes and apply per-section normalizers.
+
+    - Always validates known mapping sections if present.
+    - Applies normalizers for sections in `normalize_keys` (or all registered normalizers if None).
+    """
+    cfg = dict(cfg)
+
+    # Validate mapping sections (mapping-only keys + all normalizer keys)
+    mapping_keys = set(_SECTION_MAPPING_ONLY_KEYS) | set(_SECTION_NORMALIZERS.keys())
+    for key in mapping_keys:
+        if key in cfg and not isinstance(cfg[key], dict):
+            raise KeyError(f"Invalid '{key}' section in config (expected mapping)")
+
+    # Decide which normalizers to run
+    if normalize_keys is None:
+        keys_to_normalize = set(_SECTION_NORMALIZERS.keys())
+    else:
+        keys_to_normalize = set(normalize_keys) & set(_SECTION_NORMALIZERS.keys())
+
+    for key in keys_to_normalize:
+        if key in cfg:
+            cfg[key] = _SECTION_NORMALIZERS[key](cfg[key])  # type: ignore[arg-type]
 
     return cfg
 
@@ -72,11 +205,9 @@ def _load_any(path: Path) -> dict:
         return cfg
 
     # If user passes no extension, attempt YAML then JSON
-    # (keep this permissive for CLI convenience)
     with path.open("r", encoding="utf-8") as f:
         raw = f.read()
 
-    # Try YAML first
     try:
         import yaml  # type: ignore
         cfg = yaml.safe_load(raw) or {}
@@ -85,7 +216,6 @@ def _load_any(path: Path) -> dict:
     except Exception:
         pass
 
-    # Try JSON
     try:
         cfg = json.loads(raw) or {}
         if isinstance(cfg, dict):
@@ -109,7 +239,6 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
     cfg = dict(cfg)
 
-    # Accept either defaults or _defaults
     defaults_section = cfg.get("defaults")
     underscore_defaults = cfg.get("_defaults")
 
@@ -132,7 +261,6 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if not start or not end:
         raise KeyError("Missing defaults.dates.start or defaults.dates.end in config")
 
-    # Validate dates are parseable and sane
     try:
         start_ts = pd.to_datetime(start).normalize()
         end_ts = pd.to_datetime(end).normalize()
@@ -142,7 +270,6 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if pd.isna(start_ts) or pd.isna(end_ts) or start_ts >= end_ts:
         raise ValueError("Invalid defaults.dates range (start must be < end)")
 
-    # Store canonical string values (keep user's format stable-ish)
     cfg_defaults = dict(cfg["defaults"])
     cfg_dates = dict(cfg_defaults["dates"])
     cfg_dates["start"] = str(start_ts.date())
@@ -154,9 +281,7 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def get_global_dates(cfg: Dict[str, Any]) -> Dict[str, str]:
-    """
-    Return canonical defaults.dates dict with string ISO dates.
-    """
+    """Return canonical defaults.dates dict with string ISO dates."""
     defaults_section = cfg.get("defaults") or cfg.get("_defaults")
     if not isinstance(defaults_section, dict):
         raise KeyError("Missing defaults section")
@@ -171,20 +296,7 @@ def get_global_dates(cfg: Dict[str, Any]) -> Dict[str, str]:
 # ------------------------------------------------------------
 # Sales config normalization
 # ------------------------------------------------------------
-
 def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize sales configuration without destructive mutation.
-
-    Rules:
-    - file_format is required and normalized to lowercase
-    - total_rows is required
-    - skip_order_cols is required (explicit; no implicit defaults)
-    - parquet_folder / out_folder are NOT required here (runners may supply them),
-      but prepare_paths() can still use them if present.
-    - CSV mode marks parquet-only keys as ignored (but does not delete them)
-    - deltaparquet mode marks merge_parquet/merged_file as ignored (they don't apply)
-    """
     sales_cfg = dict(sales_cfg)
 
     file_format = sales_cfg.get("file_format")
@@ -200,25 +312,24 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
         required=("total_rows", "skip_order_cols"),
     )
 
-    # Normalize core numeric options if present
     sales_cfg["total_rows"] = int(sales_cfg["total_rows"])
     sales_cfg["skip_order_cols"] = bool(sales_cfg["skip_order_cols"])
 
-    if "chunk_size" in sales_cfg:
+    if "chunk_size" in sales_cfg and sales_cfg["chunk_size"] is not None:
         sales_cfg["chunk_size"] = int(sales_cfg["chunk_size"])
-    if "row_group_size" in sales_cfg:
+    if "row_group_size" in sales_cfg and sales_cfg["row_group_size"] is not None:
         sales_cfg["row_group_size"] = int(sales_cfg["row_group_size"])
     if "workers" in sales_cfg and sales_cfg["workers"] is not None:
         sales_cfg["workers"] = int(sales_cfg["workers"])
-        
+
     # Support nested config: sales.partitioning.{enabled, columns}
-    # Map nested -> flat (but do NOT override explicit flat keys)
     part = sales_cfg.get("partitioning")
     if isinstance(part, dict):
         if "partition_enabled" not in sales_cfg and part.get("enabled") is not None:
             sales_cfg["partition_enabled"] = bool(part.get("enabled"))
 
-        if "partition_cols" not in sales_cfg and part.get("columns") is not None:
+        # Use `"columns" in part` so explicit null is respected
+        if "partition_cols" not in sales_cfg and "columns" in part:
             cols = part.get("columns")
             if cols is None:
                 sales_cfg["partition_cols"] = None
@@ -227,59 +338,133 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
                     raise ValueError("sales.partitioning.columns must be a list of column names")
                 sales_cfg["partition_cols"] = [str(c) for c in cols]
 
-    # Partition defaults for delta/parquet pipelines
+    # Normalize / validate flat keys
     if "partition_enabled" in sales_cfg:
         sales_cfg["partition_enabled"] = bool(sales_cfg["partition_enabled"])
+        if sales_cfg["partition_enabled"] is False:
+            sales_cfg["partition_cols"] = []
+
     if "partition_cols" in sales_cfg and sales_cfg["partition_cols"] is not None:
         if not isinstance(sales_cfg["partition_cols"], list):
             raise ValueError("sales.partition_cols must be a list of column names")
         sales_cfg["partition_cols"] = [str(c) for c in sales_cfg["partition_cols"]]
 
-    # Track ignored keys for transparency (do not delete)
     sales_cfg.setdefault("_ignored_keys", [])
 
     if file_format == "csv":
-        sales_cfg["_ignored_keys"].extend(
-            k for k in _PARQUET_ONLY_KEYS if k in sales_cfg
-        )
-        sales_cfg["_ignored_keys"].extend(
-            k for k in _DELTA_ONLY_KEYS if k in sales_cfg
-        )
+        sales_cfg["_ignored_keys"].extend(k for k in _PARQUET_ONLY_KEYS if k in sales_cfg)
+        sales_cfg["_ignored_keys"].extend(k for k in _DELTA_ONLY_KEYS if k in sales_cfg)
 
     elif file_format == "parquet":
-        # Delta-only keys ignored in parquet mode
-        sales_cfg["_ignored_keys"].extend(
-            k for k in _DELTA_ONLY_KEYS if k in sales_cfg
-        )
+        sales_cfg["_ignored_keys"].extend(k for k in _DELTA_ONLY_KEYS if k in sales_cfg)
 
     elif file_format == "deltaparquet":
-        # Parquet merge options don't apply to Delta output folder
-        sales_cfg["_ignored_keys"].extend(
-            k for k in _PARQUET_MERGE_ONLY_KEYS if k in sales_cfg
-        )
-
-        # partition defaults if not set
+        sales_cfg["_ignored_keys"].extend(k for k in _PARQUET_MERGE_ONLY_KEYS if k in sales_cfg)
         sales_cfg.setdefault("partition_enabled", True)
         sales_cfg.setdefault("partition_cols", ["Year", "Month"])
 
     else:
         raise ValueError("sales.file_format must be one of: csv, parquet, deltaparquet")
 
-    # De-duplicate ignored keys
     sales_cfg["_ignored_keys"] = sorted(set(sales_cfg["_ignored_keys"]))
-
     return sales_cfg
+
+
+# ------------------------------------------------------------
+# Customer segments normalization
+# ------------------------------------------------------------
+
+_VALID_SEG_GRAINS = {"month", "day"}
+
+def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    seg_cfg = dict(seg_cfg)
+
+    seg_cfg.setdefault("enabled", True)
+    seg_cfg["enabled"] = bool(seg_cfg["enabled"])
+    if not seg_cfg["enabled"]:
+        return seg_cfg
+
+    # NEW: deterministic seed (top-level)
+    seg_cfg.setdefault("seed", 123)
+    if seg_cfg["seed"] is not None:
+        seg_cfg["seed"] = int(seg_cfg["seed"])
+
+    seg_cfg.setdefault("segment_count", 12)
+    seg_cfg.setdefault("segments_per_customer_min", 1)
+    seg_cfg.setdefault("segments_per_customer_max", 4)
+
+    seg_cfg["segment_count"] = int(seg_cfg["segment_count"])
+    seg_cfg["segments_per_customer_min"] = int(seg_cfg["segments_per_customer_min"])
+    seg_cfg["segments_per_customer_max"] = int(seg_cfg["segments_per_customer_max"])
+
+    # ... keep your existing validations ...
+
+    seg_cfg.setdefault("include_score", True)
+    seg_cfg.setdefault("include_primary_flag", True)
+
+    # NEW: auto-enable validity if validity block exists (prevents “silent ignore”)
+    if "include_validity" not in seg_cfg:
+        seg_cfg["include_validity"] = ("validity" in seg_cfg)
+
+    seg_cfg["include_score"] = bool(seg_cfg["include_score"])
+    seg_cfg["include_primary_flag"] = bool(seg_cfg["include_primary_flag"])
+    seg_cfg["include_validity"] = bool(seg_cfg["include_validity"])
+
+    # validity block
+    validity = seg_cfg.get("validity") or {}
+    if seg_cfg["include_validity"]:
+        if not isinstance(validity, dict):
+            raise KeyError("customer_segments.validity must be a mapping/object")
+
+        grain = str(validity.get("grain", "month")).lower()
+        if grain not in _VALID_SEG_GRAINS:
+            raise ValueError("customer_segments.validity.grain must be one of: month, day")
+
+        churn = float(validity.get("churn_rate_qtr", 0.08))
+        if churn < 0.0 or churn > 1.0:
+            raise ValueError("customer_segments.validity.churn_rate_qtr must be between 0 and 1")
+
+        new_months = int(validity.get("new_customer_months", 2))
+        if new_months < 0:
+            raise ValueError("customer_segments.validity.new_customer_months must be >= 0")
+
+        seg_cfg["validity"] = {
+            "grain": grain,
+            "churn_rate_qtr": churn,
+            "new_customer_months": new_months,
+        }
+    else:
+        # NEW: if user supplied validity but include_validity is off, record it as ignored
+        if "validity" in seg_cfg:
+            seg_cfg.setdefault("_ignored_keys", [])
+            seg_cfg["_ignored_keys"].append("validity")
+            seg_cfg["_ignored_keys"] = sorted(set(seg_cfg["_ignored_keys"]))
+
+    override = seg_cfg.get("override") or {}
+    if not isinstance(override, dict):
+        raise KeyError("customer_segments.override must be a mapping/object")
+    override.setdefault("seed", None)
+    override.setdefault("dates", {})
+    override.setdefault("paths", {})
+
+    # NEW: normalize override.seed type if present
+    if override["seed"] is not None:
+        override["seed"] = int(override["seed"])
+
+    if not isinstance(override["dates"], dict):
+        raise KeyError("customer_segments.override.dates must be a mapping/object")
+    if not isinstance(override["paths"], dict):
+        raise KeyError("customer_segments.override.paths must be a mapping/object")
+    seg_cfg["override"] = override
+
+    return seg_cfg
 
 
 # ------------------------------------------------------------
 # Validation helpers
 # ------------------------------------------------------------
 
-def _validate_required_keys(
-    cfg: Dict[str, Any],
-    section: str,
-    required: Iterable[str],
-) -> None:
+def _validate_required_keys(cfg: Dict[str, Any], section: str, required: Iterable[str]) -> None:
     missing = [k for k in required if k not in cfg]
     if missing:
         raise KeyError(f"Missing required keys in '{section}' config: {missing}")
@@ -294,14 +479,6 @@ def prepare_paths(
     parquet_folder_override: Optional[str | Path] = None,
     out_folder_override: Optional[str | Path] = None,
 ) -> Tuple[Path, Path]:
-    """
-    Prepare and validate filesystem paths for pipeline runners.
-
-    Preferred usage now:
-      - Runners/CLI pass explicit paths
-    Backward compatibility:
-      - If overrides are None, uses sales.parquet_folder / sales.out_folder if present
-    """
     sales_cfg = cfg.get("sales") or {}
     if not isinstance(sales_cfg, dict):
         raise KeyError("Invalid sales section in config")
@@ -327,23 +504,18 @@ def prepare_paths(
 # Constants
 # ------------------------------------------------------------
 
-# Options that only make sense for parquet chunk output (not CSV/Delta)
-_PARQUET_ONLY_KEYS = {
-    "row_group_size",
-    "compression",
-    "chunk_size",
-    "workers",
-}
+_PARQUET_ONLY_KEYS = {"row_group_size", "compression", "chunk_size", "workers"}
+_PARQUET_MERGE_ONLY_KEYS = {"merge_parquet", "merged_file"}
+_DELTA_ONLY_KEYS = {"partition_enabled", "partition_cols", "delta_output_folder"}
 
-# Options that only apply to merging parquet chunks
-_PARQUET_MERGE_ONLY_KEYS = {
-    "merge_parquet",
-    "merged_file",
-}
 
-# Options that only make sense for delta output/partitioning
-_DELTA_ONLY_KEYS = {
-    "partition_enabled",
-    "partition_cols",
-    "delta_output_folder",
-}
+# ------------------------------------------------------------
+# Register section normalizers (keep at bottom so functions exist)
+# ------------------------------------------------------------
+
+_SECTION_NORMALIZERS.update(
+    {
+        "sales": normalize_sales_config,
+        "customer_segments": normalize_customer_segments_config,
+    }
+)

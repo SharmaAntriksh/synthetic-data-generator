@@ -1,6 +1,11 @@
-# src/facts/sales/sales_logic/globals.py
+"""Sales runtime state + schema binding.
 
+This module is imported by worker processes; keep it lightweight and deterministic.
+"""
 from __future__ import annotations
+
+
+
 
 import numpy as np
 

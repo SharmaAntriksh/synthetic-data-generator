@@ -3,7 +3,9 @@ from __future__ import annotations
 import glob
 import os
 from math import ceil
-from multiprocessing import Pool, cpu_count
+from multiprocessing import cpu_count
+from src.facts.sales.sales_worker import PoolRunSpec, iter_imap_unordered
+
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -11,10 +13,16 @@ import numpy as np
 import pandas as pd
 
 from src.utils.logging_utils import done, info, skip, work
-from .sales_logic.globals import State
+from .sales_logic import State
 from .sales_worker import _worker_task, init_sales_worker
 from .sales_writer import merge_parquet_files
-from .output_paths import OutputPaths, TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
+from .output_paths import (
+    OutputPaths,
+    TABLE_SALES,
+    TABLE_SALES_ORDER_DETAIL,
+    TABLE_SALES_ORDER_HEADER,
+    TABLE_SALES_RETURN,   # NEW
+)
 
 
 from dataclasses import dataclass
@@ -401,17 +409,52 @@ def generate_sales_fact(
         raise ValueError(f"Invalid sales_output: {sales_output}")
 
     needs_order_cols = sales_output in {"sales_order", "both"}
+    # ------------------------------------------------------------
+    # Returns (optional)
+    # ------------------------------------------------------------
+    facts_enabled = _cfg_get(cfg, ["facts", "enabled"], default=[])
+    facts_enabled = facts_enabled if isinstance(facts_enabled, list) else []
+
+    returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
+    returns_enabled = _bool_or(returns_cfg.get("enabled"), False)
+
+    # If facts.enabled is used, treat it as an additional “feature gate”
+    if facts_enabled:
+        returns_enabled = bool(returns_enabled and ("returns" in {str(x).lower() for x in facts_enabled}))
+
+    returns_rate = float(returns_cfg.get("return_rate", 0.0))
+    returns_max_lag_days = int(returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)))
 
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
     if sales_output == "both" and not bool(skip_order_cols):
         info("Config: both + skip_order_cols=false -> Sales includes order cols.")
         info("Note: output will be large; set skip_order_cols=true for slimmer Sales.")
 
+    # Keep "requested" vs "effective" separate so we can warn+continue.
+    returns_enabled_requested = bool(returns_enabled)
+    returns_enabled_effective = bool(returns_enabled)
+
+    # Allow returns for ALL modes (sales / sales_order / both),
+    # but if sales_output == "sales" and skip_order_cols == True, we cannot derive returns
+    # (no order identifiers), so disable returns and warn.
+    if returns_enabled_requested and sales_output == "sales" and bool(skip_order_cols):
+        info(
+            "WARNING: returns.enabled=true with sales_output='sales' and skip_order_cols=true "
+            "=> SalesReturn will be skipped (needs SalesOrderNumber/SalesOrderLineNumber). "
+            "Sales generation will continue."
+        )
+        returns_enabled_effective = False
+
     tables: list[str] = []
     if sales_output in {"sales", "both"}:
         tables.append(TABLE_SALES)
     if sales_output in {"sales_order", "both"}:
         tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
+
+    # Returns table is independent of which sales family tables you output
+    # (as long as returns_enabled_effective == True).
+    if returns_enabled_effective:
+        tables.append(TABLE_SALES_RETURN)
 
     for t in tables:
         output_paths.ensure_dirs(t)
@@ -563,6 +606,61 @@ def generate_sales_fact(
         promo_pct_all = _as_np(promo_df["DiscountPct"], np.float64)
         promo_start_all = _as_np(promo_start, "datetime64[D]")
         promo_end_all = _as_np(promo_end, "datetime64[D]")
+        
+    # ------------------------------------------------------------
+    # Employees / store assignments -> SalesPersonEmployeeKey
+    # ------------------------------------------------------------
+    emp_assign_path = parquet_folder_p / "employee_store_assignments.parquet"
+
+    employee_assign_store_key = None
+    employee_assign_employee_key = None
+    employee_assign_start_date = None
+    employee_assign_end_date = None
+    employee_assign_fte = None
+    employee_assign_is_primary = None
+    employee_assign_role = None
+
+    # config-driven allowlist: which RoleAtStore can appear as SalesPersonEmployeeKey
+    salesperson_roles = _cfg_get(cfg, ["sales", "salesperson_roles"], default=None)
+    if not (isinstance(salesperson_roles, list) and salesperson_roles):
+        primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")
+        salesperson_roles = [str(primary)]
+
+    if emp_assign_path.exists():
+        emp_assign_df = load_parquet_df(
+            emp_assign_path,
+            cols=[
+                "EmployeeKey",
+                "StoreKey",
+                "StartDate",
+                "EndDate",
+                "FTE",
+                "IsPrimary",
+                "RoleAtStore",
+            ],
+        )
+
+        # Keep only allowed salespeople roles
+        if "RoleAtStore" in emp_assign_df.columns:
+            emp_assign_df = emp_assign_df[emp_assign_df["RoleAtStore"].isin(salesperson_roles)].copy()
+
+        if not emp_assign_df.empty:
+            end_dt = pd.to_datetime(end_date, errors="coerce").normalize()
+
+            start_dt = pd.to_datetime(emp_assign_df["StartDate"], errors="coerce").dt.normalize()
+            end_dt_col = pd.to_datetime(emp_assign_df["EndDate"], errors="coerce").dt.normalize()
+            end_dt_col = end_dt_col.fillna(end_dt)
+
+            employee_assign_store_key = _as_np(emp_assign_df["StoreKey"], np.int64)
+            employee_assign_employee_key = _as_np(emp_assign_df["EmployeeKey"], np.int64)
+            employee_assign_start_date = _as_np(start_dt, "datetime64[D]")
+            employee_assign_end_date = _as_np(end_dt_col, "datetime64[D]")
+            employee_assign_role = _as_np(emp_assign_df["RoleAtStore"].astype(str))
+
+            if "FTE" in emp_assign_df.columns:
+                employee_assign_fte = _as_np(emp_assign_df["FTE"], np.float64)
+            if "IsPrimary" in emp_assign_df.columns:
+                employee_assign_is_primary = _as_np(emp_assign_df["IsPrimary"], bool)
 
     # Weighted date pool (deterministic)
     date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
@@ -652,38 +750,99 @@ def generate_sales_fact(
         partition_cols=partition_cols,
 
         models_cfg=State.models_cfg,
+        # Returns (optional)
+        returns_enabled=bool(returns_enabled_effective),
+        returns_rate=float(returns_rate),
+        returns_max_lag_days=int(returns_max_lag_days),
+
+        # deterministic employee assignment lookup
+        seed_master= int(seed),
+        employee_salesperson_seed= int(seed) + 99173,
+        employee_primary_boost= 2.0,
+
+        # employee-store assignment pools
+        employee_assign_store_key= employee_assign_store_key,
+        employee_assign_employee_key= employee_assign_employee_key,
+        employee_assign_start_date= employee_assign_start_date,
+        employee_assign_end_date= employee_assign_end_date,
+        employee_assign_fte= employee_assign_fte,
+        employee_assign_is_primary= employee_assign_is_primary,
+        employee_assign_role=employee_assign_role,
+        salesperson_roles=salesperson_roles,
     )
 
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)
     created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
     created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
 
+
     def _record_chunk_result(r: Any, completed_units: int, total_units: int) -> None:
         """
         r can be:
-          - str (legacy 'sales' mode): path
-          - dict(table_name -> write_result): multi-table modes
-              write_result is str for csv/parquet, or {"part":..., "rows":...} for delta
+        - str (legacy 'sales' mode): path
+        - dict(table_name -> write_result): multi-table modes
+            write_result is str for csv/parquet, or {"part":..., "rows":...} for delta
         """
+
+        def _chunk_tag(path_like: str) -> str:
+            b = os.path.basename(path_like)
+            i = b.find("chunk")
+            if i < 0:
+                return b
+            j = i + 5
+            while j < len(b) and b[j].isdigit():
+                j += 1
+            return b[i:j]  # e.g. "chunk0004"
+
+        short = {
+            TABLE_SALES: "sales",
+            TABLE_SALES_ORDER_DETAIL: "detail",
+            TABLE_SALES_ORDER_HEADER: "header",
+            TABLE_SALES_RETURN: "return",
+        }
+
         if isinstance(r, str):
             created_by_table.setdefault(TABLE_SALES, []).append(r)
             created_files.append(r)
-            work(f"[{completed_units}/{total_units}] -> {os.path.basename(r)}")
+            work(f"[{completed_units}/{total_units}] {_chunk_tag(r)} -> sales")
             return
 
         if isinstance(r, dict):
-            for table_name, val in r.items():
+            # stable display order: configured tables first, then any extras
+            ordered_keys = [t for t in tables if t in r] + [k for k in r.keys() if k not in set(tables)]
+
+            # pick any string path to extract the chunk tag (parquet/csv)
+            tag = None
+            for k in ordered_keys:
+                v = r.get(k)
+                if isinstance(v, str):
+                    tag = _chunk_tag(v)
+                    break
+
+            produced: list[str] = []
+
+            for table_name in ordered_keys:
+                val = r.get(table_name)
+
+                # record outputs (preserve manifest + created_files behavior)
                 created_by_table.setdefault(table_name, []).append(val)
+
                 if isinstance(val, str):
                     created_files.append(val)
-                    work(f"[{completed_units}/{total_units}] -> {os.path.basename(val)}")
+                    produced.append(short.get(table_name, table_name))
                 elif isinstance(val, dict) and "part" in val:
-                    work(f"[{completed_units}/{total_units}] -> {table_name}:{val['part']}")
+                    # delta mode: no file name spam; just note table produced a part
+                    produced.append(short.get(table_name, table_name))
+
+            if produced:
+                if tag is None:
+                    tag = "chunk"
+                work(f"[{completed_units}/{total_units}] {tag} -> " + ", ".join(produced))
             return
 
         # Unknown / unexpected return type: ignore quietly
         return
-
+    
     # ------------------------------------------------------------
     # Multiprocessing (batched)
     # ------------------------------------------------------------
@@ -693,19 +852,27 @@ def generate_sales_fact(
     total_units = len(tasks)
     completed_units = 0
 
-    with Pool(
+    pool_spec = PoolRunSpec(
         processes=n_workers,
+        chunksize=1,            # keep existing behavior; tune later if needed
+        maxtasksperchild=None,  # leave None; can set later for long runs
+        label="sales",
+    )
+
+    for result in iter_imap_unordered(
+        tasks=batched_tasks,
+        task_fn=_worker_task,
+        spec=pool_spec,
         initializer=init_sales_worker,
         initargs=(worker_cfg,),
-    ) as pool:
-        for result in pool.imap_unordered(_worker_task, batched_tasks):
-            if isinstance(result, list):
-                for r in result:
-                    completed_units += 1
-                    _record_chunk_result(r, completed_units, total_units)
-            else:
+    ):
+        if isinstance(result, list):
+            for r in result:
                 completed_units += 1
-                _record_chunk_result(result, completed_units, total_units)
+                _record_chunk_result(r, completed_units, total_units)
+        else:
+            completed_units += 1
+            _record_chunk_result(result, completed_units, total_units)
 
     done("All chunks completed.")
 
@@ -736,7 +903,7 @@ def generate_sales_fact(
     # Final assembly (TABLE-AWARE)
     # ------------------------------------------------------------
     if file_format == "deltaparquet":
-        from .writers.sales_delta import write_delta_partitioned
+        from .sales_writer import write_delta_partitioned
 
         missing_parts = []
         wrote = 0
@@ -770,7 +937,10 @@ def generate_sales_fact(
 
     if file_format == "parquet":
         if merge_parquet:
-            from .writers.parquet_merge import merge_parquet_files
+            from .sales_writer import merge_parquet_files
+
+            merge_jobs: list[tuple[str, list[str], str]] = []
+            skipped: list[str] = []
 
             for t in tables:
                 chunks = sorted(
@@ -778,15 +948,36 @@ def generate_sales_fact(
                     if os.path.isfile(f)
                 )
                 if not chunks:
-                    info(f"No parquet chunks found for {t}; skipping merge")
+                    skipped.append(t)
                     continue
+                merge_jobs.append((t, chunks, output_paths.merged_path(t)))
 
-                merge_parquet_files(
-                    chunks,
-                    output_paths.merged_path(t),
-                    delete_after=bool(delete_chunks),
-                    table_name=t,
-                )
+            if merge_jobs:
+                short = {
+                    TABLE_SALES: "sales",
+                    TABLE_SALES_ORDER_DETAIL: "detail",
+                    TABLE_SALES_ORDER_HEADER: "header",
+                    TABLE_SALES_RETURN: "return",
+                }
+
+                counts = [(short.get(t, t), len(chunks)) for (t, chunks, _out) in merge_jobs]
+
+                if len({c for _, c in counts}) == 1:
+                    n = counts[0][1]
+                    info(f"Merge parquet: {n} chunks -> " + ", ".join(name for name, _ in counts))
+                else:
+                    info("Merge parquet: " + ", ".join(f"{name}={n}" for name, n in counts))
+
+                for t, chunks, out in merge_jobs:
+                    merge_parquet_files(
+                        chunks,
+                        out,
+                        delete_after=bool(delete_chunks),
+                        table_name=t,
+                        log=False,   # if you added log support
+                    )
+            else:
+                info("Merge parquet: none")
 
         manifest = _build_sales_manifest()
         return (created_files, manifest) if return_manifest else created_files

@@ -37,9 +37,12 @@ _SALES_SCHEMA: Schema = (
     ("CustomerKey",          "INT NOT NULL"),
     ("ProductKey",           "INT NOT NULL"),
     ("StoreKey",             "INT NOT NULL"),
+    ("SalesPersonEmployeeKey","BIGINT NOT NULL"),  
     ("PromotionKey",         "INT NOT NULL"),
     ("CurrencyKey",          "INT NOT NULL"),
+    ("SalesChannelKey",           "INT NOT NULL"),
 
+    ("TimeKey",              "INT NOT NULL"),
     ("OrderDate",            "DATE NOT NULL"),
     ("DueDate",              "DATE NOT NULL"),
     ("DeliveryDate",         "DATE NOT NULL"),
@@ -58,7 +61,11 @@ _SALES_SCHEMA: Schema = (
 _SALES_ORDER_HEADER_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
     "CustomerKey",
+    "StoreKey",
+    "SalesPersonEmployeeKey",
+    "SalesChannelKey",
     "OrderDate",
+    "TimeKey",
     "IsOrderDelayed",
 )
 
@@ -66,7 +73,6 @@ _SALES_ORDER_DETAIL_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
     "SalesOrderLineNumber",
     "ProductKey",
-    "StoreKey",
     "PromotionKey",
     "CurrencyKey",
     "DueDate",
@@ -108,6 +114,8 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("CustomerType",       "VARCHAR(20) NOT NULL"),
         ("CompanyName",        "VARCHAR(200)"),
         ("GeographyKey",       "INT NOT NULL"),
+        ("LoyaltyTierKey",       "INT NOT NULL"),
+        ("CustomerAcquisitionChannelKey",       "INT NOT NULL"),
         ("IsActiveInSales",    "INT NOT NULL"),
 
         ("CustomerStartMonth", "INT NOT NULL"),     # 0..T-1 month index
@@ -121,6 +129,30 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("CustomerChurnBias",   "FLOAT NOT NULL"),  # lognormal > 0
     ),
 
+    "CustomerAcquisitionChannels": (
+        ("CustomerAcquisitionChannelKey", "INT NOT NULL"),
+        ("AcquisitionChannel", "VARCHAR(50)"),
+        ("ChannelGroup", "VARCHAR(50)"),       
+    ),
+
+    "CustomerSegment": (
+        ("SegmentKey",    "INT NOT NULL"),
+        ("SegmentName",   "VARCHAR(200) NOT NULL"),
+        ("SegmentType",   "VARCHAR(50) NOT NULL"),
+        ("Definition",    "VARCHAR(400) NOT NULL"),
+        ("IsActiveFlag",  "TINYINT NOT NULL"),
+    ),
+
+    "CustomerSegmentMembership": (
+        ("CustomerKey",   "INT NOT NULL"),
+        ("SegmentKey",    "INT NOT NULL"),
+        ("ValidFromDate", "DATETIME2(7) NOT NULL"),
+        ("ValidToDate",   "DATETIME2(7) NOT NULL"),
+
+        # Present by default; optional in config
+        ("IsPrimaryFlag", "TINYINT NOT NULL"),
+        ("Score",         "REAL NOT NULL"),
+    ),
     "Geography": (
         ("GeographyKey", "INT NOT NULL"),
         ("City",         "VARCHAR(100) NOT NULL"),
@@ -145,6 +177,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("UnitPrice",               "DECIMAL(10,2) NOT NULL"),
         ("BaseProductKey",          "INT NOT NULL"),
         ("VariantIndex",            "INT NOT NULL"),
+        ("SupplierKey",            "INT NOT NULL"),
         ("IsActiveInSales",         "INT NOT NULL"),
     ),
 
@@ -175,19 +208,19 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
 
     "Stores": (
         ("StoreKey",         "INT NOT NULL"),
-        ("StoreName",        "VARCHAR(100) NOT NULL"),
-        ("StoreManager",     "VARCHAR(20)"),
         ("StoreType",        "VARCHAR(20) NOT NULL"),
         ("Status",           "VARCHAR(10)"),
         ("GeographyKey",     "INT NOT NULL"),
+        ("StoreManager",     "VARCHAR(20)"),
+        ("StoreName",        "VARCHAR(100) NOT NULL"),
         ("OpenDate",         "DATETIME"),
         ("CloseDate",        "DATETIME"),
         ("OpenFlag",         "BIT"),
         ("SquarFootage",     "INT"),
         ("EmployeeCount",    "INT"),
         ("Phone",            "VARCHAR(20)"),
-        ("StoreDescription", "VARCHAR(MAX)"),
         ("CloseReason",      "VARCHAR(MAX)"),
+        ("StoreDescription", "VARCHAR(MAX)"),
     ),
 
     "Dates": (
@@ -262,12 +295,148 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("CurrentDayOffset",         "INT NOT NULL"),
     ),
 
+    "Time": (
+        ("TimeKey",        "INT NOT NULL"),        # 0..1439 minute-of-day
+        ("Hour",           "INT NOT NULL"),        # 0..23
+        ("Minute",         "INT NOT NULL"),        # 0..59
+        ("TimeText",       "VARCHAR(5) NOT NULL"), # "HH:MM"
+        # Rollup bins
+        ("TimeKey15",      "INT NOT NULL"),
+        ("Bin15Label",     "VARCHAR(11) NOT NULL"),  # "HH:MM-HH:MM"
+        ("TimeKey30",      "INT NOT NULL"),
+        ("Bin30Label",     "VARCHAR(11) NOT NULL"),
+        ("TimeKey60",      "INT NOT NULL"),
+        ("Bin60Label",     "VARCHAR(11) NOT NULL"),
+        ("TimeKey360",     "INT NOT NULL"),
+        ("Bin6hLabel",     "VARCHAR(11) NOT NULL"),  # "HH:MM-HH:MM" (inclusive end style OK too)
+        ("TimeKey720",     "INT NOT NULL"),
+        ("Bin12hLabel",    "VARCHAR(11) NOT NULL"),
+
+        # Coarse “4 bucket” grouping
+        ("TimeBucketKey4", "INT NOT NULL"),
+        ("TimeBucket4",    "VARCHAR(10) NOT NULL"),  # Night/Morning/Afternoon/Evening
+        
+        # PQ/SQL-friendly time representations (include if present in parquet)
+        ("TimeSeconds",    "INT NOT NULL"),        # seconds since midnight
+        ("TimeOfDay",      "TIME(0) NOT NULL"),    # "HH:MM:SS"
+    ),
+    
     "Currency": (
         ("CurrencyKey",     "INT NOT NULL"),
         ("ToCurrency",      "VARCHAR(10) NOT NULL"),
         ("CurrencyName",    "VARCHAR(50) NOT NULL"),
     ),
 
+    "Employees": (
+        # Base hierarchy / placement (dict insertion order)
+        ("EmployeeKey",        "BIGINT NOT NULL"),
+        ("ParentEmployeeKey",  "BIGINT NULL"),
+        ("EmployeeName",       "VARCHAR(200) NOT NULL"),
+        ("Title",              "VARCHAR(100) NOT NULL"),
+        ("OrgLevel",           "INT NOT NULL"),
+        ("OrgUnitType",        "VARCHAR(20) NOT NULL"),
+        ("RegionId",           "INT NULL"),
+        ("DistrictId",         "INT NULL"),
+
+        # Dates / status (appended next)
+        ("HireDate",           "DATE NOT NULL"),
+        ("TerminationDate",    "DATE NULL"),
+        ("IsActive",           "BIT NOT NULL"),
+
+        # Deterministic names (appended next)
+        ("FirstName",          "VARCHAR(100) NOT NULL"),
+        ("LastName",           "VARCHAR(100) NOT NULL"),
+        ("MiddleName",         "VARCHAR(10) NULL"),
+
+        # HR enrichment (appended in this order)
+        ("Gender",                 "CHAR(1) NOT NULL"),
+        ("BirthDate",              "DATE NOT NULL"),
+        ("MaritalStatus",          "CHAR(1) NOT NULL"),
+        ("EmailAddress",           "VARCHAR(200) NOT NULL"),
+        ("Phone",                  "VARCHAR(20) NOT NULL"),
+        ("EmergencyContactName",   "VARCHAR(200) NOT NULL"),
+        ("EmergencyContactPhone",  "VARCHAR(20) NOT NULL"),
+        ("SalariedFlag",           "BIT NOT NULL"),
+        ("PayFrequency",           "INT NOT NULL"),
+        ("BaseRate",               "DECIMAL(10, 2) NOT NULL"),
+        ("VacationHours",          "INT NOT NULL"),
+        ("CurrentFlag",            "BIT NOT NULL"),
+        ("StartDate",              "DATE NOT NULL"),
+        ("EndDate",                "DATE NULL"),
+        ("Status",                 "VARCHAR(20) NOT NULL"),
+        ("SalesPersonFlag",        "BIT NOT NULL"),
+        ("IsSalesPerson",          "BIT NOT NULL"),
+        ("DepartmentName",         "VARCHAR(50) NOT NULL"),
+    ),
+
+    "EmployeeStoreAssignments": (
+        ("EmployeeKey",        "BIGINT NOT NULL"),
+        ("StoreKey",           "INT NOT NULL"),
+        ("StartDate",          "DATE NOT NULL"),
+        ("EndDate",            "DATE NULL"),
+        ("FTE",                "DECIMAL(18, 2) NOT NULL"),
+        ("RoleAtStore",        "VARCHAR(100) NOT NULL"),
+        ("IsPrimary",          "BIT NULL"),
+        ("AssignmentSequence", "INT NOT NULL"),
+    ),
+    "Suppliers": (
+        ("SupplierKey",       "INT NOT NULL"),
+        ("SupplierName",      "VARCHAR(200) NOT NULL"),
+        ("SupplierType",      "VARCHAR(50) NOT NULL"),
+        ("Country",           "VARCHAR(100) NULL"),
+        ("ReliabilityScore",  "DECIMAL(4, 3) NULL"),
+    ),
+    "Superpowers": (
+        ("SuperpowerKey",   "INT NOT NULL"),
+        ("SuperpowerName",  "VARCHAR(200) NOT NULL"),
+        ("PowerType",       "VARCHAR(50) NOT NULL"),
+        ("Universe",        "VARCHAR(50) NOT NULL"),
+        ("Rarity",          "VARCHAR(20) NOT NULL"),
+        ("IconicExamples",  "VARCHAR(400) NOT NULL"),
+        ("IsActiveFlag",    "BIT NOT NULL"),
+    ),
+
+    "CustomerSuperpowers": (
+        ("CustomerKey",     "INT NOT NULL"),
+        ("SuperpowerKey",   "INT NOT NULL"),
+        ("ValidFromDate",   "DATETIME2(7) NOT NULL"),
+        ("ValidToDate",     "DATETIME2(7) NOT NULL"),
+        ("PowerLevel",      "TINYINT NOT NULL"),
+        ("IsPrimaryFlag",   "BIT NOT NULL"),
+        ("AcquiredDate",    "DATETIME2(7) NOT NULL"),
+    ),
+    "LoyaltyTiers": (
+        ("LoyaltyTierKey", "INT NOT NULL"),
+        ("LoyaltyTier",    "VARCHAR(50) NOT NULL"),
+        ("TierRank",    "TINYINT NOT NULL"),
+        ("PointsMultiplier",    "DECIMAL(4, 2) NOT NULL"),
+    ),
+
+    "SalesChannels": (
+        ("SalesChannelKey", "INT NOT NULL"),
+        ("SalesChannel", "VARCHAR(50)"),
+        ("ChannelGroup", "VARCHAR(50)"),
+
+        ("SalesChannelCode", "VARCHAR(30)"),
+        ("SortOrder", "SMALLINT"),
+
+        ("IsDigital", "BIT"),
+        ("IsPhysical", "BIT"),
+        ("IsThirdParty", "BIT"),
+        ("IsB2B", "BIT"),
+        ("IsAssisted", "BIT"),
+        ("IsOwnedChannel", "BIT"),
+
+        ("TimeProfile", "VARCHAR(20)"),
+        ("Is24x7", "BIT"),
+        ("OpenMinute", "SMALLINT"),
+        ("CloseMinute", "SMALLINT"),
+    ),
+    "ReturnReason": (
+        ("ReturnReasonKey",      "INT NOT NULL"),
+        ("ReturnReason",         "VARCHAR(200) NOT NULL"),
+        ("ReturnReasonCategory", "VARCHAR(100) NOT NULL"),
+    ),
     # -----------------------
     # FACTS
     # -----------------------
@@ -277,12 +446,23 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
     "SalesOrderHeader": _SALES_ORDER_HEADER_SCHEMA,
     "SalesOrderDetail": _SALES_ORDER_DETAIL_SCHEMA,
 
+    # NEW: thin SalesReturn fact (order line grain)
+    "SalesReturn": (
+        ("SalesOrderNumber",     "BIGINT NOT NULL"),
+        ("SalesOrderLineNumber", "INT NOT NULL"),
+        ("ReturnDate",           "DATE NOT NULL"),
+        ("ReturnReasonKey",      "INT NOT NULL"),
+        ("ReturnQuantity",       "INT NOT NULL"),
+        ("ReturnNetPrice",       "DECIMAL(8, 2) NOT NULL"),
+        ("ReturnEventKey",       "BIGINT NOT NULL"),
+    ),
     "ExchangeRates": (
         ("Date",         "DATE NOT NULL"),
         ("FromCurrency", "VARCHAR(10) NOT NULL"),
         ("ToCurrency",   "VARCHAR(10) NOT NULL"),
         ("Rate",         "DECIMAL(10, 6) NOT NULL"),
     ),
+
 }
 
 

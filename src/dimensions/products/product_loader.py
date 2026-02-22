@@ -10,6 +10,35 @@ from .contoso_expander import expand_contoso_products
 from .pricing import apply_product_pricing
 
 
+def _load_supplier_keys(output_folder: Path) -> np.ndarray:
+    """
+    Loads SupplierKey values from suppliers.parquet in the same dims folder.
+    Returns sorted unique int64 keys.
+    """
+    sup_path = output_folder / "suppliers.parquet"
+    if not sup_path.exists():
+        raise FileNotFoundError(
+            f"Missing suppliers dimension parquet: {sup_path}. "
+            "Generate dimensions first (Suppliers)."
+        )
+
+    sup = pd.read_parquet(sup_path)
+    # tolerate minor schema naming drift
+    key_col = None
+    for c in ["SupplierKey", "Key"]:
+        if c in sup.columns:
+            key_col = c
+            break
+    if key_col is None:
+        raise KeyError(f"suppliers.parquet missing SupplierKey/Key. Available: {list(sup.columns)}")
+
+    keys = pd.to_numeric(sup[key_col], errors="coerce").dropna().astype("int64").to_numpy()
+    keys = np.unique(keys)
+    if keys.size == 0:
+        raise ValueError("suppliers.parquet has zero valid SupplierKey values")
+    return np.sort(keys)
+
+
 def load_product_dimension(config, output_folder: Path):
     """
     Product dimension loader.
@@ -26,11 +55,39 @@ def load_product_dimension(config, output_folder: Path):
     """
     p = config["products"]
     active_ratio = p.get("active_ratio", 1.0)
+    # ------------------------------------------------------------
+    # Supplier assignment
+    # ------------------------------------------------------------
+    sup_cfg = p.get("supplier_assignment") or {}
+    sup_enabled = bool(sup_cfg.get("enabled", True))
+    sup_seed = int(sup_cfg.get("seed", p.get("seed", 42)))
+    sup_strategy = str(sup_cfg.get("strategy", "by_base_product")).lower()
+
+    supplier_keys = None
+    supplier_sig = None
+    if sup_enabled:
+        supplier_keys = _load_supplier_keys(output_folder)
+        supplier_sig = {
+            "n": int(supplier_keys.size),
+            "min": int(supplier_keys.min()),
+            "max": int(supplier_keys.max()),
+        }
 
     if not isinstance(active_ratio, (int, float)) or not (0 < float(active_ratio) <= 1.0):
         raise ValueError("products.active_ratio must be a number in the range (0, 1]")
 
     version_key = _version_key(p)
+
+    # Make supplier assignment part of the skip/version signature
+    if sup_enabled:
+        version_key = dict(version_key)
+        version_key["supplier_assignment"] = {
+            "enabled": True,
+            "strategy": sup_strategy,
+            "seed": sup_seed,
+        }
+        version_key["supplier_sig"] = supplier_sig
+
     parquet_path = output_folder / "products.parquet"
 
     # ---------------- SKIP ----------------
@@ -69,6 +126,28 @@ def load_product_dimension(config, output_folder: Path):
         pricing_cfg=p.get("pricing"),
         seed=p.get("seed"),
     )
+    # ------------------------------------------------------------
+    # Assign SupplierKey (deterministic)
+    # ------------------------------------------------------------
+    if sup_enabled:
+        n_sup = int(supplier_keys.size)
+
+        if "BaseProductKey" in df.columns:
+            base = pd.to_numeric(df["BaseProductKey"], errors="coerce").fillna(0).astype("int64").to_numpy()
+        else:
+            base = pd.to_numeric(df["ProductKey"], errors="coerce").fillna(0).astype("int64").to_numpy()
+
+        if sup_strategy == "by_subcategory" and "SubcategoryKey" in df.columns:
+            sub = pd.to_numeric(df["SubcategoryKey"], errors="coerce").fillna(0).astype("int64").to_numpy()
+            idx = np.mod(sub, n_sup)
+        elif sup_strategy == "uniform":
+            rng_sup = np.random.default_rng(sup_seed)
+            idx = rng_sup.integers(0, n_sup, size=len(df), dtype=np.int64)
+        else:
+            # default: keep variants on the same supplier
+            idx = np.mod(base, n_sup)
+
+        df["SupplierKey"] = supplier_keys[idx].astype("int64")
 
     # ------------------------------------------------------------
     # Active products (eligibility for Sales)
@@ -102,6 +181,9 @@ def load_product_dimension(config, output_folder: Path):
         "UnitPrice",
         "UnitCost",
     ]
+    if sup_enabled:
+        required.append("SupplierKey")
+
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Missing required field(s) in Products: {missing}")

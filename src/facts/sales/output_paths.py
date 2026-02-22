@@ -11,6 +11,7 @@ from typing import Dict, Optional
 TABLE_SALES = "Sales"
 TABLE_SALES_ORDER_DETAIL = "SalesOrderDetail"
 TABLE_SALES_ORDER_HEADER = "SalesOrderHeader"
+TABLE_SALES_RETURN = "SalesReturn"
 
 @dataclass(frozen=True)
 class TableSpec:
@@ -68,6 +69,13 @@ DEFAULT_TABLE_SPECS: Dict[str, TableSpec] = {
         merged_filename=f"{_to_snake(TABLE_SALES_ORDER_HEADER)}.parquet",  # sales_order_header.parquet
         delta_subdir=_to_snake(TABLE_SALES_ORDER_HEADER),
     ),
+    TABLE_SALES_RETURN: TableSpec(
+        out_subdir=_to_snake(TABLE_SALES_RETURN),
+        chunk_prefix=f"{_to_snake(TABLE_SALES_RETURN)}_chunk",       # sales_return_chunk0001.csv
+        merged_filename=f"{_to_snake(TABLE_SALES_RETURN)}.parquet",  # sales_return.parquet
+        delta_subdir=_to_snake(TABLE_SALES_RETURN),
+    ),
+
 }
 
 @dataclass(frozen=True)

@@ -1,25 +1,32 @@
+"""Sales chunk builder (Arrow table).
+
+This is the ONLY place that materializes the Sales row-level table.
+
+Adding columns:
+- Add schema field(s) in src/utils/static_schemas.get_sales_schema(...)
+- Implement the values in sales_logic/columns.py (single extension point)
+"""
+
+from __future__ import annotations
+
 import math
+
 import numpy as np
 import pyarrow as pa
 
-from .globals import State, PA_AVAILABLE
-from .order_logic import build_orders
-from .date_logic import compute_dates
-from .promo_logic import apply_promotions
-from .price_logic import compute_prices
-
-from .models.activity_model import apply_activity_thinning
-from .models.quantity_model import build_quantity
-from .models.pricing_pipeline import build_prices
-
-from .month_planing import build_rows_per_month
-from .customer_sampling import (
-    _normalize_end_month,
+from .globals import PA_AVAILABLE, State
+from .core import (
     _eligible_customer_mask_for_month,
+    _normalize_end_month,
     _participation_distinct_target,
     _sample_customers,
+    apply_promotions,
+    build_orders,
+    build_rows_per_month,
+    compute_dates,
+    compute_prices,
 )
-
+from .columns import build_extra_columns
 
 # ------------------------------------------------------------
 # Helpers
@@ -257,6 +264,9 @@ def build_chunk_table(
     chunk_idx: int,
     chunk_capacity_orders: int,
 ) -> pa.Table:
+
+    # Lazy import to avoid circular import: sales_models imports State from sales_logic
+    from ..sales_models import apply_activity_thinning, build_quantity, build_prices
 
     """
     Build a chunk of synthetic sales data.
@@ -544,22 +554,21 @@ def build_chunk_table(
         unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
         # --------------------------------------------------------
-        # STORE → GEO → CURRENCY (guard missing mappings)
-        # --------------------------------------------------------
-        store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n_orders)]
-        geo_arr = st2g_arr[store_key_arr]
-        if np.any(geo_arr < 0):
-            raise RuntimeError("store_to_geo_arr missing mapping for sampled StoreKey(s)")
-        currency_arr = g2c_arr[geo_arr]
-        if np.any(currency_arr < 0):
-            raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
-
-        # --------------------------------------------------------
         # ORDERS (use month-specific date pool so month loop is real)
         # --------------------------------------------------------
         if not skip_cols:
+            # build_orders allocates suffixes per *order* (avg ~2 lines/order)
+            order_count = max(1, int(n_orders / 2.0))
+
+            # Each chunk owns suffix range [base, base + cap)
+            if order_cursor + np.int64(order_count) > np.int64(cap):
+                raise RuntimeError(
+                    f"chunk_capacity_orders too small: need {int(order_cursor) + order_count} orders in chunk "
+                    f"(cap={cap}). Increase chunk_capacity_orders (or reduce chunk sizing)."
+                )
+
             order_id_start = base + order_cursor
-            if order_id_start + np.int64(n_orders) >= MOD:
+            if order_id_start + np.int64(order_count) >= MOD:
                 raise RuntimeError("SalesOrderNumber suffix overflow; increase suffix width/capacity.")
 
             orders = build_orders(
@@ -575,7 +584,8 @@ def build_chunk_table(
                 order_id_start=int(order_id_start),
             )
 
-            order_cursor += np.int64(n_orders)
+            # Advance by allocated orders (robust to future build_orders heuristic changes)
+            order_cursor += np.int64(orders.get("_order_count", order_count))
 
             customer_keys_out = orders["customer_keys"]
             order_dates = orders["order_dates"]
@@ -587,6 +597,28 @@ def build_chunk_table(
             order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=n_orders)]
             order_ids_int = None
             line_num = None
+
+        # --------------------------------------------------------
+        # STORE → GEO → CURRENCY (guard missing mappings)
+        #   Agreement: 1 Store per Order (when order ids exist)
+        # --------------------------------------------------------
+        if not skip_cols:
+            # line_num is 1..k within each order; derive order index cheaply (no np.unique)
+            order_starts = (np.asarray(line_num) == 1)
+            order_idx = np.cumsum(order_starts.astype(np.int64)) - 1
+            n_unique_orders = int(order_idx.max() + 1) if order_idx.size else 0
+            order_store = store_keys[rng.integers(0, len(store_keys), size=n_unique_orders)]
+            store_key_arr = order_store[order_idx]
+        else:
+            # no order concept -> sample per line
+            store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n_orders)]
+
+        geo_arr = st2g_arr[store_key_arr]
+        if np.any(geo_arr < 0):
+            raise RuntimeError("store_to_geo_arr missing mapping for sampled StoreKey(s)")
+        currency_arr = g2c_arr[geo_arr]
+        if np.any(currency_arr < 0):
+            raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
 
         customer_keys_out = np.asarray(customer_keys_out, dtype=np.int64)
         order_dates = np.asarray(order_dates, dtype="datetime64[D]")
@@ -638,11 +670,139 @@ def build_chunk_table(
         order_dates = _take(order_dates)
         promo_keys = _take(promo_keys)
 
+        # Ensure order ids/line nums stay aligned after thinning
         if not skip_cols:
             order_ids_int = _take(order_ids_int)
             line_num = _take(line_num)
-
+            
         # --------------------------------------------------------
+                # --------------------------------------------------------
+        # EMPLOYEE (SalesPersonEmployeeKey)
+        #   Agreement:
+        #     - If order identifiers exist (skip_cols == False): 1 salesperson per order (broadcast to all lines),
+        #       still respecting effective-dated store assignments by (StoreKey, OrderDate).
+        #     - If order identifiers do not exist: keep line-level sampling (old behavior).
+        # - Prefer DAY-accurate effective-dated bridge:
+        #     State.salesperson_effective_by_store[store] = (emp_keys[int64], start_dates[D], end_dates[D], weights[f64])
+        # - Fallback: State.salesperson_by_store_month (values may be -1)
+        # - Final fallback: State.salesperson_global_pool (sales-role only)
+        # IMPORTANT: Never emit Store Manager keys (30_000_000 + StoreKey).
+        # --------------------------------------------------------
+
+        global_pool = getattr(State, "salesperson_global_pool", None)
+
+        def _ensure_global_pool():
+            nonlocal global_pool
+            if global_pool is None or len(global_pool) == 0:
+                # Try to infer from effective map (union of emp_keys) if present
+                eff2 = getattr(State, "salesperson_effective_by_store", None)
+                if isinstance(eff2, dict) and eff2:
+                    acc = []
+                    for _store, entry in eff2.items():
+                        if entry is None:
+                            continue
+                        emp_keys = entry[0]
+                        if emp_keys is not None and len(emp_keys):
+                            acc.append(np.asarray(emp_keys, dtype=np.int64))
+                    if acc:
+                        global_pool = np.unique(np.concatenate(acc)).astype(np.int64, copy=False)
+
+            if global_pool is None or len(global_pool) == 0:
+                raise RuntimeError(
+                    "No eligible salespeople found. "
+                    "Bind State.salesperson_global_pool (Sales Associate only) in init.py, "
+                    "or ensure salesperson_effective_by_store contains eligible emp_keys."
+                )
+
+        _ensure_global_pool()
+
+        eff = getattr(State, "salesperson_effective_by_store", None)
+
+        FAR_PAST = np.datetime64("1900-01-01", "D")
+        FAR_FUTURE = np.datetime64("2262-04-11", "D")
+
+        def _sample_salesperson_for_store_dates(store_ids: np.ndarray, dates_D: np.ndarray) -> np.ndarray:
+            """Sample one salesperson per (store_ids[i], dates_D[i]) row."""
+            out = np.empty(store_ids.shape[0], dtype=np.int64)
+
+            if isinstance(eff, dict) and eff:
+                for store in np.unique(store_ids):
+                    store_i = int(store)
+                    idx_store = (store_ids == store)
+                    n_store = int(idx_store.sum())
+
+                    entry = eff.get(store_i)
+                    if entry is None:
+                        out[idx_store] = rng.choice(global_pool, size=n_store, replace=True)
+                        continue
+
+                    emp_keys, start_d, end_d, weights = entry
+                    emp_keys = np.asarray(emp_keys, dtype=np.int64)
+                    start_d = np.asarray(start_d, dtype="datetime64[D]")
+                    end_d = np.asarray(end_d, dtype="datetime64[D]")
+                    weights = np.asarray(weights, dtype=np.float64)
+
+                    if np.isnat(start_d).any():
+                        start_d = start_d.copy()
+                        start_d[np.isnat(start_d)] = FAR_PAST
+                    if np.isnat(end_d).any():
+                        end_d = end_d.copy()
+                        end_d[np.isnat(end_d)] = FAR_FUTURE
+
+                    d_store = dates_D[idx_store].astype("datetime64[D]", copy=False)
+                    u_dates, inv = np.unique(d_store, return_inverse=True)
+                    out_store = np.empty(d_store.shape[0], dtype=np.int64)
+
+                    for j, d in enumerate(u_dates):
+                        sel = (inv == j)
+                        sel_n = int(sel.sum())
+
+                        active = (start_d <= d) & (d <= end_d)
+                        if not np.any(active):
+                            out_store[sel] = rng.choice(global_pool, size=sel_n, replace=True)
+                            continue
+
+                        w = weights[active]
+                        sw = float(w.sum())
+                        if sw <= 1e-12:
+                            out_store[sel] = rng.choice(global_pool, size=sel_n, replace=True)
+                            continue
+
+                        p = (w / sw).astype(np.float64, copy=False)
+                        out_store[sel] = rng.choice(emp_keys[active], size=sel_n, replace=True, p=p)
+
+                    out[idx_store] = out_store
+                return out
+
+            # No effective map -> fallback to month map (then global pool)
+            sp_map = getattr(State, "salesperson_by_store_month", None)
+            if sp_map is not None:
+                out = sp_map[store_ids, int(m_offset)]
+                missing = out < 0
+                if np.any(missing):
+                    out = out.copy()
+                    out[missing] = rng.choice(global_pool, size=int(missing.sum()), replace=True)
+                return out.astype(np.int64, copy=False)
+
+            return rng.choice(global_pool, size=store_ids.shape[0], replace=True).astype(np.int64, copy=False)
+
+        # --- Sampling mode ---
+        if not skip_cols and order_ids_int is not None:
+            # Order-level salesperson: sample per unique order, then broadcast back to lines
+            uniq_orders, first_idx, inv_idx = np.unique(order_ids_int, return_index=True, return_inverse=True)
+            order_store = store_key_arr[first_idx]
+            order_date = order_dates[first_idx].astype("datetime64[D]", copy=False)
+
+            salesperson_order = _sample_salesperson_for_store_dates(order_store, order_date)
+            salesperson_key_arr = salesperson_order[inv_idx]
+        else:
+            # Line-level fallback (when order ids do not exist)
+            salesperson_key_arr = _sample_salesperson_for_store_dates(
+                np.asarray(store_key_arr, dtype=np.int64),
+                np.asarray(order_dates, dtype="datetime64[D]")
+            )
+
+
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------
         if use_discovery:
@@ -670,44 +830,139 @@ def build_chunk_table(
             price=price,
         )
 
+                # --------------------------------------------------------
+        # BUILD ARROW TABLE (schema-driven)
+        #
+        # Base columns are produced here.
+        # Extra columns are produced ONLY via sales_logic/columns.py (single extension point).
+        #
+        # Behavior:
+        # - If a schema field isn't produced, it is filled with typed nulls.
+        # - If columns.py returns a column not present in the schema, we raise (forces schema update).
         # --------------------------------------------------------
-        # BUILD ARROW TABLE
-        # --------------------------------------------------------
-        arrays = []
+        n_rows = int(customer_keys_out.shape[0])
+        EPOCH_D = np.datetime64("1970-01-01", "D")
 
-        def add(name, data):
-            arrays.append(pa.array(data, type=schema_types[name], safe=False))
+        def _as_datetime64_D(x):
+            x = np.asarray(x)
+
+            # Already a datetime64 -> normalize to day resolution
+            if np.issubdtype(x.dtype, np.datetime64):
+                return x.astype("datetime64[D]", copy=False)
+
+            # Integer -> interpret as epoch-based; handle both day-scale and ns-scale
+            if np.issubdtype(x.dtype, np.integer):
+                if x.size == 0:
+                    return x.astype("datetime64[D]")
+                mx = int(np.max(np.abs(x)))
+                # days for 2020s are ~ 18k–22k; ns timestamps are ~ 1e18
+                if mx > 10_000_000:  # too large to be "days"
+                    return x.astype("datetime64[ns]").astype("datetime64[D]")
+                return (EPOCH_D + x.astype("timedelta64[D]")).astype("datetime64[D]")
+
+            # Fallback
+            return np.asarray(x, dtype="datetime64[D]")
+
+        # Base columns
+        cols: dict[str, object] = {}
 
         if not skip_cols:
-            add("SalesOrderNumber", order_ids_int)
-            add("SalesOrderLineNumber", line_num)
+            cols["SalesOrderNumber"] = order_ids_int
+            cols["SalesOrderLineNumber"] = line_num
 
-        add("CustomerKey", customer_keys_out)
-        add("ProductKey", product_keys)
-        add("StoreKey", store_key_arr)
-        add("PromotionKey", promo_keys)
-        add("CurrencyKey", currency_arr)
+        cols["CustomerKey"] = customer_keys_out
+        cols["ProductKey"] = product_keys
+        cols["StoreKey"] = store_key_arr
+        cols["SalesPersonEmployeeKey"] = salesperson_key_arr
+        cols["PromotionKey"] = promo_keys
+        cols["CurrencyKey"] = currency_arr
 
-        add("OrderDate", order_dates)
-        add("DueDate", dates["due_date"][keep_mask])
-        add("DeliveryDate", dates["delivery_date"][keep_mask])
+        cols["OrderDate"] = _as_datetime64_D(order_dates)
+        cols["DueDate"] = _as_datetime64_D(dates["due_date"][keep_mask])
+        cols["DeliveryDate"] = _as_datetime64_D(dates["delivery_date"][keep_mask])
 
-        add("Quantity", qty)
-        add("NetPrice", price["final_net_price"])
-        add("UnitCost", price["final_unit_cost"])
-        add("UnitPrice", price["final_unit_price"])
-        add("DiscountAmount", price["discount_amt"])
+        cols["Quantity"] = qty
+        cols["NetPrice"] = price["final_net_price"]
+        cols["UnitCost"] = price["final_unit_cost"]
+        cols["UnitPrice"] = price["final_unit_price"]
+        cols["DiscountAmount"] = price["discount_amt"]
 
-        add("DeliveryStatus", dates["delivery_status"][keep_mask])
-        add("IsOrderDelayed", dates["is_order_delayed"][keep_mask])
+        cols["DeliveryStatus"] = dates["delivery_status"][keep_mask]
+        cols["IsOrderDelayed"] = dates["is_order_delayed"][keep_mask]
 
         if file_format == "deltaparquet":
             m_int = order_dates.astype("datetime64[M]").astype("int64")
-            add("Year", (m_int // 12 + 1970).astype("int16"))
-            add("Month", (m_int % 12 + 1).astype("int16"))   # was int8
+            cols["Year"] = (m_int // 12 + 1970).astype("int16")
+            cols["Month"] = (m_int % 12 + 1).astype("int16")   # was int8
 
+        # Extra columns (single extension point)
+        extra = build_extra_columns(
+            {
+                "State": State,
+                "rng": rng,
+                "n": n_rows,
+                "skip_cols": skip_cols,
+                "chunk_idx": chunk_idx,
+                "seed": seed,
+                "schema_types": schema_types,
+
+                # primary arrays
+                "customer_keys": customer_keys_out,
+                "product_keys": product_keys,
+                "store_keys": store_key_arr,
+                "salesperson_keys": salesperson_key_arr,
+                "promo_keys": promo_keys,
+                "currency_keys": currency_arr,
+                "order_dates": order_dates,
+
+                # order cols (may be None if skip_cols=True)
+                "order_ids_int": order_ids_int,
+                "line_num": line_num,
+
+                # derived / measures
+                "qty": qty,
+                "price": price,
+                "due_date": dates["due_date"][keep_mask],
+                "delivery_date": dates["delivery_date"][keep_mask],
+                "delivery_status": dates["delivery_status"][keep_mask],
+                "is_order_delayed": dates["is_order_delayed"][keep_mask],
+
+                # current base columns (so extras can reference already-built cols)
+                "cols": cols,
+            }
+        )
+
+        if extra:
+            unknown = [k for k in extra.keys() if k not in schema_types]
+            if unknown:
+                raise RuntimeError(
+                    f"Extra columns not in Sales schema: {unknown}. "
+                    "Add them to src/utils/static_schemas.get_sales_schema(...) first."
+                )
+            cols.update(extra)
+
+        def _to_array(name: str, data: object):
+            t = schema_types[name]
+
+            if data is None:
+                return pa.nulls(n_rows, type=t)
+
+            # Broadcast scalars
+            if np.isscalar(data):
+                data = np.full(n_rows, data)
+
+            # date32: build as timestamp first (inference), then cast to date32
+            if pa.types.is_date32(t):
+                dt = _as_datetime64_D(data)
+                arr = pa.array(np.asarray(dt).astype("datetime64[ns]"))
+                if arr.type != t:
+                    arr = arr.cast(t, safe=False)
+                return arr
+
+            return pa.array(data, type=t, safe=False)
+
+        arrays = [_to_array(f.name, cols.get(f.name)) for f in schema]
         tables.append(pa.Table.from_arrays(arrays, schema=schema))
-
     if not tables:
         return _empty_table(schema)
 

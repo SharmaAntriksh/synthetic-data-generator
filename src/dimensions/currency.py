@@ -1,10 +1,3 @@
-# ---------------------------------------------------------
-#  CURRENCY DIMENSION (PIPELINE READY – OPTIMIZED)
-#  - Minimal versioning deps
-#  - Validated + deterministic keys
-#  - Uses shared parquet writer utility (safe even with no date cols)
-# ---------------------------------------------------------
-
 from __future__ import annotations
 
 from pathlib import Path
