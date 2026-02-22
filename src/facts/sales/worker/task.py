@@ -425,7 +425,7 @@ def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
 def build_header_from_detail(detail: pa.Table) -> pa.Table:
     gb = detail.group_by(["SalesOrderNumber"])
 
-    aggs = [("CustomerKey", "min"), ("OrderDate", "min"), ("IsOrderDelayed", "max")]
+    aggs = [("CustomerKey", "min"), ("StoreKey", "min"), ("SalesPersonEmployeeKey", "min"), ("OrderDate", "min"), ("IsOrderDelayed", "max")]
     if "SalesChannelKey" in detail.column_names:
         aggs.append(("SalesChannelKey", "min"))
     if "TimeKey" in detail.column_names:
@@ -434,6 +434,8 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
     out = gb.aggregate(aggs)
 
     rename_map = {
+        "StoreKey_min": "StoreKey",
+        "SalesPersonEmployeeKey_min": "SalesPersonEmployeeKey",
         "CustomerKey_min": "CustomerKey",
         "OrderDate_min": "OrderDate",
         "IsOrderDelayed_max": "IsOrderDelayed",
@@ -478,9 +480,13 @@ def _worker_task(args):
 
         if mode in {"sales_order", "both"}:
             _task_require_cols(detail_table, ["SalesOrderNumber", "SalesOrderLineNumber"], ctx=f"sales_output={mode} requires")
-            _task_require_cols(detail_table, ["SalesOrderNumber", "CustomerKey", "OrderDate", "IsOrderDelayed"], ctx="Header build requires")
+            _task_require_cols(detail_table, ["SalesOrderNumber", "CustomerKey", "StoreKey", "SalesPersonEmployeeKey", "OrderDate", "IsOrderDelayed"], ctx="Header build requires")
 
             expected_header = State.schema_by_table[TABLE_SALES_ORDER_HEADER]
+            if "StoreKey" in expected_header.names:
+                _task_require_cols(detail_table, ["StoreKey"], ctx="Header build requires StoreKey")
+            if "SalesPersonEmployeeKey" in expected_header.names:
+                _task_require_cols(detail_table, ["SalesPersonEmployeeKey"], ctx="Header build requires SalesPersonEmployeeKey")
             if "SalesChannelKey" in expected_header.names:
                 _task_require_cols(detail_table, ["SalesChannelKey"], ctx="Header build requires SalesChannelKey")
             if "TimeKey" in expected_header.names:

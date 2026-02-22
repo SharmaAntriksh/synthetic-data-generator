@@ -61,6 +61,8 @@ _SALES_SCHEMA: Schema = (
 _SALES_ORDER_HEADER_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
     "CustomerKey",
+    "StoreKey",
+    "SalesPersonEmployeeKey",
     "OrderDate",
     "TimeKey",
     "SalesChannelKey",
@@ -71,8 +73,6 @@ _SALES_ORDER_DETAIL_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
     "SalesOrderLineNumber",
     "ProductKey",
-    "StoreKey",
-    "SalesPersonEmployeeKey",
     "PromotionKey",
     "CurrencyKey",
     "DueDate",

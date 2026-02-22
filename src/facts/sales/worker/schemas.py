@@ -153,13 +153,14 @@ def build_worker_schemas(
 
     # ---------------------------------------------------------------------
     # SalesOrderDetail / SalesOrderHeader schemas (OUTPUT only)
+    # Agreement:
+    #   - StoreKey and SalesPersonEmployeeKey are ORDER-level (header)
+    #   - Detail remains line-level for product/pricing/shipping facts
     # ---------------------------------------------------------------------
     detail_fields = [
         pa.field("SalesOrderNumber", pa.int64()),
         pa.field("SalesOrderLineNumber", pa.int64()),
         pa.field("ProductKey", pa.int64()),
-        pa.field("StoreKey", pa.int64()),
-        pa.field("SalesPersonEmployeeKey", pa.int64()),  # line-level (multi-store orders)
         pa.field("PromotionKey", pa.int64()),
         pa.field("CurrencyKey", pa.int64()),
         pa.field("DueDate", pa.date32()),
@@ -176,6 +177,8 @@ def build_worker_schemas(
     header_fields = [
         pa.field("SalesOrderNumber", pa.int64()),
         pa.field("CustomerKey", pa.int64()),
+        pa.field("StoreKey", pa.int64()),
+        pa.field("SalesPersonEmployeeKey", pa.int64()),
         pa.field("SalesChannelKey", pa.int16()),
         pa.field("OrderDate", pa.date32()),
         pa.field("TimeKey", pa.int16()),  # order-level time
