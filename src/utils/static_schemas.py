@@ -63,9 +63,9 @@ _SALES_ORDER_HEADER_COLS: Tuple[str, ...] = (
     "CustomerKey",
     "StoreKey",
     "SalesPersonEmployeeKey",
+    "SalesChannelKey",
     "OrderDate",
     "TimeKey",
-    "SalesChannelKey",
     "IsOrderDelayed",
 )
 

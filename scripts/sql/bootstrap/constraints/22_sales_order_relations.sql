@@ -10,9 +10,9 @@ SET XACT_ABORT ON;
 -----------------------------------------------------------------------
 -- SalesOrderDetail -> SalesOrderHeader
 -----------------------------------------------------------------------
-
 IF OBJECT_ID(N'dbo.SalesOrderDetail', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.SalesOrderDetail', N'SalesOrderNumber') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
@@ -29,10 +29,8 @@ BEGIN
 END;
 
 -----------------------------------------------------------------------
--- SalesReturn -> SalesOrderDetail (natural key)
--- Requires PK/unique key on SalesOrderDetail(SalesOrderNumber, SalesOrderLineNumber)
+-- SalesReturn -> SalesOrderDetail  (natural key join)
 -----------------------------------------------------------------------
-
 IF OBJECT_ID(N'dbo.SalesReturn', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.SalesOrderDetail', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.SalesReturn', N'SalesOrderNumber') IS NOT NULL

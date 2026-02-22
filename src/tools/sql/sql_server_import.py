@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -17,6 +19,119 @@ class SqlServerImportError(RuntimeError):
 # -------------------------
 # Formatting helpers
 # -------------------------
+def _ts() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _log(level: str, msg: str) -> None:
+    # level: INFO/WARN/ERROR
+    print(f"{_ts()} | {level:<5} | {msg}")
+
+
+def _extract_tables_from_create_sql(sql_file: "Path") -> list[str]:
+    """
+    Extract table names from a CREATE TABLE script in execution order.
+    Works with: CREATE TABLE dbo.Table, CREATE TABLE [dbo].[Table], CREATE TABLE [Table]
+    """
+    try:
+        txt = sql_file.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+
+    out: list[str] = []
+    seen: set[str] = set()
+
+    for raw in txt.splitlines():
+        line = re.sub(r"--.*$", "", raw).strip()
+        if not line:
+            continue
+        if "CREATE" not in line.upper() or "TABLE" not in line.upper():
+            continue
+
+        m = re.search(
+            r"CREATE\s+TABLE\s+"
+            r"(?:(?:\[\s*(?P<s1>\w+)\s*\]|\b(?P<s2>\w+)\b)\s*\.\s*)?"
+            r"(?:\[\s*(?P<t1>\w+)\s*\]|(?P<t2>\w+))",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if not m:
+            continue
+
+        table = (m.group("t1") or m.group("t2") or "").strip()
+        if not table:
+            continue
+        if table.lower() in {"if", "exists"}:
+            continue
+
+        if table not in seen:
+            seen.add(table)
+            out.append(table)
+
+    return out
+
+def _find_table_schema(cursor: "pyodbc.Cursor", table_name: str) -> str:
+    cursor.execute(
+        "SELECT s.name "
+        "FROM sys.tables t "
+        "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        "WHERE t.name = ? "
+        "ORDER BY CASE WHEN s.name = 'dbo' THEN 0 ELSE 1 END, s.name;",
+        table_name,
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise SqlServerImportError(f"Table not found in database: {table_name}")
+    return str(row[0])
+
+
+def _fast_rowcount(cursor: "pyodbc.Cursor", schema: str, table: str) -> int:
+    cursor.execute(
+        "SELECT COALESCE(SUM(row_count),0) "
+        "FROM sys.dm_db_partition_stats "
+        "WHERE object_id = OBJECT_ID(?) AND index_id IN (0,1);",
+        f"{schema}.{table}",
+    )
+    return int(cursor.fetchone()[0])
+
+
+def _print_table_counts(cursor: "pyodbc.Cursor", *, tables: list[str], title: str) -> None:
+    _log("INFO", title)
+    for t in tables:
+        try:
+            schema = _find_table_schema(cursor, t)
+            n = _fast_rowcount(cursor, schema, t)
+            print(f"  - {schema}.{t}: {n:,}")
+        except Exception as exc:
+            print(f"  - {t}: [SKIP] {exc}")
+
+
+def _cci_count(cursor: "pyodbc.Cursor", schema: str, table: str) -> int:
+    cursor.execute(
+        "SELECT COUNT(*) "
+        "FROM sys.indexes i "
+        "JOIN sys.tables t ON t.object_id = i.object_id "
+        "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        "WHERE s.name = ? AND t.name = ? AND i.type_desc = 'CLUSTERED COLUMNSTORE';",
+        schema,
+        table,
+    )
+    return int(cursor.fetchone()[0])
+
+
+def _print_cci_summary(cursor: "pyodbc.Cursor", *, tables: list[str]) -> None:
+    cursor.execute("SELECT COUNT(*) FROM sys.indexes WHERE type_desc = 'CLUSTERED COLUMNSTORE';")
+    total_ccis = int(cursor.fetchone()[0])
+
+    _log("INFO", f"CCI summary: total CCIs in DB = {total_ccis}")
+    for t in tables:
+        try:
+            schema = _find_table_schema(cursor, t)
+            c = _cci_count(cursor, schema, t)
+            print(f"  - {schema}.{t}: CCI={c}")
+        except Exception as exc:
+            print(f"  - {t}: [SKIP] {exc}")
+
 def _short_path(p: Path, *, base: Path | None = None) -> str:
     """
     Prefer printing paths relative to `base` (if possible), otherwise just the filename.
@@ -280,9 +395,8 @@ def import_sql_server(
         ) from exc
 
     db_conn_str = f"{connection_string};DATABASE={database}"
-
     # -------------------------
-    # Step 2: core import (always)
+    # Step 2: core import (tables/constraints/views/load)
     # -------------------------
     try:
         with pyodbc.connect(db_conn_str, autocommit=False) as conn:
@@ -290,23 +404,70 @@ def import_sql_server(
             cursor = conn.cursor()
 
             # 2.1 Tables
+            _log("INFO", "Executing schema + load scripts:")
+            print("  Tables:")
+            for f in tables_files:
+                print(f"    - {_short_path(f, base=run_dir)}")
             execute_sql_files(cursor, tables_files)
 
-            # 2.2 Views
+            # 2.2 Constraints (pre-load; matches SSMS manual flow)
+            if constraint_files:
+                print("  Constraints:")
+                for f in constraint_files:
+                    print(f"    - {_short_path(f, base=run_dir)}")
+                execute_sql_files(cursor, constraint_files)
+
+            # 2.3 Views
             if view_files:
+                print("  Views:")
+                for f in view_files:
+                    print(f"    - {_short_path(f, base=run_dir)}")
                 execute_sql_files(cursor, view_files)
 
-            # 2.3 Insert data
+            # 2.4 Insert data (explicit order: dims then facts)
             load_files = list_sql_files(load_dir)
-            execute_sql_files(cursor, load_files)
-            conn.commit()  # commit data before constraints
 
-            # 2.4 Constraints
-            if constraint_files:
-                execute_sql_files(cursor, constraint_files)
+            dims_sql = next((p for p in load_files if p.name.lower() == "01_bulk_insert_dims.sql"), None)
+            facts_sql = next((p for p in load_files if p.name.lower() == "02_bulk_insert_facts.sql"), None)
+
+            ordered_load: List[Path] = []
+            if dims_sql is not None:
+                ordered_load.append(dims_sql)
+            if facts_sql is not None:
+                ordered_load.append(facts_sql)
+
+            if not ordered_load:
+                ordered_load = load_files  # fallback: run everything sorted
+            else:
+                # Avoid accidentally running extra scripts that would duplicate loads
+                seen = set(ordered_load)
+                extras = [p for p in load_files if p not in seen]
+                if extras:
+                    _log("WARN", "Extra load scripts present; skipping by default:")
+                    for f in extras:
+                        print(f"    - {_short_path(f, base=run_dir)}")
+
+            print("  Load:")
+            for f in ordered_load:
+                print(f"    - {_short_path(f, base=run_dir)}")
+            execute_sql_files(cursor, ordered_load)
+# 2.5 Verification: row counts (fast metadata counts)
+            # Uses sys.dm_db_partition_stats (no scans).
+            try:
+                dim_create = next((p for p in tables_files if p.name.lower().endswith("create_dimensions.sql")), None)
+                fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
+
+                dim_tables = _extract_tables_from_create_sql(dim_create) if dim_create else []
+                fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
+
+                _print_table_counts(cursor, tables=dim_tables, title="Loaded dimension row counts:")
+                _print_table_counts(cursor, tables=fact_tables, title="Loaded fact row counts:")
+            except Exception as _exc:
+                _log("WARN", f"Row count verification skipped: {_exc}")
+
             conn.commit()
 
-        print(f"[INFO] Core import completed (tables/views/load/constraints) for '{database}'.")
+        _log("INFO", f"Core import completed (tables/constraints/views/load) for '{database}'.")
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(
@@ -314,8 +475,13 @@ def import_sql_server(
         ) from exc
 
     # -------------------------
-    # Step 3: CCI bootstrap (always)
+    # Step 3: optional CCI (types/procs + apply)
     # -------------------------
+    if not apply_cci:
+        _log("INFO", "Skipping CCI bootstrap/apply (apply_cci=False).")
+        return
+
+    # 3.1 Bootstrap (TYPE + PROC)
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             _try_disable_query_timeout(conn)
@@ -324,33 +490,27 @@ def import_sql_server(
             if types_file.is_file():
                 execute_sql_batches(cursor, types_file)
             else:
-                print(f"[WARN] Missing bootstrap types file: {_short_path(types_file, base=PROJECT_ROOT)}")
+                _log("WARN", f"Missing bootstrap types file: {_short_path(types_file, base=PROJECT_ROOT)}")
 
             if procs_file.is_file():
                 execute_sql_batches(cursor, procs_file)
             else:
-                print(f"[WARN] Missing bootstrap procs file: {_short_path(procs_file, base=PROJECT_ROOT)}")
+                _log("WARN", f"Missing bootstrap procs file: {_short_path(procs_file, base=PROJECT_ROOT)}")
 
-        print("[INFO] CCI bootstrap completed (TYPE + PROC).")
+        _log("INFO", "CCI bootstrap completed (TYPE + PROC).")
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(
             f"Failed running CCI bootstrap in database '{database}'. Details: {exc.args}"
         ) from exc
 
-    # -------------------------
-    # Step 4: optional CCI apply
-    # -------------------------
-    if not apply_cci:
-        print("[INFO] Skipping CCI apply scripts (apply_cci=False).")
-        return
-
-    print("[INFO] CCI apply scripts discovered:")
+    # 3.2 Apply scripts (from run output)
+    _log("INFO", "CCI apply scripts discovered:")
     for f in cci_apply_files:
-        print(f"  - {_short_path(f, base=run_dir)}")
+        print(f"    - {_short_path(f, base=run_dir)}")
 
     if not cci_apply_files:
-        print("[INFO] No CCI apply scripts found; nothing to do.")
+        _log("INFO", "No CCI apply scripts found; nothing to do.")
         return
 
     try:
@@ -359,26 +519,22 @@ def import_sql_server(
             cursor = conn.cursor()
 
             execute_sql_files(cursor, cci_apply_files)
+# Verification: total CCIs + per-fact CCIs (derived from create_facts.sql)
+            fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
+            fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
+            _print_cci_summary(cursor, tables=fact_tables)
 
-            # Verification: total CCIs
-            cursor.execute(
-                "SELECT COUNT(*) FROM sys.indexes WHERE type_desc = 'CLUSTERED COLUMNSTORE';"
-            )
+            cursor.execute("SELECT COUNT(*) FROM sys.indexes WHERE type_desc = 'CLUSTERED COLUMNSTORE';")
             total_ccis = int(cursor.fetchone()[0])
 
-            # Verification: Sales CCI (schema-agnostic)
             cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM sys.indexes i
-                JOIN sys.tables  t ON t.object_id = i.object_id
-                WHERE t.name = N'Sales'
-                  AND i.type_desc = 'CLUSTERED COLUMNSTORE';
-                """
+                "SELECT COUNT(*) "
+                "FROM sys.indexes i "
+                "JOIN sys.tables  t ON t.object_id = i.object_id "
+                "WHERE t.name = N'Sales' "
+                "  AND i.type_desc = 'CLUSTERED COLUMNSTORE';"
             )
             sales_cci = int(cursor.fetchone()[0])
-
-        print(f"[INFO] CCI apply scripts executed. Total CCIs in DB: {total_ccis}. Sales CCI: {sales_cci}.")
 
         if total_ccis == 0:
             raise SqlServerImportError(
