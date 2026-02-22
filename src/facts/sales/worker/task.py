@@ -491,7 +491,7 @@ def _worker_task(args):
             if bool(getattr(State, "skip_order_cols_requested", False)):
                 sales_table = _drop_order_cols_for_sales(sales_table)
 
-            returns_table = _maybe_build_returns(detail_table, chunk_seed=int(chunk_seed))
+            returns_table = _maybe_build_returns(detail_table, chunk_seed=int(idx_i))
             sales_out = _project_for_table(TABLE_SALES, sales_table)
 
             if returns_table is None:
@@ -521,7 +521,7 @@ def _worker_task(args):
             TABLE_SALES_ORDER_HEADER, idx_i, _project_for_table(TABLE_SALES_ORDER_HEADER, header_table)
         )
 
-        returns_table = _maybe_build_returns(detail_table, chunk_seed=int(chunk_seed))
+        returns_table = _maybe_build_returns(detail_table, chunk_seed=int(idx_i))
         if returns_table is not None:
             out[TABLE_SALES_RETURN] = _write_table(
                 TABLE_SALES_RETURN, idx_i, _project_for_table(TABLE_SALES_RETURN, returns_table)  # type: ignore[arg-type]

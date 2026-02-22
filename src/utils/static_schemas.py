@@ -454,6 +454,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("ReturnReasonKey",      "INT NOT NULL"),
         ("ReturnQuantity",       "INT NOT NULL"),
         ("ReturnNetPrice",       "DECIMAL(8, 2) NOT NULL"),
+        ("ReturnEventKey",       "BIGINT NOT NULL"),
     ),
     "ExchangeRates": (
         ("Date",         "DATE NOT NULL"),

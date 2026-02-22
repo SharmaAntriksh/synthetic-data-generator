@@ -4,31 +4,30 @@
 --   SalesOrderNumber, CustomerKey, OrderDate, TimeKey, SalesChannelKey, IsOrderDelayed
 -----------------------------------------------------------------------
 
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
 -----------------------------------------------------------------------
--- CANDIDATE KEY (required for SalesOrderDetail -> SalesOrderHeader FK)
+-- Primary / candidate key
 -----------------------------------------------------------------------
+
 IF OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.SalesOrderHeader', N'SalesOrderNumber') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.key_constraints
-    WHERE name = N'UQ_SalesOrderHeader_SalesOrderNumber'
+    WHERE name = N'PK_SalesOrderHeader'
       AND parent_object_id = OBJECT_ID(N'dbo.SalesOrderHeader')
 )
 BEGIN
     ALTER TABLE dbo.SalesOrderHeader
-    ADD CONSTRAINT UQ_SalesOrderHeader_SalesOrderNumber
-        UNIQUE NONCLUSTERED ([SalesOrderNumber]);
+    ADD CONSTRAINT PK_SalesOrderHeader PRIMARY KEY NONCLUSTERED ([SalesOrderNumber]);
 END;
 
 -----------------------------------------------------------------------
--- FOREIGN KEYS (WITH CHECK)
+-- Foreign keys
 -----------------------------------------------------------------------
 
--- SalesOrderHeader -> Customers
 IF OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
-AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.SalesOrderHeader', N'CustomerKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
@@ -44,10 +43,7 @@ BEGIN
     ALTER TABLE dbo.SalesOrderHeader CHECK CONSTRAINT FK_SalesOrderHeader_Customers;
 END;
 
--- SalesOrderHeader -> Dates (OrderDate)
 IF OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
-AND OBJECT_ID(N'dbo.Dates', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.SalesOrderHeader', N'OrderDate') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
@@ -63,7 +59,6 @@ BEGIN
     ALTER TABLE dbo.SalesOrderHeader CHECK CONSTRAINT FK_SalesOrderHeader_Dates_OrderDate;
 END;
 
--- SalesOrderHeader -> Time
 IF OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Time', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.SalesOrderHeader', N'TimeKey') IS NOT NULL
@@ -82,7 +77,6 @@ BEGIN
     ALTER TABLE dbo.SalesOrderHeader CHECK CONSTRAINT FK_SalesOrderHeader_Time;
 END;
 
--- SalesOrderHeader -> SalesChannels
 IF OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.SalesChannels', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.SalesOrderHeader', N'SalesChannelKey') IS NOT NULL
@@ -102,20 +96,19 @@ BEGIN
 END;
 
 -----------------------------------------------------------------------
--- CHECK CONSTRAINTS
+-- Checks
 -----------------------------------------------------------------------
 
--- IsOrderDelayed is a bit/flag represented as INT in the fact schema (0/1).
 IF OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.SalesOrderHeader', N'IsOrderDelayed') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.check_constraints
-    WHERE name = N'CK_SalesOrderHeader_IsOrderDelayed_01'
+    WHERE name = N'CK_SalesOrderHeader_IsOrderDelayed'
       AND parent_object_id = OBJECT_ID(N'dbo.SalesOrderHeader')
 )
 BEGIN
-    ALTER TABLE dbo.SalesOrderHeader WITH CHECK
-    ADD CONSTRAINT CK_SalesOrderHeader_IsOrderDelayed_01
+    ALTER TABLE dbo.SalesOrderHeader
+    ADD CONSTRAINT CK_SalesOrderHeader_IsOrderDelayed
         CHECK ([IsOrderDelayed] IN (0, 1));
 END;

@@ -4,11 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence, Tuple
 
-from src.utils.static_schemas import (
-    STATIC_SCHEMAS,
-    get_sales_schema,
-    get_dates_schema,
-)
+from src.utils.static_schemas import STATIC_SCHEMAS, get_dates_schema, get_sales_schema
 from src.utils.logging_utils import work
 
 ColumnSpec = Sequence[Tuple[str, str]]
@@ -18,7 +14,6 @@ TABLE_SALES = "Sales"
 TABLE_SALES_ORDER_HEADER = "SalesOrderHeader"
 TABLE_SALES_ORDER_DETAIL = "SalesOrderDetail"
 TABLE_SALES_RETURN = "SalesReturn"
-
 
 # Tables that should be emitted in the Facts script (not Dimensions),
 # even though they live inside STATIC_SCHEMAS.
@@ -31,21 +26,23 @@ _FACT_TABLE_NAMES = {
 
 
 def _quote_ident(name: str) -> str:
-    """SQL Server identifier quoting with [] escaping."""
-    return f"[{name.replace(']', ']]')}]"
+    return f"[{str(name).replace(']', ']]')}]"
 
 
 def _qualify(schema: str, table: str) -> str:
-    """Return schema-qualified table name: [schema].[table]."""
     return f"{_quote_ident(schema)}.{_quote_ident(table)}"
 
 
 def _sales_output_mode(cfg: Mapping) -> str:
-    sales_cfg = cfg.get("sales") or {}
-    mode = str(sales_cfg.get("sales_output", "sales")).lower().strip()
+    mode = str((cfg.get("sales") or {}).get("sales_output", "sales")).lower().strip()
     if mode not in {"sales", "sales_order", "both"}:
         raise ValueError(f"Invalid sales.sales_output: {mode!r}. Expected sales|sales_order|both.")
     return mode
+
+
+def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
+    sales_cfg = cfg.get("sales") or {}
+    return bool(sales_cfg.get("skip_order_cols", default))
 
 
 def _returns_enabled(cfg: Mapping) -> bool:
@@ -53,10 +50,10 @@ def _returns_enabled(cfg: Mapping) -> bool:
     Determine whether SalesReturn should be emitted.
 
     Supported config shapes (any one):
-      - cfg['facts'] = ['sales', 'returns', ...]                      (list of enabled facts)
-      - cfg['facts']['enabled'] = ['sales', 'returns', ...]           (list of enabled facts)
-      - cfg['facts']['returns'] = true|false
-      - cfg['facts']['enabled']['returns'] = true|false
+      - facts: ['sales','returns', ...]
+      - facts.enabled: ['sales','returns', ...]
+      - facts.returns: true|false
+      - facts.enabled.returns: true|false
 
     Semantics:
       - If an explicit enabled LIST is provided, returns must be present to enable SalesReturn.
@@ -70,50 +67,30 @@ def _returns_enabled(cfg: Mapping) -> bool:
             "returns" in norm
             or "salesreturn" in norm
             or "sales_return" in norm
-            or "salesreturn" in norm
+            or "salesreturns" in norm
+            or "sales_returns" in norm
         )
 
-    # facts: ['sales', 'returns', ...]
     if isinstance(facts_cfg, list):
         return _list_has_returns(facts_cfg)
 
-    # missing / unexpected shape -> default True
-    if facts_cfg is None:
-        return True
-    if not isinstance(facts_cfg, Mapping):
+    if facts_cfg is None or not isinstance(facts_cfg, Mapping):
         return True
 
-    # facts.returns: bool
-    if "returns" in facts_cfg and isinstance(facts_cfg.get("returns"), (bool, int)):
+    if isinstance(facts_cfg.get("returns"), (bool, int)):
         return bool(facts_cfg.get("returns"))
 
     enabled_cfg = facts_cfg.get("enabled")
-
-    # facts.enabled: ['sales', 'returns', ...]
     if isinstance(enabled_cfg, list):
         return _list_has_returns(enabled_cfg)
 
-    # facts.enabled.returns: bool
-    if isinstance(enabled_cfg, Mapping):
-        if "returns" in enabled_cfg and isinstance(enabled_cfg.get("returns"), (bool, int)):
-            return bool(enabled_cfg.get("returns"))
+    if isinstance(enabled_cfg, Mapping) and isinstance(enabled_cfg.get("returns"), (bool, int)):
+        return bool(enabled_cfg.get("returns"))
 
-    # If we got here, no explicit selection was provided.
     return True
-
-def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
-    sales_cfg = cfg.get("sales") or {}
-    # config should win if present
-    if "skip_order_cols" in sales_cfg:
-        return bool(sales_cfg.get("skip_order_cols"))
-    return bool(default)
 
 
 def _require_static_schema(table_name: str) -> ColumnSpec:
-    """
-    Fetch schema from STATIC_SCHEMAS with a helpful error if missing.
-    STATIC_SCHEMAS is the source of truth for all non-Sales facts.
-    """
     try:
         return STATIC_SCHEMAS[table_name]
     except KeyError as e:
@@ -123,7 +100,7 @@ def _require_static_schema(table_name: str) -> ColumnSpec:
         ) from e
 
 
-def create_table_from_static_schema(
+def create_table_from_schema(
     table_name: str,
     cols: ColumnSpec,
     *,
@@ -131,18 +108,10 @@ def create_table_from_static_schema(
     drop_existing: bool = True,
     include_go: bool = True,
 ) -> str:
-    """
-    Generate a CREATE TABLE statement from a (col, dtype) schema.
-    - schema-qualifies table names ([dbo].[Table])
-    - optionally drops existing table first (idempotent reruns)
-    - optionally adds GO separators (friendlier to sqlcmd/SSMS)
-    """
     fq_table = _qualify(schema, table_name)
-    # For OBJECT_ID string literal, you must NOT use brackets inside the name.
     object_id_name = f"{schema}.{table_name}"
 
     lines: list[str] = []
-
     if drop_existing:
         lines.append(
             f"IF OBJECT_ID(N'{object_id_name}', N'U') IS NOT NULL\n"
@@ -154,7 +123,7 @@ def create_table_from_static_schema(
     lines.append(f"CREATE TABLE {fq_table} (")
     for col, dtype in cols:
         lines.append(f"    {_quote_ident(col)} {dtype},")
-    if lines and lines[-1].endswith(","):
+    if lines[-1].endswith(","):
         lines[-1] = lines[-1].rstrip(",")
     lines.append(");")
 
@@ -179,18 +148,11 @@ def generate_all_create_tables(
       <output_folder>/schema/01_create_dimensions.sql
       <output_folder>/schema/02_create_facts.sql
 
-    Facts included are conditional on cfg['sales']['sales_output']:
-      - "sales"       -> Sales
-      - "sales_order" -> SalesOrderHeader + SalesOrderDetail
-      - "both"        -> Sales + SalesOrderHeader + SalesOrderDetail
-
-    Notes:
-      - SQL table names are PascalCase.
-      - Sales schema is generated via get_sales_schema() to support skip_order_cols.
-      - SalesOrderHeader/Detail/SalesReturn schemas come from STATIC_SCHEMAS (no hard-coded columns here).
+    Schemas are sourced from:
+      - STATIC_SCHEMAS for everything except Sales and Dates
+      - get_sales_schema(skip_order_cols) for Sales
+      - get_dates_schema(cfg['dates']) for Dates
     """
-
-    # Args currently unused by design; keep them to avoid breaking callers.
     _ = dim_folder
     _ = fact_folder
 
@@ -208,9 +170,7 @@ def generate_all_create_tables(
         "",
     ]
 
-    # -------------------------
-    # Dimensions (exclude fact tables)
-    # -------------------------
+    # Dimensions
     dim_scripts: list[str] = []
     for table_name in sorted(STATIC_SCHEMAS.keys()):
         if table_name in _FACT_TABLE_NAMES:
@@ -225,7 +185,7 @@ def generate_all_create_tables(
             cols = STATIC_SCHEMAS[table_name]
 
         dim_scripts.append(
-            create_table_from_static_schema(
+            create_table_from_schema(
                 table_name,
                 cols,
                 schema=schema,
@@ -234,97 +194,65 @@ def generate_all_create_tables(
             )
         )
 
-    dim_out_path.write_text(
-        "\n".join(header) + "\n\n" + "\n\n".join(dim_scripts) + "\n",
-        encoding="utf-8",
-    )
+    dim_out_path.write_text("\n".join(header) + "\n\n" + "\n\n".join(dim_scripts) + "\n", encoding="utf-8")
 
-    # -------------------------
-    # Facts (single script)
-    # -------------------------
+    # Facts
     mode = _sales_output_mode(cfg)
     include_sales = mode in {"sales", "both"}
     include_sales_order = mode in {"sales_order", "both"}
     include_returns = _returns_enabled(cfg)
 
-    effective_skip_order_cols = _skip_order_cols(cfg, skip_order_cols)
+    eff_skip_order_cols = _skip_order_cols(cfg, skip_order_cols)
 
     fact_scripts: list[str] = []
 
-    # Sales
     if include_sales:
-        sales_schema = get_sales_schema(effective_skip_order_cols)
         fact_scripts.append(
-            create_table_from_static_schema(
+            create_table_from_schema(
                 TABLE_SALES,
-                sales_schema,
+                get_sales_schema(eff_skip_order_cols),
                 schema=schema,
                 drop_existing=drop_existing,
                 include_go=True,
             )
         )
 
-    # SalesReturn (only when SalesOrder tables are not enabled)
-    if include_returns and not include_sales_order:
-        return_schema = _require_static_schema(TABLE_SALES_RETURN)
-        fact_scripts.append(
-            create_table_from_static_schema(
-                TABLE_SALES_RETURN,
-                return_schema,
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
-        )
-
-
-
-    # SalesOrderHeader / SalesOrderDetail (no hard-coded columns; use STATIC_SCHEMAS)
     if include_sales_order:
-        header_schema = _require_static_schema(TABLE_SALES_ORDER_HEADER)
-        detail_schema = _require_static_schema(TABLE_SALES_ORDER_DETAIL)
-
-        # Order-level first, then line-level
         fact_scripts.append(
-            create_table_from_static_schema(
+            create_table_from_schema(
                 TABLE_SALES_ORDER_HEADER,
-                header_schema,
+                _require_static_schema(TABLE_SALES_ORDER_HEADER),
                 schema=schema,
                 drop_existing=drop_existing,
                 include_go=True,
             )
         )
         fact_scripts.append(
-            create_table_from_static_schema(
+            create_table_from_schema(
                 TABLE_SALES_ORDER_DETAIL,
-                detail_schema,
+                _require_static_schema(TABLE_SALES_ORDER_DETAIL),
                 schema=schema,
                 drop_existing=drop_existing,
                 include_go=True,
             )
         )
 
-    # SalesReturn (order line grain; emitted after SalesOrderDetail when SalesOrder tables are enabled)
-    if include_sales_order and include_returns:
-        return_schema = _require_static_schema(TABLE_SALES_RETURN)
+    # SalesReturn placement:
+    # - If sales_order tables exist: emit after detail
+    # - Else: emit after Sales (if present) or as the only fact
+    if include_returns and (include_sales or include_sales_order):
         fact_scripts.append(
-            create_table_from_static_schema(
+            create_table_from_schema(
                 TABLE_SALES_RETURN,
-                return_schema,
+                _require_static_schema(TABLE_SALES_RETURN),
                 schema=schema,
                 drop_existing=drop_existing,
                 include_go=True,
             )
         )
 
-
-
-    fact_out_path.write_text(
-        "\n".join(header) + "\n\n" + "\n\n".join(fact_scripts) + "\n",
-        encoding="utf-8",
-    )
+    fact_out_path.write_text("\n".join(header) + "\n\n" + "\n\n".join(fact_scripts) + "\n", encoding="utf-8")
 
     work(f"Created {dim_out_path.name}")
     work(f"Created {fact_out_path.name}")
-
     return dim_out_path, fact_out_path

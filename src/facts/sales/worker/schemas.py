@@ -203,6 +203,7 @@ def build_worker_schemas(
             pa.field("ReturnReasonKey", pa.int64()),
             pa.field("ReturnQuantity", pa.int64()),
             pa.field("ReturnNetPrice", pa.float64()),
+            pa.field("ReturnEventKey", pa.int64()),   # <-- ADD (BIGINT)
         ]
         return_schema = pa.schema(return_fields + delta_fields) if is_delta else pa.schema(return_fields)
         schema_by_table[TABLE_SALES_RETURN] = return_schema

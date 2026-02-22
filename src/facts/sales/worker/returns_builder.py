@@ -56,9 +56,10 @@ def build_sales_returns_from_detail(
     cfg: ReturnsConfig,
 ) -> pa.Table:
     """
-    Build a SalesReturn-like fact table from SalesOrderDetail lines.
+    Build SalesReturn event rows from SalesOrderDetail lines.
 
-    Deterministic per chunk (seeded by chunk_seed). Returns are sampled per line.
+    Adds ReturnEventKey (BIGINT) to guarantee uniqueness for PK/joins.
+    Deterministic per chunk via chunk_seed.
     """
     if not cfg.enabled or cfg.return_rate <= 0:
         return pa.table({})[:0]
@@ -123,6 +124,15 @@ def build_sales_returns_from_detail(
 
     reason = rng.choice(reason_keys, size=qty.size, p=probs).astype(np.int64)
 
+    # ReturnEventKey: (24-bit chunk_id/seed) << 32 | row_ordinal
+    m = int(qty.size)
+    if m >= (1 << 32):
+        raise RuntimeError("SalesReturn chunk too large for ReturnEventKey packing (>= 2^32 rows).")
+
+    seed24 = np.int64(int(chunk_seed) & 0x00FF_FFFF)        # keep in 24 bits
+    ordinal = np.arange(m, dtype=np.int64)                 # < 2^32 guaranteed by check
+    return_event_key = (seed24 << 32) | ordinal            # fits in signed BIGINT
+
     return pa.table(
         {
             "SalesOrderNumber": so,
@@ -139,5 +149,6 @@ def build_sales_returns_from_detail(
             "ReturnDiscountAmount": disc_amt * frac,
             "ReturnNetPrice": net_price * frac,
             "ReturnUnitCost": unit_cost,
+            "ReturnEventKey": return_event_key,
         }
     )

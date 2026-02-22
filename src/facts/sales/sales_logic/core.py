@@ -387,8 +387,34 @@ def build_orders(
     if holiday_boost.any():
         lines_per_order[holiday_boost] = k[np.searchsorted(cdf_hol, u[holiday_boost], side="right")]
 
-    repeats = lines_per_order.astype(np.int32, copy=False)
+    repeats = lines_per_order.astype(np.int64, copy=False)
     expanded_len = int(repeats.sum())
+
+    # ------------------------------------------------------------
+    # CRITICAL FIX: ensure we create exactly `n` line rows without
+    # duplicating earlier rows (which can duplicate order keys).
+    # Adjust repeats (lines/order) so sum(repeats) == n.
+    # ------------------------------------------------------------
+    if expanded_len < n:
+        repeats[-1] += (n - expanded_len)
+    elif expanded_len > n:
+        excess = expanded_len - n
+        i = repeats.size - 1
+        while excess > 0 and i >= 0:
+            can_take = int(repeats[i]) - 1
+            if can_take > 0:
+                take = min(excess, can_take)
+                repeats[i] -= take
+                excess -= take
+            i -= 1
+        if excess > 0:
+            raise RuntimeError(
+                "Unable to adjust repeats to match n without violating min 1 line/order."
+            )
+
+    expanded_len = int(repeats.sum())
+    if expanded_len != n:
+        raise RuntimeError("Internal error: repeats sum != n after adjustment")
 
     # prefix sums for line numbering
     order_starts = np.cumsum(repeats, dtype=np.int64) - repeats
@@ -405,25 +431,7 @@ def build_orders(
         + 1
     )
 
-    # ------------------------------------------------------------
-    # Pad or trim to exactly n rows (deterministic)
-    # ------------------------------------------------------------
-    if expanded_len < n:
-        extra = n - expanded_len
-        sl = slice(0, extra)
-
-        customer_keys = np.concatenate((customer_keys, customer_keys[sl]))
-        order_dates_expanded = np.concatenate((order_dates_expanded, order_dates_expanded[sl]))
-        sales_order_num_int = np.concatenate((sales_order_num_int, sales_order_num_int[sl]))
-        line_num = np.concatenate((line_num, line_num[sl]))
-
-    customer_keys = customer_keys[:n]
-    order_dates_expanded = order_dates_expanded[:n]
-    sales_order_num_int = sales_order_num_int[:n]
-    line_num = line_num[:n]
-
-    # ------------------------------------------------------------
-    # Output
+        # Output
     # ------------------------------------------------------------
     result = {
         "customer_keys": customer_keys.astype(np.int64, copy=False),
@@ -435,6 +443,8 @@ def build_orders(
         result["line_num"] = line_num
         # Keep for downstream compatibility (string conversion can be expensive but optional)
         result["order_ids_str"] = sales_order_num_int.astype(str)
+        result["_order_count"] = int(order_count)
+
 
     return result
 

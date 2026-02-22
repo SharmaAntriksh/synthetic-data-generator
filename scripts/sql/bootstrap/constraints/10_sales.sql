@@ -1,18 +1,43 @@
 -----------------------------------------------------------------------
--- FACT: Sales + SalesReturn (FOREIGN KEYS / PK) WITH CHECK
+-- FACT: Sales + SalesReturn (PK + FOREIGN KEYS WITH CHECK)
 -- Aligned to src/utils/static_schemas.py
+--
+-- SalesReturn change (Option B):
+--   - Add ReturnEventKey BIGINT to SalesReturn
+--   - PK_SalesReturn becomes (ReturnEventKey)
+--   - Natural key gets a non-unique index for joins:
+--       (SalesOrderNumber, SalesOrderLineNumber, ReturnDate, ReturnReasonKey)
 -----------------------------------------------------------------------
+
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+-----------------------------------------------------------------------
+-- Sales: candidate key (order line grain)
+-----------------------------------------------------------------------
+
+IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_Sales'
+      AND parent_object_id = OBJECT_ID(N'dbo.Sales')
+)
+BEGIN
+    ALTER TABLE dbo.Sales
+    ADD CONSTRAINT PK_Sales
+        PRIMARY KEY NONCLUSTERED ([SalesOrderNumber], [SalesOrderLineNumber]);
+END;
 
 -----------------------------------------------------------------------
 -- Sales: dimension links
 -----------------------------------------------------------------------
 
--- Sales -> Customers
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'CustomerKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_Customers'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -25,12 +50,11 @@ BEGIN
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Customers;
 END;
 
--- Sales -> Products
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'ProductKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_Products'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -43,12 +67,11 @@ BEGIN
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Products;
 END;
 
--- Sales -> Stores
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Stores', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'StoreKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_Stores'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -61,12 +84,40 @@ BEGIN
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Stores;
 END;
 
--- Sales -> Promotions
+-- Employees (type-mismatch guard)
+IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Sales', N'SalesPersonEmployeeKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Sales_Employees'
+      AND parent_object_id = OBJECT_ID(N'dbo.Sales')
+)
+AND EXISTS (
+    SELECT 1
+    FROM sys.columns c1
+    JOIN sys.columns c2 ON 1=1
+    WHERE c1.object_id = OBJECT_ID(N'dbo.Sales')
+      AND c1.name = N'SalesPersonEmployeeKey'
+      AND c2.object_id = OBJECT_ID(N'dbo.Employees')
+      AND c2.name = N'EmployeeKey'
+      AND c1.user_type_id = c2.user_type_id
+)
+BEGIN
+    ALTER TABLE dbo.Sales WITH CHECK
+    ADD CONSTRAINT FK_Sales_Employees
+        FOREIGN KEY ([SalesPersonEmployeeKey])
+        REFERENCES dbo.Employees ([EmployeeKey]);
+
+    ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Employees;
+END;
+
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Promotions', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'PromotionKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_Promotions'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -79,12 +130,11 @@ BEGIN
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Promotions;
 END;
 
--- Sales -> Currency
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'CurrencyKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_Currency'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -97,12 +147,12 @@ BEGIN
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Currency;
 END;
 
--- Sales -> SalesChannels
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.SalesChannels', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.Sales', N'SalesChannelKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_SalesChannels'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -115,12 +165,12 @@ BEGIN
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_SalesChannels;
 END;
 
--- Sales -> Time
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Time', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.Sales', N'TimeKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_Time'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -133,62 +183,28 @@ BEGIN
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Time;
 END;
 
--- Sales -> Employees (SalesPersonEmployeeKey) [guarded for type compatibility]
-IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
-AND OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'SalesPersonEmployeeKey') IS NOT NULL
-AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
-    WHERE name = N'FK_Sales_Employees_SalesPersonEmployeeKey'
-      AND parent_object_id = OBJECT_ID(N'dbo.Sales')
-)
-AND EXISTS (
-    SELECT 1
-    FROM sys.columns pc
-    JOIN sys.columns rc
-      ON rc.object_id = OBJECT_ID(N'dbo.Employees')
-     AND rc.name = N'EmployeeKey'
-    WHERE pc.object_id = OBJECT_ID(N'dbo.Sales')
-      AND pc.name = N'SalesPersonEmployeeKey'
-      AND pc.system_type_id = rc.system_type_id
-      AND pc.user_type_id = rc.user_type_id
-      AND pc.max_length = rc.max_length
-      AND pc.precision = rc.precision
-      AND pc.scale = rc.scale
-)
-BEGIN
-    ALTER TABLE dbo.Sales WITH CHECK
-    ADD CONSTRAINT FK_Sales_Employees_SalesPersonEmployeeKey
-        FOREIGN KEY ([SalesPersonEmployeeKey])
-        REFERENCES dbo.Employees ([EmployeeKey]);
-
-    ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Employees_SalesPersonEmployeeKey;
-END;
-
--- Sales -> Dates (OrderDate)
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Dates', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'OrderDate') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
-    WHERE name = N'FK_Sales_Dates'
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Sales_Dates_OrderDate'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
 BEGIN
     ALTER TABLE dbo.Sales WITH CHECK
-    ADD CONSTRAINT FK_Sales_Dates
+    ADD CONSTRAINT FK_Sales_Dates_OrderDate
         FOREIGN KEY ([OrderDate])
         REFERENCES dbo.Dates ([Date]);
 
-    ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Dates;
+    ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Dates_OrderDate;
 END;
 
--- Sales -> Dates (DueDate)
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Dates', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'DueDate') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_Dates_DueDate'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -201,12 +217,11 @@ BEGIN
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Dates_DueDate;
 END;
 
--- Sales -> Dates (DeliveryDate)
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Dates', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'DeliveryDate') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_Sales_Dates_DeliveryDate'
       AND parent_object_id = OBJECT_ID(N'dbo.Sales')
 )
@@ -220,32 +235,43 @@ BEGIN
 END;
 
 -----------------------------------------------------------------------
--- SalesReturn: PK + dimension links (order-line relation lives in 22_*.sql)
+-- SalesReturn: PK + dimension links
 -----------------------------------------------------------------------
 
--- PK: (SalesOrderNumber, SalesOrderLineNumber, ReturnDate, ReturnReasonKey)
+-- PK: ReturnEventKey (only when column exists in the table)
 IF OBJECT_ID(N'dbo.SalesReturn', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.SalesReturn', N'SalesOrderNumber') IS NOT NULL
-AND COL_LENGTH(N'dbo.SalesReturn', N'SalesOrderLineNumber') IS NOT NULL
-AND COL_LENGTH(N'dbo.SalesReturn', N'ReturnDate') IS NOT NULL
-AND COL_LENGTH(N'dbo.SalesReturn', N'ReturnReasonKey') IS NOT NULL
+AND COL_LENGTH(N'dbo.SalesReturn', N'ReturnEventKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.key_constraints
+    SELECT 1
+    FROM sys.key_constraints
     WHERE name = N'PK_SalesReturn'
       AND parent_object_id = OBJECT_ID(N'dbo.SalesReturn')
 )
 BEGIN
     ALTER TABLE dbo.SalesReturn
-    ADD CONSTRAINT PK_SalesReturn
-        PRIMARY KEY NONCLUSTERED ([SalesOrderNumber], [SalesOrderLineNumber], [ReturnDate], [ReturnReasonKey]);
+    ADD CONSTRAINT PK_SalesReturn PRIMARY KEY NONCLUSTERED ([ReturnEventKey]);
 END;
 
--- SalesReturn -> Dates (ReturnDate)
+-- Natural key access path (non-unique)
+IF OBJECT_ID(N'dbo.SalesReturn', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes
+    WHERE name = N'IX_SalesReturn_NaturalKey'
+      AND object_id = OBJECT_ID(N'dbo.SalesReturn')
+)
+BEGIN
+    CREATE INDEX IX_SalesReturn_NaturalKey
+    ON dbo.SalesReturn ([SalesOrderNumber], [SalesOrderLineNumber], [ReturnDate], [ReturnReasonKey]);
+END;
+
+-- ReturnDate -> Dates(Date)
 IF OBJECT_ID(N'dbo.SalesReturn', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Dates', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.SalesReturn', N'ReturnDate') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_SalesReturn_Dates_ReturnDate'
       AND parent_object_id = OBJECT_ID(N'dbo.SalesReturn')
 )
@@ -258,28 +284,26 @@ BEGIN
     ALTER TABLE dbo.SalesReturn CHECK CONSTRAINT FK_SalesReturn_Dates_ReturnDate;
 END;
 
--- SalesReturn -> ReturnReason (guarded for type compatibility)
+-- ReturnReasonKey -> ReturnReason(ReturnReasonKey)
+-- Guarded due to potential INT/BIGINT mismatch between fact/dim.
 IF OBJECT_ID(N'dbo.SalesReturn', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.ReturnReason', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.SalesReturn', N'ReturnReasonKey') IS NOT NULL
 AND NOT EXISTS (
-    SELECT 1 FROM sys.foreign_keys
+    SELECT 1
+    FROM sys.foreign_keys
     WHERE name = N'FK_SalesReturn_ReturnReason'
       AND parent_object_id = OBJECT_ID(N'dbo.SalesReturn')
 )
 AND EXISTS (
     SELECT 1
-    FROM sys.columns pc
-    JOIN sys.columns rc
-      ON rc.object_id = OBJECT_ID(N'dbo.ReturnReason')
-     AND rc.name = N'ReturnReasonKey'
-    WHERE pc.object_id = OBJECT_ID(N'dbo.SalesReturn')
-      AND pc.name = N'ReturnReasonKey'
-      AND pc.system_type_id = rc.system_type_id
-      AND pc.user_type_id = rc.user_type_id
-      AND pc.max_length = rc.max_length
-      AND pc.precision = rc.precision
-      AND pc.scale = rc.scale
+    FROM sys.columns c1
+    JOIN sys.columns c2 ON 1=1
+    WHERE c1.object_id = OBJECT_ID(N'dbo.SalesReturn')
+      AND c1.name = N'ReturnReasonKey'
+      AND c2.object_id = OBJECT_ID(N'dbo.ReturnReason')
+      AND c2.name = N'ReturnReasonKey'
+      AND c1.user_type_id = c2.user_type_id
 )
 BEGIN
     ALTER TABLE dbo.SalesReturn WITH CHECK
