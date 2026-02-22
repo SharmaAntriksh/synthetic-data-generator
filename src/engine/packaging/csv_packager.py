@@ -37,17 +37,23 @@ def copy_csv_facts(*, fact_out: Path, facts_out: Path, tables: list[str]) -> Non
     """
     Copy CSV fact chunk files into the packaged facts folder.
 
+    Layout rules:
+      - Multi-table (len(tables) > 1):
+          facts/<table_dir_name(table)>/*.csv  for every table (including Sales)
+      - Sales-only (tables == ["sales"]):
+          facts/sales/*.csv   (NOT facts/*.csv)
+
     Logging:
-      - 1 INFO line with total + per-table counts
+      - 1 INFO line with totals + per-table counts
       - 1 DONE line with total copied
-      - No per-table "Copying ..." spam
     """
     copied_files = 0
     missing_dirs: list[str] = []
 
     multi_table = len(tables) > 1
+    force_sales_subdir = (len(tables) == 1 and tables[0] == TABLE_SALES)
 
-    # Build a copy plan first so we can print one summary line
+    # Build plan first so we can log once
     plan: list[tuple[str, Path, list[Path], Path]] = []  # (table, src_dir, files, dst_dir)
 
     for t in tables:
@@ -57,7 +63,8 @@ def copy_csv_facts(*, fact_out: Path, facts_out: Path, tables: list[str]) -> Non
             continue
 
         if t == TABLE_SALES:
-            dst_dir = (facts_out / table_dir_name(t)) if multi_table else facts_out
+            # Key change: when sales-only, keep under facts/sales instead of facts/
+            dst_dir = (facts_out / table_dir_name(t)) if (multi_table or force_sales_subdir) else facts_out
         else:
             dst_dir = facts_out / table_dir_name(t)
 
@@ -71,14 +78,13 @@ def copy_csv_facts(*, fact_out: Path, facts_out: Path, tables: list[str]) -> Non
             + f". Expected under: {fact_out / 'csv'}"
         )
 
-    # Short, stable names in the log (based on destination dir names)
+    # Concise summary log
     short = {
         "sales": "sales",
         "sales_order_detail": "detail",
         "sales_order_header": "header",
         "sales_return": "return",
     }
-
     counts = [(short.get(table_dir_name(t), table_dir_name(t)), len(files)) for (t, _src, files, _dst) in plan]
     total = sum(n for _name, n in counts)
 
