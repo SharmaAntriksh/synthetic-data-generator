@@ -139,6 +139,7 @@ class State:
     # --------------------------------------------------------------
     file_format = None
     out_folder = None
+    chunk_size = None
     row_group_size = None
     compression = None
 

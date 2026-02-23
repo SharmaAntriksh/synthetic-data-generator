@@ -732,8 +732,17 @@ def generate_sales_fact(
         out_folder=str(out_folder_p),
         row_group_size=_int_or(row_group_size, 2_000_000),
         compression=_str_or(compression, "snappy"),
+
+        # CRITICAL: must be constant across ALL chunks/tasks for SalesOrderNumber uniqueness.
+        # worker/task.py must use this constant (never fall back to per-task batch_i).
+        chunk_size=int(chunk_size),
+
+        # Optional alias (safe to add): lets us rename later without breaking older workers.
+        # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
+        order_id_stride_orders=int(chunk_size),
+
         sales_output=sales_output,
-        
+
         # legacy knobs (kept)
         heavy_pct=heavy_pct,
         heavy_mult=heavy_mult,
@@ -756,17 +765,17 @@ def generate_sales_fact(
         returns_max_lag_days=int(returns_max_lag_days),
 
         # deterministic employee assignment lookup
-        seed_master= int(seed),
-        employee_salesperson_seed= int(seed) + 99173,
-        employee_primary_boost= 2.0,
+        seed_master=int(seed),
+        employee_salesperson_seed=int(seed) + 99173,
+        employee_primary_boost=2.0,
 
         # employee-store assignment pools
-        employee_assign_store_key= employee_assign_store_key,
-        employee_assign_employee_key= employee_assign_employee_key,
-        employee_assign_start_date= employee_assign_start_date,
-        employee_assign_end_date= employee_assign_end_date,
-        employee_assign_fte= employee_assign_fte,
-        employee_assign_is_primary= employee_assign_is_primary,
+        employee_assign_store_key=employee_assign_store_key,
+        employee_assign_employee_key=employee_assign_employee_key,
+        employee_assign_start_date=employee_assign_start_date,
+        employee_assign_end_date=employee_assign_end_date,
+        employee_assign_fte=employee_assign_fte,
+        employee_assign_is_primary=employee_assign_is_primary,
         employee_assign_role=employee_assign_role,
         salesperson_roles=salesperson_roles,
     )

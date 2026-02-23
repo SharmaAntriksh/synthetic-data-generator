@@ -475,6 +475,23 @@ def init_sales_worker(worker_cfg: dict) -> None:
         row_group_size = int(worker_cfg.get("row_group_size", 2_000_000))
         compression = str(worker_cfg.get("compression", "snappy"))
 
+        # ------------------------------------------------------------
+        # CRITICAL: SalesOrderNumber uniqueness depends on a CONSTANT
+        # per-run stride for chunk order-id ranges (NOT per-task batch size).
+        # Support alias 'order_id_stride_orders' for forward-compat.
+        # ------------------------------------------------------------
+        stride_raw = worker_cfg.get("order_id_stride_orders", None)
+        if stride_raw is None:
+            stride_raw = worker_cfg.get("chunk_size", None)
+
+        chunk_size = int(stride_raw or 0)
+        if chunk_size <= 0:
+            raise RuntimeError(
+                "Missing/invalid order-id stride. Set worker_cfg.order_id_stride_orders (preferred) "
+                "or worker_cfg.chunk_size to a positive int. This value partitions SalesOrderNumber "
+                "space across chunks and must be constant across the run."
+            )
+
         no_discount_key = worker_cfg["no_discount_key"]
         delta_output_folder = worker_cfg.get("delta_output_folder") or op.get("delta_output_folder")
         merged_file = worker_cfg.get("merged_file") or op.get("merged_file")
@@ -675,6 +692,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "date_prob": date_prob,
             "file_format": file_format,
             "out_folder": out_folder,
+            "chunk_size": int(max(1, chunk_size)),
             "row_group_size": int(max(1, row_group_size)),
             "compression": compression,
             "output_paths": output_paths,

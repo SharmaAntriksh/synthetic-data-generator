@@ -425,28 +425,64 @@ def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
 def build_header_from_detail(detail: pa.Table) -> pa.Table:
     gb = detail.group_by(["SalesOrderNumber"])
 
-    aggs = [("CustomerKey", "min"), ("StoreKey", "min"), ("SalesPersonEmployeeKey", "min"), ("OrderDate", "min"), ("IsOrderDelayed", "max")]
+    # Aggregate MIN+MAX for invariants we expect to be constant within an order
+    aggs = [
+        ("CustomerKey", "min"), ("CustomerKey", "max"),
+        ("StoreKey", "min"), ("StoreKey", "max"),
+        ("SalesPersonEmployeeKey", "min"), ("SalesPersonEmployeeKey", "max"),
+        ("OrderDate", "min"), ("OrderDate", "max"),
+        ("IsOrderDelayed", "max"),
+    ]
     if "SalesChannelKey" in detail.column_names:
-        aggs.append(("SalesChannelKey", "min"))
+        aggs += [("SalesChannelKey", "min"), ("SalesChannelKey", "max")]
     if "TimeKey" in detail.column_names:
-        aggs.append(("TimeKey", "min"))
+        aggs += [("TimeKey", "min"), ("TimeKey", "max")]
 
     out = gb.aggregate(aggs)
 
-    rename_map = {
-        "StoreKey_min": "StoreKey",
-        "SalesPersonEmployeeKey_min": "SalesPersonEmployeeKey",
-        "CustomerKey_min": "CustomerKey",
-        "OrderDate_min": "OrderDate",
-        "IsOrderDelayed_max": "IsOrderDelayed",
-        "SalesChannelKey_min": "SalesChannelKey",
-        "TimeKey_min": "TimeKey",
-    }
+    # Validate invariants: for each order, min == max for constant fields
+    bad = pc.not_equal(out["CustomerKey_min"], out["CustomerKey_max"])
+    bad = pc.or_(bad, pc.not_equal(out["StoreKey_min"], out["StoreKey_max"]))
+    bad = pc.or_(bad, pc.not_equal(out["SalesPersonEmployeeKey_min"], out["SalesPersonEmployeeKey_max"]))
+    bad = pc.or_(bad, pc.not_equal(out["OrderDate_min"], out["OrderDate_max"]))
 
+    if "SalesChannelKey_min" in out.column_names:
+        bad = pc.or_(bad, pc.not_equal(out["SalesChannelKey_min"], out["SalesChannelKey_max"]))
+    if "TimeKey_min" in out.column_names:
+        bad = pc.or_(bad, pc.not_equal(out["TimeKey_min"], out["TimeKey_max"]))
+
+    if bool(pc.any(bad).as_py()):
+        bad_idx = pc.indices_nonzero(bad)
+        # take first few offenders for error message
+        k = min(5, bad_idx.length())
+        take_idx = bad_idx.slice(0, k)
+
+        so = pc.take(out["SalesOrderNumber"], take_idx).to_pylist()
+        ck_min = pc.take(out["CustomerKey_min"], take_idx).to_pylist()
+        ck_max = pc.take(out["CustomerKey_max"], take_idx).to_pylist()
+
+        raise RuntimeError(
+            "Invalid SalesOrderNumber invariants: a SalesOrderNumber maps to multiple values "
+            f"(example SalesOrderNumber(s)={so}, CustomerKey_min={ck_min}, CustomerKey_max={ck_max}). "
+            "This indicates overlapping order-id ranges across chunks OR duplicated/misaligned rows during order expansion."
+        )
+
+    # Build final header columns (use *_min for constant fields, max for IsOrderDelayed)
     cols, names = [], []
-    for name in out.schema.names:
-        cols.append(out[name])
-        names.append(rename_map.get(name, name))
+
+    def _add(src: str, dst: str):
+        if src in out.column_names:
+            cols.append(out[src])
+            names.append(dst)
+
+    _add("SalesOrderNumber", "SalesOrderNumber")
+    _add("CustomerKey_min", "CustomerKey")
+    _add("StoreKey_min", "StoreKey")
+    _add("SalesPersonEmployeeKey_min", "SalesPersonEmployeeKey")
+    _add("OrderDate_min", "OrderDate")
+    _add("IsOrderDelayed_max", "IsOrderDelayed")
+    _add("SalesChannelKey_min", "SalesChannelKey")
+    _add("TimeKey_min", "TimeKey")
 
     return pa.Table.from_arrays(cols, names=names)
 
@@ -454,6 +490,12 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
 def _worker_task(args):
     tasks, single = normalize_tasks(args)
     results = []
+
+    # chunk_size MUST be constant across chunks; never fall back to per-task batch size
+    State.validate(["chunk_size"])
+    cap_orders = int(getattr(State, "chunk_size", 0) or 0)
+    if cap_orders <= 0:
+        raise RuntimeError(f"State.chunk_size must be > 0, got {cap_orders}")
 
     for idx, batch_size, seed in tasks:
         idx_i = int(idx)
@@ -466,7 +508,7 @@ def _worker_task(args):
             int(chunk_seed),
             no_discount_key=State.no_discount_key,
             chunk_idx=idx_i,
-            chunk_capacity_orders=int(getattr(State, "chunk_size", batch_i)),
+            chunk_capacity_orders=cap_orders,   # constant stride across ALL chunks
         )
 
         # Ensure FKs exist even if Sales schema hasn’t been updated yet
