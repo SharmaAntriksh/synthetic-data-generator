@@ -197,7 +197,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
     "Promotions": (
         ("PromotionKey",            "INT NOT NULL"),
         ("PromotionLabel",          "VARCHAR(20) NOT NULL"),
-        ("PromotionName",           "VARCHAR(50) NOT NULL"),
+        ("PromotionName",           "VARCHAR(100) NOT NULL"),
         ("PromotionDescription",    "VARCHAR(100) NOT NULL"),
         ("DiscountPct",             "DECIMAL(6,2)"),
         ("PromotionType",           "VARCHAR(20) NOT NULL"),
@@ -211,8 +211,8 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("StoreType",        "VARCHAR(20) NOT NULL"),
         ("Status",           "VARCHAR(10)"),
         ("GeographyKey",     "INT NOT NULL"),
-        ("StoreManager",     "VARCHAR(20)"),
-        ("StoreName",        "VARCHAR(100) NOT NULL"),
+        ("StoreManager",     "VARCHAR(200)"),
+        ("StoreName",        "VARCHAR(200) NOT NULL"),
         ("OpenDate",         "DATETIME"),
         ("CloseDate",        "DATETIME"),
         ("OpenFlag",         "BIT"),
@@ -342,6 +342,7 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("HireDate",           "DATE NOT NULL"),
         ("TerminationDate",    "DATE NULL"),
         ("IsActive",           "BIT NOT NULL"),
+        ("Gender",              "VARCHAR(10)"),
 
         # Deterministic names (appended next)
         ("FirstName",          "VARCHAR(100) NOT NULL"),
@@ -349,7 +350,6 @@ STATIC_SCHEMAS: Dict[str, Schema] = {
         ("MiddleName",         "VARCHAR(10) NULL"),
 
         # HR enrichment (appended in this order)
-        ("Gender",                 "CHAR(1) NOT NULL"),
         ("BirthDate",              "DATE NOT NULL"),
         ("MaritalStatus",          "CHAR(1) NOT NULL"),
         ("EmailAddress",           "VARCHAR(200) NOT NULL"),
