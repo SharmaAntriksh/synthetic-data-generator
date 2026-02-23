@@ -78,9 +78,9 @@ BEGIN
                 ),
                 CountryCurrency AS (
                     -- TODO: adjust if you use CurrencyKey instead of CurrencyCode
-                    SELECT g.Country, MAX(g.CurrencyCode) AS LocalCurrency
+                    SELECT g.Country, MAX(g.ISOCode) AS LocalCurrency
                     FROM dbo.Geography g
-                    WHERE g.Country IS NOT NULL AND g.CurrencyCode IS NOT NULL
+                    WHERE g.Country IS NOT NULL AND g.ISOCode IS NOT NULL
                     GROUP BY g.Country
                 )
                 SELECT
@@ -137,9 +137,9 @@ BEGIN
                         ToCurrency
                 ),
                 CountryCurrency AS (
-                    SELECT g.Country, MAX(g.CurrencyCode) AS LocalCurrency
+                    SELECT g.Country, MAX(g.ISOCode) AS LocalCurrency
                     FROM dbo.Geography g
-                    WHERE g.Country IS NOT NULL AND g.CurrencyCode IS NOT NULL
+                    WHERE g.Country IS NOT NULL AND g.ISOCode IS NOT NULL
                     GROUP BY g.Country
                 )
                 INSERT INTO dbo.Budget_ChannelMonth_FX (
