@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-
 import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
@@ -70,6 +69,7 @@ def _extract_tables_from_create_sql(sql_file: "Path") -> list[str]:
 
     return out
 
+
 def _find_table_schema(cursor: "pyodbc.Cursor", table_name: str) -> str:
     cursor.execute(
         "SELECT s.name "
@@ -131,6 +131,7 @@ def _print_cci_summary(cursor: "pyodbc.Cursor", *, tables: list[str]) -> None:
             print(f"  - {schema}.{t}: CCI={c}")
         except Exception as exc:
             print(f"  - {t}: [SKIP] {exc}")
+
 
 def _short_path(p: Path, *, base: Path | None = None) -> str:
     """
@@ -345,6 +346,47 @@ def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[
 
 
 # -------------------------
+# Budget cache refresh (optional)
+# -------------------------
+def _maybe_refresh_budget_cache(db_conn_str: str, *, target: str) -> None:
+    t = (target or "FX").strip().upper()
+    if t in {"", "NONE"}:
+        _log("INFO", "Budget cache target is NONE; skipping refresh.")
+        return
+    if t not in {"FX", "LOCAL", "BOTH"}:
+        raise SqlServerImportError(f"Invalid budget_cache_target={target!r}. Use FX, LOCAL, BOTH, or NONE.")
+
+    try:
+        with pyodbc.connect(db_conn_str, autocommit=True) as conn:
+            _try_disable_query_timeout(conn)
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT 1 WHERE OBJECT_ID(N'dbo.sp_RefreshBudgetCache', N'P') IS NOT NULL;")
+            if cursor.fetchone() is None:
+                _log("WARN", "dbo.sp_RefreshBudgetCache not found; skipping budget cache refresh.")
+                return
+
+            _log("INFO", f"Executing dbo.sp_RefreshBudgetCache (@Target='{t}') ...")
+            try:
+                cursor.execute(
+                    "EXEC dbo.sp_RefreshBudgetCache @RebuildIfSchemaChanged = 1, @Target = ?;",
+                    (t,),
+                )
+            except pyodbc.Error as exc:
+                # Backward-compatible fallback if someone has an older proc without @Target
+                msg = " ".join(str(x) for x in (exc.args or ()))
+                if "too many arguments" in msg.lower():
+                    cursor.execute("EXEC dbo.sp_RefreshBudgetCache @RebuildIfSchemaChanged = 1;")
+                else:
+                    raise
+
+            _log("INFO", "Budget cache refresh completed.")
+
+    except pyodbc.Error as exc:
+        raise SqlServerImportError(f"Failed refreshing budget cache. Details: {exc.args}") from exc
+
+
+# -------------------------
 # Main import
 # -------------------------
 def import_sql_server(
@@ -354,6 +396,8 @@ def import_sql_server(
     run_dir: Path,
     connection_string: str,
     apply_cci: bool = False,
+    refresh_budget_cache: bool = False,
+    budget_cache_target: str = "FX",
 ) -> None:
     run_dir = Path(run_dir)
     sql_dir = run_dir / "sql"
@@ -378,16 +422,20 @@ def import_sql_server(
             "or under 'sql/schema/tables/'."
         )
 
-    # -------------------------
     # Step 1: ensure DB exists
-    # -------------------------
     try:
         with pyodbc.connect(connection_string, autocommit=True) as conn:
             _try_disable_query_timeout(conn)
             cursor = conn.cursor()
 
-            if not database_exists(cursor, database):
-                create_database_if_not_exists(cursor, database)
+            if database_exists(cursor, database):
+                raise SqlServerImportError(
+                    f"Database '{database}' already exists. "
+                    "Import aborted to avoid partial drops / FK failures. "
+                    "Use a new database name or drop the database first."
+                )
+
+            create_database_if_not_exists(cursor, database)
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(
@@ -395,22 +443,22 @@ def import_sql_server(
         ) from exc
 
     db_conn_str = f"{connection_string};DATABASE={database}"
-    # -------------------------
+
     # Step 2: core import (tables/constraints/views/load)
-    # -------------------------
     try:
         with pyodbc.connect(db_conn_str, autocommit=False) as conn:
             _try_disable_query_timeout(conn)
             cursor = conn.cursor()
 
-            # 2.1 Tables
             _log("INFO", "Executing schema + load scripts:")
+
+            # 2.1 Tables
             print("  Tables:")
             for f in tables_files:
                 print(f"    - {_short_path(f, base=run_dir)}")
             execute_sql_files(cursor, tables_files)
 
-            # 2.2 Constraints (pre-load; matches SSMS manual flow)
+            # 2.2 Constraints
             if constraint_files:
                 print("  Constraints:")
                 for f in constraint_files:
@@ -424,7 +472,7 @@ def import_sql_server(
                     print(f"    - {_short_path(f, base=run_dir)}")
                 execute_sql_files(cursor, view_files)
 
-            # 2.4 Insert data (explicit order: dims then facts)
+            # 2.4 Load (dims then facts)
             load_files = list_sql_files(load_dir)
 
             dims_sql = next((p for p in load_files if p.name.lower() == "01_bulk_insert_dims.sql"), None)
@@ -437,9 +485,8 @@ def import_sql_server(
                 ordered_load.append(facts_sql)
 
             if not ordered_load:
-                ordered_load = load_files  # fallback: run everything sorted
+                ordered_load = load_files
             else:
-                # Avoid accidentally running extra scripts that would duplicate loads
                 seen = set(ordered_load)
                 extras = [p for p in load_files if p not in seen]
                 if extras:
@@ -451,8 +498,8 @@ def import_sql_server(
             for f in ordered_load:
                 print(f"    - {_short_path(f, base=run_dir)}")
             execute_sql_files(cursor, ordered_load)
-# 2.5 Verification: row counts (fast metadata counts)
-            # Uses sys.dm_db_partition_stats (no scans).
+
+            # 2.5 Row count verification
             try:
                 dim_create = next((p for p in tables_files if p.name.lower().endswith("create_dimensions.sql")), None)
                 fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
@@ -474,9 +521,11 @@ def import_sql_server(
             f"Failed importing SQL into database '{database}'. Details: {exc.args}"
         ) from exc
 
-    # -------------------------
+    # Step 2.6: optional budget cache refresh (materialize cache tables)
+    if refresh_budget_cache:
+        _maybe_refresh_budget_cache(db_conn_str, target=budget_cache_target)
+
     # Step 3: optional CCI (types/procs + apply)
-    # -------------------------
     if not apply_cci:
         _log("INFO", "Skipping CCI bootstrap/apply (apply_cci=False).")
         return
@@ -519,22 +568,14 @@ def import_sql_server(
             cursor = conn.cursor()
 
             execute_sql_files(cursor, cci_apply_files)
-# Verification: total CCIs + per-fact CCIs (derived from create_facts.sql)
+
+            # Verification: total CCIs + per-fact CCIs (derived from create_facts.sql)
             fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
             fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
             _print_cci_summary(cursor, tables=fact_tables)
 
             cursor.execute("SELECT COUNT(*) FROM sys.indexes WHERE type_desc = 'CLUSTERED COLUMNSTORE';")
             total_ccis = int(cursor.fetchone()[0])
-
-            cursor.execute(
-                "SELECT COUNT(*) "
-                "FROM sys.indexes i "
-                "JOIN sys.tables  t ON t.object_id = i.object_id "
-                "WHERE t.name = N'Sales' "
-                "  AND i.type_desc = 'CLUSTERED COLUMNSTORE';"
-            )
-            sales_cci = int(cursor.fetchone()[0])
 
         if total_ccis == 0:
             raise SqlServerImportError(

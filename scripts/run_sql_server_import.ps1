@@ -26,6 +26,13 @@ param (
     # --- Optional flags ---
     [bool]$ApplyCCI = $false,
 
+    # Enable/disable budget cache refresh (exec dbo.sp_RefreshBudgetCache)
+    [bool]$RefreshBudgetCache = $false,
+
+    # Which cache to build (maps to proc @Target)
+    [ValidateSet("None","FX","Local","Both")]
+    [string]$BudgetCacheTarget = "FX",
+
     # e.g. "ODBC Driver 18 for SQL Server"
     [string]$OdbcDriver,
 
@@ -78,6 +85,14 @@ if ($PSCmdlet.ParameterSetName -eq "Trusted") {
 if ($ApplyCCI) {
     $argsList += "--apply-cci"
 }
+
+# Budget cache controls
+$doRefresh = $RefreshBudgetCache -and ($BudgetCacheTarget -ne "None")
+if ($doRefresh) {
+    $argsList += "--refresh-budget-cache"
+    $argsList += @("--budget-cache-target", $BudgetCacheTarget)
+}
+
 if ($OdbcDriver) {
     $argsList += @("--odbc-driver", $OdbcDriver)
 }
@@ -100,7 +115,8 @@ if ($ShowFullPaths) {
     $authLabel = if ($PSCmdlet.ParameterSetName -eq "Trusted") { "trusted" } else { "sql-auth" }
 
     $flags = @()
-    if ($ApplyCCI)   { $flags += "apply-cci" }
+    if ($ApplyCCI) { $flags += "apply-cci" }
+    if ($doRefresh) { $flags += ("budget-cache=" + $BudgetCacheTarget) }
     if ($OdbcDriver) { $flags += ("odbc=" + $OdbcDriver) }
 
     $flagText = if ($flags.Count -gt 0) { " [" + ($flags -join ", ") + "]" } else { "" }
