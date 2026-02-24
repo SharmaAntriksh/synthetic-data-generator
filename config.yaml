@@ -31,8 +31,8 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 250041597
-  chunk_size: 2000000
+  total_rows: 100041
+  chunk_size: 1000000
   max_lines_per_order: 6
   
   file_format: "parquet"          # csv | parquet | deltaparquet
@@ -77,10 +77,16 @@ returns:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: false
+
   num_products: 18100
   active_ratio: 0.94
   seed: 42
+
+  lifecycle:
+    lookback_years: 10
+    lookahead_years: 2
+    preexisting_share: 0.70
+    discontinue_ratio: 0.20
 
   pricing:
     base:
@@ -131,7 +137,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 68433
+  total_customers: 6843
   active_ratio: 0.90
 
   pct_india: 10
