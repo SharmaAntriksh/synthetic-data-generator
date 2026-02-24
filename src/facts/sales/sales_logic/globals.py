@@ -142,6 +142,19 @@ class State:
     chunk_size = None
     row_group_size = None
     compression = None
+    
+    # CRITICAL: constant per-run stride for chunk order-id ranges
+    # (task.py validates this; chunk_builder uses it to avoid overlaps)
+    chunk_size = None
+
+    # Forward-compat aliases for SalesOrderNumber generation
+    order_id_stride_orders = None      # usually == chunk_size
+    order_id_run_id = None             # 0..999 (used in SalesOrderNumber prefix)
+
+    # used by task.py when deciding to drop order cols in Sales output
+    skip_order_cols_requested = None
+    
+    max_lines_per_order = 6
 
     # parquet tuning
     parquet_dict_exclude = None

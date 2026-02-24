@@ -31,11 +31,12 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 20415971
+  total_rows: 250041597
   chunk_size: 2000000
-
+  max_lines_per_order: 6
+  
   file_format: "parquet"          # csv | parquet | deltaparquet
-  sales_output: "both"           # sales | sales_order | both
+  sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 

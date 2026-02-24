@@ -695,6 +695,19 @@ def generate_sales_fact(
 
     info(f"Spawning {n_workers} worker processes...")
 
+    # SalesOrderNumber RunId:
+    # - If configured: sales.order_id_run_id (0..999)
+    # - Else derive a stable 0..999 id from output folder + seed (unique per run folder)
+    order_id_run_id_raw = sales_cfg.get("order_id_run_id", None)
+    if order_id_run_id_raw is None:
+        import zlib
+        key = f"{out_folder_p.resolve()}|{int(seed)}".encode("utf-8")
+        order_id_run_id = int(zlib.crc32(key) % 1000)
+    else:
+        order_id_run_id = int(order_id_run_id_raw) % 1000
+    if order_id_run_id < 0:
+        order_id_run_id += 1000
+
     # ------------------------------------------------------------
     # Worker configuration (keep keys stable for compatibility)
     # ------------------------------------------------------------
@@ -740,7 +753,9 @@ def generate_sales_fact(
         # Optional alias (safe to add): lets us rename later without breaking older workers.
         # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
         order_id_stride_orders=int(chunk_size),
-
+        order_id_run_id=int(order_id_run_id),
+        max_lines_per_order=int(sales_cfg.get("max_lines_per_order", 6) or 6),
+        
         sales_output=sales_output,
 
         # legacy knobs (kept)
