@@ -340,36 +340,55 @@ def _profile_lut_from_dim() -> Optional[np.ndarray]:
 
 
 def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
-    """Add TimeKey to a line-level table; constant within SalesOrderNumber if present."""
-    if "TimeKey" in table.column_names:
-        return table
-
+    """Ensure TimeKey exists and is constant within SalesOrderNumber (if present)."""
     rng = np.random.default_rng(seed)
 
     profile_lut = _profile_lut_from_dim()
     has_channel = "SalesChannelKey" in table.column_names and profile_lut is not None
 
+    # Helper: compute first-row index per order (vectorized)
+    def _first_row_per_order(enc: pa.DictionaryArray, n_orders: int) -> np.ndarray:
+        inv = np.asarray(enc.indices.to_numpy(zero_copy_only=False), dtype=np.int64)
+        pos = np.arange(inv.size, dtype=np.int64)
+        first = np.full(n_orders, inv.size, dtype=np.int64)
+        np.minimum.at(first, inv, pos)
+        # safety: should never remain inv.size
+        first[first == inv.size] = 0
+        return first
+
     if "SalesOrderNumber" in table.column_names:
         order_col = table["SalesOrderNumber"]
         if isinstance(order_col, pa.ChunkedArray):
             order_col = order_col.combine_chunks()
+
         enc = pc.dictionary_encode(order_col)
         n_orders = len(enc.dictionary)
 
+        # If TimeKey already exists, FORCE it to be constant per order by taking first row per order.
+        if "TimeKey" in table.column_names:
+            tc = table["TimeKey"]
+            if isinstance(tc, pa.ChunkedArray):
+                tc = tc.combine_chunks()
+            tc_np = np.asarray(tc.to_numpy(zero_copy_only=False), dtype=np.int16)
+
+            first = _first_row_per_order(enc, n_orders)
+            per_order_time = tc_np[first].astype(np.int16, copy=False)
+
+            per_order_arr = pa.array(per_order_time, type=pa.int16())
+            time_col = pc.take(per_order_arr, enc.indices)
+
+            idx = table.schema.get_field_index("TimeKey")
+            return table.set_column(idx, "TimeKey", time_col)
+
+        # Else: generate per-order TimeKey (your existing behavior)
         if has_channel:
             sc_col = table["SalesChannelKey"]
             if isinstance(sc_col, pa.ChunkedArray):
                 sc_col = sc_col.combine_chunks()
             sc_np = np.asarray(sc_col.to_numpy(zero_copy_only=False), dtype=np.int16)
 
-            inv = np.asarray(enc.indices.to_numpy(zero_copy_only=False), dtype=np.int64)
-            first = np.full(n_orders, -1, dtype=np.int64)
-            for i in range(inv.shape[0]):
-                j = inv[i]
-                if first[j] == -1:
-                    first[j] = i
+            first = _first_row_per_order(enc, n_orders)
             per_order_sc = sc_np[first]
-            # map channel -> profile
             prof = profile_lut[np.clip(per_order_sc.astype(np.int64), 0, profile_lut.shape[0] - 1)]
 
             per_order_time = np.empty(n_orders, dtype=np.int16)
@@ -392,61 +411,102 @@ def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
             per_order = rng.integers(0, 1440, size=n_orders, dtype=np.int32).astype(np.int16, copy=False)
             per_order_arr = pa.array(per_order, type=pa.int16())
             time_col = pc.take(per_order_arr, enc.indices)
+
+        return table.append_column("TimeKey", time_col)
+
+    # No SalesOrderNumber: leave existing TimeKey alone; otherwise sample per row
+    if "TimeKey" in table.column_names:
+        return table
+
+    if has_channel:
+        sc_col = table["SalesChannelKey"]
+        if isinstance(sc_col, pa.ChunkedArray):
+            sc_col = sc_col.combine_chunks()
+        sc_np = np.asarray(sc_col.to_numpy(zero_copy_only=False), dtype=np.int16)
+        prof = profile_lut[np.clip(sc_np.astype(np.int64), 0, profile_lut.shape[0] - 1)]
+        out = np.empty(table.num_rows, dtype=np.int16)
+
+        m0 = prof == 0
+        if m0.any():
+            out[m0] = _sample_hour_weighted_minute(rng, int(m0.sum()), _RETAIL_HOUR_W)
+        m1 = prof == 1
+        if m1.any():
+            out[m1] = _sample_hour_weighted_minute(rng, int(m1.sum()), _DIGITAL_HOUR_W)
+        m2 = prof == 2
+        if m2.any():
+            out[m2] = _sample_hour_weighted_minute(rng, int(m2.sum()), _BUSINESS_HOUR_W)
+        m3 = prof == 3
+        if m3.any():
+            out[m3] = _sample_hour_weighted_minute(rng, int(m3.sum()), _ASSISTED_HOUR_W)
+
+        time_col = pa.array(out, type=pa.int16())
     else:
-        if has_channel:
-            sc_col = table["SalesChannelKey"]
-            if isinstance(sc_col, pa.ChunkedArray):
-                sc_col = sc_col.combine_chunks()
-            sc_np = np.asarray(sc_col.to_numpy(zero_copy_only=False), dtype=np.int16)
-            prof = profile_lut[np.clip(sc_np.astype(np.int64), 0, profile_lut.shape[0] - 1)]
-            out = np.empty(table.num_rows, dtype=np.int16)
-
-            m0 = prof == 0
-            if m0.any():
-                out[m0] = _sample_hour_weighted_minute(rng, int(m0.sum()), _RETAIL_HOUR_W)
-            m1 = prof == 1
-            if m1.any():
-                out[m1] = _sample_hour_weighted_minute(rng, int(m1.sum()), _DIGITAL_HOUR_W)
-            m2 = prof == 2
-            if m2.any():
-                out[m2] = _sample_hour_weighted_minute(rng, int(m2.sum()), _BUSINESS_HOUR_W)
-            m3 = prof == 3
-            if m3.any():
-                out[m3] = _sample_hour_weighted_minute(rng, int(m3.sum()), _ASSISTED_HOUR_W)
-
-            time_col = pa.array(out, type=pa.int16())
-        else:
-            per_row = rng.integers(0, 1440, size=table.num_rows, dtype=np.int32).astype(np.int16, copy=False)
-            time_col = pa.array(per_row, type=pa.int16())
+        per_row = rng.integers(0, 1440, size=table.num_rows, dtype=np.int32).astype(np.int16, copy=False)
+        time_col = pa.array(per_row, type=pa.int16())
 
     return table.append_column("TimeKey", time_col)
 
 
 def build_header_from_detail(detail: pa.Table) -> pa.Table:
+    import pyarrow.compute as pc
+
     gb = detail.group_by(["SalesOrderNumber"])
 
-    aggs = [("CustomerKey", "min"), ("StoreKey", "min"), ("SalesPersonEmployeeKey", "min"), ("OrderDate", "min"), ("IsOrderDelayed", "max")]
+    # Invariants expected to be constant within a SalesOrderNumber
+    inv_cols = ["CustomerKey", "StoreKey", "SalesPersonEmployeeKey", "OrderDate"]
     if "SalesChannelKey" in detail.column_names:
-        aggs.append(("SalesChannelKey", "min"))
+        inv_cols.append("SalesChannelKey")
     if "TimeKey" in detail.column_names:
-        aggs.append(("TimeKey", "min"))
+        inv_cols.append("TimeKey")
+
+    # Aggregate MIN+MAX for invariants, plus max for IsOrderDelayed
+    aggs = []
+    for c in inv_cols:
+        aggs.append((c, "min"))
+        aggs.append((c, "max"))
+    aggs.append(("IsOrderDelayed", "max"))
 
     out = gb.aggregate(aggs)
 
-    rename_map = {
-        "StoreKey_min": "StoreKey",
-        "SalesPersonEmployeeKey_min": "SalesPersonEmployeeKey",
-        "CustomerKey_min": "CustomerKey",
-        "OrderDate_min": "OrderDate",
-        "IsOrderDelayed_max": "IsOrderDelayed",
-        "SalesChannelKey_min": "SalesChannelKey",
-        "TimeKey_min": "TimeKey",
-    }
+    # Build boolean mask of any invariant mismatch
+    bad = None
+    for c in inv_cols:
+        neq = pc.not_equal(out[f"{c}_min"], out[f"{c}_max"])
+        bad = neq if bad is None else pc.or_(bad, neq)
 
+    if bad is not None and bool(pc.any(bad).as_py()):
+        bad_out = out.filter(bad).slice(0, 5)
+
+        def _py(name: str):
+            return bad_out[name].to_pylist() if name in bad_out.column_names else None
+
+        parts = [f"SalesOrderNumber(s)={_py('SalesOrderNumber')}"]
+        for c in inv_cols:
+            parts.append(f"{c}_min={_py(f'{c}_min')}")
+            parts.append(f"{c}_max={_py(f'{c}_max')}")
+
+        raise RuntimeError(
+            "Invalid SalesOrderNumber invariants: a SalesOrderNumber maps to multiple values. "
+            + " | ".join(parts)
+            + " | This indicates overlapping order-id ranges across chunks OR duplicated/misaligned rows during order expansion."
+        )
+
+    # Build final header columns (use *_min for constant fields, max for IsOrderDelayed)
     cols, names = [], []
-    for name in out.schema.names:
-        cols.append(out[name])
-        names.append(rename_map.get(name, name))
+
+    def _add(src: str, dst: str):
+        if src in out.column_names:
+            cols.append(out[src])
+            names.append(dst)
+
+    _add("SalesOrderNumber", "SalesOrderNumber")
+    _add("CustomerKey_min", "CustomerKey")
+    _add("StoreKey_min", "StoreKey")
+    _add("SalesPersonEmployeeKey_min", "SalesPersonEmployeeKey")
+    _add("OrderDate_min", "OrderDate")
+    _add("IsOrderDelayed_max", "IsOrderDelayed")
+    _add("SalesChannelKey_min", "SalesChannelKey")
+    _add("TimeKey_min", "TimeKey")
 
     return pa.Table.from_arrays(cols, names=names)
 
@@ -455,9 +515,22 @@ def _worker_task(args):
     tasks, single = normalize_tasks(args)
     results = []
 
+    # chunk_size MUST be constant across chunks; never fall back to per-task batch size
+    State.validate(["chunk_size"])
+    cap_orders = int(getattr(State, "chunk_size", 0) or 0)
+    if cap_orders <= 0:
+        raise RuntimeError(f"State.chunk_size must be > 0, got {cap_orders}")
+
     for idx, batch_size, seed in tasks:
         idx_i = int(idx)
         batch_i = int(batch_size)
+
+        # hard guard: stride must be >= max batch size for the run
+        if cap_orders < batch_i:
+            raise RuntimeError(
+                f"State.chunk_size={cap_orders} < batch_i={batch_i}; "
+                "chunk_size must be the constant order-id stride and >= the maximum batch size."
+            )
 
         chunk_seed = derive_chunk_seed(seed, idx_i, stride=10_000)
 
@@ -466,7 +539,7 @@ def _worker_task(args):
             int(chunk_seed),
             no_discount_key=State.no_discount_key,
             chunk_idx=idx_i,
-            chunk_capacity_orders=int(getattr(State, "chunk_size", batch_i)),
+            chunk_capacity_orders=cap_orders,   # constant stride across ALL chunks
         )
 
         # Ensure FKs exist even if Sales schema hasn’t been updated yet

@@ -5,20 +5,25 @@ from typing import Any, List, Optional
 
 import numpy as np
 
+from ..output_paths import (
+    OutputPaths,
+    TABLE_SALES,
+    TABLE_SALES_ORDER_DETAIL,
+    TABLE_SALES_ORDER_HEADER,
+)
 from ..sales_logic import bind_globals
-from ..output_paths import OutputPaths, TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
+from .schemas import build_worker_schemas
 
 try:
     from ..output_paths import TABLE_SALES_RETURN  # type: ignore
 except Exception:
     TABLE_SALES_RETURN = None  # type: ignore
 
-from .schemas import build_worker_schemas
-
 
 # ---------------------------------------------------------------------
 # Small helpers (kept close to monolith behavior for compatibility)
 # ---------------------------------------------------------------------
+
 
 def build_buckets_from_key(key: Any) -> list[np.ndarray]:
     key_np = np.asarray(key, dtype=np.int64)
@@ -133,6 +138,7 @@ def _infer_T_from_date_pool(date_pool: Any) -> int:
 # Canonical: day-accurate effective-dated bridge index
 # ---------------------------------------------------------------------
 
+
 def _build_salesperson_effective_by_store(
     *,
     store_keys: np.ndarray,
@@ -174,7 +180,6 @@ def _build_salesperson_effective_by_store(
     if start_raw.shape[0] != assign_store.shape[0] or end_raw.shape[0] != assign_store.shape[0]:
         raise RuntimeError("employee assignment arrays must align (dates vs keys)")
 
-    # Normalize missing dates
     FAR_FUTURE = np.datetime64("2262-04-11", "D")
     FAR_PAST = np.datetime64("1900-01-01", "D")
 
@@ -189,7 +194,6 @@ def _build_salesperson_effective_by_store(
     if nat_e.any():
         end_fixed[nat_e] = FAR_FUTURE
 
-    # Optional: filter to plausible store range
     valid_store = (assign_store >= 0) & (assign_store <= max_store_key)
     if not valid_store.all():
         assign_store = assign_store[valid_store]
@@ -203,7 +207,6 @@ def _build_salesperson_effective_by_store(
         if assign_is_primary is not None:
             assign_is_primary = np.asarray(assign_is_primary, dtype=bool)[valid_store]
 
-    # Filter invalid windows (start > end)
     ok_window = start_fixed <= end_fixed
     if not ok_window.all():
         assign_store = assign_store[ok_window]
@@ -233,7 +236,6 @@ def _build_salesperson_effective_by_store(
 
     weights = fte * np.where(is_primary, float(primary_boost), 1.0)
 
-    # Group by store
     order = np.argsort(assign_store, kind="mergesort")
     s_sorted = assign_store[order]
     starts = np.flatnonzero(np.r_[True, s_sorted[1:] != s_sorted[:-1]])
@@ -272,10 +274,6 @@ def _build_salesperson_by_store_month(
     primary_boost: float = 2.0,
     seed: int = 12345,
 ) -> Optional[np.ndarray]:
-    """
-    Legacy behavior: chooses ONE employee per (StoreKey, Month).
-    Cannot enforce EndDate within a month (rounds to month buckets).
-    """
     if assign_store is None or assign_emp is None or assign_start is None or assign_end is None:
         return None
 
@@ -291,11 +289,8 @@ def _build_salesperson_by_store_month(
     if assign_start.shape[0] != assign_store.shape[0] or assign_end.shape[0] != assign_store.shape[0]:
         raise RuntimeError("employee assignment arrays must align (dates vs keys)")
 
-    # --- FIX: normalize NaT dates ---
-    # NaT StartDate => far past (always eligible until EndDate)
-    # NaT EndDate   => far future (open-ended)
     FAR_PAST = np.datetime64("1900-01-01", "D")
-    FAR_FUTURE = np.datetime64("2262-04-11", "D")  # max safe day for numpy datetime64
+    FAR_FUTURE = np.datetime64("2262-04-11", "D")
 
     if np.isnat(assign_start).any():
         assign_start = assign_start.copy()
@@ -305,7 +300,6 @@ def _build_salesperson_by_store_month(
         assign_end = assign_end.copy()
         assign_end[np.isnat(assign_end)] = FAR_FUTURE
 
-    # Optional: drop invalid windows
     ok = assign_start <= assign_end
     if not np.all(ok):
         assign_store = assign_store[ok]
@@ -366,7 +360,7 @@ def _build_salesperson_by_store_month(
         if store < 0 or store > max_store_key:
             continue
 
-        idxs = order[int(s): int(e)]
+        idxs = order[int(s) : int(e)]
         if idxs.size == 0:
             continue
 
@@ -394,6 +388,7 @@ def _build_salesperson_by_store_month(
 # ---------------------------------------------------------------------
 # Brand popularity model helper (unchanged)
 # ---------------------------------------------------------------------
+
 
 def _build_brand_prob_by_month_rotate_winner(
     rng: np.random.Generator,
@@ -429,8 +424,8 @@ def _build_brand_prob_by_month_rotate_winner(
 # Main entrypoint
 # ---------------------------------------------------------------------
 
+
 def init_sales_worker(worker_cfg: dict) -> None:
-    # parse required config
     try:
         product_np = worker_cfg["product_np"]
         product_brand_key = worker_cfg.get("product_brand_key")
@@ -462,7 +457,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         employee_assign_is_primary = worker_cfg.get("employee_assign_is_primary")
         employee_primary_boost = float(worker_cfg.get("employee_primary_boost", 2.0))
         employee_seed = int(worker_cfg.get("employee_salesperson_seed", worker_cfg.get("seed_master", 12345)))
-        employee_assign_role = worker_cfg.get("employee_assign_role")  # array[str], same length as employee_assign_employee_key
+        employee_assign_role = worker_cfg.get("employee_assign_role")
         salesperson_roles = worker_cfg.get("salesperson_roles", ["Sales Associate"])
 
         op = worker_cfg["output_paths"]
@@ -471,14 +466,48 @@ def init_sales_worker(worker_cfg: dict) -> None:
 
         file_format = worker_cfg.get("file_format") or op.get("file_format")
         out_folder = worker_cfg.get("out_folder") or op.get("out_folder")
+        if not file_format:
+            raise RuntimeError("file_format is required (worker_cfg.file_format or output_paths.file_format)")
+        if not out_folder:
+            raise RuntimeError("out_folder is required (worker_cfg.out_folder or output_paths.out_folder)")
 
         row_group_size = int(worker_cfg.get("row_group_size", 2_000_000))
         compression = str(worker_cfg.get("compression", "snappy"))
 
+        # ------------------------------------------------------------
+        # CRITICAL: SalesOrderNumber uniqueness depends on a CONSTANT
+        # per-run stride for chunk order-id ranges (NOT per-task batch size).
+        # Prefer 'order_id_stride_orders'; fall back to 'chunk_size'.
+        # ------------------------------------------------------------
+        stride_raw = worker_cfg.get("order_id_stride_orders", None)
+        if stride_raw is None:
+            stride_raw = worker_cfg.get("chunk_size", None)
+
+        chunk_size = int(stride_raw or 0)
+        if chunk_size <= 0:
+            raise RuntimeError(
+                "Missing/invalid order-id stride. Set worker_cfg.order_id_stride_orders (preferred) "
+                "or worker_cfg.chunk_size to a positive int. This value partitions SalesOrderNumber "
+                "space across chunks and must be constant across the run."
+            )
+
+        # ------------------------------------------------------------
+        # Per-run id for SalesOrderNumber (0..999).
+        # If caller doesn't provide it, derive deterministically from seed_master.
+        # ------------------------------------------------------------
+        run_id_raw = worker_cfg.get("order_id_run_id", None)
+        if run_id_raw is None:
+            seed_master = int(worker_cfg.get("seed_master", 0) or 0)
+            order_id_run_id = int(seed_master % 1000)
+        else:
+            order_id_run_id = int(run_id_raw)
+
+        if order_id_run_id < 0 or order_id_run_id > 999:
+            raise RuntimeError(f"order_id_run_id must be in [0,999], got {order_id_run_id}")
+
         no_discount_key = worker_cfg["no_discount_key"]
         delta_output_folder = worker_cfg.get("delta_output_folder") or op.get("delta_output_folder")
         merged_file = worker_cfg.get("merged_file") or op.get("merged_file")
-
         write_delta = worker_cfg.get("write_delta", False)
 
         skip_order_cols = worker_cfg["skip_order_cols"]
@@ -497,14 +526,18 @@ def init_sales_worker(worker_cfg: dict) -> None:
         if sales_output in {"sales_order", "both"}:
             skip_order_cols = False
 
-        partition_enabled = worker_cfg.get("partition_enabled", False)
+        partition_enabled = bool(worker_cfg.get("partition_enabled", False))
         partition_cols = worker_cfg.get("partition_cols") or []
         models_cfg = worker_cfg.get("models_cfg")
 
         parquet_dict_exclude = worker_cfg.get("parquet_dict_exclude")
         write_pyarrow = worker_cfg.get("write_pyarrow", True)
 
-        # optional legacy toggle
+        # NEW: configurable cap for SalesOrderLineNumber per SalesOrderNumber
+        max_lines_per_order = int_or(worker_cfg.get("max_lines_per_order"), 6)
+        if max_lines_per_order < 1:
+            raise RuntimeError(f"max_lines_per_order must be >= 1, got {max_lines_per_order}")
+
         legacy_salesperson_by_store_month = bool(worker_cfg.get("legacy_salesperson_by_store_month", False))
 
     except KeyError as e:
@@ -523,7 +556,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
 
     # ------------------------------------------------------------
     # Filter employee assignment rows to sales-eligible roles
-    # (so Store Manager / Fulfillment etc never appear in SalesPersonEmployeeKey)
     # ------------------------------------------------------------
     if employee_assign_employee_key is not None and employee_assign_store_key is not None:
         emp_key = np.asarray(employee_assign_employee_key, dtype=np.int64)
@@ -536,7 +568,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
             # fallback if role not provided: at least exclude Store Manager key range (30M..40M)
             mask = emp_key >= 40_000_000
 
-        # Apply mask consistently across all assignment arrays
         employee_assign_store_key = np.asarray(employee_assign_store_key, dtype=np.int64)[mask]
         employee_assign_employee_key = emp_key[mask]
         employee_assign_start_date = np.asarray(employee_assign_start_date, dtype="datetime64[D]")[mask]
@@ -551,7 +582,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
     else:
         salesperson_global_pool = None
 
-    # Canonical (day-accurate)
     salesperson_effective_by_store = _build_salesperson_effective_by_store(
         store_keys=store_keys,
         assign_store=employee_assign_store_key,
@@ -563,7 +593,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
         primary_boost=employee_primary_boost,
     )
 
-    # Optional legacy (month-rounded)
     salesperson_by_store_month = None
     if legacy_salesperson_by_store_month:
         salesperson_by_store_month = _build_salesperson_by_store_month(
@@ -675,6 +704,13 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "date_prob": date_prob,
             "file_format": file_format,
             "out_folder": out_folder,
+
+            # CRITICAL: constant per-run stride used to partition SalesOrderNumber ranges
+            "chunk_size": int(max(1, chunk_size)),
+            "order_id_stride_orders": int(max(1, chunk_size)),
+            "order_id_run_id": int(order_id_run_id),
+            "max_lines_per_order": int(max_lines_per_order),
+            
             "row_group_size": int(max(1, row_group_size)),
             "compression": compression,
             "output_paths": output_paths,

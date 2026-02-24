@@ -315,6 +315,13 @@ def build_orders(
     avg_lines = 2.0
     order_count = max(1, int(n / avg_lines))
 
+    max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
+    if max_lines < 1:
+        raise RuntimeError(f"State.max_lines_per_order must be >= 1, got {max_lines}")
+
+    min_orders = (int(n) + max_lines - 1) // max_lines
+    order_count = max(int(order_count), int(min_orders))
+
     # ------------------------------------------------------------
     # Order-level date sampling
     # ------------------------------------------------------------
@@ -328,13 +335,30 @@ def build_orders(
     order_dates = date_pool[od_idx].astype("datetime64[D]", copy=False)
 
     # ------------------------------------------------------------
-    # Order IDs: YYYYMMDD * 1e9 + random suffix
-    # (no string formatting; faster)
+    # Order IDs: (ExcelDayID * 1000 + RunID) * 1e9 + suffix
+    #
+    # ExcelDayID is an Excel-style day serial (1899-12-30 = 0):
+    #   2022-09-22 -> 44826
+    #
+    # RunID is 0..999 and must differ across dataset runs to make
+    # SalesOrderNumber globally unique across reruns.
+    #
+    # Suffix remains a 9-digit space allocated disjointly per chunk via order_id_start.
     # ------------------------------------------------------------
     days = order_dates.astype("datetime64[D]").astype(np.int64, copy=False)
-    date_int = _yyyymmdd_from_days(days)
 
-    MOD = np.int64(1_000_000_000)
+    # Excel epoch offset: 1970-01-01 is day 25569 in Excel
+    excel_day_id = days + np.int64(25569)
+    if excel_day_id.size and excel_day_id.min() < 0:
+        raise RuntimeError("ExcelDayID underflow (dates before 1899-12-30)")
+
+    run_id = int(getattr(State, "order_id_run_id", 0) or 0)
+    if run_id < 0 or run_id > 999:
+        raise RuntimeError(f"State.order_id_run_id must be in [0,999], got {run_id}")
+
+    prefix = excel_day_id * np.int64(1000) + np.int64(run_id)
+
+    MOD = np.int64(1_000_000_000)  # 1e9 => 9-digit suffix
 
     if order_id_start is None:
         raise RuntimeError(
@@ -349,7 +373,7 @@ def build_orders(
     if suffix_int.size and suffix_int[-1] >= MOD:
         raise RuntimeError("SalesOrderNumber suffix overflow; increase suffix width or capacity.")
 
-    order_ids_int = date_int * MOD + suffix_int
+    order_ids_int = prefix * MOD + suffix_int
 
     # ------------------------------------------------------------
     # Assign a customer per order (preserve upstream distribution)
@@ -367,7 +391,7 @@ def build_orders(
     holiday_boost = month_factor > 1.10
 
     # Discrete outcomes
-    k = np.array([1, 2, 3, 4, 5], dtype=np.int8)
+    k = np.array([1, 2, 3, 4, 5], dtype=np.int16)
 
     base_p = np.array([0.55, 0.25, 0.10, 0.06, 0.04], dtype=np.float64)
     holiday_p = np.array([0.40, 0.30, 0.15, 0.10, 0.05], dtype=np.float64)
@@ -378,7 +402,7 @@ def build_orders(
     cdf_hol = np.cumsum(holiday_p)
 
     u = rng.random(order_count)  # one uniform per order
-    lines_per_order = np.empty(order_count, dtype=np.int8)
+    lines_per_order = np.empty(order_count, dtype=np.int16)
 
     # base orders
     base_mask = ~holiday_boost
@@ -391,26 +415,52 @@ def build_orders(
     expanded_len = int(repeats.sum())
 
     # ------------------------------------------------------------
-    # CRITICAL FIX: ensure we create exactly `n` line rows without
-    # duplicating earlier rows (which can duplicate order keys).
-    # Adjust repeats (lines/order) so sum(repeats) == n.
+    # Ensure we create exactly `n` line rows WITHOUT creating a single
+    # giant order. Cap repeats and distribute adjustments across orders.
     # ------------------------------------------------------------
-    if expanded_len < n:
-        repeats[-1] += (n - expanded_len)
-    elif expanded_len > n:
-        excess = expanded_len - n
-        i = repeats.size - 1
-        while excess > 0 and i >= 0:
-            can_take = int(repeats[i]) - 1
-            if can_take > 0:
-                take = min(excess, can_take)
-                repeats[i] -= take
-                excess -= take
-            i -= 1
-        if excess > 0:
-            raise RuntimeError(
-                "Unable to adjust repeats to match n without violating min 1 line/order."
-            )
+    max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
+    if max_lines < 1:
+        raise RuntimeError(f"State.max_lines_per_order must be >= 1, got {max_lines}")
+
+    # Ensure feasibility: need at least ceil(n / max_lines) orders
+    min_orders = (int(n) + max_lines - 1) // max_lines
+    if order_count < min_orders:
+        order_count = int(min_orders)
+        # NOTE: if you change order_count here, you must also regenerate:
+        # - order_dates
+        # - order_ids_int
+        # - order_customers
+        # In practice, keep order_count calculation earlier consistent with max_lines.
+        # (Preferred: apply min_orders right after order_count is first computed.)
+
+    delta = int(n) - int(expanded_len)
+
+    if delta > 0:
+        need = delta
+        while need > 0:
+            candidates = np.flatnonzero(repeats < max_lines)
+            if candidates.size == 0:
+                raise RuntimeError(
+                    f"Need {need} more lines but all orders are at max_lines_per_order={max_lines}. "
+                    "Increase max_lines_per_order or increase order_count."
+                )
+            take = min(need, int(candidates.size))
+            chosen = rng.choice(candidates, size=take, replace=False)
+            repeats[chosen] += 1
+            need -= take
+
+    elif delta < 0:
+        excess = -delta
+        while excess > 0:
+            candidates = np.flatnonzero(repeats > 1)
+            if candidates.size == 0:
+                raise RuntimeError(
+                    "Unable to reduce repeats to match n without violating min 1 line/order."
+                )
+            take = min(excess, int(candidates.size))
+            chosen = rng.choice(candidates, size=take, replace=False)
+            repeats[chosen] -= 1
+            excess -= take
 
     expanded_len = int(repeats.sum())
     if expanded_len != n:

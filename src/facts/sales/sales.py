@@ -695,6 +695,19 @@ def generate_sales_fact(
 
     info(f"Spawning {n_workers} worker processes...")
 
+    # SalesOrderNumber RunId:
+    # - If configured: sales.order_id_run_id (0..999)
+    # - Else derive a stable 0..999 id from output folder + seed (unique per run folder)
+    order_id_run_id_raw = sales_cfg.get("order_id_run_id", None)
+    if order_id_run_id_raw is None:
+        import zlib
+        key = f"{out_folder_p.resolve()}|{int(seed)}".encode("utf-8")
+        order_id_run_id = int(zlib.crc32(key) % 1000)
+    else:
+        order_id_run_id = int(order_id_run_id_raw) % 1000
+    if order_id_run_id < 0:
+        order_id_run_id += 1000
+
     # ------------------------------------------------------------
     # Worker configuration (keep keys stable for compatibility)
     # ------------------------------------------------------------
@@ -732,8 +745,19 @@ def generate_sales_fact(
         out_folder=str(out_folder_p),
         row_group_size=_int_or(row_group_size, 2_000_000),
         compression=_str_or(compression, "snappy"),
-        sales_output=sales_output,
+
+        # CRITICAL: must be constant across ALL chunks/tasks for SalesOrderNumber uniqueness.
+        # worker/task.py must use this constant (never fall back to per-task batch_i).
+        chunk_size=int(chunk_size),
+
+        # Optional alias (safe to add): lets us rename later without breaking older workers.
+        # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
+        order_id_stride_orders=int(chunk_size),
+        order_id_run_id=int(order_id_run_id),
+        max_lines_per_order=int(sales_cfg.get("max_lines_per_order", 6) or 6),
         
+        sales_output=sales_output,
+
         # legacy knobs (kept)
         heavy_pct=heavy_pct,
         heavy_mult=heavy_mult,
@@ -756,17 +780,17 @@ def generate_sales_fact(
         returns_max_lag_days=int(returns_max_lag_days),
 
         # deterministic employee assignment lookup
-        seed_master= int(seed),
-        employee_salesperson_seed= int(seed) + 99173,
-        employee_primary_boost= 2.0,
+        seed_master=int(seed),
+        employee_salesperson_seed=int(seed) + 99173,
+        employee_primary_boost=2.0,
 
         # employee-store assignment pools
-        employee_assign_store_key= employee_assign_store_key,
-        employee_assign_employee_key= employee_assign_employee_key,
-        employee_assign_start_date= employee_assign_start_date,
-        employee_assign_end_date= employee_assign_end_date,
-        employee_assign_fte= employee_assign_fte,
-        employee_assign_is_primary= employee_assign_is_primary,
+        employee_assign_store_key=employee_assign_store_key,
+        employee_assign_employee_key=employee_assign_employee_key,
+        employee_assign_start_date=employee_assign_start_date,
+        employee_assign_end_date=employee_assign_end_date,
+        employee_assign_fte=employee_assign_fte,
+        employee_assign_is_primary=employee_assign_is_primary,
         employee_assign_role=employee_assign_role,
         salesperson_roles=salesperson_roles,
     )
