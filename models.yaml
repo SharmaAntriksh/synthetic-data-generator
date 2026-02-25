@@ -177,8 +177,8 @@ models:
     inflation:
       annual_rate: 0.03
       month_volatility_sigma: 0.0
-      factor_clip: [0.90, 1.25]
-      scale_discount: false         # keep DiscountAmount stable; promo is analysis-time anyway
+      factor_clip: [1.00, 1.25]
+      scale_discount: false        # keep DiscountAmount in ladder buckets (no drift scaling)
       volatility_seed: 123
 
     seasonality:
@@ -195,7 +195,7 @@ models:
       discount_noise_sigma: 0.0
 
     discount:
-      max_pct_of_price: 0.30        # lower than 0.50 to avoid huge pct markdowns on 5000 items
+      max_pct_of_price: 0.50        # cap for safety
     floors:
       min_net_price: 0.01
 
@@ -204,39 +204,30 @@ models:
     # ------------------------------------------------------------
     markdown:
       enabled: true
-      max_pct_of_price: 0.30
+      max_pct_of_price: 0.50
       min_net_price: 0.01
       allow_negative_margin: false
 
-      # Target: lots of clean 5/10/15/.../35 discounts
+      # Target: few discrete discount amounts (0, 50, 100, 200, 300, 400, 500)
       ladder:
-        - { kind: none, value: 0.0,  weight: 0.15 }
-
-        # small % markdowns (kept light so you don't get huge discounts on high prices)
-        - { kind: pct,  value: 0.02, weight: 0.08 }
-        - { kind: pct,  value: 0.03, weight: 0.06 }
-        - { kind: pct,  value: 0.05, weight: 0.06 }
-        - { kind: pct,  value: 0.08, weight: 0.04 }
-
-        # fixed markdowns (main variety driver)
-        - { kind: amt,  value: 5.0,  weight: 0.06 }
-        - { kind: amt,  value: 10.0, weight: 0.08 }
-        - { kind: amt,  value: 35.0, weight: 0.07 }
-        - { kind: amt,  value: 49.0, weight: 0.06 }
-        - { kind: amt,  value: 79.0, weight: 0.04 }
-        - { kind: amt,  value: 90.0, weight: 0.03 }
-        - { kind: amt,  value: 100.0, weight: 0.02 }
+        - { kind: none, value: 0.0,   weight: 0.35 }
+        - { kind: amt,  value: 50.0,  weight: 0.22 }
+        - { kind: amt,  value: 100.0, weight: 0.16 }
+        - { kind: amt,  value: 200.0, weight: 0.12 }
+        - { kind: amt,  value: 300.0, weight: 0.08 }
+        - { kind: amt,  value: 400.0, weight: 0.04 }
+        - { kind: amt,  value: 500.0, weight: 0.03 }
 
       # Quantization inside compute_prices()
       appearance:
         quantize_discount: true
-        discount_rounding: nearest     # critical: avoids % discounts turning into 0 too often
+        discount_rounding: floor      # never round UP into a bucket that violates caps
         discount_bands:
-          - { max: 5000,  step: 5 }    # your product max
-          - { max: 1e18,  step: 10 }   # for rare larger prices if you ever raise max
+          - { max: 100,  step: 50 }     # yields 0, 50, 100
+          - { max: 1e18, step: 100 }    # yields 200, 300, 400, 500, ...
 
     # ------------------------------------------------------------
-    # FINAL snapping AFTER time-scaling (pricing_pipeline)
+    # FINAL snapping AFTER drift (pricing_pipeline)
     # ------------------------------------------------------------
     appearance:
       enabled: true
@@ -244,30 +235,28 @@ models:
       unit_price:
         rounding: floor
         endings:
-          - { value: 0.99, weight: 0.75 }
-          # - { value: 0.50, weight: 0.20 }
-          # - { value: 0.00, weight: 0.05 }
-        bands:
-          - { max: 200,   step: 5 }
-          - { max: 1000,  step: 5 }
-          - { max: 5000,  step: 5 }
-          - { max: 1e18,  step: 10 }
-
-      unit_cost:
-        rounding: floor
-        endings:
           - { value: 0.99, weight: 1.0 }
         bands:
-          - { max: 200, step: 1.0 }
-          - { max: 1000, step: 5.0 }
-          - { max: 1e18, step: 10.0 }
+          - { max: 100,  step: 50 }
+          - { max: 1e18, step: 100 }
 
-      # Re-quantize DiscountAmount after scaling/snapping so it stays 5/10/15/...
-      discount:
+      unit_cost:
         rounding: nearest
+        endings:
+          - { value: 0.00, weight: 1.0 }
         bands:
-          - { max: 5000,  step: 0.01 }
-          - { max: 1e18,  step: 0.01 }
+          - { max: 100,   step: 1 }
+          - { max: 500,   step: 2 }
+          - { max: 2000,  step: 5 }
+          - { max: 10000, step: 25 }
+          - { max: 1e18,  step: 50 }
+
+      # Re-quantize DiscountAmount after drift/snapping so it stays in coarse buckets
+      discount:
+        rounding: floor
+        bands:
+          - { max: 100,  step: 50 }     # 0, 50, 100
+          - { max: 1e18, step: 100 }    # 200, 300, 400, 500, ...
 
   returns:
     enabled: true

@@ -31,9 +31,9 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 250041597
-  chunk_size: 2000000
-  max_lines_per_order: 6
+  total_rows: 100041
+  chunk_size: 1000000
+  max_lines_per_order: 10
   
   file_format: "parquet"          # csv | parquet | deltaparquet
   sales_output: "sales"           # sales | sales_order | both
@@ -77,61 +77,79 @@ returns:
 # PRODUCTS
 # ---------------------------------------------------------------------
 products:
-  use_contoso_products: false
-  num_products: 18100
+
+  num_products: 381
   active_ratio: 0.94
   seed: 42
 
+  lifecycle:
+    lookback_years: 10
+    lookahead_years: 2
+    preexisting_share: 0.70
+    discontinue_ratio: 0.20
+
   pricing:
     base:
-      value_scale: .10
-      min_unit_price: 50
+      value_scale: 1
+      min_unit_price: 100
       max_unit_price: 5000
 
-      # optional tuning:
-      stretch_to_range: false
+      # Keep ON so min/max behave like design targets after trimming/scaling
+      stretch_to_range: true
       stretch_low_quantile: 0.01
       stretch_high_quantile: 0.99
 
+    # New default: ignore any upstream UnitCost and derive it from final snapped UnitPrice.
     cost:
-      mode: margin          # add this (or "keep" if you want to preserve Contoso UnitCost when use_contoso_products: true)
-      min_margin_pct: 0.30
-      max_margin_pct: 0.65
+      mode: margin # keep or margin
+      # Narrower band than 0.20..0.50 -> more stable margins, fewer pathological near-zero costs.
+      min_margin_pct: 0.20
+      max_margin_pct: 0.35
 
+    # Keep jitter low; uniqueness should mostly come from products/brands, not random walk.
     jitter:
-      price_pct: 0.03
-      cost_pct: 0.02
+      price_pct: 0.00
+      cost_pct: 0.00
 
+    # Keep brand normalization but ensure low-count brands do NOT turn into NaNs (code now guards this).
     brand_normalization:
       enabled: true
-      brand_col: Brand          # or BrandName; if omitted we'll try Brand then BrandName
-      alpha: 0.70               # 0..1 (strength of pull toward global typical price)
-      min_factor: 0.60          # clamp per-brand rescale factor
+      brand_col: Brand
+      alpha: 0.70
+      min_factor: 0.60
       max_factor: 1.60
-      min_count: 10             # brands with < min_count products won't be adjusted
-      noise_sd: 0.05            # optional per-brand log-noise (0 disables)
-    # NEW: controls how prices *look* (works for max 2000 / 10000 / etc.)
+      min_count: 10
+      noise_sd: 0.00
+
     appearance:
+      # Snap prices to realistic retail points (with .99 ending).
       snap_unit_price: true
       price_ending: 0.99
-      price_bands:
-        - {max: 100,   step: 1}
-        - {max: 1000,  step: 10}
-        - {max: 10000, step: 50}
-        - {max: 1e18,  step: 100}
 
+      # Coarser bands reduce the number of unique UnitPrice values while preserving realism.
+      # (Your earlier 5/10/25/50/100 bands can create too many near-by price points.)
+      price_bands:
+        - { max: 100,   step: 10 }     #  99.99 (or 89.99/99.99 depending on rounding)
+        - { max: 500,   step: 25 }     #  124.99, 149.99, ...
+        - { max: 2000,  step: 50 }     #  1049.99, 1099.99, ...
+        - { max: 5000,  step: 100 }    #  2499.99, 2599.99, ...
+        - { max: 1e18,  step: 250 }
+
+      # Round costs to clean increments (no pennies).
       round_unit_cost: true
+      # Costs should generally be “cleaner” than prices; keep steps modest.
       cost_bands:
-        - {max: 100,   step: 0.05}
-        - {max: 1000,  step: 0.10}
-        - {max: 10000, step: 1}
-        - {max: 1e18,  step: 5}
+        - { max: 100,   step: 5 }
+        - { max: 500,   step: 10 }
+        - { max: 2000,  step: 25 }
+        - { max: 10000, step: 50 }
+        - { max: 1e18,  step: 100 }
 
 # ---------------------------------------------------------------------
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 68433
+  total_customers: 6843
   active_ratio: 0.90
 
   pct_india: 10
