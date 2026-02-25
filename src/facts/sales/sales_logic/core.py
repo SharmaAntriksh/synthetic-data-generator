@@ -145,11 +145,9 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
         delivery_offset[mask_d] = (product_seed[mask_d] % 5) + 2
 
     # ------------------------------------------------------------
-    # Early deliveries
-    #   - Order-level when we have order ids
-    #   - Row-level otherwise
-    # NOTE: keep RNG draw shapes consistent with original to avoid
-    # shifting downstream randomness consumption.
+    # Early deliveries (line-item mixed even when has order ids)
+    # NOTE: keep RNG draw shapes consistent (still draw per-order),
+    # but only a subset of lines in an "early" order become early.
     # ------------------------------------------------------------
     if has_orders:
         n_orders = len(unique_orders)
@@ -159,10 +157,13 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
         # Early days per order: 1..2
         early_days_per_order = rng.integers(1, 3, size=n_orders, dtype=np.int64)
 
-        early_mask = early_order[inv_idx]
+        # NEW: only some lines in an early order are early (e.g., ~60%)
+        # line_seed is per-row, so this creates within-order variation.
+        early_mask = early_order[inv_idx] & (line_seed < 60)
+
         if early_mask.any():
             early_days_rows = early_days_per_order[inv_idx]
-            # Early overrides delay (consistent with original behavior)
+            # Early overrides delay for those *lines* only
             delivery_offset[early_mask] = -early_days_rows[early_mask]
     else:
         early_mask = rng.random(n) < 0.10
@@ -390,11 +391,47 @@ def build_orders(
     month_factor = month_demand[months]
     holiday_boost = month_factor > 1.10
 
-    # Discrete outcomes
-    k = np.array([1, 2, 3, 4, 5], dtype=np.int16)
+    # Discrete outcomes (respect max_lines_per_order)
+    # max_lines already computed earlier in build_orders (used for min_orders) :contentReference[oaicite:3]{index=3}
+    max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
+    if max_lines < 1:
+        raise RuntimeError(f"State.max_lines_per_order must be >= 1, got {max_lines}")
 
-    base_p = np.array([0.55, 0.25, 0.10, 0.06, 0.04], dtype=np.float64)
-    holiday_p = np.array([0.40, 0.30, 0.15, 0.10, 0.05], dtype=np.float64)
+    if max_lines == 1:
+        k = np.array([1], dtype=np.int16)
+        base_p = np.array([1.0], dtype=np.float64)
+        holiday_p = np.array([1.0], dtype=np.float64)
+    else:
+        # Always build k up to the configured cap
+        k = np.arange(1, max_lines + 1, dtype=np.int16)
+
+        # Preserve the original Contoso-like basket depth shape for 1..5
+        base_p5 = np.array([0.55, 0.25, 0.10, 0.06, 0.04], dtype=np.float64)
+        hol_p5  = np.array([0.40, 0.30, 0.15, 0.10, 0.05], dtype=np.float64)
+
+        if max_lines <= 5:
+            base_p = base_p5[:max_lines].copy()
+            holiday_p = hol_p5[:max_lines].copy()
+            base_p /= base_p.sum()
+            holiday_p /= holiday_p.sum()
+        else:
+            # Add a small “long tail” probability mass for 6..max_lines
+            # (keeps 1..5 relative proportions nearly identical)
+            base_tail_mass = 0.03   # ~3% of orders can be 6+ lines
+            hol_tail_mass  = 0.06   # holidays: heavier baskets
+
+            tail_vals = np.arange(6, max_lines + 1, dtype=np.float64)
+            decay = np.exp(-0.7 * (tail_vals - 6.0))  # geometric-ish decay
+            decay /= decay.sum()
+
+            base_p = np.concatenate([base_p5 * (1.0 - base_tail_mass), decay * base_tail_mass])
+            holiday_p = np.concatenate([hol_p5 * (1.0 - hol_tail_mass), decay * hol_tail_mass])
+
+    # Vectorized categorical sampling via inverse CDF:
+    cdf_base = np.cumsum(base_p)
+    cdf_hol = np.cumsum(holiday_p)
+    cdf_base[-1] = 1.0
+    cdf_hol[-1] = 1.0
 
     # Vectorized categorical sampling via inverse CDF:
     # pick base/holiday cdf per order, then digitize U~[0,1)
@@ -1242,8 +1279,7 @@ def _quantize_discount(
         q = np.floor(disc / step) * step
 
     # Apply ".99" ending for non-zero discounts
-    q = np.where(q > 0.0, np.maximum(q - 0.01, 0.0), 0.0)
-
+    q = np.where(q > 0.0, q, 0.0)
     return q
 
 
