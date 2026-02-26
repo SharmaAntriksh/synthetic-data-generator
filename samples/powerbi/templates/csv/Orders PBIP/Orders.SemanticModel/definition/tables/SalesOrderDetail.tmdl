@@ -7,7 +7,7 @@ table SalesOrderDetail
 		isHidden
 		formatString: 0
 		lineageTag: 69d80e65-99c7-4ad3-bc29-5f988106b0bc
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: SalesOrderNumber
 
 		changedProperty = IsHidden
@@ -31,20 +31,8 @@ table SalesOrderDetail
 		isHidden
 		formatString: 0
 		lineageTag: d2f2bd07-44ab-4ba0-a266-f3865e969a07
-		summarizeBy: count
+		summarizeBy: none
 		sourceColumn: ProductKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column StoreKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: efc35d34-9c13-48db-aeff-38c1d7e2775a
-		summarizeBy: count
-		sourceColumn: StoreKey
 
 		changedProperty = IsHidden
 
@@ -55,7 +43,7 @@ table SalesOrderDetail
 		isHidden
 		formatString: 0
 		lineageTag: 5820d409-2f31-4e26-9423-1eb518806243
-		summarizeBy: count
+		summarizeBy: none
 		sourceColumn: PromotionKey
 
 		changedProperty = IsHidden
@@ -67,7 +55,7 @@ table SalesOrderDetail
 		isHidden
 		formatString: 0
 		lineageTag: 31634858-0720-4808-ab52-1c1cf60047f1
-		summarizeBy: count
+		summarizeBy: none
 		sourceColumn: CurrencyKey
 
 		changedProperty = IsHidden
@@ -206,7 +194,6 @@ table SalesOrderDetail
 				            { "SalesOrderNumber", Int64.Type },
 				            { "SalesOrderLineNumber", Int64.Type },
 				            { "ProductKey", Int64.Type },
-				            { "StoreKey", Int64.Type },
 				            { "PromotionKey", Int64.Type },
 				            { "CurrencyKey", Int64.Type },
 				            { "DueDate", type date },

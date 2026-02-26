@@ -185,6 +185,22 @@ table Customers
 
 		annotation SummarizationSetBy = Automatic
 
+	column LoyaltyTierKey
+		dataType: string
+		lineageTag: 5bdd0621-4b06-4324-9ad0-61d189c6bb95
+		summarizeBy: none
+		sourceColumn: LoyaltyTierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerAcquisitionChannelKey
+		dataType: string
+		lineageTag: 70ddacd6-92e5-43f7-b53d-47beafad3d33
+		summarizeBy: none
+		sourceColumn: CustomerAcquisitionChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Customers = m
 		mode: import
 		queryGroup: Dimensions

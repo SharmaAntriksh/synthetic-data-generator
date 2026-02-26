@@ -173,6 +173,66 @@
             "width": 234
           },
           "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "MeasuresTable",
+          "nodeLineageTag": "09884a1f-f5d3-4d32-9913-353326f25b6a",
+          "size": {
+            "height": 176,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "Employee",
+          "nodeLineageTag": "6cdf88b0-c683-4874-b84f-0f5c1620597e",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "EmployeeStoreAssignment",
+          "nodeLineageTag": "f267ecf6-0b03-49ba-a159-dacf45da748e",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "ReturnReason",
+          "nodeLineageTag": "98f0a278-5f99-4d46-af71-71f7eb1b3c15",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "SalesChannel",
+          "nodeLineageTag": "de0800c1-321b-4f83-9b7d-f9879932d065",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "SalesReturns",
+          "nodeLineageTag": "5b6613aa-7a5b-4f47-b5df-0a29fcadedc8",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
         }
       ],
       "name": "All tables",
@@ -362,8 +422,89 @@
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,
       "tablesLocked": false
+    },
+    {
+      "ordinal": 2,
+      "scrollPosition": {
+        "x": 0,
+        "y": 0
+      },
+      "nodes": [
+        {
+          "location": {
+            "x": 0,
+            "y": 186
+          },
+          "nodeIndex": "EmployeeStoreAssignment",
+          "nodeLineageTag": "f267ecf6-0b03-49ba-a159-dacf45da748e",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 270.33333206176758,
+            "y": 0
+          },
+          "nodeIndex": "Employee",
+          "nodeLineageTag": "6cdf88b0-c683-4874-b84f-0f5c1620597e",
+          "size": {
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 300
+        },
+        {
+          "location": {
+            "x": 436.33333206176758,
+            "y": 160
+          },
+          "nodeIndex": "SalesOrderHeader",
+          "nodeLineageTag": "a6858967-9b2f-4631-b1db-1fc3279814ea",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 785.92734847305223,
+            "y": 207.83150216590136
+          },
+          "nodeIndex": "SalesReturns",
+          "nodeLineageTag": "5b6613aa-7a5b-4f47-b5df-0a29fcadedc8",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 975.33333206176758,
+            "y": 0
+          },
+          "nodeIndex": "ReturnReason",
+          "nodeLineageTag": "98f0a278-5f99-4d46-af71-71f7eb1b3c15",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0
+        }
+      ],
+      "name": "Layout 1",
+      "zoomValue": 79.553182037699813,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
     }
   ],
-  "selectedDiagram": "SOH/SOD",
+  "selectedDiagram": "Layout 1",
   "defaultDiagram": "All tables"
 }

@@ -13,7 +13,7 @@ table ProductSubcategory
 		dataType: int64
 		formatString: 0
 		lineageTag: c65defde-05fe-4684-b78c-9d6dd0c6c177
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CategoryKey
 
 		annotation SummarizationSetBy = Automatic
@@ -22,7 +22,7 @@ table ProductSubcategory
 		dataType: int64
 		formatString: 0
 		lineageTag: 8461138a-1331-4d9f-a0e1-096475ebbf5d
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: SubcategoryKey
 
 		annotation SummarizationSetBy = Automatic

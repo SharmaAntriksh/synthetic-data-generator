@@ -1,0 +1,108 @@
+table SalesReturns
+	lineageTag: 5b6613aa-7a5b-4f47-b5df-0a29fcadedc8
+
+	column SalesOrderNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: b126feb1-2a99-4d59-9b8f-b5fc5d1b30fd
+		summarizeBy: sum
+		sourceColumn: SalesOrderNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesOrderLineNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 22b98c5f-6d82-4417-a0aa-bb08f6aae022
+		summarizeBy: sum
+		sourceColumn: SalesOrderLineNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 04f938f9-9c67-4c3d-b2bb-6ace68a3dcc3
+		summarizeBy: none
+		sourceColumn: ReturnDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column ReturnReasonKey
+		dataType: int64
+		formatString: 0
+		lineageTag: da8e1926-be27-4727-9dda-8a13dc4744b2
+		summarizeBy: none
+		sourceColumn: ReturnReasonKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnQuantity
+		dataType: int64
+		formatString: 0
+		lineageTag: 3fcb9389-684f-45c9-8bf0-50f2d6109dc3
+		summarizeBy: sum
+		sourceColumn: ReturnQuantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnNetPrice
+		dataType: decimal
+		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		lineageTag: 0288ed18-01f0-41c4-b598-8e223fbc2cd1
+		summarizeBy: sum
+		sourceColumn: ReturnNetPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	column ReturnEventKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 2ecf48e5-7f38-4b62-9937-fed864153967
+		summarizeBy: count
+		sourceColumn: ReturnEventKey
+
+		annotation SummarizationSetBy = Automatic
+
+	partition SalesReturns = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source = Folder.Files ( ContosoFolder & "\facts\sales_return" ),
+				    RemoveCols = Table.SelectColumns ( Source, { "Content" } ),
+				    RemoveHidden = Table.SelectRows ( RemoveCols, each [Attributes]?[Hidden]? <> true ),
+				    InvokeCustom = Table.AddColumn (
+				        RemoveHidden,
+				        "Transform File",
+				        each Transform_SalesReturns_File ( [Content] )
+				    ),
+				    RemoveOtherCol = Table.SelectColumns ( InvokeCustom, { "Transform File" } ),
+				    CombineTables = Table.ExpandTableColumn (
+				        RemoveOtherCol,
+				        "Transform File",
+				        Table.ColumnNames ( Transform_Sales_File ( Sample_File_SalesReturns ) )
+				    ),
+				    ChangeType = Table.TransformColumnTypes (
+				        CombineTables,
+				        {
+				            { "SalesOrderNumber", Int64.Type },
+				            { "SalesOrderLineNumber", Int64.Type },
+				            { "ReturnDate", type date },
+				            { "ReturnReasonKey", Int64.Type },
+				            { "ReturnQuantity", Int64.Type },
+				            { "ReturnNetPrice", Currency.Type },
+				            { "ReturnEventKey", Int64.Type }
+				        }
+				    )
+				in
+				    ChangeType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+
