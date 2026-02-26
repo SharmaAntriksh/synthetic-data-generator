@@ -74,10 +74,42 @@ def _pick_seed(cfg: Dict[str, Any], a_cfg: Dict[str, Any], fallback: int = 42) -
 
 
 def _parse_global_dates(cfg: Dict[str, Any], a_cfg: Dict[str, Any]) -> Tuple[pd.Timestamp, pd.Timestamp]:
+    """
+    Resolve dataset window for assignments.
+
+    Priority:
+      1) a_cfg.global_dates {start,end}
+      2) a_cfg.override.dates {start,end}
+      3) cfg.defaults.dates {start,end}
+      4) fallback (2021-01-01..2026-12-31)
+    """
     gd = _as_dict(a_cfg.get("global_dates"))
     if gd and gd.get("start") and gd.get("end"):
-        return pd.to_datetime(gd["start"]).normalize(), pd.to_datetime(gd["end"]).normalize()
-    return pd.Timestamp("2021-01-01"), pd.Timestamp("2026-12-31")
+        gs = pd.to_datetime(gd["start"]).normalize()
+        ge = pd.to_datetime(gd["end"]).normalize()
+        if ge < gs:
+            gs, ge = ge, gs
+        return gs, ge
+
+    override = _as_dict(a_cfg.get("override"))
+    od = _as_dict(override.get("dates"))
+    if od and od.get("start") and od.get("end"):
+        gs = pd.to_datetime(od["start"]).normalize()
+        ge = pd.to_datetime(od["end"]).normalize()
+        if ge < gs:
+            gs, ge = ge, gs
+        return gs, ge
+
+    defaults = _as_dict(cfg.get("defaults"))
+    dd = _as_dict(defaults.get("dates"))
+    start = dd.get("start") or "2021-01-01"
+    end = dd.get("end") or "2026-12-31"
+
+    gs = pd.to_datetime(start).normalize()
+    ge = pd.to_datetime(end).normalize()
+    if ge < gs:
+        gs, ge = ge, gs
+    return gs, ge
 
 
 # -----------------------------------------------------------------------------
@@ -95,7 +127,7 @@ def _rand_dates_between(rng: np.random.Generator, start: pd.Timestamp, end: pd.T
     secs = rng.integers(start_i, end_i + 1, size=int(n), dtype=np.int64)
 
     dt = pd.to_datetime(secs, unit="s").normalize()  # DatetimeIndex
-    return pd.Series(dt) 
+    return pd.Series(dt)
 
 
 def _infer_home_store_key(employees: pd.DataFrame) -> pd.Series:
@@ -225,6 +257,7 @@ def _get_profile(
 def generate_employee_store_assignments(
     employees: pd.DataFrame,
     seed: int,
+    global_start: pd.Timestamp,
     global_end: pd.Timestamp,
     *,
     enabled: bool = True,
@@ -282,7 +315,14 @@ def generate_employee_store_assignments(
 
     hire = pd.to_datetime(emp["HireDate"]).dt.normalize()
     term = pd.to_datetime(emp["TerminationDate"]).dt.normalize()
-    term_filled = term.fillna(pd.to_datetime(global_end).normalize())
+
+    window_start = pd.to_datetime(global_start).normalize()
+    window_end = pd.to_datetime(global_end).normalize()
+    if window_end < window_start:
+        window_start, window_end = window_end, window_start
+
+    # For planning we cap at window_end; open-ended semantics are handled later.
+    term_filled = term.fillna(window_end)
 
     title = emp["Title"].astype(str).to_numpy()
 
@@ -388,9 +428,28 @@ def generate_employee_store_assignments(
         role = str(emp.iloc[i]["Title"])
         tgt = float(target_fte[i])
 
-        emp_start = hire.iloc[i]
-        plan_end = term_filled.iloc[i]
-        if pd.isna(emp_start) or pd.isna(plan_end) or plan_end < emp_start:
+        emp_hire = hire.iloc[i]
+        emp_term = term.iloc[i]              # may be NaT
+        plan_end_raw = term_filled.iloc[i]   # NaT -> window_end
+
+        if pd.isna(emp_hire) or pd.isna(plan_end_raw) or plan_end_raw < emp_hire:
+            continue
+
+        # Open-ended if still employed beyond dataset end (or unknown end)
+        open_ended = pd.isna(emp_term) or (pd.notna(emp_term) and pd.to_datetime(emp_term).normalize() > window_end)
+
+        # Plan end is capped to dataset end (and to termination if within window)
+        plan_end = pd.to_datetime(plan_end_raw).normalize()
+        if plan_end > window_end:
+            plan_end = window_end
+
+        # Assignments must start within dataset window
+        gen_start = pd.to_datetime(emp_hire).normalize()
+        if gen_start < window_start:
+            gen_start = window_start
+
+        # No overlap with dataset window -> skip
+        if plan_end < gen_start or gen_start > window_end:
             continue
 
         # never move Store Manager (but still emit home store row)
@@ -426,9 +485,10 @@ def generate_employee_store_assignments(
             if other:
                 k = int(rng.integers(e_min, e_max + 1)) if e_max >= e_min else int(e_min)
                 if k > 0:
-                    episodes = _sample_non_overlapping_episodes(emp_start, plan_end, other, k, tgt, dmin, dmax)
+                    # NOTE: episodes are sampled only inside dataset window (gen_start..plan_end)
+                    episodes = _sample_non_overlapping_episodes(gen_start, plan_end, other, k, tgt, dmin, dmax)
 
-        cur = pd.to_datetime(emp_start).normalize()
+        cur = pd.to_datetime(gen_start).normalize()
 
         def _emit(store_key: int, seg_start: pd.Timestamp, seg_end: Any, is_primary: bool, fte_val: float) -> None:
             rows.append(
@@ -453,16 +513,20 @@ def generate_employee_store_assignments(
                 _emit(home_store, cur, before_end, True, tgt)
 
             _emit(store, s, e, False, sec_fte)
-
             cur = (e + pd.Timedelta(days=1)).normalize()
 
         # final home segment
         if cur <= plan_end:
-            final_end = term.iloc[i]  # may be NaT
-            if pd.notna(final_end):
-                _emit(home_store, cur, final_end, True, tgt)
-            else:
+            if open_ended:
+                # employment continues beyond dataset end (or unknown end): keep open-ended validity
                 _emit(home_store, cur, pd.NaT, True, tgt)
+            else:
+                # terminated within dataset window
+                final_end = pd.to_datetime(emp_term).normalize()
+                if final_end > window_end:
+                    final_end = window_end
+                if final_end >= cur:
+                    _emit(home_store, cur, final_end, True, tgt)
 
     out = pd.DataFrame(rows, columns=cols)
     if out.empty:
@@ -506,7 +570,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
     force = bool(a_cfg.get("_force_regenerate", False))
     seed = _pick_seed(cfg, a_cfg, fallback=42)
-    _, global_end = _parse_global_dates(cfg, a_cfg)
+    global_start, global_end = _parse_global_dates(cfg, a_cfg)
 
     employees = pd.read_parquet(
         employees_path,
@@ -515,8 +579,9 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
     version_cfg = dict(a_cfg)
     version_cfg.pop("_force_regenerate", None)
-    version_cfg["schema_version"] = 6  # bump to force regen for role-profile semantics
+    version_cfg["schema_version"] = 7  # bump: dataset-window clamping + open-ended semantics
     version_cfg["_rows_employees"] = int(len(employees))
+    version_cfg["_global_dates"] = {"start": str(global_start.date()), "end": str(global_end.date())}
 
     if not force and not should_regenerate("employee_store_assignments", version_cfg, out_path):
         skip("EmployeeStoreAssignments up-to-date; skipping.")
@@ -528,6 +593,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
         df = generate_employee_store_assignments(
             employees=employees,
             seed=seed,
+            global_start=global_start,
             global_end=global_end,
             enabled=bool(a_cfg.get("enabled", True)),
             mover_share=_float_or(a_cfg.get("mover_share", a_cfg.get("multi_store_share", 0.03)), 0.03),
@@ -542,19 +608,6 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
             max_non_sales_episodes_frac=_float_or(a_cfg.get("max_non_sales_episodes_frac", 0.50), 0.50),
             multi_store_share=(a_cfg.get("multi_store_share") if "multi_store_share" in a_cfg else None),
         )
-
-        # Diagnostics
-        n_emp = int(df["EmployeeKey"].nunique()) if not df.empty else 0
-        movers = int((df.groupby("EmployeeKey")["StoreKey"].nunique() > 1).sum()) if n_emp else 0
-        avg_rows = float(len(df) / n_emp) if n_emp else 0.0
-        # info(f"EmployeeStoreAssignments: rows={len(df)} employees={n_emp} movers={movers} avg_rows/emp={avg_rows:.2f}")
-
-        # Role movement diagnostics (how many assignments per role)
-        try:
-            by_role = df.groupby("RoleAtStore")["AssignmentSequence"].max().sort_values(ascending=False)
-            # info("EmployeeStoreAssignments: max AssignmentSequence by role (top 10): " + str(by_role.head(10).to_dict()))
-        except Exception:
-            pass
 
         write_parquet_with_date32(
             df,
