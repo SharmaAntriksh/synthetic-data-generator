@@ -10,12 +10,43 @@ createOrReplace
 				)
 				```
 			formatString: #,0
+			displayFolder: 01 - Base Measures
 			lineageTag: 67a26120-bf02-41ae-a523-b8f62f1fdfef
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
+		measure 'Employee Sales by Store Assgn.' = ```
+				
+				CALCULATE ( 
+				    [Sales Amount],
+				    TREATAS ( 
+				        GENERATE ( 
+				            SUMMARIZE ( 
+				                EmployeeStoreAssignment, 
+				                EmployeeStoreAssignment[StoreKey],
+				                Employee[EmployeeKey]
+				            ),
+				            DATESBETWEEN ( 
+				                Dates[Date],
+				                CALCULATE ( MIN ( EmployeeStoreAssignment[StartDate] ) ),
+				                CALCULATE ( MAX ( EmployeeStoreAssignment[EndDate] ) )
+				            )
+				        ),
+				        SalesOrderHeader[StoreKey],
+				        SalesOrderHeader[SalesPersonEmployeeKey],
+				        Dates[Date]
+				    )
+				)
+				```
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: db2b2247-e1e1-4c1d-a41d-919e070c7d95
 
 			annotation PBI_FormatHint = {"isDecimal":true}
 
 		measure 'Profit Amount' = [Sales Amount] - [Cost Amount]
 			formatString: #,0
+			displayFolder: 01 - Base Measures
 			lineageTag: f8647297-675c-4b3d-aa5f-6b54c27ffadc
 
 			annotation PBI_FormatHint = {"isDecimal":true}
@@ -28,6 +59,7 @@ createOrReplace
 				)
 				```
 			formatString: #,0
+			displayFolder: 01 - Base Measures
 			lineageTag: da55f0b3-05ec-4a91-a1dc-7f0c25f625e5
 
 			annotation PBI_FormatHint = {"isDecimal":true}

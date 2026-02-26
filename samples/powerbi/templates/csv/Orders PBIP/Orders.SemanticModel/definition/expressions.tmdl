@@ -1,4 +1,4 @@
-expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-26 03_17_00 PM Customers 80 Sales 10K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-26 04_25_59 PM Customers 80 Sales 10K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
 	lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
 	queryGroup: 'Parameters & Functions'
 
@@ -118,13 +118,13 @@ expression Sample_SOD =
 expression Transform_SOD_File =
 		let
 		    Source = (Parameter_SOD as binary) => let
-		        Source = Csv.Document (
-		            Parameter_SOD,
-		            [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
-		        ),
-		        PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
-		    in
-		        PromotedHeaders
+		    Source = Csv.Document (
+		        Parameter_SOD,
+		        [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		    ),
+		    PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+		in
+		    PromotedHeaders
 		in
 		    Source
 	mAttributes: [ FunctionQueryBinding = "{""exemplarFormulaName"":""Sample_SOD""}" ]

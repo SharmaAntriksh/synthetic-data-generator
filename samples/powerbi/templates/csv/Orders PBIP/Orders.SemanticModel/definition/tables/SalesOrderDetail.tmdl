@@ -38,30 +38,6 @@ table SalesOrderDetail
 
 		annotation SummarizationSetBy = Automatic
 
-	column PromotionKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: 5820d409-2f31-4e26-9423-1eb518806243
-		summarizeBy: none
-		sourceColumn: PromotionKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column CurrencyKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: 31634858-0720-4808-ab52-1c1cf60047f1
-		summarizeBy: none
-		sourceColumn: CurrencyKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
 	column DueDate
 		dataType: dateTime
 		isHidden
@@ -194,8 +170,6 @@ table SalesOrderDetail
 				            { "SalesOrderNumber", Int64.Type },
 				            { "SalesOrderLineNumber", Int64.Type },
 				            { "ProductKey", Int64.Type },
-				            { "PromotionKey", Int64.Type },
-				            { "CurrencyKey", Int64.Type },
 				            { "DueDate", type date },
 				            { "DeliveryDate", type date },
 				            { "Quantity", Int64.Type },

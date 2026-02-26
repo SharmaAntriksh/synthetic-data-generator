@@ -38,46 +38,10 @@ table SalesOrderDetail
 
 		annotation SummarizationSetBy = Automatic
 
-	column StoreKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: efc35d34-9c13-48db-aeff-38c1d7e2775a
-		summarizeBy: count
-		sourceColumn: StoreKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column PromotionKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: 5820d409-2f31-4e26-9423-1eb518806243
-		summarizeBy: count
-		sourceColumn: PromotionKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column CurrencyKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: 31634858-0720-4808-ab52-1c1cf60047f1
-		summarizeBy: count
-		sourceColumn: CurrencyKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
 	column DueDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 59407756-07ac-456c-83fc-ffc6cfb820ba
 		summarizeBy: none
 		sourceColumn: DueDate
@@ -91,7 +55,7 @@ table SalesOrderDetail
 	column DeliveryDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: cf365f53-8b76-4e8e-a213-e4bfa4387380
 		summarizeBy: none
 		sourceColumn: DeliveryDate
@@ -206,9 +170,6 @@ table SalesOrderDetail
 				            { "SalesOrderNumber", Int64.Type },
 				            { "SalesOrderLineNumber", Int64.Type },
 				            { "ProductKey", Int64.Type },
-				            { "StoreKey", Int64.Type },
-				            { "PromotionKey", Int64.Type },
-				            { "CurrencyKey", Int64.Type },
 				            { "DueDate", type date },
 				            { "DeliveryDate", type date },
 				            { "Quantity", Int64.Type },

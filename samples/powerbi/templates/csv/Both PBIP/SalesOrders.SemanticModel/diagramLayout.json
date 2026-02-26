@@ -186,6 +186,66 @@
             "width": 234
           },
           "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "MeasuresTable",
+          "nodeLineageTag": "a79715bc-3f48-4e38-a742-77f338a1070a",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "Employee",
+          "nodeLineageTag": "f10e3dfb-d1a7-4a92-aaff-adebe2240cda",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "EmployeeStoreAssignment",
+          "nodeLineageTag": "1454de38-631b-4308-9560-8def0bdf1a09",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "ReturnReason",
+          "nodeLineageTag": "524eb4fb-0595-4b04-b133-686a4b7f7b02",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "SalesChannel",
+          "nodeLineageTag": "58913eb8-bce8-4850-8386-331ac43caa89",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "SalesReturns",
+          "nodeLineageTag": "906e8d13-d2cb-4206-ab3c-0ff546485163",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
         }
       ],
       "name": "All tables",
@@ -370,7 +430,88 @@
         }
       ],
       "name": "SOH/SOD",
-      "zoomValue": 67.604521404597349,
+      "zoomValue": 60.298223949793261,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
+    },
+    {
+      "ordinal": 2,
+      "scrollPosition": {
+        "x": 0,
+        "y": 0
+      },
+      "nodes": [
+        {
+          "location": {
+            "x": 0,
+            "y": 194
+          },
+          "nodeIndex": "EmployeeStoreAssignment",
+          "nodeLineageTag": "1454de38-631b-4308-9560-8def0bdf1a09",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 1
+        },
+        {
+          "location": {
+            "x": 263,
+            "y": 0
+          },
+          "nodeIndex": "Employee",
+          "nodeLineageTag": "f10e3dfb-d1a7-4a92-aaff-adebe2240cda",
+          "size": {
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 2,
+          "expandedHeight": 284
+        },
+        {
+          "location": {
+            "x": 483.33333206176758,
+            "y": 178
+          },
+          "nodeIndex": "Sales",
+          "nodeLineageTag": "cc1ca8dd-c4cc-4266-871c-d66529b444fb",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 3
+        },
+        {
+          "location": {
+            "x": 996.303607533611,
+            "y": 427.92062912437609
+          },
+          "nodeIndex": "SalesReturns",
+          "nodeLineageTag": "906e8d13-d2cb-4206-ab3c-0ff546485163",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 814.03559978593182,
+            "y": 96.06715294929127
+          },
+          "nodeIndex": "ReturnReason",
+          "nodeLineageTag": "524eb4fb-0595-4b04-b133-686a4b7f7b02",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0
+        }
+      ],
+      "name": "Layout 1",
+      "zoomValue": 79.553182037699813,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,

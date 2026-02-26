@@ -89,7 +89,7 @@ table Sales
 	column OrderDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 3a6177f9-db2b-403a-b928-b558a94f3e40
 		summarizeBy: none
 		sourceColumn: OrderDate
@@ -103,7 +103,7 @@ table Sales
 	column DueDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 006c062f-1d6d-4fca-a9b0-189ec9e909e7
 		summarizeBy: none
 		sourceColumn: DueDate
@@ -117,7 +117,7 @@ table Sales
 	column DeliveryDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 68e5e918-eb4e-4e6d-9630-084bffae83b3
 		summarizeBy: none
 		sourceColumn: DeliveryDate
@@ -219,6 +219,33 @@ table Sales
 
 		annotation SummarizationSetBy = Automatic
 
+	column SalesPersonEmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 22db6ab8-2c47-45e9-9eb7-23d24b15b808
+		summarizeBy: count
+		sourceColumn: SalesPersonEmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: c6b718e2-fccd-4d56-897c-37dd9254ac34
+		summarizeBy: count
+		sourceColumn: SalesChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 313b8021-a41b-4976-8443-49141ea65e8e
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Sales = m
 		mode: import
 		queryGroup: Fact
@@ -255,7 +282,10 @@ table Sales
 				        { "UnitPrice", Currency.Type },
 				        { "DiscountAmount", Currency.Type },
 				        { "DeliveryStatus", type text },
-				        { "IsOrderDelayed", Int64.Type }
+				        { "IsOrderDelayed", Int64.Type },
+				        { "SalesPersonEmployeeKey", Int64.Type },
+				        { "SalesChannelKey", Int64.Type },
+				        { "TimeKey", Int64.Type }
 				    },
 				    CheckNamesForTypes =
 				        if List.ContainsAny (

@@ -35,14 +35,6 @@ relationship dded5175-84e2-b7b8-6f6d-f340109e64ff
 	fromColumn: SalesOrderDetail.ProductKey
 	toColumn: Products.ProductKey
 
-relationship 1fac21a3-ee5d-cac2-b359-3985ac449411
-	fromColumn: SalesOrderDetail.PromotionKey
-	toColumn: Promotions.PromotionKey
-
-relationship e592004a-d7f4-4ab6-e25c-a9eba894cc16
-	fromColumn: SalesOrderDetail.CurrencyKey
-	toColumn: Currency.CurrencyKey
-
 relationship 4407fcda-70ba-5a9a-d338-638b7def17f6
 	fromColumn: SalesOrderHeader.CustomerKey
 	toColumn: Customers.CustomerKey
@@ -70,4 +62,12 @@ relationship AutoDetected_f1fcc0cf-f00f-4ea6-9deb-675ac1def2b4
 relationship 0d9b199c-ce95-ba02-c862-659a1662265d
 	fromColumn: SalesOrderHeader.SalesPersonEmployeeKey
 	toColumn: Employee.EmployeeKey
+
+relationship AutoDetected_1c27029a-9227-47fd-b041-25acd20bf8fe
+	fromColumn: SalesOrderHeader.PromotionKey
+	toColumn: Promotions.PromotionKey
+
+relationship AutoDetected_566e0966-a65c-4198-8729-6608f983754e
+	fromColumn: SalesOrderHeader.CurrencyKey
+	toColumn: Currency.CurrencyKey
 

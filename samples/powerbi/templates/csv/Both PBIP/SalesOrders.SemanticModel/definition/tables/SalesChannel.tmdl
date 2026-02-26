@@ -1,0 +1,167 @@
+table SalesChannel
+	lineageTag: 58913eb8-bce8-4850-8386-331ac43caa89
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 48ab08aa-e611-42ad-8dc9-3a58ca6fafaa
+		summarizeBy: count
+		sourceColumn: SalesChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannel
+		dataType: string
+		lineageTag: 274acb0b-4880-4bc2-8d1e-384c8e60d625
+		summarizeBy: none
+		sourceColumn: SalesChannel
+
+		annotation SummarizationSetBy = Automatic
+
+	column ChannelGroup
+		dataType: string
+		lineageTag: 1304fc2c-567b-4436-add9-07865a12042e
+		summarizeBy: none
+		sourceColumn: ChannelGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelCode
+		dataType: string
+		lineageTag: 34a51e52-ca53-496f-a450-6b522e8a41c4
+		summarizeBy: none
+		sourceColumn: SalesChannelCode
+
+		annotation SummarizationSetBy = Automatic
+
+	column SortOrder
+		dataType: int64
+		formatString: 0
+		lineageTag: a3a34e49-2c41-4b1e-aab7-05dd2fefb8fa
+		summarizeBy: sum
+		sourceColumn: SortOrder
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsDigital
+		dataType: int64
+		formatString: 0
+		lineageTag: c91cef8f-5db5-4ccc-b9aa-156aa5577534
+		summarizeBy: sum
+		sourceColumn: IsDigital
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsPhysical
+		dataType: int64
+		formatString: 0
+		lineageTag: 5ae668c5-f40b-4751-8df9-2281fbda3412
+		summarizeBy: sum
+		sourceColumn: IsPhysical
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsThirdParty
+		dataType: int64
+		formatString: 0
+		lineageTag: 0081c3e9-bf30-4d91-93e0-9dacf692969c
+		summarizeBy: sum
+		sourceColumn: IsThirdParty
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsB2B
+		dataType: int64
+		formatString: 0
+		lineageTag: bd1bd955-e3b4-4eb4-900d-fff7b0341636
+		summarizeBy: sum
+		sourceColumn: IsB2B
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsAssisted
+		dataType: int64
+		formatString: 0
+		lineageTag: d2ca1e20-de7e-44af-9d8c-f5e0c10186db
+		summarizeBy: sum
+		sourceColumn: IsAssisted
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsOwnedChannel
+		dataType: int64
+		formatString: 0
+		lineageTag: 8b6917cf-ee7f-4161-a0c4-c38453f2dc1e
+		summarizeBy: sum
+		sourceColumn: IsOwnedChannel
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeProfile
+		dataType: string
+		lineageTag: dd3d7958-81af-44bf-aa3b-f89dce45bf0c
+		summarizeBy: none
+		sourceColumn: TimeProfile
+
+		annotation SummarizationSetBy = Automatic
+
+	column Is24x7
+		dataType: int64
+		formatString: 0
+		lineageTag: 476ff5a1-2bc5-4b98-a929-17c83cefb9a9
+		summarizeBy: sum
+		sourceColumn: Is24x7
+
+		annotation SummarizationSetBy = Automatic
+
+	column OpenMinute
+		dataType: int64
+		formatString: 0
+		lineageTag: c68f303b-cf45-4e78-942e-c636faf11f82
+		summarizeBy: sum
+		sourceColumn: OpenMinute
+
+		annotation SummarizationSetBy = Automatic
+
+	column CloseMinute
+		dataType: int64
+		formatString: 0
+		lineageTag: 08e7e6b3-3fe8-4eae-a7d8-5beaefdca756
+		summarizeBy: sum
+		sourceColumn: CloseMinute
+
+		annotation SummarizationSetBy = Automatic
+
+	partition SalesChannel = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "sales_channels" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        {
+				            { "SalesChannelKey", Int64.Type },
+				            { "SalesChannel", type text },
+				            { "ChannelGroup", type text },
+				            { "SalesChannelCode", type text },
+				            { "SortOrder", Int64.Type },
+				            { "IsDigital", Int64.Type },
+				            { "IsPhysical", Int64.Type },
+				            { "IsThirdParty", Int64.Type },
+				            { "IsB2B", Int64.Type },
+				            { "IsAssisted", Int64.Type },
+				            { "IsOwnedChannel", Int64.Type },
+				            { "TimeProfile", type text },
+				            { "Is24x7", Int64.Type },
+				            { "OpenMinute", Int64.Type },
+				            { "CloseMinute", Int64.Type }
+				        }
+				    )
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

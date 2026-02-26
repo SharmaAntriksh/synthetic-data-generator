@@ -35,8 +35,8 @@ sales:
   chunk_size: 1000000
   max_lines_per_order: 10
   
-  file_format: "parquet"          # csv | parquet | deltaparquet
-  sales_output: "sales_order"           # sales | sales_order | both
+  file_format: "csv"          # csv | parquet | deltaparquet
+  sales_output: "both"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 

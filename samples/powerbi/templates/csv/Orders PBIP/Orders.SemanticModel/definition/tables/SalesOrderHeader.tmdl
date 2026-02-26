@@ -88,6 +88,24 @@ table SalesOrderHeader
 
 		annotation SummarizationSetBy = Automatic
 
+	column PromotionKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 51bef817-8d62-4a1a-b275-720d9c63f5b4
+		summarizeBy: none
+		sourceColumn: PromotionKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 63147d3e-3fe5-4120-a595-3fcf282a3ecb
+		summarizeBy: none
+		sourceColumn: CurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition SalesOrderHeader = m
 		mode: import
 		queryGroup: Fact
@@ -117,7 +135,9 @@ table SalesOrderHeader
 				            { "SalesChannelKey", Int64.Type },
 				            { "OrderDate", type date },
 				            { "TimeKey", Int64.Type },
-				            { "IsOrderDelayed", Int64.Type }
+				            { "IsOrderDelayed", Int64.Type },
+				            { "PromotionKey", Int64.Type },
+				            { "CurrencyKey", Int64.Type }
 				        }
 				    )
 				in

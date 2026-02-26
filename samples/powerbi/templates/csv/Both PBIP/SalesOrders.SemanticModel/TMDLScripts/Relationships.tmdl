@@ -67,18 +67,49 @@ createOrReplace
 		fromColumn: SalesOrderDetail.ProductKey
 		toColumn: Products.ProductKey
 
-	relationship 1fac21a3-ee5d-cac2-b359-3985ac449411
-		fromColumn: SalesOrderDetail.PromotionKey
-		toColumn: Promotions.PromotionKey
-
-	relationship 7b2e0cb0-a9bc-2724-42f2-0a172ddf5156
-		fromColumn: SalesOrderDetail.StoreKey
-		toColumn: Store.StoreKey
-
-	relationship e592004a-d7f4-4ab6-e25c-a9eba894cc16
-		fromColumn: SalesOrderDetail.CurrencyKey
-		toColumn: Currency.CurrencyKey
-
 	relationship 4407fcda-70ba-5a9a-d338-638b7def17f6
 		fromColumn: SalesOrderHeader.CustomerKey
 		toColumn: Customers.CustomerKey
+
+	relationship 949e15da-96b5-4173-99ce-24dff493793f
+		fromColumn: SalesOrderHeader.StoreKey
+		toColumn: Store.StoreKey
+
+	relationship 566aa513-5d46-4e4c-87d4-5dacc8c039b1
+		fromColumn: EmployeeStoreAssignment.StoreKey
+		toColumn: Store.StoreKey
+
+	relationship 6e410510-fd04-4ba3-a320-e2f3a085d55f
+		fromColumn: SalesOrderHeader.PromotionKey
+		toColumn: Promotions.PromotionKey
+
+	relationship e512eec8-6f8d-4573-b6a7-939c5ea70297
+		fromColumn: SalesOrderHeader.CurrencyKey
+		toColumn: Currency.CurrencyKey
+
+	relationship 54098baf-3b65-4d49-9739-df3cd0b36156
+		crossFilteringBehavior: bothDirections
+		fromCardinality: one
+		fromColumn: SalesReturns.SalesOrderNumber
+		toColumn: SalesOrderHeader.SalesOrderNumber
+
+	relationship 3687eaf9-aa9c-44a7-a33e-20036259f623
+		fromColumn: SalesOrderHeader.SalesChannelKey
+		toColumn: SalesChannel.SalesChannelKey
+
+	relationship 25fb2392-48d8-4f92-8a8d-4d7f2d1ffbaf
+		fromColumn: Sales.SalesChannelKey
+		toColumn: SalesChannel.SalesChannelKey
+
+	relationship 6e1ff80e-61ce-402a-9da9-421e0751cfb7
+		fromColumn: SalesReturns.ReturnReasonKey
+		toColumn: ReturnReason.ReturnReasonKey
+
+	relationship 692a29e9-90a9-42c9-a45c-fd9fbeae2c48
+		fromColumn: EmployeeStoreAssignment.EmployeeKey
+		toColumn: Employee.EmployeeKey
+
+	relationship 326d51ec-a1c5-8745-c008-b9ed4db2ad56
+		fromColumn: Sales.SalesPersonEmployeeKey
+		toColumn: Employee.EmployeeKey
+
