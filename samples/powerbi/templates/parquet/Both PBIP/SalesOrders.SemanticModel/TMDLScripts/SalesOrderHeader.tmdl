@@ -9,7 +9,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: f17d5347-259c-4ea8-b3dc-4d2b48560f58
-			summarizeBy: none
+			summarizeBy: sum
 			sourceColumn: SalesOrderNumber
 
 			changedProperty = IsHidden
@@ -21,7 +21,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: da63cb2e-08d8-4c46-a8a4-10e89d95b9f3
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: CustomerKey
 
 			changedProperty = IsHidden
@@ -54,14 +54,76 @@ createOrReplace
 
 			annotation SummarizationSetBy = Automatic
 
+		column StoreKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 31f91d16-dc4c-4237-9421-4fae9d2cfe7a
+			summarizeBy: count
+			sourceColumn: StoreKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesPersonEmployeeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 38218133-6f21-4368-8502-9dee4098e926
+			summarizeBy: count
+			sourceColumn: SalesPersonEmployeeKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column PromotionKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 884d1910-8823-4b37-bdf7-a94f6fc5804c
+			summarizeBy: count
+			sourceColumn: PromotionKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column CurrencyKey
+			dataType: int64
+			formatString: 0
+			lineageTag: af9340e2-d153-4cec-b7a9-d40d2bd9a249
+			summarizeBy: count
+			sourceColumn: CurrencyKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesChannelKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 0e066b37-1d3b-4325-8160-90b04f800168
+			summarizeBy: count
+			sourceColumn: SalesChannelKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column TimeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 8fd9ba76-bf51-4d00-9c77-f60b697a4578
+			summarizeBy: count
+			sourceColumn: TimeKey
+
+			annotation SummarizationSetBy = Automatic
+
 		partition SalesOrderHeader = m
 			mode: import
 			queryGroup: Fact
 			source =
 					let
-					    Source = FxReadParquetFile ( "facts\sales_order_header" )
+					    Source = FxReadParquetFile ( "facts\sales_order_header" ),
+					    ChangedType = Table.TransformColumnTypes (
+					        Source,
+					        {
+					            { "SalesChannelKey", Int64.Type },
+					            { "TimeKey", Int64.Type },
+					            { "IsOrderDelayed", Int64.Type }
+					        }
+					    )
 					in
-					    Source
+					    ChangedType
 
 		changedProperty = IsHidden
 

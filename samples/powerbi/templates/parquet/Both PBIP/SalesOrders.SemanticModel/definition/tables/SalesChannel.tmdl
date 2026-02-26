@@ -1,0 +1,148 @@
+table SalesChannel
+	lineageTag: 47a8ed70-6b38-4bbe-acb0-623457c1fe8f
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 94d1472d-afcd-4a20-9b89-14bfc75fc627
+		summarizeBy: count
+		sourceColumn: SalesChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannel
+		dataType: string
+		lineageTag: f14d3907-8f33-4e19-91ae-ceda6fc3d5e6
+		summarizeBy: none
+		sourceColumn: SalesChannel
+
+		annotation SummarizationSetBy = Automatic
+
+	column ChannelGroup
+		dataType: string
+		lineageTag: a7f68c14-f60a-47f5-9796-0152d96612bf
+		summarizeBy: none
+		sourceColumn: ChannelGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelCode
+		dataType: string
+		lineageTag: f5ccbb3d-78e2-4017-ad55-2c92177771e3
+		summarizeBy: none
+		sourceColumn: SalesChannelCode
+
+		annotation SummarizationSetBy = Automatic
+
+	column SortOrder
+		dataType: int64
+		formatString: 0
+		lineageTag: 1cf3944c-dcba-4254-8787-d26b19de2741
+		summarizeBy: sum
+		sourceColumn: SortOrder
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsDigital
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: d81abe28-e61e-4fea-976d-3369c80b8f1f
+		summarizeBy: none
+		sourceColumn: IsDigital
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsPhysical
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 04f5478c-11ed-42bc-b972-0ba262f8657c
+		summarizeBy: none
+		sourceColumn: IsPhysical
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsThirdParty
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 579bb8b1-fcf1-4b79-bfa3-150569d1d127
+		summarizeBy: none
+		sourceColumn: IsThirdParty
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsB2B
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 63ef1408-77fc-4d00-9c66-2d5ba127b7b4
+		summarizeBy: none
+		sourceColumn: IsB2B
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsAssisted
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 9145f1c8-ef40-498b-8be3-367ae1f4802e
+		summarizeBy: none
+		sourceColumn: IsAssisted
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsOwnedChannel
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 7c262f7b-0eef-4b4a-81d6-79a323de3e90
+		summarizeBy: none
+		sourceColumn: IsOwnedChannel
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeProfile
+		dataType: string
+		lineageTag: c4f02986-891d-47d8-9b8c-7c65e21fdf5a
+		summarizeBy: none
+		sourceColumn: TimeProfile
+
+		annotation SummarizationSetBy = Automatic
+
+	column Is24x7
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 1ad7fbf4-062e-406e-a443-8b02d049829d
+		summarizeBy: none
+		sourceColumn: Is24x7
+
+		annotation SummarizationSetBy = Automatic
+
+	column OpenMinute
+		dataType: int64
+		formatString: 0
+		lineageTag: f0fb55c0-2b8c-4ba1-8049-40f8979cf39b
+		summarizeBy: sum
+		sourceColumn: OpenMinute
+
+		annotation SummarizationSetBy = Automatic
+
+	column CloseMinute
+		dataType: int64
+		formatString: 0
+		lineageTag: ce7c9ac7-9574-4054-91d7-9e3b5cf4cd21
+		summarizeBy: sum
+		sourceColumn: CloseMinute
+
+		annotation SummarizationSetBy = Automatic
+
+	partition SalesChannel = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source     = FxReadParquetFile ( "dimensions\sales_channels" ),
+				    ChangeType = Table.TransformColumnTypes ( Source, { { "SalesChannelKey", Int64.Type } } )
+				in
+				    ChangeType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

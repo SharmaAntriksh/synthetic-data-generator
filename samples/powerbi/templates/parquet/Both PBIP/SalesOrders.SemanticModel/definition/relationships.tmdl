@@ -65,19 +65,45 @@ relationship dded5175-84e2-b7b8-6f6d-f340109e64ff
 	fromColumn: SalesOrderDetail.ProductKey
 	toColumn: Products.ProductKey
 
-relationship 1fac21a3-ee5d-cac2-b359-3985ac449411
-	fromColumn: SalesOrderDetail.PromotionKey
-	toColumn: Promotions.PromotionKey
-
-relationship 7b2e0cb0-a9bc-2724-42f2-0a172ddf5156
-	fromColumn: SalesOrderDetail.StoreKey
-	toColumn: Store.StoreKey
-
-relationship e592004a-d7f4-4ab6-e25c-a9eba894cc16
-	fromColumn: SalesOrderDetail.CurrencyKey
-	toColumn: Currency.CurrencyKey
-
 relationship 4407fcda-70ba-5a9a-d338-638b7def17f6
 	fromColumn: SalesOrderHeader.CustomerKey
 	toColumn: Customers.CustomerKey
+
+relationship 286be71c-ead4-4c84-8f8b-9128118415e7
+	fromColumn: SalesOrderHeader.StoreKey
+	toColumn: Store.StoreKey
+
+relationship 9e2c99e3-c7a0-4452-824c-27f8ed1a2e2a
+	fromColumn: SalesOrderHeader.PromotionKey
+	toColumn: Promotions.PromotionKey
+
+relationship 3af48a45-6b6d-4c9b-af44-c4e4ace3d646
+	fromColumn: SalesOrderHeader.CurrencyKey
+	toColumn: Currency.CurrencyKey
+
+relationship 11af6b0f-569a-4d9d-a398-85b4957a483c
+	fromColumn: EmployeeStoreAssignment.StoreKey
+	toColumn: Store.StoreKey
+
+relationship 5fe28bfb-dcdb-40d2-8b84-ab3525aeb4d4
+	crossFilteringBehavior: bothDirections
+	fromCardinality: one
+	fromColumn: SalesReturns.SalesOrderNumber
+	toColumn: SalesOrderHeader.SalesOrderNumber
+
+relationship 8ddbfaec-9b36-4efb-be35-6bd8af43d6e3
+	fromColumn: SalesOrderHeader.SalesChannelKey
+	toColumn: SalesChannel.SalesChannelKey
+
+relationship c17a2a29-65c7-4171-b776-f11d10e0fd2a
+	fromColumn: Sales.SalesChannelKey
+	toColumn: SalesChannel.SalesChannelKey
+
+relationship 4f0a0fe6-420c-4011-affd-e8d04e27d4e9
+	fromColumn: EmployeeStoreAssignment.EmployeeKey
+	toColumn: Employee.EmployeeKey
+
+relationship 8584b92c-a4fc-4e86-908e-f32b600285fd
+	fromColumn: SalesReturns.ReturnReasonKey
+	toColumn: ReturnReason.ReturnReasonKey
 

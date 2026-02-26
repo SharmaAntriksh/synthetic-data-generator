@@ -7,7 +7,7 @@ table SalesOrderDetail
 		isHidden
 		formatString: 0
 		lineageTag: cb34fba1-948b-4ea1-821a-21ddce07d4f6
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
 
 		changedProperty = IsHidden
@@ -31,7 +31,7 @@ table SalesOrderDetail
 		isHidden
 		formatString: 0
 		lineageTag: 722964a7-101a-41fa-946f-2599d7dfb2fd
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ProductKey
 
 		changedProperty = IsHidden
@@ -74,8 +74,6 @@ table SalesOrderDetail
 
 		changedProperty = IsHidden
 
-		changedProperty = DataType
-
 		annotation SummarizationSetBy = Automatic
 
 	column UnitCost
@@ -87,8 +85,6 @@ table SalesOrderDetail
 		sourceColumn: UnitCost
 
 		changedProperty = IsHidden
-
-		changedProperty = DataType
 
 		annotation SummarizationSetBy = Automatic
 
@@ -102,8 +98,6 @@ table SalesOrderDetail
 
 		changedProperty = IsHidden
 
-		changedProperty = DataType
-
 		annotation SummarizationSetBy = Automatic
 
 	column DiscountAmount
@@ -115,8 +109,6 @@ table SalesOrderDetail
 		sourceColumn: DiscountAmount
 
 		changedProperty = IsHidden
-
-		changedProperty = DataType
 
 		annotation SummarizationSetBy = Automatic
 
@@ -131,46 +123,10 @@ table SalesOrderDetail
 
 		annotation SummarizationSetBy = Automatic
 
-	column StoreKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: c646e5a0-63b7-451e-b161-6046010cf0bf
-		summarizeBy: none
-		sourceColumn: StoreKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column PromotionKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: 03c41836-623d-4cc0-9230-2a4bfc9e09eb
-		summarizeBy: none
-		sourceColumn: PromotionKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column CurrencyKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: e70f974f-ea27-4d2e-ae57-a3841e06df13
-		summarizeBy: none
-		sourceColumn: CurrencyKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
 	column DueDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 520f8853-2b05-4a63-a3f4-9bc61a91762a
 		summarizeBy: none
 		sourceColumn: DueDate
@@ -186,9 +142,18 @@ table SalesOrderDetail
 		queryGroup: Fact
 		source =
 				let
-				    Source = FxReadParquetFile ( "facts\sales_order_detail" )
+				    Source = FxReadParquetFile ( "facts\sales_order_detail" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        {
+				            { "NetPrice", Currency.Type },
+				            { "UnitCost", Currency.Type },
+				            { "UnitPrice", Currency.Type },
+				            { "DiscountAmount", Currency.Type }
+				        }
+				    )
 				in
-				    Source
+				    ChangedType
 
 	changedProperty = IsHidden
 

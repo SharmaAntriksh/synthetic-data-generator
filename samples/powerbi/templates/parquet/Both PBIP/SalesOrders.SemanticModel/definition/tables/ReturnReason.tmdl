@@ -1,0 +1,41 @@
+table ReturnReason
+	lineageTag: c60843a1-5d3a-45b2-867e-7f664fff32a0
+
+	column ReturnReasonKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 5bf84513-cce0-4290-b1f3-df32b9e33e47
+		summarizeBy: count
+		sourceColumn: ReturnReasonKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnReason
+		dataType: string
+		lineageTag: 8166aee8-2ec8-4873-b62c-333375fa46fb
+		summarizeBy: none
+		sourceColumn: ReturnReason
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnReasonCategory
+		dataType: string
+		lineageTag: 93fe5324-6533-432e-a354-a3b37232bb85
+		summarizeBy: none
+		sourceColumn: ReturnReasonCategory
+
+		annotation SummarizationSetBy = Automatic
+
+	partition ReturnReason = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\return_reason" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+
