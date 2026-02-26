@@ -1,0 +1,96 @@
+table EmployeeStoreAssignment
+	lineageTag: e0eb2dcb-0949-4b1d-86ca-d558ebda6c58
+
+	column EmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 4ac7b2c6-0070-425f-8bab-b46a5e05f232
+		summarizeBy: count
+		sourceColumn: EmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 45697346-c5e3-4a98-ac10-0fb1a5d4b29c
+		summarizeBy: count
+		sourceColumn: StoreKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column StartDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 37488242-4a67-4848-bfc3-0c91d1c3a113
+		summarizeBy: none
+		sourceColumn: StartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column EndDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 68ffd156-5f19-4a4f-9449-6a6c34cc6230
+		summarizeBy: none
+		sourceColumn: EndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column FTE
+		dataType: double
+		lineageTag: 4627ce23-a8d5-40cb-ba3d-226bd86786df
+		summarizeBy: sum
+		sourceColumn: FTE
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column RoleAtStore
+		dataType: string
+		lineageTag: 0af47093-9f98-4cf6-b692-56ef44209caa
+		summarizeBy: none
+		sourceColumn: RoleAtStore
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsPrimary
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: 3f77aae2-0669-42e5-b767-31653557264c
+		summarizeBy: none
+		sourceColumn: IsPrimary
+
+		annotation SummarizationSetBy = Automatic
+
+	column AssignmentSequence
+		dataType: int64
+		formatString: 0
+		lineageTag: 1dc8717f-bdc4-4580-b8d4-2f5849c01848
+		summarizeBy: sum
+		sourceColumn: AssignmentSequence
+
+		annotation SummarizationSetBy = Automatic
+
+	partition EmployeeStoreAssignment = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\employee_store_assignments" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

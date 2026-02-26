@@ -50,6 +50,35 @@ table Sales
 		displayFolder: 01 - Base Measures
 		lineageTag: f941d2a9-2c52-4441-ba75-afa6c2f91413
 
+	measure 'Employee Sales by Store Assgn.' = ```
+			
+			CALCULATE ( 
+			    [Sales Amount],
+			    TREATAS ( 
+			        GENERATE ( 
+			            SUMMARIZE ( 
+			                EmployeeStoreAssignment, 
+			                EmployeeStoreAssignment[StoreKey],
+			                Employee[EmployeeKey]
+			            ),
+			            DATESBETWEEN ( 
+			                Dates[Date],
+			                CALCULATE ( MIN ( EmployeeStoreAssignment[StartDate] ) ),
+			                CALCULATE ( MAX ( EmployeeStoreAssignment[EndDate] ) )
+			            )
+			        ),
+			        Sales[StoreKey],
+			        Sales[SalesPersonEmployeeKey],
+			        Dates[Date]
+			    )
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 9766ddad-3012-4b9f-8155-49a83414ced3
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
 	column CustomerKey
 		dataType: int64
 		isHidden
@@ -113,7 +142,7 @@ table Sales
 	column OrderDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 9331a271-99b7-434b-a739-db9a7df62a84
 		summarizeBy: none
 		sourceColumn: OrderDate
@@ -127,7 +156,7 @@ table Sales
 	column DueDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: a781ae6f-5ed6-40de-95ac-91debb993042
 		summarizeBy: none
 		sourceColumn: DueDate
@@ -141,7 +170,7 @@ table Sales
 	column DeliveryDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 5da03247-1e61-4876-af60-fbd845bb26ed
 		summarizeBy: none
 		sourceColumn: DeliveryDate
@@ -180,6 +209,7 @@ table Sales
 	column UnitCost
 		dataType: decimal
 		isHidden
+		formatString: #,0.00
 		lineageTag: 24c21a55-1fb2-484b-87ce-6da090009bc1
 		summarizeBy: sum
 		sourceColumn: UnitCost
@@ -187,8 +217,6 @@ table Sales
 		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column UnitPrice
 		dataType: decimal
@@ -239,16 +267,61 @@ table Sales
 
 		annotation SummarizationSetBy = Automatic
 
+	column SalesOrderNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 28a9da4e-9b50-48e4-be35-4081e6d3d780
+		summarizeBy: sum
+		sourceColumn: SalesOrderNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesOrderLineNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 8c4099b1-1ca5-4d4b-a456-c4a78f0773fd
+		summarizeBy: sum
+		sourceColumn: SalesOrderLineNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesPersonEmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 19b32192-0ccf-4afc-9145-dd27cad865d8
+		summarizeBy: count
+		sourceColumn: SalesPersonEmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: b07deb9d-d33d-480e-85a9-e9cbd17cd345
+		summarizeBy: count
+		sourceColumn: SalesChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: b1e1e8b2-5d47-44b5-9924-e8f426178090
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Sales = m
 		mode: import
 		queryGroup: Fact
 		source =
 				let
-				    Source = Folder.Files ( ContosoFolder & "\facts" ),
+				    Source = Folder.Files ( ContosoFolder & "\facts\sales" ),
 				    RemoveCols = Table.SelectColumns ( Source, { "Content" } ),
-				    RemoveHiden = Table.SelectRows ( RemoveCols, each [Attributes]?[Hidden]? <> true ),
+				    RemoveHidden = Table.SelectRows ( RemoveCols, each [Attributes]?[Hidden]? <> true ),
 				    InvokeCustom = Table.AddColumn (
-				        RemoveHiden,
+				        RemoveHidden,
 				        "Transform File",
 				        each Transform_Sales_File ( [Content] )
 				    ),
@@ -275,7 +348,10 @@ table Sales
 				        { "UnitPrice", Currency.Type },
 				        { "DiscountAmount", Currency.Type },
 				        { "DeliveryStatus", type text },
-				        { "IsOrderDelayed", Int64.Type }
+				        { "IsOrderDelayed", Int64.Type },
+				        { "SalesPersonEmployeeKey", Int64.Type },
+				        { "SalesChannelKey", Int64.Type },
+				        { "TimeKey", Int64.Type }
 				    },
 				    CheckNamesForTypes =
 				        if List.ContainsAny (

@@ -1,0 +1,111 @@
+table EmployeeStoreAssignment
+	lineageTag: 9ea6a6fd-674f-4b0a-8d7a-c13aebfb56fe
+
+	column EmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 4c104e3d-41a0-4ce7-827f-8e940331563f
+		summarizeBy: count
+		sourceColumn: EmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 5d90c23e-6fe0-46ba-a74c-5e3075dbfed8
+		summarizeBy: count
+		sourceColumn: StoreKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column StartDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 1fe8125c-0bf1-444f-8a2d-ff7e061c0df3
+		summarizeBy: none
+		sourceColumn: StartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column EndDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 9928dd29-fb19-4393-b881-f43458fe761b
+		summarizeBy: none
+		sourceColumn: EndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column FTE
+		dataType: double
+		lineageTag: 15abbe00-407b-4051-bd43-c1e27afa15d9
+		summarizeBy: sum
+		sourceColumn: FTE
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column RoleAtStore
+		dataType: string
+		lineageTag: ac504002-f189-4b50-94e0-84d2bbbf3c01
+		summarizeBy: none
+		sourceColumn: RoleAtStore
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsPrimary
+		dataType: int64
+		formatString: 0
+		lineageTag: 6c7f9937-0586-4e0c-b59a-fd682a1237cc
+		summarizeBy: sum
+		sourceColumn: IsPrimary
+
+		annotation SummarizationSetBy = Automatic
+
+	column AssignmentSequence
+		dataType: int64
+		formatString: 0
+		lineageTag: 1f1c59b1-26d4-4ec5-a6e2-a3d2db520ecf
+		summarizeBy: sum
+		sourceColumn: AssignmentSequence
+
+		annotation SummarizationSetBy = Automatic
+
+	partition EmployeeStoreAssignment = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "employee_store_assignments" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        {
+				            { "EmployeeKey", Int64.Type },
+				            { "StoreKey", Int64.Type },
+				            { "StartDate", type date },
+				            { "EndDate", type date },
+				            { "FTE", type number },
+				            { "RoleAtStore", type text },
+				            { "IsPrimary", Int64.Type },
+				            { "AssignmentSequence", Int64.Type }
+				        }
+				    )
+				in
+				    ChangedType
+
+	changedProperty = Name
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

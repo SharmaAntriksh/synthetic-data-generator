@@ -5,7 +5,7 @@ table Products
 		dataType: int64
 		formatString: 0
 		lineageTag: 817fb5b9-efba-4622-9733-06c52a3785e4
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ProductKey
 
 		changedProperty = IsHidden
@@ -46,7 +46,7 @@ table Products
 		dataType: int64
 		formatString: 0
 		lineageTag: 169bba0b-83a5-49c2-ae55-f76e8d03183f
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: SubcategoryKey
 
 		changedProperty = IsHidden
@@ -104,7 +104,7 @@ table Products
 		annotation SummarizationSetBy = Automatic
 
 	column UnitCost
-		dataType: double
+		dataType: decimal
 		formatString: #,0.00
 		lineageTag: 55417800-0963-4dcf-bbb2-b6a61d0f428a
 		summarizeBy: sum
@@ -115,7 +115,7 @@ table Products
 		annotation SummarizationSetBy = Automatic
 
 	column UnitPrice
-		dataType: double
+		dataType: decimal
 		formatString: #,0.00
 		lineageTag: 11e753c5-0f96-43ea-83b7-a269d2c1a0d6
 		summarizeBy: sum
@@ -158,14 +158,308 @@ table Products
 
 		annotation SummarizationSetBy = Automatic
 
+	column LaunchDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 1c723ae0-0fef-4079-adf0-ce25583fdcc8
+		summarizeBy: none
+		sourceColumn: LaunchDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column LaunchDateKey
+		dataType: int64
+		formatString: 0
+		lineageTag: a4c035ed-de95-460c-9a8e-e3be04d1df3e
+		summarizeBy: count
+		sourceColumn: LaunchDateKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column DiscontinuedDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 6257bb66-bf63-4978-a547-2acd4acfeab6
+		summarizeBy: none
+		sourceColumn: DiscontinuedDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column DiscontinuedDateKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 4f1c4f16-824b-49cf-a042-00c6f0c06e2e
+		summarizeBy: count
+		sourceColumn: DiscontinuedDateKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsDiscontinued
+		dataType: int64
+		formatString: 0
+		lineageTag: 590ae54f-528f-4a6f-8a2f-147d1d1f73d1
+		summarizeBy: sum
+		sourceColumn: IsDiscontinued
+
+		annotation SummarizationSetBy = Automatic
+
+	column ColorFamily
+		dataType: string
+		lineageTag: 75e0bdf1-1061-45e9-afa4-3c54a8004ef3
+		summarizeBy: none
+		sourceColumn: ColorFamily
+
+		annotation SummarizationSetBy = Automatic
+
+	column Material
+		dataType: string
+		lineageTag: b43cfd0b-4331-452d-a6e0-452cad41d715
+		summarizeBy: none
+		sourceColumn: Material
+
+		annotation SummarizationSetBy = Automatic
+
+	column Style
+		dataType: string
+		lineageTag: 9a00f399-a365-4bd3-91a1-7df71bfa78b2
+		summarizeBy: none
+		sourceColumn: Style
+
+		annotation SummarizationSetBy = Automatic
+
+	column AgeGroup
+		dataType: string
+		lineageTag: e890890d-5990-4794-b52e-a0660cb07621
+		summarizeBy: none
+		sourceColumn: AgeGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	column ProductLine
+		dataType: string
+		lineageTag: 3e3c9f62-f113-4a7f-ba73-d60b24fbd3d5
+		summarizeBy: none
+		sourceColumn: ProductLine
+
+		annotation SummarizationSetBy = Automatic
+
+	column SeasonalityProfile
+		dataType: string
+		lineageTag: d37729df-0d7b-428a-967f-d675c2c39245
+		summarizeBy: none
+		sourceColumn: SeasonalityProfile
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeightKg
+		dataType: double
+		lineageTag: 2c6f236d-e9af-4567-9979-95968b0198e3
+		summarizeBy: sum
+		sourceColumn: WeightKg
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column LengthCm
+		dataType: double
+		lineageTag: 3fd488fb-ad2f-4b92-9c4e-58c2cf365884
+		summarizeBy: sum
+		sourceColumn: LengthCm
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column WidthCm
+		dataType: double
+		lineageTag: d4a96c89-0a79-4743-88b1-7747e72ef583
+		summarizeBy: sum
+		sourceColumn: WidthCm
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column HeightCm
+		dataType: double
+		lineageTag: 1bc57885-1d5d-49b2-8c50-e4784a96a84c
+		summarizeBy: sum
+		sourceColumn: HeightCm
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column VolumeCm3
+		dataType: double
+		lineageTag: 32bdb4ad-f683-4caa-8ede-773203517621
+		summarizeBy: sum
+		sourceColumn: VolumeCm3
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column ShippingClass
+		dataType: string
+		lineageTag: 52ce2cbd-9ede-4442-812e-04d58d680062
+		summarizeBy: none
+		sourceColumn: ShippingClass
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsFragile
+		dataType: int64
+		formatString: 0
+		lineageTag: 029b9702-bf96-435b-9aad-10f0d180f2d6
+		summarizeBy: sum
+		sourceColumn: IsFragile
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsHazmat
+		dataType: int64
+		formatString: 0
+		lineageTag: 13f6b372-28f5-4d73-b836-266bb99d6fab
+		summarizeBy: sum
+		sourceColumn: IsHazmat
+
+		annotation SummarizationSetBy = Automatic
+
+	column LeadTimeDays
+		dataType: int64
+		formatString: 0
+		lineageTag: 33b5821a-bd94-4865-b336-cff4dfa1157f
+		summarizeBy: sum
+		sourceColumn: LeadTimeDays
+
+		annotation SummarizationSetBy = Automatic
+
+	column CasePackQty
+		dataType: int64
+		formatString: 0
+		lineageTag: 09be0678-6b34-4236-9ea4-4824c5deddcb
+		summarizeBy: sum
+		sourceColumn: CasePackQty
+
+		annotation SummarizationSetBy = Automatic
+
+	column FulfillmentType
+		dataType: string
+		lineageTag: 0d20d631-cd56-4497-a5b6-00a62f41fa28
+		summarizeBy: none
+		sourceColumn: FulfillmentType
+
+		annotation SummarizationSetBy = Automatic
+
+	column BrandTier
+		dataType: string
+		lineageTag: 661a0002-1fa3-462d-be28-c1c544bc8751
+		summarizeBy: none
+		sourceColumn: BrandTier
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleStore
+		dataType: int64
+		formatString: 0
+		lineageTag: 7eea187c-0e7d-4a64-97f1-828e3ca4e637
+		summarizeBy: sum
+		sourceColumn: EligibleStore
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleOnline
+		dataType: int64
+		formatString: 0
+		lineageTag: 5108e513-3bfa-4cad-9ec1-73bf4ad313fe
+		summarizeBy: sum
+		sourceColumn: EligibleOnline
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleMarketplace
+		dataType: int64
+		formatString: 0
+		lineageTag: 713f7841-8b37-4530-81cd-aa5517eacdd0
+		summarizeBy: sum
+		sourceColumn: EligibleMarketplace
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleB2B
+		dataType: int64
+		formatString: 0
+		lineageTag: c1243865-9cc6-4c38-8a79-ab1b46d348db
+		summarizeBy: sum
+		sourceColumn: EligibleB2B
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarrantyMonths
+		dataType: int64
+		formatString: 0
+		lineageTag: 309d491b-b4a9-423c-a735-aea29370e03d
+		summarizeBy: sum
+		sourceColumn: WarrantyMonths
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnRateBase
+		dataType: double
+		lineageTag: 14f51302-8250-49a1-9872-e941e23a42ca
+		summarizeBy: sum
+		sourceColumn: ReturnRateBase
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column DefectRateBase
+		dataType: double
+		lineageTag: 4c668db3-5246-4537-9a89-055f38ea1edb
+		summarizeBy: sum
+		sourceColumn: DefectRateBase
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column ReturnWindowDays
+		dataType: int64
+		formatString: 0
+		lineageTag: dad0e375-1fe3-44da-bd46-56c2056f6410
+		summarizeBy: sum
+		sourceColumn: ReturnWindowDays
+
+		annotation SummarizationSetBy = Automatic
+
+	column SupplierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 5c5d59a6-1a58-484b-8c1b-380701b508e8
+		summarizeBy: count
+		sourceColumn: SupplierKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Products = m
 		mode: import
 		queryGroup: Dimensions
 		source =
 				let
-				    Source = FxReadParquetFile ( "dimensions\products" )
+				    Source = FxReadParquetFile ( "dimensions\products" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        { { "UnitCost", Currency.Type }, { "UnitPrice", Currency.Type } }
+				    )
 				in
-				    Source
+				    ChangedType
 
 	changedProperty = IsHidden
 

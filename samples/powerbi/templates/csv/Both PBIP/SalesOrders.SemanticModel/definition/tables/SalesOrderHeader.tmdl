@@ -29,7 +29,7 @@ table SalesOrderHeader
 	column OrderDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: cfc3783a-99e1-4910-a1f6-077df3c58ad9
 		summarizeBy: none
 		sourceColumn: OrderDate
@@ -52,6 +52,60 @@ table SalesOrderHeader
 
 		annotation SummarizationSetBy = Automatic
 
+	column StoreKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 98c12d4c-86d6-41fb-bb4c-ce3fe3ce58a4
+		summarizeBy: count
+		sourceColumn: StoreKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesPersonEmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 0d014db4-23ef-41a8-8c60-2808ee6f5e3a
+		summarizeBy: count
+		sourceColumn: SalesPersonEmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 6780fdb5-040c-4943-be69-38d879da1f07
+		summarizeBy: count
+		sourceColumn: PromotionKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 00eb9a70-0ba3-468e-9569-2bc7d9c18b67
+		summarizeBy: count
+		sourceColumn: CurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 1e5cec2c-633d-40c2-8b4e-c787cc16de2a
+		summarizeBy: count
+		sourceColumn: SalesChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 597de895-c94c-4af2-90a6-cc70f49c9ec9
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition SalesOrderHeader = m
 		mode: import
 		queryGroup: Fact
@@ -71,17 +125,23 @@ table SalesOrderHeader
 				        "Transform File",
 				        Table.ColumnNames ( Transform_SOH_File ( Sample_File_SOH ) )
 				    ),
-				    CombineTables = Table.TransformColumnTypes (
+				    ChangedType = Table.TransformColumnTypes (
 				        ExpandTable,
 				        {
 				            { "SalesOrderNumber", Int64.Type },
 				            { "CustomerKey", Int64.Type },
+				            { "StoreKey", Int64.Type },
+				            { "SalesPersonEmployeeKey", Int64.Type },
+				            { "SalesChannelKey", Int64.Type },
 				            { "OrderDate", type date },
-				            { "IsOrderDelayed", Int64.Type }
+				            { "TimeKey", Int64.Type },
+				            { "IsOrderDelayed", Int64.Type },
+				            { "PromotionKey", Int64.Type },
+				            { "CurrencyKey", Int64.Type }
 				        }
 				    )
 				in
-				    CombineTables
+				    ChangedType
 
 	changedProperty = IsHidden
 

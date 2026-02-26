@@ -9,15 +9,15 @@ model Model
 
 queryGroup 'Parameters & Functions'
 
-	annotation PBI_QueryGroupOrder = 3
+	annotation PBI_QueryGroupOrder = 4
 
 queryGroup Dimensions
 
-	annotation PBI_QueryGroupOrder = 4
+	annotation PBI_QueryGroupOrder = 5
 
 queryGroup Fact
 
-	annotation PBI_QueryGroupOrder = 5
+	annotation PBI_QueryGroupOrder = 6
 
 queryGroup 'SOH Transformation'
 
@@ -43,9 +43,13 @@ queryGroup 'Sales Transformations\Helper Queries'
 
 	annotation PBI_QueryGroupOrder = 0
 
+queryGroup 'SalesReturns Transformation'
+
+	annotation PBI_QueryGroupOrder = 3
+
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBI_QueryOrder = ["ContosoFolder","FxReadCSVFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRates","Sample_File_SOH","Parameter_SOH","Sample_SOH","Transform_SOH_File","SalesOrderDetail","Sample_File_SOD","Parameter_SOD","Sample_SOD","Transform_SOD_File","Sales","Sample_File_Sales","Parameter_Sales","Sample_Sales","Transform_File_Sales","MeasuresTable"]
+annotation PBI_QueryOrder = ["ContosoFolder","FxReadCSVFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRates","Sample_File_SOH","Parameter_SOH","Sample_SOH","Transform_SOH_File","SalesOrderDetail","Sample_File_SOD","Parameter_SOD","Sample_SOD","Transform_SOD_File","Sales","SalesReturns","Sample_File_Sales","Parameter_Sales","Sample_Sales","Transform_File_Sales","MeasuresTable","Transform_SalesReturns_File","Transform_Sales_File","Sample_File_SalesReturns","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel"]
 
 annotation PBI_ProTooling = ["TMDLView_Desktop","DevMode"]
 
@@ -63,6 +67,11 @@ ref table SalesOrderHeader
 ref table SalesOrderDetail
 ref table Sales
 ref table MeasuresTable
+ref table SalesReturns
+ref table Employee
+ref table EmployeeStoreAssignment
+ref table ReturnReason
+ref table SalesChannel
 
 ref cultureInfo en-US
 

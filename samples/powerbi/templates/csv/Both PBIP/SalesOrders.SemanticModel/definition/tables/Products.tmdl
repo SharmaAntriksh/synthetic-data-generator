@@ -130,6 +130,262 @@ table Products
 
 		annotation SummarizationSetBy = Automatic
 
+	column LaunchDate
+		dataType: string
+		lineageTag: 41248ee1-2322-4f35-a8a5-c6e3ea453c45
+		summarizeBy: none
+		sourceColumn: LaunchDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column LaunchDateKey
+		dataType: string
+		lineageTag: eca97638-5ad3-4696-990e-ea2ce73ab4c9
+		summarizeBy: none
+		sourceColumn: LaunchDateKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column DiscontinuedDate
+		dataType: string
+		lineageTag: 6e49aba8-730a-44d5-a517-fa31efd023ad
+		summarizeBy: none
+		sourceColumn: DiscontinuedDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column DiscontinuedDateKey
+		dataType: string
+		lineageTag: f8f6baf2-28b2-4719-8e18-9e8663617845
+		summarizeBy: none
+		sourceColumn: DiscontinuedDateKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsDiscontinued
+		dataType: string
+		lineageTag: 383b6635-806e-45b9-9552-f1a7be5bebea
+		summarizeBy: none
+		sourceColumn: IsDiscontinued
+
+		annotation SummarizationSetBy = Automatic
+
+	column ColorFamily
+		dataType: string
+		lineageTag: 4b76299a-7d68-467e-bb68-5f6ee465e36b
+		summarizeBy: none
+		sourceColumn: ColorFamily
+
+		annotation SummarizationSetBy = Automatic
+
+	column Material
+		dataType: string
+		lineageTag: 72770e03-1008-4222-a3c5-3d7f7f0028bd
+		summarizeBy: none
+		sourceColumn: Material
+
+		annotation SummarizationSetBy = Automatic
+
+	column Style
+		dataType: string
+		lineageTag: 087dd506-f7ce-4a24-9b55-e565792644cb
+		summarizeBy: none
+		sourceColumn: Style
+
+		annotation SummarizationSetBy = Automatic
+
+	column AgeGroup
+		dataType: string
+		lineageTag: 621e9a81-01aa-4191-8c7b-48280ec787d6
+		summarizeBy: none
+		sourceColumn: AgeGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	column ProductLine
+		dataType: string
+		lineageTag: a31a8a60-cc54-4ba5-a0e3-9a7c957a2645
+		summarizeBy: none
+		sourceColumn: ProductLine
+
+		annotation SummarizationSetBy = Automatic
+
+	column SeasonalityProfile
+		dataType: string
+		lineageTag: 136959ab-f7dd-407e-9ee4-aa31e083b0cf
+		summarizeBy: none
+		sourceColumn: SeasonalityProfile
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeightKg
+		dataType: string
+		lineageTag: 9133b117-11f0-40ee-9c2a-e9ba23d3ab6d
+		summarizeBy: none
+		sourceColumn: WeightKg
+
+		annotation SummarizationSetBy = Automatic
+
+	column LengthCm
+		dataType: string
+		lineageTag: a4d9e2f8-ee1c-4e0e-a397-ca70b0b8ab5d
+		summarizeBy: none
+		sourceColumn: LengthCm
+
+		annotation SummarizationSetBy = Automatic
+
+	column WidthCm
+		dataType: string
+		lineageTag: 17b01291-abfe-4e21-9a23-d24f89f4a012
+		summarizeBy: none
+		sourceColumn: WidthCm
+
+		annotation SummarizationSetBy = Automatic
+
+	column HeightCm
+		dataType: string
+		lineageTag: 9ce0463a-0e79-4bfb-8c9c-00d2e3f1c986
+		summarizeBy: none
+		sourceColumn: HeightCm
+
+		annotation SummarizationSetBy = Automatic
+
+	column VolumeCm3
+		dataType: string
+		lineageTag: 803fffda-b092-407f-b1ce-c7adca93b92b
+		summarizeBy: none
+		sourceColumn: VolumeCm3
+
+		annotation SummarizationSetBy = Automatic
+
+	column ShippingClass
+		dataType: string
+		lineageTag: e4f5ed53-b8e2-4050-95fc-87c435c833c6
+		summarizeBy: none
+		sourceColumn: ShippingClass
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsFragile
+		dataType: string
+		lineageTag: 6fdce913-0228-4cd1-b8ce-9d8cac8890de
+		summarizeBy: none
+		sourceColumn: IsFragile
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsHazmat
+		dataType: string
+		lineageTag: d5691b76-8df4-482f-84a4-44fe34696866
+		summarizeBy: none
+		sourceColumn: IsHazmat
+
+		annotation SummarizationSetBy = Automatic
+
+	column LeadTimeDays
+		dataType: string
+		lineageTag: d3ef9d83-e6d4-4df0-a3db-9c9182ecffee
+		summarizeBy: none
+		sourceColumn: LeadTimeDays
+
+		annotation SummarizationSetBy = Automatic
+
+	column CasePackQty
+		dataType: string
+		lineageTag: 9a8fb203-76ce-43d6-bb9c-df9a3c9fe079
+		summarizeBy: none
+		sourceColumn: CasePackQty
+
+		annotation SummarizationSetBy = Automatic
+
+	column FulfillmentType
+		dataType: string
+		lineageTag: 961917e2-c2e8-4ec2-b2e6-bbb41c5b56e4
+		summarizeBy: none
+		sourceColumn: FulfillmentType
+
+		annotation SummarizationSetBy = Automatic
+
+	column BrandTier
+		dataType: string
+		lineageTag: 4cdd0479-44de-4986-83a7-7b3c45a2dca7
+		summarizeBy: none
+		sourceColumn: BrandTier
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleStore
+		dataType: string
+		lineageTag: 2745561d-74a2-47ae-8bc7-2fbba4d009c1
+		summarizeBy: none
+		sourceColumn: EligibleStore
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleOnline
+		dataType: string
+		lineageTag: 1e11eb84-d554-4a6d-a28c-5aace026da87
+		summarizeBy: none
+		sourceColumn: EligibleOnline
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleMarketplace
+		dataType: string
+		lineageTag: bc751106-c895-4309-891c-7ce5552327b7
+		summarizeBy: none
+		sourceColumn: EligibleMarketplace
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleB2B
+		dataType: string
+		lineageTag: 40cabe40-aef7-484d-8381-a85fb2365923
+		summarizeBy: none
+		sourceColumn: EligibleB2B
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarrantyMonths
+		dataType: string
+		lineageTag: e9c06c5b-2391-419f-9569-67d689f38f8e
+		summarizeBy: none
+		sourceColumn: WarrantyMonths
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnRateBase
+		dataType: string
+		lineageTag: 2fa755f9-ab80-4eca-b05d-0e11b3fa3d31
+		summarizeBy: none
+		sourceColumn: ReturnRateBase
+
+		annotation SummarizationSetBy = Automatic
+
+	column DefectRateBase
+		dataType: string
+		lineageTag: 2550c168-ac08-4845-8769-74280e0c2ce7
+		summarizeBy: none
+		sourceColumn: DefectRateBase
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnWindowDays
+		dataType: string
+		lineageTag: a263d293-ef36-4683-9627-9a5f37a23a41
+		summarizeBy: none
+		sourceColumn: ReturnWindowDays
+
+		annotation SummarizationSetBy = Automatic
+
+	column SupplierKey
+		dataType: string
+		lineageTag: b6fbd1ba-85ae-46c3-aeb9-fa4030f8d927
+		summarizeBy: none
+		sourceColumn: SupplierKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Products = m
 		mode: import
 		queryGroup: Dimensions

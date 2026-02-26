@@ -161,6 +161,55 @@
           },
           "zIndex": 8,
           "expandedHeight": 214.67453797818621
+        },
+        {
+          "location": {},
+          "nodeIndex": "Employee",
+          "nodeLineageTag": "4da63b43-c7b1-4b96-ada6-7f2b812f9a89",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "ReturnReason",
+          "nodeLineageTag": "e353c8f0-8450-452a-acfc-397d943cc5ad",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "SalesChannel",
+          "nodeLineageTag": "317913c8-54ce-46c3-8e0f-a61d6e4790df",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "SalesReturns",
+          "nodeLineageTag": "ad061206-05b5-4802-9da3-0a7b38aafd28",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "EmployeeStoreAssignment",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 0
         }
       ],
       "name": "All tables",
@@ -319,16 +368,109 @@
             "width": 234
           },
           "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 0,
+            "y": 940.67119380877989
+          },
+          "nodeIndex": "SalesChannel",
+          "nodeLineageTag": "317913c8-54ce-46c3-8e0f-a61d6e4790df",
+          "size": {
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 300
         }
       ],
       "name": "Expanded",
-      "zoomValue": 67.604521404597349,
+      "zoomValue": 53.781547978715061,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
+    },
+    {
+      "ordinal": 2,
+      "scrollPosition": {
+        "x": 160.89865511519264,
+        "y": 0
+      },
+      "nodes": [
+        {
+          "location": {
+            "x": 123.33333206176758,
+            "y": 173
+          },
+          "nodeIndex": "SalesReturns",
+          "nodeLineageTag": "ad061206-05b5-4802-9da3-0a7b38aafd28",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 443.33333206176758,
+            "y": 0
+          },
+          "nodeIndex": "ReturnReason",
+          "nodeLineageTag": "e353c8f0-8450-452a-acfc-397d943cc5ad",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 954.955431445402,
+            "y": 0
+          },
+          "nodeIndex": "Employee",
+          "nodeLineageTag": "4da63b43-c7b1-4b96-ada6-7f2b812f9a89",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 1315.6813147345567,
+            "y": 221.591577390572
+          },
+          "nodeIndex": "Sales",
+          "nodeLineageTag": "f4666ca0-6a51-44bc-9ac1-318199c49815",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 661.33333206176758,
+            "y": 241.75152724079157
+          },
+          "nodeIndex": "EmployeeStoreAssignment",
+          "size": {
+            "height": 272,
+            "width": 234
+          },
+          "zIndex": 0
+        }
+      ],
+      "name": "Layout 1",
+      "zoomValue": 79.553182037699813,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,
       "tablesLocked": false
     }
   ],
-  "selectedDiagram": "Expanded",
+  "selectedDiagram": "Layout 1",
   "defaultDiagram": "All tables"
 }

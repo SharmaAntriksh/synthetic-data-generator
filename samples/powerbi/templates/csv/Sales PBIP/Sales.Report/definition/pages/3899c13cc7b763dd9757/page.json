@@ -1,0 +1,8 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/page/2.0.0/schema.json",
+  "name": "3899c13cc7b763dd9757",
+  "displayName": "Employee Store Sales",
+  "displayOption": "FitToPage",
+  "height": 720,
+  "width": 1280
+}

@@ -454,6 +454,13 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
 
     # Invariants expected to be constant within a SalesOrderNumber
     inv_cols = ["CustomerKey", "StoreKey", "SalesPersonEmployeeKey", "OrderDate"]
+
+    # Newly order-level keys (you made these unique per order in chunk_builder)
+    if "PromotionKey" in detail.column_names:
+        inv_cols.append("PromotionKey")
+    if "CurrencyKey" in detail.column_names:
+        inv_cols.append("CurrencyKey")
+
     if "SalesChannelKey" in detail.column_names:
         inv_cols.append("SalesChannelKey")
     if "TimeKey" in detail.column_names:
@@ -468,7 +475,7 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
 
     out = gb.aggregate(aggs)
 
-    # Build boolean mask of any invariant mismatch
+    # Detect invariant violations
     bad = None
     for c in inv_cols:
         neq = pc.not_equal(out[f"{c}_min"], out[f"{c}_max"])
@@ -488,10 +495,9 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
         raise RuntimeError(
             "Invalid SalesOrderNumber invariants: a SalesOrderNumber maps to multiple values. "
             + " | ".join(parts)
-            + " | This indicates overlapping order-id ranges across chunks OR duplicated/misaligned rows during order expansion."
         )
 
-    # Build final header columns (use *_min for constant fields, max for IsOrderDelayed)
+    # Build final header table
     cols, names = [], []
 
     def _add(src: str, dst: str):
@@ -503,10 +509,14 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
     _add("CustomerKey_min", "CustomerKey")
     _add("StoreKey_min", "StoreKey")
     _add("SalesPersonEmployeeKey_min", "SalesPersonEmployeeKey")
-    _add("OrderDate_min", "OrderDate")
-    _add("IsOrderDelayed_max", "IsOrderDelayed")
+
+    _add("PromotionKey_min", "PromotionKey")
+    _add("CurrencyKey_min", "CurrencyKey")
+
     _add("SalesChannelKey_min", "SalesChannelKey")
+    _add("OrderDate_min", "OrderDate")
     _add("TimeKey_min", "TimeKey")
+    _add("IsOrderDelayed_max", "IsOrderDelayed")
 
     return pa.Table.from_arrays(cols, names=names)
 
@@ -564,6 +574,10 @@ def _worker_task(args):
                 _task_require_cols(detail_table, ["SalesChannelKey"], ctx="Header build requires SalesChannelKey")
             if "TimeKey" in expected_header.names:
                 _task_require_cols(detail_table, ["TimeKey"], ctx="Header build requires TimeKey")
+            if "PromotionKey" in expected_header.names:
+                _task_require_cols(detail_table, ["PromotionKey"], ctx="Header build requires PromotionKey")
+            if "CurrencyKey" in expected_header.names:
+                _task_require_cols(detail_table, ["CurrencyKey"], ctx="Header build requires CurrencyKey")
 
         if mode == "sales":
             sales_table = detail_table

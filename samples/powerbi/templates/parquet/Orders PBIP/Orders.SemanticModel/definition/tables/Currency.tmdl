@@ -5,7 +5,7 @@ table Currency
 		dataType: int64
 		formatString: 0
 		lineageTag: 05d148a7-8f50-4672-af86-2acd1915bde8
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CurrencyKey
 
 		changedProperty = IsHidden

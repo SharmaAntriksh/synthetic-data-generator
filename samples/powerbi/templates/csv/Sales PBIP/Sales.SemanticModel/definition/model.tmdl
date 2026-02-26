@@ -9,27 +9,35 @@ model Model
 
 queryGroup 'Parameters & Functions'
 
-	annotation PBI_QueryGroupOrder = 1
+	annotation PBI_QueryGroupOrder = 2
 
 queryGroup Dimensions
 
-	annotation PBI_QueryGroupOrder = 2
+	annotation PBI_QueryGroupOrder = 3
 
 queryGroup Fact
 
-	annotation PBI_QueryGroupOrder = 3
+	annotation PBI_QueryGroupOrder = 4
 
-queryGroup 'Transform File from facts'
+queryGroup Transform_Sales
+
+	annotation PBI_QueryGroupOrder = 1
+
+queryGroup 'Transform_Sales\Helper Queries'
 
 	annotation PBI_QueryGroupOrder = 0
 
-queryGroup 'Transform File from facts\Helper Queries'
+queryGroup 'Transform File from sales_return'
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup 'Transform File from sales_return\Helper Queries'
 
 	annotation PBI_QueryGroupOrder = 0
 
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBI_QueryOrder = ["ContosoFolder","FxReadCSVFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","Sales","ExchangeRates","Sample_File_Sales","Parameter_Sales","Sample_Sales","Transform_Sales_File"]
+annotation PBI_QueryOrder = ["ContosoFolder","FxReadCSVFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","Sales","SalesReturns","ExchangeRates","Sample_File_Sales","Parameter_Sales","Sample_Sales","Transform_Sales_File","Sample_File_SalesReturns","Parameter_SalesReturns","Sample_SalesReturns","Transform_SalesReturns_File","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel"]
 
 annotation PBI_ProTooling = ["TMDLView_Desktop","DevMode"]
 
@@ -44,6 +52,11 @@ ref table Geography
 ref table Currency
 ref table ExchangeRates
 ref table Sales
+ref table SalesReturns
+ref table Employee
+ref table EmployeeStoreAssignment
+ref table ReturnReason
+ref table SalesChannel
 
 ref cultureInfo en-US
 

@@ -37,19 +37,39 @@ createOrReplace
 		fromColumn: SalesOrderDetail.ProductKey
 		toColumn: Products.ProductKey
 
-	relationship 1fac21a3-ee5d-cac2-b359-3985ac449411
-		fromColumn: SalesOrderDetail.PromotionKey
-		toColumn: Promotions.PromotionKey
-
-	relationship 7b2e0cb0-a9bc-2724-42f2-0a172ddf5156
-		fromColumn: SalesOrderDetail.StoreKey
-		toColumn: Store.StoreKey
-
-	relationship e592004a-d7f4-4ab6-e25c-a9eba894cc16
-		fromColumn: SalesOrderDetail.CurrencyKey
-		toColumn: Currency.CurrencyKey
-
 	relationship 4407fcda-70ba-5a9a-d338-638b7def17f6
 		fromColumn: SalesOrderHeader.CustomerKey
 		toColumn: Customers.CustomerKey
+
+	relationship 2b688c46-8a20-48a9-812b-bf9f17278197
+		fromColumn: SalesOrderHeader.StoreKey
+		toColumn: Store.StoreKey
+
+	relationship c1c05fe6-786e-4e23-873c-fd27b924aa2e
+		fromColumn: SalesOrderHeader.PromotionKey
+		toColumn: Promotions.PromotionKey
+
+	relationship 3ff333b6-8b16-4f30-bd72-b4bf84bf937c
+		fromColumn: SalesOrderHeader.CurrencyKey
+		toColumn: Currency.CurrencyKey
+
+	relationship d5b6d7a1-05a6-4c37-8351-3d2ec59ba9e7
+		fromColumn: EmployeeStoreAssignment.StoreKey
+		toColumn: Store.StoreKey
+
+	relationship 61dbfd54-d553-4a41-890a-a0c8b998ed42
+		fromColumn: SalesOrderHeader.SalesChannelKey
+		toColumn: SalesChannel.SalesChannelKey
+
+	relationship bd3482e1-9d52-44aa-af55-6a054e219cd5
+		fromColumn: SalesReturns.ReturnReasonKey
+		toColumn: ReturnReason.ReturnReasonKey
+
+	relationship 21632fb4-d9d5-4fbc-a87e-6ac87eddf2ef
+		fromColumn: EmployeeStoreAssignment.EmployeeKey
+		toColumn: Employee.EmployeeKey
+
+	relationship e03cfaab-d683-1fa7-fd8d-441fce65e92c
+		fromColumn: SalesOrderHeader.SalesPersonEmployeeKey
+		toColumn: Employee.EmployeeKey
 

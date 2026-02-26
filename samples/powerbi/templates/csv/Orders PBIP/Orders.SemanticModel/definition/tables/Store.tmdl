@@ -38,7 +38,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: dfddc145-b9df-431c-bad2-89fb5e22c252
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: GeographyKey
 
 		annotation SummarizationSetBy = Automatic
@@ -65,7 +65,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: fe65a993-456c-4d32-924b-21d0dc34de01
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: OpenFlag
 
 		annotation SummarizationSetBy = Automatic
@@ -74,7 +74,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: 397a3657-92e0-47f9-8a90-7139436eb067
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: SquareFootage
 
 		annotation SummarizationSetBy = Automatic
@@ -83,7 +83,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: e167b0c3-6ef3-4b0d-b1d0-474b566ab5f3
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: EmployeeCount
 
 		annotation SummarizationSetBy = Automatic

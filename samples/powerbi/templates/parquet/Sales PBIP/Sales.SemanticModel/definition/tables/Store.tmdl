@@ -5,7 +5,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: 8637d84b-74d0-48a2-92c8-2af2e7cb27a6
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: StoreKey
 
 		changedProperty = IsHidden
@@ -46,7 +46,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: dfddc145-b9df-431c-bad2-89fb5e22c252
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: GeographyKey
 
 		changedProperty = IsHidden
@@ -83,7 +83,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: fe65a993-456c-4d32-924b-21d0dc34de01
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: OpenFlag
 
 		changedProperty = IsHidden
@@ -94,7 +94,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: 397a3657-92e0-47f9-8a90-7139436eb067
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: SquareFootage
 
 		changedProperty = IsHidden
@@ -105,7 +105,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: e167b0c3-6ef3-4b0d-b1d0-474b566ab5f3
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: EmployeeCount
 
 		changedProperty = IsHidden

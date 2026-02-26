@@ -55,3 +55,23 @@ createOrReplace
 		fromColumn: ProductSubcategory.CategoryKey
 		toColumn: ProductCategory.CategoryKey
 
+	relationship 7eb0162a-3cbb-427e-855f-c7b298947c9a
+		fromColumn: EmployeeStoreAssignment.StoreKey
+		toColumn: Store.StoreKey
+
+	relationship 04153036-3544-45a2-951b-5d0ed546b84a
+		fromColumn: Sales.SalesChannelKey
+		toColumn: SalesChannel.SalesChannelKey
+
+	relationship a349b7f5-3fcc-4a33-adc2-efdfc4929610
+		fromColumn: EmployeeStoreAssignment.EmployeeKey
+		toColumn: Employee.EmployeeKey
+
+	relationship fce5d5c1-4090-45b6-85aa-e640bb9dee47
+		fromColumn: SalesReturns.ReturnReasonKey
+		toColumn: ReturnReason.ReturnReasonKey
+
+	relationship 150a1654-1e92-3521-db0e-b67cd738b9e1
+		fromColumn: Sales.SalesPersonEmployeeKey
+		toColumn: Employee.EmployeeKey
+

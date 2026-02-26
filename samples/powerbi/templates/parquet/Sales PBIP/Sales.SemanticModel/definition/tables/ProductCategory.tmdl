@@ -5,7 +5,7 @@ table ProductCategory
 		dataType: int64
 		formatString: 0
 		lineageTag: af011566-9475-4ca8-a0e7-04588a8cf00c
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CategoryKey
 
 		changedProperty = IsHidden

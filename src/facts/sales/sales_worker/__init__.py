@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .worker.init import (
+from .init import (
     init_sales_worker,
     build_buckets_from_key,
     int_or,
@@ -19,17 +19,17 @@ from .worker.init import (
     _dense_map,
     _infer_T_from_date_pool,
 )
-from .worker.io import (
+from .io import (
     ChunkIOConfig,
     add_year_month_from_date,
     normalize_to_schema,
     write_parquet_table,
     write_csv_table,
 )
-from .worker.pool import PoolRunSpec, iter_imap_unordered
-from .worker.returns_builder import ReturnsConfig, build_sales_returns_from_detail
-from .worker.schemas import schema_dict_cols
-from .worker.task import _worker_task, normalize_tasks, derive_chunk_seed, write_table_by_format
+from .pool import PoolRunSpec, iter_imap_unordered
+from .returns_builder import ReturnsConfig, build_sales_returns_from_detail
+from .schemas import schema_dict_cols
+from .task import _worker_task, normalize_tasks, derive_chunk_seed, write_table_by_format
 
 __all__ = [
     # Sales worker entrypoints

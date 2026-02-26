@@ -7,7 +7,7 @@ table SalesOrderHeader
 		isHidden
 		formatString: 0
 		lineageTag: f54cd52d-191e-41c3-9c06-c3c4c0b2941a
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: SalesOrderNumber
 
 		changedProperty = IsHidden
@@ -19,7 +19,7 @@ table SalesOrderHeader
 		isHidden
 		formatString: 0
 		lineageTag: e494926b-c112-4d65-a2f5-d01b8272d2e0
-		summarizeBy: count
+		summarizeBy: none
 		sourceColumn: CustomerKey
 
 		changedProperty = IsHidden
@@ -29,7 +29,7 @@ table SalesOrderHeader
 	column OrderDate
 		dataType: dateTime
 		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: cfc3783a-99e1-4910-a1f6-077df3c58ad9
 		summarizeBy: none
 		sourceColumn: OrderDate
@@ -52,6 +52,60 @@ table SalesOrderHeader
 
 		annotation SummarizationSetBy = Automatic
 
+	column StoreKey
+		dataType: int64
+		formatString: 0
+		lineageTag: c6de61ed-9c88-4584-ae76-8598ee7f63f0
+		summarizeBy: none
+		sourceColumn: StoreKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesPersonEmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: f54e80d1-5c2d-41aa-8f61-f426eaa1b705
+		summarizeBy: none
+		sourceColumn: SalesPersonEmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 78c48ce5-30fd-4308-b810-f163066f69a0
+		summarizeBy: none
+		sourceColumn: SalesChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: db48e0cf-c154-4d04-8389-419e19135993
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 51bef817-8d62-4a1a-b275-720d9c63f5b4
+		summarizeBy: none
+		sourceColumn: PromotionKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 63147d3e-3fe5-4120-a595-3fcf282a3ecb
+		summarizeBy: none
+		sourceColumn: CurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition SalesOrderHeader = m
 		mode: import
 		queryGroup: Fact
@@ -71,17 +125,23 @@ table SalesOrderHeader
 				        "Transform File",
 				        Table.ColumnNames ( Transform_SOH_File ( Sample_File_SOH ) )
 				    ),
-				    CombineTables = Table.TransformColumnTypes (
+				    ChangedType = Table.TransformColumnTypes (
 				        ExpandTable,
 				        {
 				            { "SalesOrderNumber", Int64.Type },
 				            { "CustomerKey", Int64.Type },
+				            { "StoreKey", Int64.Type },
+				            { "SalesPersonEmployeeKey", Int64.Type },
+				            { "SalesChannelKey", Int64.Type },
 				            { "OrderDate", type date },
-				            { "IsOrderDelayed", Int64.Type }
+				            { "TimeKey", Int64.Type },
+				            { "IsOrderDelayed", Int64.Type },
+				            { "PromotionKey", Int64.Type },
+				            { "CurrencyKey", Int64.Type }
 				        }
 				    )
 				in
-				    CombineTables
+				    ChangedType
 
 	changedProperty = IsHidden
 

@@ -22,7 +22,7 @@ table ProductCategory
 		dataType: int64
 		formatString: 0
 		lineageTag: 81a069e3-c3b8-4d46-91c1-288590d4f108
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: CategoryLabel
 
 		annotation SummarizationSetBy = Automatic

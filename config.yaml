@@ -31,12 +31,12 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 100041
+  total_rows: 10004
   chunk_size: 1000000
   max_lines_per_order: 10
   
   file_format: "parquet"          # csv | parquet | deltaparquet
-  sales_output: "sales"           # sales | sales_order | both
+  sales_output: "both"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -149,7 +149,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 6843
+  total_customers: 80
   active_ratio: 0.90
 
   pct_india: 10
@@ -198,9 +198,9 @@ customer_segments:
 superpowers:
   enabled: true
 
-  powers_count: 40              # <= catalog size in the script
+  powers_count: 10              # <= catalog size in the script
   powers_per_customer_min: 1
-  powers_per_customer_max: 4
+  powers_per_customer_max: 2
 
   include_power_level: true
   include_primary_flag: true
@@ -253,7 +253,7 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 50
+  num_stores: 5
   ensure_currency_coverage: true
   opening:
     start: "1995-01-01"
@@ -281,6 +281,8 @@ stores:
 # EMPLOYEES (Dimension)
 # ---------------------------------------------------------------------
 employees:
+  start_date: "2020-01-01"
+  end_date: "2026-12-31"
   # sizing (demo-friendly defaults)
   use_store_employee_count: false
   min_staff_per_store: 2

@@ -5,7 +5,7 @@ table Customers
 		dataType: int64
 		formatString: 0
 		lineageTag: d352fa1d-5bd8-4e69-879f-2a5f7904f6c5
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CustomerKey
 
 		changedProperty = IsHidden
@@ -131,7 +131,7 @@ table Customers
 		dataType: int64
 		formatString: 0
 		lineageTag: 268c9fcc-8f44-4865-84dc-6da90d40b2ce
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: GeographyKey
 
 		changedProperty = IsHidden
@@ -242,6 +242,24 @@ table Customers
 		annotation SummarizationSetBy = Automatic
 
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column LoyaltyTierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 3ca4c3ce-1a27-42fc-bf8c-d0acdf727873
+		summarizeBy: count
+		sourceColumn: LoyaltyTierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerAcquisitionChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8fa35b16-5343-4a1a-8ed4-44788940c51b
+		summarizeBy: count
+		sourceColumn: CustomerAcquisitionChannelKey
+
+		annotation SummarizationSetBy = Automatic
 
 	partition Customers = m
 		mode: import

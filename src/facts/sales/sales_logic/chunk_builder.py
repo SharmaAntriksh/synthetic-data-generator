@@ -633,20 +633,42 @@ def build_chunk_table(
             order_ids_int=order_ids_int,
             order_dates=order_dates,
         )
+        
+        # --------------------------------------------------------
+        # PROMOTIONS  (make per-order when order ids exist)
+        # --------------------------------------------------------
+        if (not skip_cols) and (line_num is not None):
+            # line_num is 1..k within each order
+            order_starts = (np.asarray(line_num) == 1)
+            order_idx = np.cumsum(order_starts.astype(np.int64)) - 1
+            n_unique_orders = int(order_idx.max() + 1) if order_idx.size else 0
 
-        # --------------------------------------------------------
-        # PROMOTIONS
-        # --------------------------------------------------------
-        promo_keys, _promo_pct = apply_promotions(
-            rng=rng,
-            n=n_orders,
-            order_dates=order_dates,
-            promo_keys_all=promo_keys_all,
-            promo_pct_all=promo_pct_all,
-            promo_start_all=promo_start_all,
-            promo_end_all=promo_end_all,
-            no_discount_key=no_discount_key,
-        )
+            # use order-level dates (first line per order)
+            order_dates_order = np.asarray(order_dates, dtype="datetime64[D]")[order_starts]
+
+            promo_order_keys, _promo_pct = apply_promotions(
+                rng=rng,
+                n=n_unique_orders,
+                order_dates=order_dates_order,
+                promo_keys_all=promo_keys_all,
+                promo_pct_all=promo_pct_all,
+                promo_start_all=promo_start_all,
+                promo_end_all=promo_end_all,
+                no_discount_key=no_discount_key,
+            )
+
+            promo_keys = np.asarray(promo_order_keys, dtype=np.int64)[order_idx]
+        else:
+            promo_keys, _promo_pct = apply_promotions(
+                rng=rng,
+                n=n_orders,
+                order_dates=order_dates,
+                promo_keys_all=promo_keys_all,
+                promo_pct_all=promo_pct_all,
+                promo_start_all=promo_start_all,
+                promo_end_all=promo_end_all,
+                no_discount_key=no_discount_key,
+            )
         promo_keys = np.asarray(promo_keys, dtype=np.int64)
 
         # --------------------------------------------------------

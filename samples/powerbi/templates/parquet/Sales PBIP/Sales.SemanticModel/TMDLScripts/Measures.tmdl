@@ -22,6 +22,35 @@ createOrReplace
 
 			annotation PBI_FormatHint = {"isDecimal":true}
 
+		measure 'Employee Sales by Store Assgn.' = ```
+				
+				CALCULATE ( 
+				    [Sales Amount],
+				    TREATAS ( 
+				        GENERATE ( 
+				            SUMMARIZE ( 
+				                EmployeeStoreAssignment, 
+				                EmployeeStoreAssignment[StoreKey],
+				                Employee[EmployeeKey]
+				            ),
+				            DATESBETWEEN ( 
+				                Dates[Date],
+				                CALCULATE ( MIN ( EmployeeStoreAssignment[StartDate] ) ),
+				                CALCULATE ( MAX ( EmployeeStoreAssignment[EndDate] ) )
+				            )
+				        ),
+				        Sales[StoreKey],
+				        Sales[SalesPersonEmployeeKey],
+				        Dates[Date]
+				    )
+				)
+				```
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: 9ea4b942-f332-4920-b527-413f495e5a02
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
 		measure 'Profit Amount' =
 				
 				[Sales Amount] - [Cost Amount]

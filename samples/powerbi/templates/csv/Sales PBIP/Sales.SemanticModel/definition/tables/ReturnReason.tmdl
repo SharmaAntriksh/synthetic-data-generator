@@ -1,0 +1,42 @@
+table ReturnReason
+	lineageTag: e353c8f0-8450-452a-acfc-397d943cc5ad
+
+	column ReturnReasonKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 0e519dda-9dfe-44d9-8cd7-1eb25a21f8a8
+		summarizeBy: count
+		sourceColumn: ReturnReasonKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnReason
+		dataType: string
+		lineageTag: 4e15aaf5-b60a-4e7b-a5c3-d3a366fade0f
+		summarizeBy: none
+		sourceColumn: ReturnReason
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnReasonCategory
+		dataType: string
+		lineageTag: 49420b7c-bd1d-4095-b6f6-8d5118dfba2a
+		summarizeBy: none
+		sourceColumn: ReturnReasonCategory
+
+		annotation SummarizationSetBy = Automatic
+
+	partition ReturnReason = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source      = FxReadCSVFile ( "dimensions", "return_reason" ),
+				    ChangedType = Table.TransformColumnTypes ( Source, { { "ReturnReasonKey", Int64.Type } } )
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+
