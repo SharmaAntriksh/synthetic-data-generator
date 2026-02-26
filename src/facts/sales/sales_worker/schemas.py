@@ -161,8 +161,6 @@ def build_worker_schemas(
         pa.field("SalesOrderNumber", pa.int64()),
         pa.field("SalesOrderLineNumber", pa.int64()),
         pa.field("ProductKey", pa.int64()),
-        pa.field("PromotionKey", pa.int64()),
-        pa.field("CurrencyKey", pa.int64()),
         pa.field("DueDate", pa.date32()),
         pa.field("DeliveryDate", pa.date32()),
         pa.field("Quantity", pa.int64()),
@@ -179,9 +177,11 @@ def build_worker_schemas(
         pa.field("CustomerKey", pa.int64()),
         pa.field("StoreKey", pa.int64()),
         pa.field("SalesPersonEmployeeKey", pa.int64()),
+        pa.field("PromotionKey", pa.int64()),
+        pa.field("CurrencyKey", pa.int64()),
         pa.field("SalesChannelKey", pa.int16()),
         pa.field("OrderDate", pa.date32()),
-        pa.field("TimeKey", pa.int16()),  # order-level time
+        pa.field("TimeKey", pa.int16()),
         pa.field("IsOrderDelayed", pa.int8()),
     ]
     header_schema = pa.schema(header_fields + delta_fields) if is_delta else pa.schema(header_fields)
