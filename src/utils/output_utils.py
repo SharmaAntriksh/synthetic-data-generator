@@ -12,6 +12,43 @@ from src.utils.logging_utils import stage, done, info
 # ============================================================
 # Parquet helpers (Power BI / Power Query friendliness)
 # ============================================================
+def _all_null_series(s) -> bool:
+    try:
+        return bool(getattr(s, "isna")().all())
+    except Exception:
+        return False
+
+
+def _object_series_looks_like_date(s) -> bool:
+    """
+    True if object series appears to contain python date/datetime-like values,
+    or is entirely null (common for optional date columns in small datasets).
+    """
+    import datetime as _dt
+    import numpy as _np
+    try:
+        import pandas as _pd
+    except Exception:
+        _pd = None  # type: ignore
+
+    try:
+        if _all_null_series(s):
+            return True
+
+        nonnull = s.dropna()
+        if nonnull.empty:
+            return True
+
+        sample = nonnull.head(25)
+        for v in sample.tolist():
+            if _pd is not None and isinstance(v, _pd.Timestamp):
+                return True
+            if isinstance(v, (_dt.date, _dt.datetime, _np.datetime64)):
+                return True
+        return False
+    except Exception:
+        return False
+    
 
 def _datetime_cols(df) -> list[str]:
     """Return columns that are pandas datetime64/tz-aware."""
@@ -31,39 +68,51 @@ def _datetime_cols(df) -> list[str]:
 
 def _guess_date_cols(df) -> list[str]:
     """
-    Heuristic for date-like columns. Used only when date_cols is not provided.
+    Heuristic for date-like columns.
 
-    Conservative on purpose: only matches columns that both:
-      - look date-like by name, AND
-      - are datetime dtype.
+    Keeps prior conservatism (won't touch OpenMinute/CloseMinute etc):
+      - include datetime64 columns whose names look date-like
+      - additionally include *Date* columns that are object dtype but look date-like
+        (or are all-null), to avoid Arrow NullType on rewrite.
     """
-    dt_cols = set(_datetime_cols(df))
-    if not dt_cols:
+    try:
+        import pandas as pd
+    except Exception:
         return []
 
-    dateish_tokens = (
-        "date",
-        "day",
-        "month",
-        "year",
-        "start",
-        "end",
-        "open",
-        "close",
-        "birth",
-        "created",
-        "updated",
-        "effective",
-        "expiry",
-        "valid",
-    )
-
+    dt_cols = set(_datetime_cols(df))
     out: list[str] = []
-    for c in dt_cols:
-        cl = c.lower()
-        if any(tok in cl for tok in dateish_tokens):
-            out.append(c)
-    return out
+
+    # datetime columns: name-based filter
+    dateish_tokens = ("date", "birth", "created", "updated", "effective", "expiry", "valid")
+    for c in getattr(df, "columns", []):
+        cl = str(c).lower()
+        if c in dt_cols:
+            if any(tok in cl for tok in dateish_tokens):
+                out.append(str(c))
+
+    # object columns: ONLY if name contains "date" (prevents OpenMinute/CloseMinute mistakes)
+    for c in getattr(df, "columns", []):
+        c = str(c)
+        if c in dt_cols:
+            continue
+        if "date" not in c.lower():
+            continue
+
+        try:
+            if pd.api.types.is_object_dtype(df[c]) and _object_series_looks_like_date(df[c]):
+                out.append(c)
+        except Exception:
+            continue
+
+    # de-dupe preserving order
+    seen = set()
+    deduped = []
+    for c in out:
+        if c not in seen:
+            seen.add(c)
+            deduped.append(c)
+    return deduped
 
 
 def write_parquet_with_date32(
@@ -77,32 +126,22 @@ def write_parquet_with_date32(
     force_date32: bool = True,
 ) -> None:
     """
-    Write Parquet with selected datetime columns stored as Arrow date32 so Power Query imports them as Date.
+    Write Parquet with selected date-like columns stored as Arrow date32 (Power BI friendly).
 
-    Selection:
-      - If date_cols is provided: cast only those columns (if they are datetime dtype)
-      - Else if cast_all_datetime=True: cast all datetime64 columns
-      - Else: heuristic based on column names (see _guess_date_cols)
-
-    Notes:
-      - Casting timestamp -> date truncates time-of-day. We normalize selected cols to midnight before casting.
-      - If pyarrow isn't available:
-          - if force_date32=True: fallback converts selected cols to python date objects (object dtype) just for writing
-          - else: plain df.to_parquet
+    Fix: honor date_cols / guessed date cols even if pandas dtype is object/all-null,
+    so we don't emit Arrow NullType columns (Power BI crash: dataType cannot be null).
     """
     import pandas as pd
 
     out_path = Path(out_path)
 
-    dt_cols = _datetime_cols(df)
-    if not dt_cols:
-        df.to_parquet(out_path, index=False)
-        return
+    dt_cols = set(_datetime_cols(df))
 
     if date_cols is not None:
-        target = [c for c in date_cols if c in df.columns and c in dt_cols]
+        # IMPORTANT: don't require datetime dtype; we'll coerce below.
+        target = [str(c) for c in date_cols if str(c) in df.columns]
     elif cast_all_datetime:
-        target = list(dt_cols)
+        target = [str(c) for c in dt_cols]
     else:
         target = _guess_date_cols(df)
 
@@ -112,17 +151,19 @@ def write_parquet_with_date32(
 
     df2 = df.copy()
     for c in target:
-        # normalize to midnight to avoid "unexpected" day shifts after date cast
-        df2[c] = pd.to_datetime(df2[c]).dt.normalize()
+        if c not in df2.columns:
+            continue
+        # Coerce even object/all-null columns; normalize to midnight
+        df2[c] = pd.to_datetime(df2[c], errors="coerce").dt.normalize()
 
     try:
         import pyarrow as pa
         import pyarrow.parquet as pq
     except Exception:
         if force_date32:
-            # Fallback: write python date objects so parquet writer uses date logical type.
             for c in target:
-                df2[c] = pd.to_datetime(df2[c]).dt.date
+                if c in df2.columns:
+                    df2[c] = pd.to_datetime(df2[c], errors="coerce").dt.date
         df2.to_parquet(out_path, index=False)
         return
 
