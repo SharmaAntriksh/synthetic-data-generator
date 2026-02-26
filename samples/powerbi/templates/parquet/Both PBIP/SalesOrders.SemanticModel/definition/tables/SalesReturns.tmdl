@@ -1,0 +1,84 @@
+table SalesReturns
+	lineageTag: f71da2a8-d81c-4ef2-978c-2984049fea65
+
+	column SalesOrderNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 34819696-4025-4c11-8e34-cf55ddb7914f
+		summarizeBy: sum
+		sourceColumn: SalesOrderNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesOrderLineNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 3c0c0628-882e-4399-aace-0c7d48256757
+		summarizeBy: sum
+		sourceColumn: SalesOrderLineNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 03d49c1a-bbc0-49f3-9483-6112de83d580
+		summarizeBy: none
+		sourceColumn: ReturnDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column ReturnReasonKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 3409ec47-c6fd-4e79-8347-69d84073b723
+		summarizeBy: count
+		sourceColumn: ReturnReasonKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnQuantity
+		dataType: int64
+		formatString: 0
+		lineageTag: b5bba1cb-a8ab-4481-b4c0-f915b79b4fe5
+		summarizeBy: sum
+		sourceColumn: ReturnQuantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnNetPrice
+		dataType: decimal
+		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		lineageTag: 07b144c2-4d38-4a7e-bd8a-ee6ecbc59f70
+		summarizeBy: sum
+		sourceColumn: ReturnNetPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	column ReturnEventKey
+		dataType: int64
+		formatString: 0
+		lineageTag: d7a01222-7551-4e18-9b4a-e0b7277eebe2
+		summarizeBy: count
+		sourceColumn: ReturnEventKey
+
+		annotation SummarizationSetBy = Automatic
+
+	partition SalesReturns = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source      = FxReadParquetFile ( "facts\sales_return" ),
+				    ChangedType = Table.TransformColumnTypes ( Source, { { "ReturnNetPrice", Currency.Type } } )
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

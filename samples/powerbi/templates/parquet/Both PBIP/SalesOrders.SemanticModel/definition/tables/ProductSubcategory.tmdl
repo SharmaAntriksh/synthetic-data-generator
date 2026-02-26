@@ -15,7 +15,7 @@ table ProductSubcategory
 		dataType: int64
 		formatString: 0
 		lineageTag: c65defde-05fe-4684-b78c-9d6dd0c6c177
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CategoryKey
 
 		changedProperty = IsHidden
@@ -26,7 +26,7 @@ table ProductSubcategory
 		dataType: int64
 		formatString: 0
 		lineageTag: 87f711f3-bea5-4531-86b7-e8fc01b384ae
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: SubcategoryKey
 
 		changedProperty = IsHidden

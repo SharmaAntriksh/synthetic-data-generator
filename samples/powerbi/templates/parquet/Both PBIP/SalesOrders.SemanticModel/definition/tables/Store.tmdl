@@ -5,7 +5,7 @@ table Store
 		dataType: int64
 		formatString: 0
 		lineageTag: 8637d84b-74d0-48a2-92c8-2af2e7cb27a6
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: StoreKey
 
 		changedProperty = IsHidden
@@ -55,7 +55,7 @@ table Store
 
 	column OpeningDate
 		dataType: dateTime
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 38713ebc-a588-4f9d-b653-045c9d2f883f
 		summarizeBy: none
 		sourceColumn: OpeningDate

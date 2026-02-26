@@ -5,7 +5,7 @@ table Promotions
 		dataType: int64
 		formatString: 0
 		lineageTag: 7e6df572-b676-4cca-a951-71240f847fa4
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: PromotionKey
 
 		changedProperty = IsHidden

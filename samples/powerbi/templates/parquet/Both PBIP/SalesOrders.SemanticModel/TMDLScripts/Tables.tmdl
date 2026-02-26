@@ -100,6 +100,35 @@ createOrReplace
 
 			annotation PBI_FormatHint = {"isDecimal":true}
 
+		measure 'Employee Sales by Store Assgn.' = ```
+				
+				CALCULATE ( 
+				    [Sales Amount],
+				    TREATAS ( 
+				        GENERATE ( 
+				            SUMMARIZE ( 
+				                EmployeeStoreAssignment, 
+				                EmployeeStoreAssignment[StoreKey],
+				                Employee[EmployeeKey]
+				            ),
+				            DATESBETWEEN ( 
+				                Dates[Date],
+				                CALCULATE ( MIN ( EmployeeStoreAssignment[StartDate] ) ),
+				                CALCULATE ( MAX ( EmployeeStoreAssignment[EndDate] ) )
+				            )
+				        ),
+				        SalesOrderHeader[StoreKey],
+				        SalesOrderHeader[SalesPersonEmployeeKey],
+				        Dates[Date]
+				    )
+				)
+				```
+			formatString: #,0
+			displayFolder: 01 - Base Measures
+			lineageTag: e6394245-c2f1-49c2-9253-94f0fae7af02
+
+			annotation PBI_FormatHint = {"isDecimal":true}
+
 		column Column1
 			dataType: string
 			isHidden
@@ -131,7 +160,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: 05d148a7-8f50-4672-af86-2acd1915bde8
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: CurrencyKey
 
 			changedProperty = IsHidden
@@ -180,7 +209,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: d352fa1d-5bd8-4e69-879f-2a5f7904f6c5
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: CustomerKey
 
 			changedProperty = IsHidden
@@ -306,7 +335,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: 268c9fcc-8f44-4865-84dc-6da90d40b2ce
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: GeographyKey
 
 			changedProperty = IsHidden
@@ -417,6 +446,24 @@ createOrReplace
 			annotation SummarizationSetBy = Automatic
 
 			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column LoyaltyTierKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 6efea6dd-468c-489f-a17b-94972270984e
+			summarizeBy: count
+			sourceColumn: LoyaltyTierKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column CustomerAcquisitionChannelKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 9d6709b7-0e9d-4dbe-bc7c-174964c90e9d
+			summarizeBy: count
+			sourceColumn: CustomerAcquisitionChannelKey
+
+			annotation SummarizationSetBy = Automatic
 
 		partition Customers = m
 			mode: import
@@ -868,6 +915,404 @@ createOrReplace
 
 		annotation PBI_ResultType = Table
 
+	table Employee
+		lineageTag: 63cfd0f6-6e03-4bea-b28e-3b9c51583644
+
+		column EmployeeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: ef5703ce-6011-4810-805b-eadc235db7f9
+			summarizeBy: count
+			sourceColumn: EmployeeKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column ParentEmployeeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: d717f96e-11ef-4a88-ac62-002453480658
+			summarizeBy: count
+			sourceColumn: ParentEmployeeKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column EmployeeName
+			dataType: string
+			lineageTag: 6e794ca2-696e-4f90-8bce-916900b6d341
+			summarizeBy: none
+			sourceColumn: EmployeeName
+
+			annotation SummarizationSetBy = Automatic
+
+		column Title
+			dataType: string
+			lineageTag: 83263621-851b-4536-8934-333a6abb803f
+			summarizeBy: none
+			sourceColumn: Title
+
+			annotation SummarizationSetBy = Automatic
+
+		column OrgLevel
+			dataType: int64
+			formatString: 0
+			lineageTag: d1cf9795-4d83-4eb7-a0d3-ec3f51ae3b71
+			summarizeBy: sum
+			sourceColumn: OrgLevel
+
+			annotation SummarizationSetBy = Automatic
+
+		column OrgUnitType
+			dataType: string
+			lineageTag: f2f7027d-735c-4a3d-8a94-e461f7fd65c3
+			summarizeBy: none
+			sourceColumn: OrgUnitType
+
+			annotation SummarizationSetBy = Automatic
+
+		column RegionId
+			dataType: int64
+			formatString: 0
+			lineageTag: bf960cd0-9b74-4e92-ba07-7796fa689be9
+			summarizeBy: count
+			sourceColumn: RegionId
+
+			annotation SummarizationSetBy = Automatic
+
+		column DistrictId
+			dataType: int64
+			formatString: 0
+			lineageTag: 653225e5-4144-4d65-968d-0b208bf2b35d
+			summarizeBy: count
+			sourceColumn: DistrictId
+
+			annotation SummarizationSetBy = Automatic
+
+		column HireDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: 5e8a4a12-3a97-442d-a98a-c6d9ed4fc22b
+			summarizeBy: none
+			sourceColumn: HireDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column TerminationDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: b003068f-ca85-41eb-b96e-bc92d8ffab4a
+			summarizeBy: none
+			sourceColumn: TerminationDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column IsActive
+			dataType: int64
+			formatString: 0
+			lineageTag: 4229a1dd-9a72-4e87-8a41-fef258d2c675
+			summarizeBy: sum
+			sourceColumn: IsActive
+
+			annotation SummarizationSetBy = Automatic
+
+		column Gender
+			dataType: string
+			lineageTag: a471be9d-dca3-4549-8758-a583a2f45aa9
+			summarizeBy: none
+			sourceColumn: Gender
+
+			annotation SummarizationSetBy = Automatic
+
+		column FirstName
+			dataType: string
+			lineageTag: 19d695ca-3489-4e33-938e-431d467009ea
+			summarizeBy: none
+			sourceColumn: FirstName
+
+			annotation SummarizationSetBy = Automatic
+
+		column LastName
+			dataType: string
+			lineageTag: d3237c4f-a519-40ce-b694-3e2ae71f9033
+			summarizeBy: none
+			sourceColumn: LastName
+
+			annotation SummarizationSetBy = Automatic
+
+		column MiddleName
+			dataType: string
+			lineageTag: d34676a6-a73a-4a1b-9bf8-09eee056ac6d
+			summarizeBy: none
+			sourceColumn: MiddleName
+
+			annotation SummarizationSetBy = Automatic
+
+		column BirthDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: 6b02f7ac-ce77-438f-86f7-91b34a46181b
+			summarizeBy: none
+			sourceColumn: BirthDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column MaritalStatus
+			dataType: string
+			lineageTag: bbe8158f-1ac1-43bf-be52-b6c379055665
+			summarizeBy: none
+			sourceColumn: MaritalStatus
+
+			annotation SummarizationSetBy = Automatic
+
+		column EmailAddress
+			dataType: string
+			lineageTag: 1170e8cb-010c-45e7-bd78-14c41ec0606d
+			summarizeBy: none
+			sourceColumn: EmailAddress
+
+			annotation SummarizationSetBy = Automatic
+
+		column Phone
+			dataType: string
+			lineageTag: efd72e31-5c30-47de-9ef6-36aba95ad207
+			summarizeBy: none
+			sourceColumn: Phone
+
+			annotation SummarizationSetBy = Automatic
+
+		column EmergencyContactName
+			dataType: string
+			lineageTag: 771a37ca-1fb0-409b-b0dd-b7d9ec56f25c
+			summarizeBy: none
+			sourceColumn: EmergencyContactName
+
+			annotation SummarizationSetBy = Automatic
+
+		column EmergencyContactPhone
+			dataType: string
+			lineageTag: c56fec5b-5984-4639-a803-99f8f49f7b4c
+			summarizeBy: none
+			sourceColumn: EmergencyContactPhone
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalariedFlag
+			dataType: int64
+			formatString: 0
+			lineageTag: 373b58d8-a06e-4262-81e0-fcdfa55ec225
+			summarizeBy: sum
+			sourceColumn: SalariedFlag
+
+			annotation SummarizationSetBy = Automatic
+
+		column PayFrequency
+			dataType: int64
+			formatString: 0
+			lineageTag: c08bf0e2-9246-454e-ae6e-4e43f0b74708
+			summarizeBy: sum
+			sourceColumn: PayFrequency
+
+			annotation SummarizationSetBy = Automatic
+
+		column BaseRate
+			dataType: double
+			lineageTag: da6b1867-c62a-46b7-ba89-73f04633052a
+			summarizeBy: sum
+			sourceColumn: BaseRate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column VacationHours
+			dataType: int64
+			formatString: 0
+			lineageTag: 4343e19a-86db-4f66-8ad2-1295110d5e81
+			summarizeBy: sum
+			sourceColumn: VacationHours
+
+			annotation SummarizationSetBy = Automatic
+
+		column CurrentFlag
+			dataType: int64
+			formatString: 0
+			lineageTag: 450dd03c-bf95-4ad9-a9ed-2849744ad447
+			summarizeBy: sum
+			sourceColumn: CurrentFlag
+
+			annotation SummarizationSetBy = Automatic
+
+		column StartDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: ff4ffad3-d338-4313-893a-35af8020e257
+			summarizeBy: none
+			sourceColumn: StartDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column EndDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: 3ade3c66-8579-461c-9984-631822e8aac1
+			summarizeBy: none
+			sourceColumn: EndDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column Status
+			dataType: string
+			lineageTag: 5955c7e2-fdf2-4de7-82e3-909cf39c729e
+			summarizeBy: none
+			sourceColumn: Status
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesPersonFlag
+			dataType: int64
+			formatString: 0
+			lineageTag: 17b7cc27-decb-4fae-9e40-6e2372ff760e
+			summarizeBy: sum
+			sourceColumn: SalesPersonFlag
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsSalesPerson
+			dataType: int64
+			formatString: 0
+			lineageTag: cd0aeb40-7c2a-420b-9533-e1691579420e
+			summarizeBy: sum
+			sourceColumn: IsSalesPerson
+
+			annotation SummarizationSetBy = Automatic
+
+		column DepartmentName
+			dataType: string
+			lineageTag: 133ef55e-71a1-48bd-ab3c-ac2eb773ed85
+			summarizeBy: none
+			sourceColumn: DepartmentName
+
+			annotation SummarizationSetBy = Automatic
+
+		partition Employee = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source      = FxReadParquetFile ( "dimensions\employees" ),
+					    ChangedType = Table.TransformColumnTypes ( Source, { { "ParentEmployeeKey", Int64.Type } } )
+					in
+					    ChangedType
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table EmployeeStoreAssignment
+		lineageTag: cfd3a49d-1a68-4509-bdcd-37ddd4d834e0
+
+		column EmployeeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: b1c7f62c-0ac6-4d0f-af5d-3f19a902a059
+			summarizeBy: count
+			sourceColumn: EmployeeKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column StoreKey
+			dataType: int64
+			formatString: 0
+			lineageTag: b730092b-7a4d-4a4c-a86c-9d38ce127597
+			summarizeBy: count
+			sourceColumn: StoreKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column StartDate
+			dataType: dateTime
+			formatString: yyyy-mm-dd
+			lineageTag: 7e328bd2-6b1b-4860-b4db-64b50b3efbae
+			summarizeBy: none
+			sourceColumn: StartDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+			annotation PBI_FormatHint = {"isCustom":true}
+
+		column EndDate
+			dataType: dateTime
+			formatString: yyyy-mm-dd
+			lineageTag: 1e36edf5-3aeb-4020-bdea-f27fa9ea710f
+			summarizeBy: none
+			sourceColumn: EndDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+			annotation PBI_FormatHint = {"isCustom":true}
+
+		column FTE
+			dataType: double
+			lineageTag: 9551a545-c11c-4968-91e2-2f7998b31b27
+			summarizeBy: sum
+			sourceColumn: FTE
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column RoleAtStore
+			dataType: string
+			lineageTag: 5aad777c-d87f-4ed8-a6e4-a7eca48f0dcf
+			summarizeBy: none
+			sourceColumn: RoleAtStore
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsPrimary
+			dataType: boolean
+			formatString: """TRUE"";""TRUE"";""FALSE"""
+			lineageTag: 689b494f-1348-4314-9d93-1af0cad87817
+			summarizeBy: none
+			sourceColumn: IsPrimary
+
+			annotation SummarizationSetBy = Automatic
+
+		column AssignmentSequence
+			dataType: int64
+			formatString: 0
+			lineageTag: 4c72f374-1ab5-4302-8d51-65437b36d3fa
+			summarizeBy: sum
+			sourceColumn: AssignmentSequence
+
+			annotation SummarizationSetBy = Automatic
+
+		partition EmployeeStoreAssignment = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadParquetFile ( "dimensions\employee_store_assignments" )
+					in
+					    Source
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
 	table ExchangeRates
 		lineageTag: 97443b1d-382e-4d8e-a6e8-526c8068417b
 
@@ -1008,7 +1453,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: af011566-9475-4ca8-a0e7-04588a8cf00c
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: CategoryKey
 
 			changedProperty = IsHidden
@@ -1057,7 +1502,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: 817fb5b9-efba-4622-9733-06c52a3785e4
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: ProductKey
 
 			changedProperty = IsHidden
@@ -1098,7 +1543,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: 169bba0b-83a5-49c2-ae55-f76e8d03183f
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: SubcategoryKey
 
 			changedProperty = IsHidden
@@ -1156,7 +1601,7 @@ createOrReplace
 			annotation SummarizationSetBy = Automatic
 
 		column UnitCost
-			dataType: double
+			dataType: decimal
 			formatString: #,0.00
 			lineageTag: 55417800-0963-4dcf-bbb2-b6a61d0f428a
 			summarizeBy: sum
@@ -1167,7 +1612,7 @@ createOrReplace
 			annotation SummarizationSetBy = Automatic
 
 		column UnitPrice
-			dataType: double
+			dataType: decimal
 			formatString: #,0.00
 			lineageTag: 11e753c5-0f96-43ea-83b7-a269d2c1a0d6
 			summarizeBy: sum
@@ -1210,14 +1655,308 @@ createOrReplace
 
 			annotation SummarizationSetBy = Automatic
 
+		column LaunchDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: 25c6b1a0-77db-4354-8f15-9405b9210aca
+			summarizeBy: none
+			sourceColumn: LaunchDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column LaunchDateKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 51dcd4a5-a05b-42f2-a979-b8594760efb2
+			summarizeBy: count
+			sourceColumn: LaunchDateKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column DiscontinuedDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: 3bf13638-3651-4a94-8969-95c0d66675ba
+			summarizeBy: none
+			sourceColumn: DiscontinuedDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column DiscontinuedDateKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 7010eca1-723d-4853-a1f3-23e5e232c58a
+			summarizeBy: count
+			sourceColumn: DiscontinuedDateKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsDiscontinued
+			dataType: int64
+			formatString: 0
+			lineageTag: 3db03243-97b7-4256-863b-5631572faa9f
+			summarizeBy: sum
+			sourceColumn: IsDiscontinued
+
+			annotation SummarizationSetBy = Automatic
+
+		column ColorFamily
+			dataType: string
+			lineageTag: e55c7241-1da2-499e-9736-871acd9c88b2
+			summarizeBy: none
+			sourceColumn: ColorFamily
+
+			annotation SummarizationSetBy = Automatic
+
+		column Material
+			dataType: string
+			lineageTag: 5ba70989-ddcd-4c17-9eed-6fbd777821b2
+			summarizeBy: none
+			sourceColumn: Material
+
+			annotation SummarizationSetBy = Automatic
+
+		column Style
+			dataType: string
+			lineageTag: 38dc7604-3e4a-49c7-83e2-ab9d47d78ba2
+			summarizeBy: none
+			sourceColumn: Style
+
+			annotation SummarizationSetBy = Automatic
+
+		column AgeGroup
+			dataType: string
+			lineageTag: 6fca7a80-c1be-460c-992f-b41adc6f9ba1
+			summarizeBy: none
+			sourceColumn: AgeGroup
+
+			annotation SummarizationSetBy = Automatic
+
+		column ProductLine
+			dataType: string
+			lineageTag: 45b45de7-0e41-4ae8-843b-4bca6d770582
+			summarizeBy: none
+			sourceColumn: ProductLine
+
+			annotation SummarizationSetBy = Automatic
+
+		column SeasonalityProfile
+			dataType: string
+			lineageTag: 5771cb9c-96fa-4ab6-ad74-a84bf490df1e
+			summarizeBy: none
+			sourceColumn: SeasonalityProfile
+
+			annotation SummarizationSetBy = Automatic
+
+		column WeightKg
+			dataType: double
+			lineageTag: 63579280-6b4d-435f-a8f4-a80b8c5da59b
+			summarizeBy: sum
+			sourceColumn: WeightKg
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column LengthCm
+			dataType: double
+			lineageTag: f00ec155-e772-4aec-a25d-3f87942d3304
+			summarizeBy: sum
+			sourceColumn: LengthCm
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column WidthCm
+			dataType: double
+			lineageTag: 2627de29-b340-4cd9-8764-fb0b75d4b155
+			summarizeBy: sum
+			sourceColumn: WidthCm
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column HeightCm
+			dataType: double
+			lineageTag: be2bed0c-0ef1-4973-b281-d6fe77410157
+			summarizeBy: sum
+			sourceColumn: HeightCm
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column VolumeCm3
+			dataType: double
+			lineageTag: d2ab5e97-c7e0-4942-9e1f-cfb722baff37
+			summarizeBy: sum
+			sourceColumn: VolumeCm3
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column ShippingClass
+			dataType: string
+			lineageTag: 3f9f73da-2e18-43ca-8994-2c77a2d28b2f
+			summarizeBy: none
+			sourceColumn: ShippingClass
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsFragile
+			dataType: int64
+			formatString: 0
+			lineageTag: 244e2676-903b-4868-88b4-3584b517fcfd
+			summarizeBy: sum
+			sourceColumn: IsFragile
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsHazmat
+			dataType: int64
+			formatString: 0
+			lineageTag: 8e384256-3856-4d8e-8ed4-0cf10936c04f
+			summarizeBy: sum
+			sourceColumn: IsHazmat
+
+			annotation SummarizationSetBy = Automatic
+
+		column LeadTimeDays
+			dataType: int64
+			formatString: 0
+			lineageTag: d47f180f-d30b-46a0-9711-8c60da28150c
+			summarizeBy: sum
+			sourceColumn: LeadTimeDays
+
+			annotation SummarizationSetBy = Automatic
+
+		column CasePackQty
+			dataType: int64
+			formatString: 0
+			lineageTag: 9a05fbc9-a284-40a4-ac82-8a9599b4e0b6
+			summarizeBy: sum
+			sourceColumn: CasePackQty
+
+			annotation SummarizationSetBy = Automatic
+
+		column FulfillmentType
+			dataType: string
+			lineageTag: fb21c2b6-d2d3-4a55-9f5e-65752aa31aae
+			summarizeBy: none
+			sourceColumn: FulfillmentType
+
+			annotation SummarizationSetBy = Automatic
+
+		column BrandTier
+			dataType: string
+			lineageTag: b438f593-eec5-41fc-b9a0-5d0975fcd1f1
+			summarizeBy: none
+			sourceColumn: BrandTier
+
+			annotation SummarizationSetBy = Automatic
+
+		column EligibleStore
+			dataType: int64
+			formatString: 0
+			lineageTag: 43cfae6b-d53c-4e97-88ba-b359bffa1b4d
+			summarizeBy: sum
+			sourceColumn: EligibleStore
+
+			annotation SummarizationSetBy = Automatic
+
+		column EligibleOnline
+			dataType: int64
+			formatString: 0
+			lineageTag: baed3343-be36-418a-8dd3-7980fae0fe17
+			summarizeBy: sum
+			sourceColumn: EligibleOnline
+
+			annotation SummarizationSetBy = Automatic
+
+		column EligibleMarketplace
+			dataType: int64
+			formatString: 0
+			lineageTag: 17043102-7ed4-4555-829a-88c87a41fd57
+			summarizeBy: sum
+			sourceColumn: EligibleMarketplace
+
+			annotation SummarizationSetBy = Automatic
+
+		column EligibleB2B
+			dataType: int64
+			formatString: 0
+			lineageTag: 84f8b8e4-12fe-4c8a-b537-b8a171310fb2
+			summarizeBy: sum
+			sourceColumn: EligibleB2B
+
+			annotation SummarizationSetBy = Automatic
+
+		column WarrantyMonths
+			dataType: int64
+			formatString: 0
+			lineageTag: 860a22f5-f27d-400c-bee2-790ace295107
+			summarizeBy: sum
+			sourceColumn: WarrantyMonths
+
+			annotation SummarizationSetBy = Automatic
+
+		column ReturnRateBase
+			dataType: double
+			lineageTag: 71fee69d-2a4a-4f6b-bb16-90d2123ba805
+			summarizeBy: sum
+			sourceColumn: ReturnRateBase
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column DefectRateBase
+			dataType: double
+			lineageTag: 1a65ac51-dffd-4539-90c5-4a1130dff456
+			summarizeBy: sum
+			sourceColumn: DefectRateBase
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+		column ReturnWindowDays
+			dataType: int64
+			formatString: 0
+			lineageTag: e6f66dd7-1f26-4752-8887-47a47184c3e3
+			summarizeBy: sum
+			sourceColumn: ReturnWindowDays
+
+			annotation SummarizationSetBy = Automatic
+
+		column SupplierKey
+			dataType: int64
+			formatString: 0
+			lineageTag: ed30be91-9786-49a1-a330-be9ca19e5af6
+			summarizeBy: count
+			sourceColumn: SupplierKey
+
+			annotation SummarizationSetBy = Automatic
+
 		partition Products = m
 			mode: import
 			queryGroup: Dimensions
 			source =
 					let
-					    Source = FxReadParquetFile ( "dimensions\products" )
+					    Source = FxReadParquetFile ( "dimensions\products" ),
+					    ChangedType = Table.TransformColumnTypes (
+					        Source,
+					        { { "UnitCost", Currency.Type }, { "UnitPrice", Currency.Type } }
+					    )
 					in
-					    Source
+					    ChangedType
 
 		changedProperty = IsHidden
 
@@ -1242,7 +1981,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: c65defde-05fe-4684-b78c-9d6dd0c6c177
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: CategoryKey
 
 			changedProperty = IsHidden
@@ -1253,7 +1992,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: 87f711f3-bea5-4531-86b7-e8fc01b384ae
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: SubcategoryKey
 
 			changedProperty = IsHidden
@@ -1292,7 +2031,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: 7e6df572-b676-4cca-a951-71240f847fa4
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: PromotionKey
 
 			changedProperty = IsHidden
@@ -1403,6 +2142,47 @@ createOrReplace
 
 		annotation PBI_NavigationStepName = Navigation
 
+	table ReturnReason
+		lineageTag: c60843a1-5d3a-45b2-867e-7f664fff32a0
+
+		column ReturnReasonKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 5bf84513-cce0-4290-b1f3-df32b9e33e47
+			summarizeBy: count
+			sourceColumn: ReturnReasonKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column ReturnReason
+			dataType: string
+			lineageTag: 8166aee8-2ec8-4873-b62c-333375fa46fb
+			summarizeBy: none
+			sourceColumn: ReturnReason
+
+			annotation SummarizationSetBy = Automatic
+
+		column ReturnReasonCategory
+			dataType: string
+			lineageTag: 93fe5324-6533-432e-a354-a3b37232bb85
+			summarizeBy: none
+			sourceColumn: ReturnReasonCategory
+
+			annotation SummarizationSetBy = Automatic
+
+		partition ReturnReason = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source = FxReadParquetFile ( "dimensions\return_reason" )
+					in
+					    Source
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
 	table Sales
 		isHidden
 		lineageTag: 3b4ebd15-c006-45cf-9a28-da7b5fcc2b23
@@ -1436,7 +2216,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: ef610fa8-a5cf-448d-917e-1f4ffffc0220
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: CustomerKey
 
 			changedProperty = IsHidden
@@ -1448,7 +2228,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: 0c960408-b1ac-4eb6-aa37-fe5d60a9227b
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: ProductKey
 
 			changedProperty = IsHidden
@@ -1460,7 +2240,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: 2cca727c-d7d3-41ed-a154-db85140a90cc
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: StoreKey
 
 			changedProperty = IsHidden
@@ -1472,7 +2252,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: 45b17a0f-fefe-4d9d-b6f8-4fe64c73be43
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: PromotionKey
 
 			changedProperty = IsHidden
@@ -1546,7 +2326,7 @@ createOrReplace
 			annotation SummarizationSetBy = Automatic
 
 		column NetPrice
-			dataType: double
+			dataType: decimal
 			isHidden
 			lineageTag: 4a339bc4-fd3d-44e1-bdb3-8951f86273f0
 			summarizeBy: sum
@@ -1559,7 +2339,7 @@ createOrReplace
 			annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 		column UnitCost
-			dataType: double
+			dataType: decimal
 			isHidden
 			lineageTag: 504ead53-da47-42d5-9660-72d98bccde77
 			summarizeBy: sum
@@ -1572,7 +2352,7 @@ createOrReplace
 			annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 		column UnitPrice
-			dataType: double
+			dataType: decimal
 			isHidden
 			lineageTag: 3d674d61-1b2b-443d-a0e3-c9f0b8e99073
 			summarizeBy: sum
@@ -1585,7 +2365,7 @@ createOrReplace
 			annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 		column DiscountAmount
-			dataType: double
+			dataType: decimal
 			isHidden
 			lineageTag: ef3905c0-e59a-4764-9445-04f41a2b1d3c
 			summarizeBy: sum
@@ -1620,16 +2400,203 @@ createOrReplace
 
 			annotation SummarizationSetBy = Automatic
 
+		column SalesPersonEmployeeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: c973bb62-eefe-4d2d-9566-fadd267c35fd
+			summarizeBy: count
+			sourceColumn: SalesPersonEmployeeKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesChannelKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 0c915e27-b23a-4511-b618-dfb265a85d32
+			summarizeBy: count
+			sourceColumn: SalesChannelKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column TimeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 7200300e-8fd0-4aa9-8fe1-da1cab203fe9
+			summarizeBy: count
+			sourceColumn: TimeKey
+
+			annotation SummarizationSetBy = Automatic
+
 		partition Sales = m
 			mode: import
 			queryGroup: Fact
 			source =
 					let
-					    Source = FxReadParquetFile ( "facts\sales" )
+					    Source = FxReadParquetFile ( "facts\sales" ),
+					    ChangedType = Table.TransformColumnTypes (
+					        Source,
+					        {
+					            { "SalesChannelKey", Int64.Type },
+					            { "TimeKey", Int64.Type },
+					            { "NetPrice", Currency.Type },
+					            { "UnitCost", Currency.Type },
+					            { "UnitPrice", Currency.Type },
+					            { "DiscountAmount", Currency.Type },
+					            { "IsOrderDelayed", Int64.Type }
+					        }
+					    )
 					in
-					    Source
+					    ChangedType
 
 		changedProperty = IsHidden
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table SalesChannel
+		lineageTag: 47a8ed70-6b38-4bbe-acb0-623457c1fe8f
+
+		column SalesChannelKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 94d1472d-afcd-4a20-9b89-14bfc75fc627
+			summarizeBy: count
+			sourceColumn: SalesChannelKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesChannel
+			dataType: string
+			lineageTag: f14d3907-8f33-4e19-91ae-ceda6fc3d5e6
+			summarizeBy: none
+			sourceColumn: SalesChannel
+
+			annotation SummarizationSetBy = Automatic
+
+		column ChannelGroup
+			dataType: string
+			lineageTag: a7f68c14-f60a-47f5-9796-0152d96612bf
+			summarizeBy: none
+			sourceColumn: ChannelGroup
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesChannelCode
+			dataType: string
+			lineageTag: f5ccbb3d-78e2-4017-ad55-2c92177771e3
+			summarizeBy: none
+			sourceColumn: SalesChannelCode
+
+			annotation SummarizationSetBy = Automatic
+
+		column SortOrder
+			dataType: int64
+			formatString: 0
+			lineageTag: 1cf3944c-dcba-4254-8787-d26b19de2741
+			summarizeBy: sum
+			sourceColumn: SortOrder
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsDigital
+			dataType: boolean
+			formatString: """TRUE"";""TRUE"";""FALSE"""
+			lineageTag: d81abe28-e61e-4fea-976d-3369c80b8f1f
+			summarizeBy: none
+			sourceColumn: IsDigital
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsPhysical
+			dataType: boolean
+			formatString: """TRUE"";""TRUE"";""FALSE"""
+			lineageTag: 04f5478c-11ed-42bc-b972-0ba262f8657c
+			summarizeBy: none
+			sourceColumn: IsPhysical
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsThirdParty
+			dataType: boolean
+			formatString: """TRUE"";""TRUE"";""FALSE"""
+			lineageTag: 579bb8b1-fcf1-4b79-bfa3-150569d1d127
+			summarizeBy: none
+			sourceColumn: IsThirdParty
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsB2B
+			dataType: boolean
+			formatString: """TRUE"";""TRUE"";""FALSE"""
+			lineageTag: 63ef1408-77fc-4d00-9c66-2d5ba127b7b4
+			summarizeBy: none
+			sourceColumn: IsB2B
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsAssisted
+			dataType: boolean
+			formatString: """TRUE"";""TRUE"";""FALSE"""
+			lineageTag: 9145f1c8-ef40-498b-8be3-367ae1f4802e
+			summarizeBy: none
+			sourceColumn: IsAssisted
+
+			annotation SummarizationSetBy = Automatic
+
+		column IsOwnedChannel
+			dataType: boolean
+			formatString: """TRUE"";""TRUE"";""FALSE"""
+			lineageTag: 7c262f7b-0eef-4b4a-81d6-79a323de3e90
+			summarizeBy: none
+			sourceColumn: IsOwnedChannel
+
+			annotation SummarizationSetBy = Automatic
+
+		column TimeProfile
+			dataType: string
+			lineageTag: c4f02986-891d-47d8-9b8c-7c65e21fdf5a
+			summarizeBy: none
+			sourceColumn: TimeProfile
+
+			annotation SummarizationSetBy = Automatic
+
+		column Is24x7
+			dataType: boolean
+			formatString: """TRUE"";""TRUE"";""FALSE"""
+			lineageTag: 1ad7fbf4-062e-406e-a443-8b02d049829d
+			summarizeBy: none
+			sourceColumn: Is24x7
+
+			annotation SummarizationSetBy = Automatic
+
+		column OpenMinute
+			dataType: int64
+			formatString: 0
+			lineageTag: f0fb55c0-2b8c-4ba1-8049-40f8979cf39b
+			summarizeBy: sum
+			sourceColumn: OpenMinute
+
+			annotation SummarizationSetBy = Automatic
+
+		column CloseMinute
+			dataType: int64
+			formatString: 0
+			lineageTag: ce7c9ac7-9574-4054-91d7-9e3b5cf4cd21
+			summarizeBy: sum
+			sourceColumn: CloseMinute
+
+			annotation SummarizationSetBy = Automatic
+
+		partition SalesChannel = m
+			mode: import
+			queryGroup: Dimensions
+			source =
+					let
+					    Source     = FxReadParquetFile ( "dimensions\sales_channels" ),
+					    ChangeType = Table.TransformColumnTypes ( Source, { { "SalesChannelKey", Int64.Type } } )
+					in
+					    ChangeType
 
 		annotation PBI_NavigationStepName = Navigation
 
@@ -1644,7 +2611,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: cb34fba1-948b-4ea1-821a-21ddce07d4f6
-			summarizeBy: none
+			summarizeBy: sum
 			sourceColumn: SalesOrderNumber
 
 			changedProperty = IsHidden
@@ -1668,7 +2635,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: 722964a7-101a-41fa-946f-2599d7dfb2fd
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: ProductKey
 
 			changedProperty = IsHidden
@@ -1711,8 +2678,6 @@ createOrReplace
 
 			changedProperty = IsHidden
 
-			changedProperty = DataType
-
 			annotation SummarizationSetBy = Automatic
 
 		column UnitCost
@@ -1724,8 +2689,6 @@ createOrReplace
 			sourceColumn: UnitCost
 
 			changedProperty = IsHidden
-
-			changedProperty = DataType
 
 			annotation SummarizationSetBy = Automatic
 
@@ -1739,8 +2702,6 @@ createOrReplace
 
 			changedProperty = IsHidden
 
-			changedProperty = DataType
-
 			annotation SummarizationSetBy = Automatic
 
 		column DiscountAmount
@@ -1752,8 +2713,6 @@ createOrReplace
 			sourceColumn: DiscountAmount
 
 			changedProperty = IsHidden
-
-			changedProperty = DataType
 
 			annotation SummarizationSetBy = Automatic
 
@@ -1768,46 +2727,10 @@ createOrReplace
 
 			annotation SummarizationSetBy = Automatic
 
-		column StoreKey
-			dataType: int64
-			isHidden
-			formatString: 0
-			lineageTag: c646e5a0-63b7-451e-b161-6046010cf0bf
-			summarizeBy: none
-			sourceColumn: StoreKey
-
-			changedProperty = IsHidden
-
-			annotation SummarizationSetBy = Automatic
-
-		column PromotionKey
-			dataType: int64
-			isHidden
-			formatString: 0
-			lineageTag: 03c41836-623d-4cc0-9230-2a4bfc9e09eb
-			summarizeBy: none
-			sourceColumn: PromotionKey
-
-			changedProperty = IsHidden
-
-			annotation SummarizationSetBy = Automatic
-
-		column CurrencyKey
-			dataType: int64
-			isHidden
-			formatString: 0
-			lineageTag: e70f974f-ea27-4d2e-ae57-a3841e06df13
-			summarizeBy: none
-			sourceColumn: CurrencyKey
-
-			changedProperty = IsHidden
-
-			annotation SummarizationSetBy = Automatic
-
 		column DueDate
 			dataType: dateTime
 			isHidden
-			formatString: Long Date
+			formatString: Short Date
 			lineageTag: 520f8853-2b05-4a63-a3f4-9bc61a91762a
 			summarizeBy: none
 			sourceColumn: DueDate
@@ -1823,9 +2746,18 @@ createOrReplace
 			queryGroup: Fact
 			source =
 					let
-					    Source = FxReadParquetFile ( "facts\sales_order_detail" )
+					    Source = FxReadParquetFile ( "facts\sales_order_detail" ),
+					    ChangedType = Table.TransformColumnTypes (
+					        Source,
+					        {
+					            { "NetPrice", Currency.Type },
+					            { "UnitCost", Currency.Type },
+					            { "UnitPrice", Currency.Type },
+					            { "DiscountAmount", Currency.Type }
+					        }
+					    )
 					in
-					    Source
+					    ChangedType
 
 		changedProperty = IsHidden
 
@@ -1842,7 +2774,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: f17d5347-259c-4ea8-b3dc-4d2b48560f58
-			summarizeBy: none
+			summarizeBy: sum
 			sourceColumn: SalesOrderNumber
 
 			changedProperty = IsHidden
@@ -1854,7 +2786,7 @@ createOrReplace
 			isHidden
 			formatString: 0
 			lineageTag: da63cb2e-08d8-4c46-a8a4-10e89d95b9f3
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: CustomerKey
 
 			changedProperty = IsHidden
@@ -1887,16 +2819,162 @@ createOrReplace
 
 			annotation SummarizationSetBy = Automatic
 
+		column StoreKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 31f91d16-dc4c-4237-9421-4fae9d2cfe7a
+			summarizeBy: count
+			sourceColumn: StoreKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesPersonEmployeeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 38218133-6f21-4368-8502-9dee4098e926
+			summarizeBy: count
+			sourceColumn: SalesPersonEmployeeKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column PromotionKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 884d1910-8823-4b37-bdf7-a94f6fc5804c
+			summarizeBy: count
+			sourceColumn: PromotionKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column CurrencyKey
+			dataType: int64
+			formatString: 0
+			lineageTag: af9340e2-d153-4cec-b7a9-d40d2bd9a249
+			summarizeBy: count
+			sourceColumn: CurrencyKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesChannelKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 0e066b37-1d3b-4325-8160-90b04f800168
+			summarizeBy: count
+			sourceColumn: SalesChannelKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column TimeKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 8fd9ba76-bf51-4d00-9c77-f60b697a4578
+			summarizeBy: count
+			sourceColumn: TimeKey
+
+			annotation SummarizationSetBy = Automatic
+
 		partition SalesOrderHeader = m
 			mode: import
 			queryGroup: Fact
 			source =
 					let
-					    Source = FxReadParquetFile ( "facts\sales_order_header" )
+					    Source = FxReadParquetFile ( "facts\sales_order_header" ),
+					    ChangedType = Table.TransformColumnTypes (
+					        Source,
+					        {
+					            { "SalesChannelKey", Int64.Type },
+					            { "TimeKey", Int64.Type },
+					            { "IsOrderDelayed", Int64.Type }
+					        }
+					    )
 					in
-					    Source
+					    ChangedType
 
 		changedProperty = IsHidden
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	table SalesReturns
+		lineageTag: f71da2a8-d81c-4ef2-978c-2984049fea65
+
+		column SalesOrderNumber
+			dataType: int64
+			formatString: 0
+			lineageTag: 34819696-4025-4c11-8e34-cf55ddb7914f
+			summarizeBy: sum
+			sourceColumn: SalesOrderNumber
+
+			annotation SummarizationSetBy = Automatic
+
+		column SalesOrderLineNumber
+			dataType: int64
+			formatString: 0
+			lineageTag: 3c0c0628-882e-4399-aace-0c7d48256757
+			summarizeBy: sum
+			sourceColumn: SalesOrderLineNumber
+
+			annotation SummarizationSetBy = Automatic
+
+		column ReturnDate
+			dataType: dateTime
+			formatString: Long Date
+			lineageTag: 03d49c1a-bbc0-49f3-9483-6112de83d580
+			summarizeBy: none
+			sourceColumn: ReturnDate
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation UnderlyingDateTimeDataType = Date
+
+		column ReturnReasonKey
+			dataType: int64
+			formatString: 0
+			lineageTag: 3409ec47-c6fd-4e79-8347-69d84073b723
+			summarizeBy: count
+			sourceColumn: ReturnReasonKey
+
+			annotation SummarizationSetBy = Automatic
+
+		column ReturnQuantity
+			dataType: int64
+			formatString: 0
+			lineageTag: b5bba1cb-a8ab-4481-b4c0-f915b79b4fe5
+			summarizeBy: sum
+			sourceColumn: ReturnQuantity
+
+			annotation SummarizationSetBy = Automatic
+
+		column ReturnNetPrice
+			dataType: decimal
+			formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+			lineageTag: 07b144c2-4d38-4a7e-bd8a-ee6ecbc59f70
+			summarizeBy: sum
+			sourceColumn: ReturnNetPrice
+
+			annotation SummarizationSetBy = Automatic
+
+			annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+		column ReturnEventKey
+			dataType: int64
+			formatString: 0
+			lineageTag: d7a01222-7551-4e18-9b4a-e0b7277eebe2
+			summarizeBy: count
+			sourceColumn: ReturnEventKey
+
+			annotation SummarizationSetBy = Automatic
+
+		partition SalesReturns = m
+			mode: import
+			queryGroup: Fact
+			source =
+					let
+					    Source      = FxReadParquetFile ( "facts\sales_return" ),
+					    ChangedType = Table.TransformColumnTypes ( Source, { { "ReturnNetPrice", Currency.Type } } )
+					in
+					    ChangedType
 
 		annotation PBI_NavigationStepName = Navigation
 
@@ -1909,7 +2987,7 @@ createOrReplace
 			dataType: int64
 			formatString: 0
 			lineageTag: 8637d84b-74d0-48a2-92c8-2af2e7cb27a6
-			summarizeBy: none
+			summarizeBy: count
 			sourceColumn: StoreKey
 
 			changedProperty = IsHidden
@@ -1959,7 +3037,7 @@ createOrReplace
 
 		column OpeningDate
 			dataType: dateTime
-			formatString: Long Date
+			formatString: Short Date
 			lineageTag: 38713ebc-a588-4f9d-b653-045c9d2f883f
 			summarizeBy: none
 			sourceColumn: OpeningDate
