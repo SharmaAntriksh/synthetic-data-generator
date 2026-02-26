@@ -39,10 +39,6 @@ relationship 1fac21a3-ee5d-cac2-b359-3985ac449411
 	fromColumn: SalesOrderDetail.PromotionKey
 	toColumn: Promotions.PromotionKey
 
-relationship 7b2e0cb0-a9bc-2724-42f2-0a172ddf5156
-	fromColumn: SalesOrderDetail.StoreKey
-	toColumn: Store.StoreKey
-
 relationship e592004a-d7f4-4ab6-e25c-a9eba894cc16
 	fromColumn: SalesOrderDetail.CurrencyKey
 	toColumn: Currency.CurrencyKey
@@ -50,4 +46,28 @@ relationship e592004a-d7f4-4ab6-e25c-a9eba894cc16
 relationship 4407fcda-70ba-5a9a-d338-638b7def17f6
 	fromColumn: SalesOrderHeader.CustomerKey
 	toColumn: Customers.CustomerKey
+
+relationship AutoDetected_ac57d097-b36c-4c9b-a6d6-9df98233273f
+	fromColumn: SalesOrderHeader.StoreKey
+	toColumn: Store.StoreKey
+
+relationship AutoDetected_7238adfe-7210-48cd-982a-e626cf33f39f
+	fromColumn: EmployeeStoreAssignment.StoreKey
+	toColumn: Store.StoreKey
+
+relationship AutoDetected_98b51ca6-28e7-44d0-b5e8-1e5fd56ab5f7
+	fromColumn: SalesOrderHeader.SalesChannelKey
+	toColumn: SalesChannel.SalesChannelKey
+
+relationship AutoDetected_2a894188-7f27-47a4-933d-2395baa51745
+	fromColumn: EmployeeStoreAssignment.EmployeeKey
+	toColumn: Employee.EmployeeKey
+
+relationship AutoDetected_f1fcc0cf-f00f-4ea6-9deb-675ac1def2b4
+	fromColumn: SalesReturns.ReturnReasonKey
+	toColumn: ReturnReason.ReturnReasonKey
+
+relationship 0d9b199c-ce95-ba02-c862-659a1662265d
+	fromColumn: SalesOrderHeader.SalesPersonEmployeeKey
+	toColumn: Employee.EmployeeKey
 

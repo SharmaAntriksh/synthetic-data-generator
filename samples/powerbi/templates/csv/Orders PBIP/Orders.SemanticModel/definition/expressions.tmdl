@@ -1,4 +1,4 @@
-expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-10 01_28_17 PM Customers 20K Sales 600K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-26 03_17_00 PM Customers 80 Sales 10K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
 	lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
 	queryGroup: 'Parameters & Functions'
 
@@ -134,4 +134,57 @@ expression Transform_SOD_File =
 	annotation PBI_NavigationStepName = Navigation
 
 	annotation PBI_ResultType = Function
+
+expression Transform_SalesReturns_File =
+		let
+		    Source = ( Parameter_SalesReturns as binary ) =>
+		        let
+		            Source = Csv.Document (
+		                Parameter_SalesReturns,
+		                [ Delimiter = ",", Columns = 7, Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		            ),
+		            PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+		        in
+		            PromotedHeaders
+		in
+		    Source
+	lineageTag: 624b8361-97e1-4f5e-9515-7036b208aaa7
+	queryGroup: 'SalesReturns Transformation'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Function
+
+expression Transform_Sales_File =
+		let
+		    Source = ( Parameter1 as binary ) =>
+		        let
+		            Source = Csv.Document (
+		                Parameter1,
+		                [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+		            ),
+		            PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+		        in
+		            PromotedHeaders
+		in
+		    Source
+	lineageTag: 39cdb9e9-f4b8-4323-9be1-49718cef534d
+	queryGroup: 'SalesReturns Transformation'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Function
+
+expression Sample_File_SalesReturns =
+		let
+		    Source = Folder.Files("C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-26 01_04_52 PM Customers 80 Sales 10K CSV\facts\sales_return"),
+		    Navigation1 = Source{0}[Content]
+		in
+		    Navigation1
+	lineageTag: 824889fd-56af-45ff-a05c-c8c4430485d3
+	queryGroup: 'SalesReturns Transformation'
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Binary
 

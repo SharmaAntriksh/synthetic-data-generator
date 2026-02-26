@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.5.0/schema.json",
   "name": "f36912b401d08120c6e1",
   "position": {
     "x": 0,
@@ -54,73 +54,42 @@
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Sales"
+                      "Entity": "MeasuresTable"
                     }
                   },
                   "Property": "Sales Amount"
                 }
               },
-              "queryRef": "Sales.Sales Amount",
-              "nativeQueryRef": "Sales",
-              "displayName": "Sales"
+              "queryRef": "MeasuresTable.Sales Amount",
+              "nativeQueryRef": "Sales Amount"
             },
             {
               "field": {
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Sales"
+                      "Entity": "MeasuresTable"
                     }
                   },
                   "Property": "Cost Amount"
                 }
               },
-              "queryRef": "Sales.Cost Amount",
-              "nativeQueryRef": "Cost",
-              "displayName": "Cost"
+              "queryRef": "MeasuresTable.Cost Amount",
+              "nativeQueryRef": "Cost Amount"
             },
             {
               "field": {
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Sales"
+                      "Entity": "MeasuresTable"
                     }
                   },
                   "Property": "Profit Amount"
                 }
               },
-              "queryRef": "Sales.Profit Amount",
-              "nativeQueryRef": "Profit",
-              "displayName": "Profit"
-            },
-            {
-              "field": {
-                "Measure": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "Sales"
-                    }
-                  },
-                  "Property": "Transactions"
-                }
-              },
-              "queryRef": "Sales.Transactions",
-              "nativeQueryRef": "Transactions"
-            },
-            {
-              "field": {
-                "Measure": {
-                  "Expression": {
-                    "SourceRef": {
-                      "Entity": "Sales"
-                    }
-                  },
-                  "Property": "# Customers"
-                }
-              },
-              "queryRef": "Sales.# Customers",
-              "nativeQueryRef": "# Customers"
+              "queryRef": "MeasuresTable.Profit Amount",
+              "nativeQueryRef": "Profit Amount"
             }
           ]
         }
