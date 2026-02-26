@@ -7,7 +7,7 @@ table SalesOrderHeader
 		isHidden
 		formatString: 0
 		lineageTag: f17d5347-259c-4ea8-b3dc-4d2b48560f58
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
 
 		changedProperty = IsHidden
@@ -19,7 +19,7 @@ table SalesOrderHeader
 		isHidden
 		formatString: 0
 		lineageTag: da63cb2e-08d8-4c46-a8a4-10e89d95b9f3
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CustomerKey
 
 		changedProperty = IsHidden
@@ -52,14 +52,72 @@ table SalesOrderHeader
 
 		annotation SummarizationSetBy = Automatic
 
+	column StoreKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 9730261e-fe29-4ccb-a30f-32af6e8fdd77
+		summarizeBy: count
+		sourceColumn: StoreKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesPersonEmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: bfde07b1-d6c1-414b-9ca0-b64a76fa481d
+		summarizeBy: count
+		sourceColumn: SalesPersonEmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionKey
+		dataType: int64
+		formatString: 0
+		lineageTag: c8e0b633-9a62-49ce-8a19-44d814140b64
+		summarizeBy: count
+		sourceColumn: PromotionKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 22a60f23-3a66-4ca9-bbfb-1485115634d3
+		summarizeBy: count
+		sourceColumn: CurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 24660e03-2991-42fc-b8b4-6d40a4e122c9
+		summarizeBy: count
+		sourceColumn: SalesChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 2b37b6db-21d3-47f2-93ab-cfa9c1f153a2
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition SalesOrderHeader = m
 		mode: import
 		queryGroup: Fact
 		source =
 				let
-				    Source = FxReadParquetFile ( "facts\sales_order_header" )
+				    Source = FxReadParquetFile ( "facts\sales_order_header" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        { { "TimeKey", Int64.Type }, { "IsOrderDelayed", Int64.Type } }
+				    )
 				in
-				    Source
+				    ChangedType
 
 	changedProperty = IsHidden
 

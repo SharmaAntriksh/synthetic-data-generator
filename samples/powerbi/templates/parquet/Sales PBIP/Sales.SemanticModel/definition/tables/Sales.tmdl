@@ -7,7 +7,7 @@ table Sales
 		isHidden
 		formatString: 0
 		lineageTag: ef610fa8-a5cf-448d-917e-1f4ffffc0220
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CustomerKey
 
 		changedProperty = IsHidden
@@ -19,7 +19,7 @@ table Sales
 		isHidden
 		formatString: 0
 		lineageTag: 0c960408-b1ac-4eb6-aa37-fe5d60a9227b
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ProductKey
 
 		changedProperty = IsHidden
@@ -31,7 +31,7 @@ table Sales
 		isHidden
 		formatString: 0
 		lineageTag: 2cca727c-d7d3-41ed-a154-db85140a90cc
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: StoreKey
 
 		changedProperty = IsHidden
@@ -43,7 +43,7 @@ table Sales
 		isHidden
 		formatString: 0
 		lineageTag: 45b17a0f-fefe-4d9d-b6f8-4fe64c73be43
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: PromotionKey
 
 		changedProperty = IsHidden
@@ -117,7 +117,7 @@ table Sales
 		annotation SummarizationSetBy = Automatic
 
 	column NetPrice
-		dataType: double
+		dataType: decimal
 		isHidden
 		lineageTag: 4a339bc4-fd3d-44e1-bdb3-8951f86273f0
 		summarizeBy: sum
@@ -130,7 +130,7 @@ table Sales
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column UnitCost
-		dataType: double
+		dataType: decimal
 		isHidden
 		lineageTag: 504ead53-da47-42d5-9660-72d98bccde77
 		summarizeBy: sum
@@ -143,7 +143,7 @@ table Sales
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column UnitPrice
-		dataType: double
+		dataType: decimal
 		isHidden
 		lineageTag: 3d674d61-1b2b-443d-a0e3-c9f0b8e99073
 		summarizeBy: sum
@@ -156,7 +156,7 @@ table Sales
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column DiscountAmount
-		dataType: double
+		dataType: decimal
 		isHidden
 		lineageTag: ef3905c0-e59a-4764-9445-04f41a2b1d3c
 		summarizeBy: sum
@@ -191,14 +191,71 @@ table Sales
 
 		annotation SummarizationSetBy = Automatic
 
+	column SalesOrderNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 407d9557-1476-4c16-b370-9cfbfd2b14ad
+		summarizeBy: sum
+		sourceColumn: SalesOrderNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesOrderLineNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 9cdac010-292e-4918-b89f-d3178ebdea0a
+		summarizeBy: sum
+		sourceColumn: SalesOrderLineNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesPersonEmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 4f4b0dc7-b0d7-48e3-bbcb-2976a4f2a425
+		summarizeBy: count
+		sourceColumn: SalesPersonEmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 137d80f7-02a7-4bbb-b334-0cac557489ab
+		summarizeBy: count
+		sourceColumn: SalesChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8b63cabb-5ce7-4790-9651-71658818a100
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Sales = m
 		mode: import
 		queryGroup: Fact
 		source =
 				let
-				    Source = FxReadParquetFile ( "facts\sales" )
+				    Source = FxReadParquetFile ( "facts\sales" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        {
+				            { "SalesChannelKey", Int64.Type },
+				            { "TimeKey", Int64.Type },
+				            { "NetPrice", Currency.Type },
+				            { "UnitCost", Currency.Type },
+				            { "UnitPrice", Currency.Type },
+				            { "DiscountAmount", Currency.Type },
+				            { "IsOrderDelayed", Int64.Type }
+				        }
+				    )
 				in
-				    Source
+				    ChangedType
 
 	changedProperty = IsHidden
 

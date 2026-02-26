@@ -120,10 +120,10 @@ expression Sample_SalesReturns =
 expression Transform_SalesReturns_File =
 		let
 		    Source = (Parameter_SalesReturns as binary) => let
-		        Source = Csv.Document(Parameter_SalesReturns,[Delimiter=",", Columns=7, Encoding=1252, QuoteStyle=QuoteStyle.None]),
-		        #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true])
-		    in
-		        #"Promoted Headers"
+		    Source = Csv.Document(Parameter_SalesReturns,[Delimiter=",", Columns=7, Encoding=1252, QuoteStyle=QuoteStyle.None]),
+		    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true])
+		in
+		    #"Promoted Headers"
 		in
 		    Source
 	mAttributes: [ FunctionQueryBinding = "{""exemplarFormulaName"":""Sample_SalesReturns""}" ]

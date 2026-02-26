@@ -21,7 +21,7 @@ queryGroup Fact
 
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBI_QueryOrder = ["ContosoFolder","FxReadParquetFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRates","MeasureTable","SalesOrderDetail"]
+annotation PBI_QueryOrder = ["ContosoFolder","FxReadParquetFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRates","MeasureTable","SalesOrderDetail","SalesReturns","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel"]
 
 annotation PBI_ProTooling = ["TMDLView_Desktop","DevMode"]
 
@@ -38,6 +38,11 @@ ref table ExchangeRates
 ref table SalesOrderHeader
 ref table MeasureTable
 ref table SalesOrderDetail
+ref table SalesReturns
+ref table Employee
+ref table EmployeeStoreAssignment
+ref table ReturnReason
+ref table SalesChannel
 
 ref cultureInfo en-US
 

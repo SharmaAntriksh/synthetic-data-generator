@@ -52,15 +52,22 @@ table Geography
 
 		annotation SummarizationSetBy = Automatic
 
+	column ISOCode
+		dataType: string
+		lineageTag: 841c4297-96f2-447d-9e47-c96a95c34705
+		summarizeBy: none
+		sourceColumn: ISOCode
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Geography = m
 		mode: import
 		queryGroup: Dimensions
 		source =
 				let
-				    Source = FxReadParquetFile ( "dimensions\geography" ),
-				    #"Removed Columns" = Table.RemoveColumns ( Source,{"ISOCode"} )
+				    Source = FxReadParquetFile ( "dimensions\geography" )
 				in
-				    #"Removed Columns"
+				    Source
 
 	changedProperty = IsHidden
 

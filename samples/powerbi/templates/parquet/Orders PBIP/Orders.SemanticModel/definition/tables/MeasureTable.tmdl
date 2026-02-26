@@ -54,6 +54,35 @@ table MeasureTable
 
 		annotation PBI_FormatHint = {"isDecimal":true}
 
+	measure 'Employee Sales by Store Assgn.' = ```
+			
+			CALCULATE ( 
+			    [Sales Amount],
+			    TREATAS ( 
+			        GENERATE ( 
+			            SUMMARIZE ( 
+			                EmployeeStoreAssignment, 
+			                EmployeeStoreAssignment[StoreKey],
+			                Employee[EmployeeKey]
+			            ),
+			            DATESBETWEEN ( 
+			                Dates[Date],
+			                CALCULATE ( MIN ( EmployeeStoreAssignment[StartDate] ) ),
+			                CALCULATE ( MAX ( EmployeeStoreAssignment[EndDate] ) )
+			            )
+			        ),
+			        SalesOrderHeader[StoreKey],
+			        SalesOrderHeader[SalesPersonEmployeeKey],
+			        Dates[Date]
+			    )
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 8d7be87d-7474-4424-9ae8-82393276bfb6
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
 	column Column1
 		dataType: string
 		isHidden
