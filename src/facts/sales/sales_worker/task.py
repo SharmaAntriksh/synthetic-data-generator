@@ -14,12 +14,7 @@ except Exception:  # pragma: no cover
     pq = None  # type: ignore
 
 from ..sales_logic import State, build_chunk_table
-from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
-
-try:
-    from ..output_paths import TABLE_SALES_RETURN  # type: ignore
-except Exception:  # pragma: no cover
-    TABLE_SALES_RETURN = None  # type: ignore
+from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER, TABLE_SALES_RETURN
 
 from .init import int_or
 from .io import _write_csv, _write_parquet_table
@@ -38,8 +33,22 @@ def normalize_tasks(args: TaskArgs) -> Tuple[List[Task], bool]:
 
 
 def derive_chunk_seed(seed: Any, idx: int, *, stride: int = 10_000) -> int:
-    base_seed = int_or(seed, 0)
-    return int(base_seed) + int(idx) * int(stride)
+    """
+    Derive a per-chunk seed from a base seed and chunk index.
+
+    Uses a SplitMix64-style mixer to avoid linear/additive structure and to make the
+    low 32 bits (used by ReturnEventKey packing) well-distributed.
+    """
+    base = int_or(seed, 0) & 0xFFFF_FFFF_FFFF_FFFF
+    x = (base + (int(idx) * int(stride))) & 0xFFFF_FFFF_FFFF_FFFF
+
+    # SplitMix64 mixing (public domain reference implementation)
+    x = (x + 0x9E3779B97F4A7C15) & 0xFFFF_FFFF_FFFF_FFFF
+    z = x
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9 & 0xFFFF_FFFF_FFFF_FFFF
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EB & 0xFFFF_FFFF_FFFF_FFFF
+    z = z ^ (z >> 31)
+    return int(z & 0xFFFF_FFFF_FFFF_FFFF)
 
 
 def write_table_by_format(
@@ -149,16 +158,13 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
     if not bool(getattr(State, "returns_enabled", False)):
         return None
 
-    if TABLE_SALES_RETURN is None:
-        raise RuntimeError("returns_enabled=True but TABLE_SALES_RETURN is not defined in output_paths.py")
-
     mode = _mode()
     if mode not in {"sales", "sales_order", "both"}:
         return None
 
     _task_require_cols(source_table, RETURNS_REQUIRED_DETAIL_COLS, ctx="SalesReturn build requires")
 
-        # Sanitize config inputs defensively. We keep this tolerant so bad config values
+    # Sanitize config inputs defensively. We keep this tolerant so bad config values
     # don't crash the worker pool; returns_builder enforces correctness but we
     # normalize here to preserve backward compatibility.
     rr_raw = getattr(State, "returns_rate", 0.0)
@@ -170,12 +176,22 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
         rr = 0.0
     rr = max(0.0, min(1.0, rr))
 
+    min_lag_raw = getattr(State, "returns_min_lag_days", 0)
+    try:
+        min_lag = int(min_lag_raw if min_lag_raw not in (None, "") else 0)
+    except Exception:
+        min_lag = 0
+    min_lag = max(0, min_lag)
+
     lag_raw = getattr(State, "returns_max_lag_days", 60)
     try:
         max_lag = int(lag_raw if lag_raw not in (None, "") else 60)
     except Exception:
         max_lag = 60
     max_lag = max(0, max_lag)
+
+    if min_lag > max_lag:
+        min_lag = max_lag
 
     reason_keys = _as_list(getattr(State, "returns_reason_keys", None), default=[1])
     reason_probs = _as_list(getattr(State, "returns_reason_probs", None), default=[1.0])
@@ -201,6 +217,7 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
     cfg = ReturnsConfig(
         enabled=True,
         return_rate=rr,
+        min_lag_days=min_lag,
         max_lag_days=max_lag,
         reason_keys=rk,
         reason_probs=rp_arr.tolist(),
@@ -209,6 +226,23 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
     returns_seed = int(chunk_seed) ^ 0x5A5A_1234
     returns_table = build_sales_returns_from_detail(source_table, chunk_seed=int(returns_seed), cfg=cfg)
     return returns_table if int(returns_table.num_rows) > 0 else None
+
+
+def _state_cache_get(key: str) -> Any:
+    cache = getattr(State, "_cache", None)
+    if cache is None or not isinstance(cache, dict):
+        cache = {}
+        setattr(State, "_cache", cache)
+    return cache.get(key)
+
+
+def _state_cache_set(key: str, value: Any) -> Any:
+    cache = getattr(State, "_cache", None)
+    if cache is None or not isinstance(cache, dict):
+        cache = {}
+        setattr(State, "_cache", cache)
+    cache[key] = value
+    return value
 
 
 # -----------------------------
@@ -229,7 +263,7 @@ def _sales_channels_spec() -> tuple[np.ndarray, np.ndarray]:
     Tries sales_channels.parquet; falls back to [1..5].
     Cached on State.
     """
-    cached = getattr(State, "_sales_channel_spec", None)
+    cached = _state_cache_get('sales_channel_spec')
     if cached is not None:
         return cached
 
@@ -250,8 +284,7 @@ def _sales_channels_spec() -> tuple[np.ndarray, np.ndarray]:
         keys = np.array([1, 2, 3, 4, 5], dtype=np.int16)
 
     p = np.full(keys.shape[0], 1.0 / keys.shape[0], dtype=np.float64)
-    State._sales_channel_spec = (keys, p)
-    return State._sales_channel_spec
+    return _state_cache_set('sales_channel_spec', (keys, p))
 
 
 def _ensure_sales_channel_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
@@ -336,7 +369,7 @@ def _profile_lut_from_dim() -> Optional[np.ndarray]:
       0 Retail, 1 Digital, 2 Business, 3 Assisted
     Cached on State.
     """
-    cached = getattr(State, "_sales_channel_profile_lut", None)
+    cached = _state_cache_get('sales_channel_profile_lut')
     if cached is not None:
         return cached
 
@@ -375,8 +408,7 @@ def _profile_lut_from_dim() -> Optional[np.ndarray]:
             continue
         lut[int(k)] = np.int8(prof_for_group(str(g)))
 
-    State._sales_channel_profile_lut = lut
-    return lut
+    return _state_cache_set('sales_channel_profile_lut', lut)
 
 
 def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
@@ -454,7 +486,61 @@ def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
 
         return table.append_column("TimeKey", time_col)
 
-    # No SalesOrderNumber: leave existing TimeKey alone; otherwise sample per row
+        # No SalesOrderNumber: if SalesOrderLineNumber exists, we can still enforce a stable
+    # per-order TimeKey by deriving an order-group id from line numbers.
+    # Assumption (holds for our chunk builder): rows are emitted grouped by order and
+    # SalesOrderLineNumber resets to 1 at the start of each order.
+    if "SalesOrderLineNumber" in table.column_names:
+        if "TimeKey" in table.column_names:
+            return table
+
+        ln_col = table["SalesOrderLineNumber"]
+        if isinstance(ln_col, pa.ChunkedArray):
+            ln_col = ln_col.combine_chunks()
+        ln_np = np.asarray(ln_col.to_numpy(zero_copy_only=False), dtype=np.int64)
+
+        # group id increments each time we see line==1 (cumsum)
+        is_new = (ln_np == 1).astype(np.int64, copy=False)
+        grp = np.cumsum(is_new)
+        n_groups = int(grp.max()) if grp.size else 0
+        if n_groups <= 0:
+            n_groups = 1
+
+        if has_channel:
+            sc_col = table["SalesChannelKey"]
+            if isinstance(sc_col, pa.ChunkedArray):
+                sc_col = sc_col.combine_chunks()
+            sc_np = np.asarray(sc_col.to_numpy(zero_copy_only=False), dtype=np.int16)
+
+            # channel for group = first row in group
+            pos = np.arange(grp.size, dtype=np.int64)
+            first_idx = np.full(n_groups + 1, grp.size, dtype=np.int64)
+            np.minimum.at(first_idx, grp, pos)
+            first_idx[first_idx == grp.size] = 0
+            per_group_sc = sc_np[first_idx[1:]]
+            prof = profile_lut[np.clip(per_group_sc.astype(np.int64), 0, profile_lut.shape[0] - 1)]
+
+            per_group_time = np.empty(n_groups, dtype=np.int16)
+            m0 = prof == 0
+            if m0.any():
+                per_group_time[m0] = _sample_hour_weighted_minute(rng, int(m0.sum()), _RETAIL_HOUR_W)
+            m1 = prof == 1
+            if m1.any():
+                per_group_time[m1] = _sample_hour_weighted_minute(rng, int(m1.sum()), _DIGITAL_HOUR_W)
+            m2 = prof == 2
+            if m2.any():
+                per_group_time[m2] = _sample_hour_weighted_minute(rng, int(m2.sum()), _BUSINESS_HOUR_W)
+            m3 = prof == 3
+            if m3.any():
+                per_group_time[m3] = _sample_hour_weighted_minute(rng, int(m3.sum()), _ASSISTED_HOUR_W)
+        else:
+            per_group_time = rng.integers(0, 1440, size=n_groups, dtype=np.int32).astype(np.int16, copy=False)
+
+        # Map group -> row
+        out_np = per_group_time[np.clip(grp - 1, 0, n_groups - 1)]
+        return table.append_column("TimeKey", pa.array(out_np, type=pa.int16()))
+
+# No SalesOrderNumber: leave existing TimeKey alone; otherwise sample per row
     if "TimeKey" in table.column_names:
         return table
 
@@ -495,49 +581,46 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
     # Invariants expected to be constant within a SalesOrderNumber
     inv_cols = ["CustomerKey", "StoreKey", "SalesPersonEmployeeKey", "OrderDate"]
 
-    # Newly order-level keys (you made these unique per order in chunk_builder)
     if "PromotionKey" in detail.column_names:
         inv_cols.append("PromotionKey")
     if "CurrencyKey" in detail.column_names:
         inv_cols.append("CurrencyKey")
-
     if "SalesChannelKey" in detail.column_names:
         inv_cols.append("SalesChannelKey")
     if "TimeKey" in detail.column_names:
         inv_cols.append("TimeKey")
 
-    # Aggregate MIN+MAX for invariants, plus max for IsOrderDelayed
-    aggs = []
-    for c in inv_cols:
-        aggs.append((c, "min"))
-        aggs.append((c, "max"))
+    # Fast path: take MIN for invariants (1 agg/col) + MAX for IsOrderDelayed.
+    # Optional validation (debug): compute MAX for invariants and verify equality.
+    validate = bool(getattr(State, "validate_header_invariants", False))
+
+    aggs = [(c, "min") for c in inv_cols]
+    if validate:
+        aggs += [(c, "max") for c in inv_cols]
     aggs.append(("IsOrderDelayed", "max"))
 
     out = gb.aggregate(aggs)
 
-    # Detect invariant violations
-    bad = None
-    for c in inv_cols:
-        neq = pc.not_equal(out[f"{c}_min"], out[f"{c}_max"])
-        bad = neq if bad is None else pc.or_(bad, neq)
-
-    if bad is not None and bool(pc.any(bad).as_py()):
-        bad_out = out.filter(bad).slice(0, 5)
-
-        def _py(name: str):
-            return bad_out[name].to_pylist() if name in bad_out.column_names else None
-
-        parts = [f"SalesOrderNumber(s)={_py('SalesOrderNumber')}"]
+    if validate:
+        bad = None
         for c in inv_cols:
-            parts.append(f"{c}_min={_py(f'{c}_min')}")
-            parts.append(f"{c}_max={_py(f'{c}_max')}")
+            neq = pc.not_equal(out[f"{c}_min"], out[f"{c}_max"])
+            bad = neq if bad is None else pc.or_(bad, neq)
+        if bad is not None and bool(pc.any(bad).as_py()):
+            bad_out = out.filter(bad).slice(0, 5)
 
-        raise RuntimeError(
-            "Invalid SalesOrderNumber invariants: a SalesOrderNumber maps to multiple values. "
-            + " | ".join(parts)
-        )
+            def _py(name: str):
+                return bad_out[name].to_pylist() if name in bad_out.column_names else None
 
-    # Build final header table
+            parts = [f"SalesOrderNumber(s)={_py('SalesOrderNumber')}"]
+            for c in inv_cols:
+                parts.append(f"{c}_min={_py(f'{c}_min')}")
+                parts.append(f"{c}_max={_py(f'{c}_max')}")
+            raise RuntimeError(
+                "Invalid SalesOrderNumber invariants: a SalesOrderNumber maps to multiple values. "
+                + " | ".join(parts)
+            )
+
     cols, names = [], []
 
     def _add(src: str, dst: str):
@@ -549,10 +632,8 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
     _add("CustomerKey_min", "CustomerKey")
     _add("StoreKey_min", "StoreKey")
     _add("SalesPersonEmployeeKey_min", "SalesPersonEmployeeKey")
-
     _add("PromotionKey_min", "PromotionKey")
     _add("CurrencyKey_min", "CurrencyKey")
-
     _add("SalesChannelKey_min", "SalesChannelKey")
     _add("OrderDate_min", "OrderDate")
     _add("TimeKey_min", "TimeKey")

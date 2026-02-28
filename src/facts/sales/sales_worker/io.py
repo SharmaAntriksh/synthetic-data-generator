@@ -9,20 +9,9 @@ import pyarrow as pa
 
 from ..sales_logic import State
 
-
-def _pa_compute():
-    import pyarrow.compute as pc  # type: ignore
-    return pc
-
-
-def _pa_csv():
-    import pyarrow.csv as pacsv  # type: ignore
-    return pacsv
-
-
-def _pa_parquet():
-    import pyarrow.parquet as pq  # type: ignore
-    return pq
+import pyarrow.compute as pc
+import pyarrow.csv as pacsv
+import pyarrow.parquet as pq
 
 
 @dataclass(frozen=True)
@@ -53,7 +42,6 @@ def add_year_month_from_date(
     if not date_col:
         return table
 
-    pc = _pa_compute()
     year = pc.cast(pc.year(table[date_col]), year_type)
     month = pc.cast(pc.month(table[date_col]), month_type)
 
@@ -93,16 +81,22 @@ def normalize_to_schema(
             f"Expected:\n{expected}\n\nGot:\n{table.schema}"
         )
 
-    pc = _pa_compute()
+    arrays = []
+    cast_safe = bool(getattr(State, "cast_safe", True))
     arrays = []
     for field in expected:
         col = table[field.name]
         if col.type != field.type:
             try:
-                col = pc.cast(col, field.type, safe=False)
+                # If projecting to a DECIMAL and source is floating, round to the target scale first
+                # to avoid float artifacts prior to cast.
+                if pa.types.is_decimal(field.type) and pa.types.is_floating(col.type):
+                    col = pc.round(col, ndigits=int(field.type.scale))
+                col = pc.cast(col, field.type, safe=cast_safe)
             except Exception as ex:
                 raise RuntimeError(
-                    f"[{table_name or 'unknown'}] Failed cast '{field.name}': {col.type} -> {field.type}: {ex}"
+                    f"[{table_name or 'unknown'}] Failed cast '{field.name}': {col.type} -> {field.type} "
+                    f"(safe={cast_safe}): {ex}"
                 ) from ex
         arrays.append(col)
 
@@ -120,7 +114,6 @@ def write_parquet_table(
     ensure_cols: Optional[Sequence[str]] = None,
     ensure_cols_fn: Optional[EnsureColsFn] = None,
 ) -> None:
-    pq = _pa_parquet()
 
     table = normalize_to_schema(
         table,
@@ -155,7 +148,6 @@ def write_csv_table(
     ensure_cols_fn: Optional[EnsureColsFn] = None,
     postprocess: Optional[CsvPostprocessFn] = None,
 ) -> None:
-    pacsv = _pa_csv()
 
     table = normalize_to_schema(
         table,
@@ -278,14 +270,22 @@ def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
     return table
 
 
-def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str] = None) -> None:
+def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str] = None, is_chunk: Optional[bool] = None) -> None:
     tn = table_name or "Sales"
     expected = _expected_schema(tn)
 
+    if is_chunk is None:
+        # Heuristic: worker chunk files are typically written via output_paths.chunk_path()
+        # and contain a part identifier.
+        p = str(path).lower()
+        is_chunk = (".part" in p) or ("chunk" in p) or ("parts" in p)
+
+    write_stats_chunks = bool(getattr(State, "write_statistics_chunks", False))
+    write_stats_merged = bool(getattr(State, "write_statistics", True))
     cfg = ChunkIOConfig(
         compression=getattr(State, "compression", "snappy"),
         row_group_size=int(getattr(State, "row_group_size", 1_000_000)),
-        write_statistics=bool(getattr(State, "write_statistics", True)),
+        write_statistics=write_stats_chunks if bool(is_chunk) else write_stats_merged,
     )
 
     need_ym = _schema_needs_year_month(expected)
@@ -310,6 +310,7 @@ def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str
 def _write_csv(table: pa.Table, path: str, *, table_name: Optional[str] = None) -> None:
     tn = table_name or "Sales"
     expected = _expected_schema(tn)
+
     need_ym = _schema_needs_year_month(expected)
 
     ensure_fn = (

@@ -5,12 +5,7 @@ from typing import List, Optional, Set
 
 import pyarrow as pa
 
-from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
-
-try:
-    from ..output_paths import TABLE_SALES_RETURN  # type: ignore
-except Exception:
-    TABLE_SALES_RETURN = None  # type: ignore
+from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER, TABLE_SALES_RETURN
 
 
 def schema_dict_cols(schema: pa.Schema, exclude: Optional[Set[str]] = None) -> List[str]:
@@ -196,17 +191,15 @@ def build_worker_schemas(
     # Returns schema (thin)
     # ---------------------------------------------------------------------
     if returns_enabled:
-        if TABLE_SALES_RETURN is None:
-            raise RuntimeError("returns_enabled=True but TABLE_SALES_RETURN is not defined in output_paths.py")
 
         return_fields = [
-            pa.field("SalesOrderNumber", pa.int64()),
-            pa.field("SalesOrderLineNumber", pa.int64()),
-            pa.field("ReturnDate", pa.date32()),
-            pa.field("ReturnReasonKey", pa.int64()),
-            pa.field("ReturnQuantity", pa.int64()),
-            pa.field("ReturnNetPrice", pa.float64()),
-            pa.field("ReturnEventKey", pa.int64()),   # <-- ADD (BIGINT)
+            pa.field('SalesOrderNumber', pa.int64()),
+            pa.field('SalesOrderLineNumber', pa.int64()),
+            pa.field('ReturnDate', pa.date32()),
+            pa.field('ReturnReasonKey', pa.int64()),
+            pa.field('ReturnQuantity', pa.int64()),
+            pa.field('ReturnNetPrice', pa.float64()),
+            pa.field('ReturnEventKey', pa.int64()),
         ]
         return_schema = pa.schema(return_fields + delta_fields) if is_delta else pa.schema(return_fields)
         schema_by_table[TABLE_SALES_RETURN] = return_schema
@@ -219,7 +212,7 @@ def build_worker_schemas(
         TABLE_SALES_ORDER_DETAIL: ["DueDate", "DeliveryDate"],  # FIX: no OrderDate in detail schema
         TABLE_SALES_ORDER_HEADER: ["OrderDate"],
     }
-    if returns_enabled and TABLE_SALES_RETURN is not None:
+    if returns_enabled:
         date_cols_by_table[TABLE_SALES_RETURN] = ["ReturnDate"]
 
     # Optional models.yaml override (preserve previous behavior)

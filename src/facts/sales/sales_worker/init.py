@@ -13,27 +13,45 @@ from ..output_paths import (
 )
 from ..sales_logic import bind_globals
 from .schemas import build_worker_schemas
+from ..output_paths import TABLE_SALES_RETURN
 
-try:
-    from ..output_paths import TABLE_SALES_RETURN  # type: ignore
-except Exception:
-    TABLE_SALES_RETURN = None  # type: ignore
 
+EMPLOYEE_KEY_MIN_NON_MANAGER = 40_000_000
 
 # ---------------------------------------------------------------------
 # Small helpers (kept close to monolith behavior for compatibility)
 # ---------------------------------------------------------------------
 
 
-def build_buckets_from_key(key: Any) -> list[np.ndarray]:
+def build_buckets_from_key(
+    key: Any,
+    *,
+    max_key: Optional[int] = None,
+    max_buckets: int = 1_000_000,
+) -> list[np.ndarray]:
+    """
+    Build index buckets for non-negative integer keys.
+
+    Returns: buckets[k] = row indices where key == k.
+
+    Safety:
+      - By default, refuses to allocate more than `max_buckets` buckets to avoid OOM
+        if called with raw, high-magnitude surrogate keys (e.g., EmployeeKey ~ 40,000,000+).
+      - Override via `max_key=` or `max_buckets=` if you *intend* to allocate a large table.
+    """
     key_np = np.asarray(key, dtype=np.int64)
     if key_np.size == 0:
         return []
     if key_np.min() < 0:
         raise RuntimeError("Key values must be non-negative integers")
 
-    max_k = int(key_np.max())
+    max_k = int(key_np.max()) if max_key is None else int(max_key)
     K = max_k + 1
+    if K > int(max_buckets):
+        raise RuntimeError(
+            f"Refusing to allocate {K:,} buckets (max_key={max_k:,}); "
+            f"set max_key/max_buckets explicitly if this is intended."
+        )
 
     order = np.argsort(key_np, kind="mergesort")
     k_sorted = key_np[order]
@@ -101,42 +119,120 @@ def infer_T_from_date_pool(date_pool: Any) -> int:
 
 
 # back-compat aliases (keep older imports stable)
-def _build_buckets_from_brand_key(brand_key: Any) -> list[np.ndarray]:
-    return build_buckets_from_key(brand_key)
+_build_buckets_from_brand_key = lambda brand_key: build_buckets_from_key(brand_key, max_key=int(np.asarray(brand_key, dtype=np.int64).max()) if np.asarray(brand_key).size else None)
 
-
-def _int_or(v: Any, default: int) -> int:
-    return int_or(v, default)
-
-
-def _float_or(v: Any, default: float) -> float:
-    return float_or(v, default)
-
-
-def _str_or(v: Any, default: str) -> str:
-    return str_or(v, default)
-
-
-def _as_int64(x: Any) -> np.ndarray:
-    return as_int64(x)
-
-
-def _as_f64(x: Any) -> np.ndarray:
-    return as_f64(x)
-
-
-def _dense_map(mapping: Optional[dict]) -> Optional[np.ndarray]:
-    return dense_map(mapping)
-
-
-def _infer_T_from_date_pool(date_pool: Any) -> int:
-    return infer_T_from_date_pool(date_pool)
+# Prefer direct names in new code.
+_int_or = int_or
+_float_or = float_or
+_str_or = str_or
+_as_int64 = as_int64
+_as_f64 = as_f64
+_dense_map = dense_map
+_infer_T_from_date_pool = infer_T_from_date_pool
 
 
 # ---------------------------------------------------------------------
 # Employee salesperson assignment
+
 # Canonical: day-accurate effective-dated bridge index
 # ---------------------------------------------------------------------
+
+
+def _normalize_assignment_arrays(
+    *,
+    store_keys: np.ndarray,
+    assign_store: Any,
+    assign_emp: Any,
+    assign_start: Any,
+    assign_end: Any,
+    assign_fte: Any = None,
+    assign_is_primary: Any = None,
+) -> Optional[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]]:
+    """
+    Normalize and validate employee assignment arrays.
+
+    Returns:
+      (assign_store_i64, assign_emp_i64, start_D, end_D, fte_f64, is_primary_bool, max_store_key)
+
+    Notes:
+      - NaT start -> FAR_PAST
+      - NaT end   -> FAR_FUTURE
+      - Filters invalid store keys outside [0, max_store_key]
+      - Filters invalid windows where start > end
+      - Keeps fte/is_primary aligned with filtered rows
+    """
+    if assign_store is None or assign_emp is None or assign_start is None or assign_end is None:
+        return None
+
+    store_keys = np.asarray(store_keys, dtype=np.int64)
+    if store_keys.size == 0:
+        return None
+    max_store_key = int(store_keys.max())
+
+    a_store = np.asarray(assign_store, dtype=np.int64)
+    a_emp = np.asarray(assign_emp, dtype=np.int64)
+    if a_store.size == 0 or a_emp.size == 0:
+        return None
+    if a_store.shape[0] != a_emp.shape[0]:
+        raise RuntimeError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
+
+    start_raw = np.asarray(assign_start, dtype="datetime64[D]")
+    end_raw = np.asarray(assign_end, dtype="datetime64[D]")
+    if start_raw.shape[0] != a_store.shape[0] or end_raw.shape[0] != a_store.shape[0]:
+        raise RuntimeError("employee assignment arrays must align (dates vs keys)")
+
+    # Optional aligned arrays
+    fte = np.ones(a_store.shape[0], dtype=np.float64) if assign_fte is None else np.asarray(assign_fte, dtype=np.float64)
+    if fte.shape[0] != a_store.shape[0]:
+        raise RuntimeError("employee_assign_fte must align with employee assignments")
+
+    is_primary = (
+        np.zeros(a_store.shape[0], dtype=bool)
+        if assign_is_primary is None
+        else np.asarray(assign_is_primary, dtype=bool)
+    )
+    if is_primary.shape[0] != a_store.shape[0]:
+        raise RuntimeError("employee_assign_is_primary must align with employee assignments")
+
+    FAR_FUTURE = np.datetime64("2262-04-11", "D")
+    FAR_PAST = np.datetime64("1900-01-01", "D")
+
+    start_fixed = start_raw.copy()
+    end_fixed = end_raw.copy()
+
+    nat_s = np.isnat(start_fixed)
+    if nat_s.any():
+        start_fixed[nat_s] = FAR_PAST
+
+    nat_e = np.isnat(end_fixed)
+    if nat_e.any():
+        end_fixed[nat_e] = FAR_FUTURE
+
+    # Filter store key validity
+    valid_store = (a_store >= 0) & (a_store <= max_store_key)
+    if not valid_store.all():
+        a_store = a_store[valid_store]
+        a_emp = a_emp[valid_store]
+        start_fixed = start_fixed[valid_store]
+        end_fixed = end_fixed[valid_store]
+        fte = fte[valid_store]
+        is_primary = is_primary[valid_store]
+        if a_store.size == 0:
+            return None
+
+    # Filter window validity
+    ok_window = start_fixed <= end_fixed
+    if not ok_window.all():
+        a_store = a_store[ok_window]
+        a_emp = a_emp[ok_window]
+        start_fixed = start_fixed[ok_window]
+        end_fixed = end_fixed[ok_window]
+        fte = fte[ok_window]
+        is_primary = is_primary[ok_window]
+        if a_store.size == 0:
+            return None
+
+    return a_store, a_emp, start_fixed, end_fixed, fte, is_primary, max_store_key
 
 
 def _build_salesperson_effective_by_store(
@@ -160,84 +256,24 @@ def _build_salesperson_effective_by_store(
     - Treats missing EndDate as open-ended.
     - Treats missing StartDate as FAR_PAST (always eligible until EndDate).
     """
-    if assign_store is None or assign_emp is None or assign_start is None or assign_end is None:
+    norm = _normalize_assignment_arrays(
+        store_keys=store_keys,
+        assign_store=assign_store,
+        assign_emp=assign_emp,
+        assign_start=assign_start,
+        assign_end=assign_end,
+        assign_fte=assign_fte,
+        assign_is_primary=assign_is_primary,
+    )
+    if norm is None:
         return None
 
-    store_keys = np.asarray(store_keys, dtype=np.int64)
-    if store_keys.size == 0:
-        return None
-    max_store_key = int(store_keys.max())
-
-    assign_store = np.asarray(assign_store, dtype=np.int64)
-    assign_emp = np.asarray(assign_emp, dtype=np.int64)
-    if assign_store.size == 0 or assign_emp.size == 0:
-        return None
-    if assign_store.shape[0] != assign_emp.shape[0]:
-        raise RuntimeError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
-
-    start_raw = np.asarray(assign_start, dtype="datetime64[D]")
-    end_raw = np.asarray(assign_end, dtype="datetime64[D]")
-    if start_raw.shape[0] != assign_store.shape[0] or end_raw.shape[0] != assign_store.shape[0]:
-        raise RuntimeError("employee assignment arrays must align (dates vs keys)")
-
-    FAR_FUTURE = np.datetime64("2262-04-11", "D")
-    FAR_PAST = np.datetime64("1900-01-01", "D")
-
-    start_fixed = start_raw.copy()
-    end_fixed = end_raw.copy()
-
-    nat_s = np.isnat(start_fixed)
-    if nat_s.any():
-        start_fixed[nat_s] = FAR_PAST
-
-    nat_e = np.isnat(end_fixed)
-    if nat_e.any():
-        end_fixed[nat_e] = FAR_FUTURE
-
-    valid_store = (assign_store >= 0) & (assign_store <= max_store_key)
-    if not valid_store.all():
-        assign_store = assign_store[valid_store]
-        assign_emp = assign_emp[valid_store]
-        start_fixed = start_fixed[valid_store]
-        end_fixed = end_fixed[valid_store]
-        if assign_store.size == 0:
-            return None
-        if assign_fte is not None:
-            assign_fte = np.asarray(assign_fte, dtype=np.float64)[valid_store]
-        if assign_is_primary is not None:
-            assign_is_primary = np.asarray(assign_is_primary, dtype=bool)[valid_store]
-
-    ok_window = start_fixed <= end_fixed
-    if not ok_window.all():
-        assign_store = assign_store[ok_window]
-        assign_emp = assign_emp[ok_window]
-        start_fixed = start_fixed[ok_window]
-        end_fixed = end_fixed[ok_window]
-        if assign_store.size == 0:
-            return None
-        if assign_fte is not None:
-            assign_fte = np.asarray(assign_fte, dtype=np.float64)[ok_window]
-        if assign_is_primary is not None:
-            assign_is_primary = np.asarray(assign_is_primary, dtype=bool)[ok_window]
-
-    if assign_fte is None:
-        fte = np.ones(assign_store.shape[0], dtype=np.float64)
-    else:
-        fte = np.asarray(assign_fte, dtype=np.float64)
-        if fte.shape[0] != assign_store.shape[0]:
-            raise RuntimeError("employee_assign_fte must align with employee assignments")
-
-    if assign_is_primary is None:
-        is_primary = np.zeros(assign_store.shape[0], dtype=bool)
-    else:
-        is_primary = np.asarray(assign_is_primary, dtype=bool)
-        if is_primary.shape[0] != assign_store.shape[0]:
-            raise RuntimeError("employee_assign_is_primary must align with employee assignments")
+    a_store, a_emp, start_fixed, end_fixed, fte, is_primary, max_store_key = norm
 
     weights = fte * np.where(is_primary, float(primary_boost), 1.0)
 
-    order = np.argsort(assign_store, kind="mergesort")
-    s_sorted = assign_store[order]
+    order = np.argsort(a_store, kind="mergesort")
+    s_sorted = a_store[order]
     starts = np.flatnonzero(np.r_[True, s_sorted[1:] != s_sorted[:-1]])
     ends = np.r_[starts[1:], s_sorted.size]
 
@@ -245,8 +281,10 @@ def _build_salesperson_effective_by_store(
     for s, e in zip(starts, ends):
         idx = order[int(s) : int(e)]
         store = int(s_sorted[int(s)])
+        if store < 0 or store > max_store_key:
+            continue
         out[store] = (
-            assign_emp[idx].astype(np.int64, copy=False),
+            a_emp[idx].astype(np.int64, copy=False),
             start_fixed[idx].astype("datetime64[D]", copy=False),
             end_fixed[idx].astype("datetime64[D]", copy=False),
             weights[idx].astype(np.float64, copy=False),
@@ -274,59 +312,12 @@ def _build_salesperson_by_store_month(
     primary_boost: float = 2.0,
     seed: int = 12345,
 ) -> Optional[np.ndarray]:
-    if assign_store is None or assign_emp is None or assign_start is None or assign_end is None:
-        return None
+    """
+    Legacy: choose a single salesperson per store-month.
 
-    assign_store = np.asarray(assign_store, dtype=np.int64)
-    assign_emp = np.asarray(assign_emp, dtype=np.int64)
-    if assign_store.size == 0 or assign_emp.size == 0:
-        return None
-    if assign_store.shape[0] != assign_emp.shape[0]:
-        raise RuntimeError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
-
-    assign_start = np.asarray(assign_start, dtype="datetime64[D]")
-    assign_end = np.asarray(assign_end, dtype="datetime64[D]")
-    if assign_start.shape[0] != assign_store.shape[0] or assign_end.shape[0] != assign_store.shape[0]:
-        raise RuntimeError("employee assignment arrays must align (dates vs keys)")
-
-    FAR_PAST = np.datetime64("1900-01-01", "D")
-    FAR_FUTURE = np.datetime64("2262-04-11", "D")
-
-    if np.isnat(assign_start).any():
-        assign_start = assign_start.copy()
-        assign_start[np.isnat(assign_start)] = FAR_PAST
-
-    if np.isnat(assign_end).any():
-        assign_end = assign_end.copy()
-        assign_end[np.isnat(assign_end)] = FAR_FUTURE
-
-    ok = assign_start <= assign_end
-    if not np.all(ok):
-        assign_store = assign_store[ok]
-        assign_emp = assign_emp[ok]
-        assign_start = assign_start[ok]
-        assign_end = assign_end[ok]
-        if assign_fte is not None:
-            assign_fte = np.asarray(assign_fte, dtype=np.float64)[ok]
-        if assign_is_primary is not None:
-            assign_is_primary = np.asarray(assign_is_primary, dtype=bool)[ok]
-        if assign_store.size == 0:
-            return None
-
-    if assign_fte is None:
-        assign_fte = np.ones(assign_store.shape[0], dtype=np.float64)
-    else:
-        assign_fte = np.asarray(assign_fte, dtype=np.float64)
-        if assign_fte.shape[0] != assign_store.shape[0]:
-            raise RuntimeError("employee_assign_fte must align with employee_assign_store_key")
-
-    if assign_is_primary is None:
-        assign_is_primary = np.zeros(assign_store.shape[0], dtype=bool)
-    else:
-        assign_is_primary = np.asarray(assign_is_primary, dtype=bool)
-        if assign_is_primary.shape[0] != assign_store.shape[0]:
-            raise RuntimeError("employee_assign_is_primary must align with employee_assign_store_key")
-
+    This is a *month-rounded* view used only for backward compatibility.
+    Uses an event-sweep per store to avoid O(assignments × months) nested loops.
+    """
     store_keys = np.asarray(store_keys, dtype=np.int64)
     if store_keys.size == 0:
         return None
@@ -341,16 +332,31 @@ def _build_salesperson_by_store_month(
     if T <= 0:
         return None
 
-    start_off = assign_start.astype("datetime64[M]").astype(np.int64) - month0_int
-    end_off = assign_end.astype("datetime64[M]").astype(np.int64) - month0_int
+    norm = _normalize_assignment_arrays(
+        store_keys=store_keys,
+        assign_store=assign_store,
+        assign_emp=assign_emp,
+        assign_start=assign_start,
+        assign_end=assign_end,
+        assign_fte=assign_fte,
+        assign_is_primary=assign_is_primary,
+    )
+    if norm is None:
+        return None
+
+    a_store, a_emp, start_fixed, end_fixed, fte, is_primary, max_store_key = norm
+
+    weights = fte * np.where(is_primary, float(primary_boost), 1.0)
+
+    start_off = start_fixed.astype("datetime64[M]").astype(np.int64) - month0_int
+    end_off = end_fixed.astype("datetime64[M]").astype(np.int64) - month0_int
     start_off = np.clip(start_off, 0, T - 1).astype(np.int64, copy=False)
     end_off = np.clip(end_off, 0, T - 1).astype(np.int64, copy=False)
 
-    max_store_key = int(store_keys.max())
     out = np.full((max_store_key + 1, T), -1, dtype=np.int64)
 
-    order = np.argsort(assign_store, kind="mergesort")
-    store_sorted = assign_store[order]
+    order = np.argsort(a_store, kind="mergesort")
+    store_sorted = a_store[order]
     starts = np.flatnonzero(np.r_[True, store_sorted[1:] != store_sorted[:-1]])
     ends = np.r_[starts[1:], store_sorted.size]
 
@@ -364,23 +370,33 @@ def _build_salesperson_by_store_month(
         if idxs.size == 0:
             continue
 
-        active: List[List[int]] = [[] for _ in range(T)]
+        # month -> list of assignment row indices starting/ending
+        starts_ev: list[list[int]] = [[] for _ in range(T)]
+        ends_ev: list[list[int]] = [[] for _ in range(T + 1)]  # end+1
+
         for ii in idxs:
             so = int(start_off[int(ii)])
             eo = int(end_off[int(ii)])
             if eo < so:
                 continue
-            for m in range(so, eo + 1):
-                active[m].append(int(ii))
+            starts_ev[so].append(int(ii))
+            ends_ev[eo + 1].append(int(ii))
 
+        active: set[int] = set()
         for m in range(T):
-            cand = active[m]
-            if not cand:
+            for ii in starts_ev[m]:
+                active.add(ii)
+            for ii in ends_ev[m]:
+                active.discard(ii)
+
+            if not active:
                 continue
-            w = assign_fte[cand] * np.where(assign_is_primary[cand], float(primary_boost), 1.0)
+
+            cand = np.fromiter(active, dtype=np.int64)
+            w = weights[cand]
             sw = float(w.sum())
-            pick = 0 if sw <= 1e-12 else int(rng.choice(len(cand), p=(w / sw)))
-            out[store, m] = int(assign_emp[cand[pick]])
+            pick = 0 if sw <= 1e-12 else int(rng.choice(cand.size, p=(w / sw)))
+            out[store, m] = int(a_emp[int(cand[pick])])
 
     return out
 
@@ -519,7 +535,15 @@ def init_sales_worker(worker_cfg: dict) -> None:
 
         returns_enabled = bool(worker_cfg.get("returns_enabled", False))
         returns_rate = float(worker_cfg.get("returns_rate", 0.0))
+        returns_min_lag_days = int(worker_cfg.get("returns_min_lag_days", 0))
         returns_max_lag_days = int(worker_cfg.get("returns_max_lag_days", 60))
+        if returns_min_lag_days < 0:
+            returns_min_lag_days = 0
+        if returns_max_lag_days < 0:
+            returns_max_lag_days = 0
+        if returns_min_lag_days > returns_max_lag_days:
+            # Clamp defensively to avoid crashing the pool on bad configs.
+            returns_min_lag_days = returns_max_lag_days
         returns_reason_keys = worker_cfg.get("returns_reason_keys")
         returns_reason_probs = worker_cfg.get("returns_reason_probs")
 
@@ -534,7 +558,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         write_pyarrow = worker_cfg.get("write_pyarrow", True)
 
         # NEW: configurable cap for SalesOrderLineNumber per SalesOrderNumber
-        max_lines_per_order = int_or(worker_cfg.get("max_lines_per_order"), 6)
+        max_lines_per_order = int_or(worker_cfg.get("max_lines_per_order"), 5)
         if max_lines_per_order < 1:
             raise RuntimeError(f"max_lines_per_order must be >= 1, got {max_lines_per_order}")
 
@@ -566,7 +590,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
             mask = np.isin(role_arr, allowed)
         else:
             # fallback if role not provided: at least exclude Store Manager key range (30M..40M)
-            mask = emp_key >= 40_000_000
+            mask = emp_key >= EMPLOYEE_KEY_MIN_NON_MANAGER
 
         employee_assign_store_key = np.asarray(employee_assign_store_key, dtype=np.int64)[mask]
         employee_assign_employee_key = emp_key[mask]
@@ -668,7 +692,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         tables.append(TABLE_SALES)
     if sales_output in {"sales_order", "both"}:
         tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
-    if returns_enabled and TABLE_SALES_RETURN is not None:
+    if returns_enabled:
         tables.append(TABLE_SALES_RETURN)
     for t in tables:
         output_paths.ensure_dirs(t)
@@ -737,6 +761,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "parquet_dict_cols": bundle.parquet_dict_cols,
             "returns_enabled": bool(returns_enabled),
             "returns_rate": float(returns_rate),
+            "returns_min_lag_days": int(max(0, returns_min_lag_days)),
             "returns_max_lag_days": int(returns_max_lag_days),
             "returns_reason_keys": returns_reason_keys,
             "returns_reason_probs": returns_reason_probs,

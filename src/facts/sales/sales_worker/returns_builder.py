@@ -11,49 +11,32 @@ import pyarrow as pa
 RETURNS_REQUIRED_DETAIL_COLS: tuple[str, ...] = (
     "SalesOrderNumber",
     "SalesOrderLineNumber",
-    "CustomerKey",
-    "ProductKey",
-    "StoreKey",
-    "PromotionKey",
-    "CurrencyKey",
     "DeliveryDate",
     "Quantity",
-    "UnitPrice",
-    "DiscountAmount",
     "NetPrice",
-    "UnitCost",
 )
 
 # Output schema for the SalesReturn fact table.
 #
 # Notes on semantics:
-# - ReturnUnitPrice / ReturnUnitCost are per-unit values copied from the original sales line.
-# - ReturnDiscountAmount / ReturnNetPrice are *line amounts* prorated by returned quantity.
+# - ReturnNetPrice is a *line amount* prorated by returned quantity.
 RETURNS_SCHEMA = pa.schema(
     [
         ("SalesOrderNumber", pa.int64()),
         ("SalesOrderLineNumber", pa.int64()),
-        ("CustomerKey", pa.int64()),
-        ("ProductKey", pa.int64()),
-        ("StoreKey", pa.int64()),
-        ("PromotionKey", pa.int64()),
-        ("CurrencyKey", pa.int64()),
         ("ReturnDate", pa.date32()),
         ("ReturnReasonKey", pa.int64()),
         ("ReturnQuantity", pa.int64()),
-        ("ReturnUnitPrice", pa.float64()),
-        ("ReturnDiscountAmount", pa.float64()),
         ("ReturnNetPrice", pa.float64()),
-        ("ReturnUnitCost", pa.float64()),
         ("ReturnEventKey", pa.int64()),
     ]
 )
-
 
 @dataclass(frozen=True)
 class ReturnsConfig:
     enabled: bool = False
     return_rate: float = 0.0  # probability per SalesOrderDetail line
+    min_lag_days: int = 0  # minimum lag days after delivery (0 allows same-day)
     max_lag_days: int = 60    # return date = delivery date + lag_days (allows 0 for same-day)
     reason_keys: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8)
     reason_probs: Sequence[float] = (0.20, 0.12, 0.14, 0.10, 0.14, 0.08, 0.07, 0.15)
@@ -114,10 +97,10 @@ def _to_np_date_days(x: np.ndarray) -> np.ndarray:
     return np.asarray(x, dtype="datetime64[D]")
 
 
-def _validate_cfg(cfg: ReturnsConfig) -> tuple[float, int, np.ndarray, np.ndarray]:
+def _validate_cfg(cfg: ReturnsConfig) -> tuple[float, int, int, np.ndarray, np.ndarray]:
     """
     Returns:
-      (return_rate, max_lag_days, reason_keys_i64, reason_probs_f64_normalized)
+      (return_rate, min_lag_days, max_lag_days, reason_keys_i64, reason_probs_f64_normalized)
     """
     if not isinstance(cfg.enabled, bool):
         raise RuntimeError("ReturnsConfig.enabled must be a bool.")
@@ -129,10 +112,18 @@ def _validate_cfg(cfg: ReturnsConfig) -> tuple[float, int, np.ndarray, np.ndarra
     if rr < 0.0 or rr > 1.0:
         raise RuntimeError("ReturnsConfig.return_rate must be in [0, 1].")
 
+    # min_lag_days validation (allow 0)
+    min_lag = int(getattr(cfg, 'min_lag_days', 0))
+    if min_lag < 0:
+        raise RuntimeError('ReturnsConfig.min_lag_days must be >= 0.')
+
     # max_lag_days validation (allow 0)
     max_lag = int(cfg.max_lag_days)
     if max_lag < 0:
         raise RuntimeError("ReturnsConfig.max_lag_days must be >= 0.")
+
+    if min_lag > max_lag:
+        raise RuntimeError('ReturnsConfig.min_lag_days must be <= max_lag_days.')
 
     # reasons
     rk = _as_np_i64(list(cfg.reason_keys))
@@ -156,7 +147,7 @@ def _validate_cfg(cfg: ReturnsConfig) -> tuple[float, int, np.ndarray, np.ndarra
     else:
         rp = rp / s
 
-    return rr, max_lag, rk, rp
+    return rr, min_lag, max_lag, rk, rp
 
 
 def build_sales_returns_from_detail(
@@ -166,21 +157,30 @@ def build_sales_returns_from_detail(
     cfg: ReturnsConfig,
 ) -> pa.Table:
     """
-    Build SalesReturn event rows from SalesOrderDetail lines.
+    Build SalesReturn event rows (thin) from SalesOrderDetail lines.
+
+    Output columns:
+      - SalesOrderNumber
+      - SalesOrderLineNumber
+      - ReturnDate
+      - ReturnReasonKey
+      - ReturnQuantity
+      - ReturnNetPrice
+      - ReturnEventKey
 
     Determinism:
       - Uses a RNG seeded from chunk_seed, so the output is deterministic per chunk.
 
-    Keys:
-      - ReturnEventKey packs a 32-bit chunk id and 32-bit ordinal:
-          (chunk_seed_u32 << 32) | ordinal_u32
-        This is unique as long as chunk_seed is unique across the dataset/run.
+    ReturnEventKey:
+      - Packed into a signed int64 but guaranteed NON-NEGATIVE by using only 31 bits
+        of the chunk seed:
+          (chunk_seed_u31 << 32) | ordinal_u32
+        This stays within [0, 2^63 - 1].
     """
     if not cfg.enabled:
         return _empty_returns_table()
 
-    rr, max_lag, reason_keys, reason_probs = _validate_cfg(cfg)
-
+    rr, min_lag, max_lag, reason_keys, reason_probs = _validate_cfg(cfg)
     if rr <= 0.0:
         return _empty_returns_table()
 
@@ -199,7 +199,7 @@ def build_sales_returns_from_detail(
     if qty_all.size != n:
         raise RuntimeError("Returns builder: unexpected Quantity length mismatch.")
 
-    # Select candidate return lines.
+    # Select candidate return lines (only positive-quantity lines can be returned).
     mask = (rng.random(n) < rr) & (qty_all > 0)
     if not bool(mask.any()):
         return _empty_returns_table()
@@ -207,21 +207,12 @@ def build_sales_returns_from_detail(
     # Extract masked arrays (alignment-safe).
     so = _as_np_i64(_col_np(detail_cc, "SalesOrderNumber"))[mask]
     line = _as_np_i64(_col_np(detail_cc, "SalesOrderLineNumber"))[mask]
-    cust = _as_np_i64(_col_np(detail_cc, "CustomerKey"))[mask]
-    prod = _as_np_i64(_col_np(detail_cc, "ProductKey"))[mask]
-    store = _as_np_i64(_col_np(detail_cc, "StoreKey"))[mask]
-    promo = _as_np_i64(_col_np(detail_cc, "PromotionKey"))[mask]
-    curr = _as_np_i64(_col_np(detail_cc, "CurrencyKey"))[mask]
 
     delivery_raw = _col_np(detail_cc, "DeliveryDate")[mask]
     delivery = _to_np_date_days(delivery_raw)
 
     qty = qty_all[mask]
-
-    unit_price = _as_np_f64(_col_np(detail_cc, "UnitPrice"))[mask]
-    disc_amt = _as_np_f64(_col_np(detail_cc, "DiscountAmount"))[mask]
     net_price = _as_np_f64(_col_np(detail_cc, "NetPrice"))[mask]
-    unit_cost = _as_np_f64(_col_np(detail_cc, "UnitCost"))[mask]
 
     m = int(qty.size)
     if m == 0:
@@ -235,21 +226,25 @@ def build_sales_returns_from_detail(
 
     frac = ret_qty.astype(np.float64) / qty.astype(np.float64)
 
-    # Lag is in [0, max_lag] days (0 allowed for same-day returns).
-    if max_lag == 0:
-        lag_days = np.zeros(m, dtype=np.int32)
+    # Lag is in [min_lag, max_lag] days.
+    # Note: min_lag==0 allows same-day returns; config can enforce min>=1.
+    if max_lag <= 0:
+        lag_days = np.full(m, max(0, int(min_lag)), dtype=np.int32)
     else:
-        lag_days = rng.integers(0, max_lag + 1, size=m, dtype=np.int32)
+        lo = max(0, int(min_lag))
+        hi = max(lo, int(max_lag))
+        lag_days = rng.integers(lo, hi + 1, size=m, dtype=np.int32)
 
     lag = lag_days.astype("timedelta64[D]")
     ret_date = (delivery + lag).astype("datetime64[D]", copy=False)
 
     reason = rng.choice(reason_keys, size=m, p=reason_probs).astype(np.int64)
 
-    # ReturnEventKey: (chunk_seed_u32 << 32) | ordinal
-    seed32 = np.int64(int(chunk_seed) & 0xFFFF_FFFF)
+    # ReturnEventKey: (chunk_seed_u31 << 32) | ordinal
+    seed31 = np.int64(int(chunk_seed) & 0x7FFF_FFFF)
     ordinal = np.arange(m, dtype=np.int64)  # < 2^32 by check above
-    return_event_key = (seed32 << 32) | ordinal
+    return_event_key = (seed31 << 32) | ordinal
+
     return_net_price = np.round(net_price * frac, 2).astype(np.float64, copy=False)
 
     # Build table using explicit schema to keep empty/non-empty consistent.
@@ -257,18 +252,10 @@ def build_sales_returns_from_detail(
         {
             "SalesOrderNumber": pa.array(so, type=pa.int64()),
             "SalesOrderLineNumber": pa.array(line, type=pa.int64()),
-            "CustomerKey": pa.array(cust, type=pa.int64()),
-            "ProductKey": pa.array(prod, type=pa.int64()),
-            "StoreKey": pa.array(store, type=pa.int64()),
-            "PromotionKey": pa.array(promo, type=pa.int64()),
-            "CurrencyKey": pa.array(curr, type=pa.int64()),
             "ReturnDate": pa.array(ret_date, type=pa.date32()),
             "ReturnReasonKey": pa.array(reason, type=pa.int64()),
             "ReturnQuantity": pa.array(ret_qty, type=pa.int64()),
-            "ReturnUnitPrice": pa.array(unit_price, type=pa.float64()),
-            "ReturnDiscountAmount": pa.array(disc_amt * frac, type=pa.float64()),
             "ReturnNetPrice": pa.array(return_net_price, type=pa.float64()),
-            "ReturnUnitCost": pa.array(unit_cost, type=pa.float64()),
             "ReturnEventKey": pa.array(return_event_key, type=pa.int64()),
         },
         schema=RETURNS_SCHEMA,

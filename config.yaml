@@ -35,8 +35,8 @@ sales:
   chunk_size: 1000000
   max_lines_per_order: 5
   
-  file_format: "csv"          # csv | parquet | deltaparquet
-  sales_output: "sales"           # sales | sales_order | both
+  file_format: "deltaparquet"          # csv | parquet | deltaparquet
+  sales_output: "both"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -348,13 +348,12 @@ dates:
   as_of_date: null  # anchor for IsToday/IsCurrent* and CurrentDayOffset
                             # Treat end of dataset as “today” (default): omit it (it uses raw_end). 
                             # Anchor to last year end: as_of_date: "2025-12-31"
-  pretty_column_names: true
   
   include:
     calendar: true        # always true (safe default)
-    iso: true            # ISO week columns
-    fiscal: true         # fiscal year / quarter / month columns
-    weekly_fiscal: true
+    iso: false            # ISO week columns
+    fiscal: false         # fiscal year / quarter / month columns
+    weekly_fiscal: false
     
   weekly_calendar:
     enabled: true

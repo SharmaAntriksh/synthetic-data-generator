@@ -53,29 +53,15 @@ def _bool_or(value: Any, default: bool) -> bool:
     return bool(default)
 
 
-def _humanize_col_name(name: str) -> str:
-    """
-    Convert CamelCase / mixedCase names into space-separated "Title Case" names,
-    while preserving acronyms like ISO/FY/FW.
+# ---------------------------------------------------------------------
+# Column naming
+# ---------------------------------------------------------------------
+# This generator now always emits SQL-friendly internal column names (no spaces).
+# Users can rename columns downstream (Power BI / SQL views) if desired.
 
-    Examples:
-      - FiscalYearEndDate -> Fiscal Year End Date
-      - CalendarMonthIndex -> Calendar Month Index
-      - FWYearWeekNumber -> FW Year Week Number
-    """
-
-    s = name.replace("_", " ").strip()
-    s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", s)          # aB / 1B -> a B
-    s = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", s)        # ISOWeek -> ISO Week
-
-    words = s.split()
-    out_words: List[str] = []
-    for w in words:
-        if w.isupper():
-            out_words.append(w)
-        else:
-            out_words.append(w[:1].upper() + w[1:])
-    return " ".join(out_words)
+def pretty_dates_col_name(name: str) -> str:
+    """Backward-compatible helper; returns the internal name unchanged."""
+    return str(name)
 
 
 def _normalize_override_dates(dates_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -357,25 +343,59 @@ def _compute_weekly_fiscal_columns(
 # Column resolver
 # ---------------------------------------------------------------------
 
+
 def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
-    include = (dates_cfg or {}).get("include", {}) or {}
-    weekly_cfg = (dates_cfg or {}).get("weekly_calendar", {}) or {}
+    """
+    Resolve the Dates output column list based on config.
+
+    Key semantic: "calendar" controls only *calendar extras* (IsToday/IsCurrent*/offsets).
+    Core calendar columns (Year/Month/Day names, Day Of Week, etc.) are always present so
+    a user can generate ISO-only / fiscal-only / weekly-fiscal-only and still get the
+    essential date parts needed for analysis and SQL import.
+    """
+    dates_cfg = dates_cfg or {}
+    include_cfg = dates_cfg.get("include", None)
+    weekly_cfg = dates_cfg.get("weekly_calendar", {}) or {}
+
+    # Back-compat:
+    # - If include is missing, assume legacy "everything on"
+    # - If include is provided, default to calendar-only unless explicitly enabled.
+    has_include = isinstance(include_cfg, dict)
+    include = include_cfg or {}
+
+    if not has_include:
+        include_calendar = True
+        include_iso = True
+        include_fiscal = True
+        include_weekly = True
+    else:
+        include_calendar = bool(include.get("calendar", True))
+        include_iso = bool(include.get("iso", False))
+        include_fiscal = bool(include.get("fiscal", False))
+        include_weekly = bool(include.get("weekly_fiscal", False))
 
     base_cols = ["Date", "DateKey", "SequentialDayIndex"]
 
-    calendar_cols = [
+    # Core calendar date parts (ALWAYS INCLUDED)
+    calendar_core_cols = [
         "Year", "IsYearStart", "IsYearEnd",
         "Quarter", "QuarterStartDate", "QuarterEndDate",
         "IsQuarterStart", "IsQuarterEnd",
         "QuarterYear",
         "Month", "MonthName", "MonthShort", "MonthNameShort",
         "MonthStartDate", "MonthEndDate",
-        "MonthYear", "MonthYearNumber", "YearMonthKey", "YearMonthLabel", "YearQuarterKey", "YearQuarterLabel", "CalendarMonthIndex", "CalendarQuarterIndex",
+        "MonthYear", "MonthYearNumber", "YearMonthKey", "YearMonthLabel",
+        "YearQuarterKey", "YearQuarterLabel",
+        "CalendarMonthIndex", "CalendarQuarterIndex",
         "IsMonthStart", "IsMonthEnd",
         "WeekOfMonth",
         "Day", "DayName", "DayShort", "DayNameShort", "DayOfYear", "DayOfWeek",
         "IsWeekend", "IsBusinessDay",
         "NextBusinessDay", "PreviousBusinessDay",
+    ]
+
+    # Calendar "extras" anchored to as_of_date / dataset end
+    calendar_extra_cols = [
         "IsToday", "IsCurrentYear", "IsCurrentMonth", "IsCurrentQuarter",
         "CurrentDayOffset", "YearOffset", "CalendarMonthOffset", "CalendarQuarterOffset",
     ]
@@ -439,21 +459,25 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
         "FWYearQuarterLabel",
     ]
 
-    cols: List[str] = list(base_cols)
+    cols: List[str] = []
+    cols += base_cols
+    cols += calendar_core_cols
 
-    if include.get("calendar", True):
-        cols += calendar_cols
-    if include.get("iso", True):
+    if include_calendar:
+        cols += calendar_extra_cols
+    if include_iso:
         cols += iso_cols
-    if include.get("fiscal", True):
+    if include_fiscal:
         cols += fiscal_cols
-
-    if include.get("weekly_fiscal", True) and _bool_or(weekly_cfg.get("enabled", True), True):
+    if include_weekly and _bool_or(weekly_cfg.get("enabled", True), True):
         cols += weekly_cols
 
     return _dedupe_preserve_order(cols)
 
 
+# ---------------------------------------------------------------------
+# Generator
+# ---------------------------------------------------------------------
 # ---------------------------------------------------------------------
 # Generator
 # ---------------------------------------------------------------------
@@ -756,69 +780,6 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
         df = df[cols]
 
         # Option A: keep both monthly-fiscal and weekly-fiscal in one table, but disambiguate weekly-fiscal columns.
-        weekly_internal_cols = {
-            "FWYearNumber",
-            "FWYearLabel",
-            "FWQuarterNumber",
-            "FWQuarterLabel",
-            "FWYearQuarterNumber",
-            "FWMonthNumber",
-            "FWMonthLabel",
-            "FWYearMonthNumber",
-            "FWWeekNumber",
-            "FWWeekLabel",
-            "FWYearWeekNumber",
-            "FWYearWeekLabel",
-            "FWYearQuarterOffset",
-            "FWYearMonthOffset",
-            "FWYearWeekOffset",
-            "FWPeriodNumber",
-            "FWPeriodLabel",
-            "FWStartOfYear",
-            "FWEndOfYear",
-            "FWStartOfQuarter",
-            "FWEndOfQuarter",
-            "FWStartOfMonth",
-            "FWEndOfMonth",
-            "FWStartOfWeek",
-            "FWEndOfWeek",
-            "WeekDayNumber",
-            "WeekDayNameShort",
-            "FWDayOfYearNumber",
-            "FWDayOfQuarterNumber",
-            "FWDayOfMonthNumber",
-            "IsWorkingDay",
-            "DayType",
-            "FWWeekInQuarterNumber",
-            "FWYearMonthLabel",
-            "FWYearQuarterLabel",
-        }
-
-        rename_map: Dict[str, str] = {}
-        for c in df.columns:
-            human = _humanize_col_name(c)
-
-            if c in weekly_internal_cols:
-                if human.startswith("FW "):
-                    human = human[3:]
-                human = "Weekly Fiscal " + human
-
-                # Specific index renames for readability
-                if c == "FWYearMonthNumber":
-                    human = "Weekly Fiscal Year Month Index"
-                elif c == "FWYearQuarterNumber":
-                    human = "Weekly Fiscal Year Quarter Index"
-                elif c == "FWYearWeekNumber":
-                    human = "Weekly Fiscal Year Week Index"
-                elif c == "FWYearMonthOffset":
-                    human = "Weekly Fiscal Year Month Offset"
-                elif c == "FWYearQuarterOffset":
-                    human = "Weekly Fiscal Year Quarter Offset"
-                elif c == "FWYearWeekOffset":
-                    human = "Weekly Fiscal Year Week Offset"
-            rename_map[c] = human
-
-        df = df.rename(columns=rename_map)
 
         write_parquet_with_date32(
             df,
