@@ -6,9 +6,21 @@ from typing import Any, Dict, Tuple, List, Optional
 import numpy as np
 import pandas as pd
 
+from src.dimensions.employees import (
+    STORE_MGR_KEY_BASE,
+    STAFF_KEY_BASE,
+    STAFF_KEY_STORE_MULT,
+)
+
 from src.utils.logging_utils import info, skip, stage
+
+
 from src.utils.output_utils import write_parquet_with_date32
-from src.versioning.version_store import should_regenerate, save_version
+from src.versioning import should_regenerate, save_version
+
+
+def warn(msg: str) -> None:
+    info(f"WARN  | {msg}")
 
 
 # -----------------------------------------------------------------------------
@@ -75,52 +87,60 @@ def _pick_seed(cfg: Dict[str, Any], a_cfg: Dict[str, Any], fallback: int = 42) -
 
 def _parse_global_dates(cfg: Dict[str, Any], a_cfg: Dict[str, Any]) -> Tuple[pd.Timestamp, pd.Timestamp]:
     """
-    Resolve dataset window for assignments.
+    Resolve dataset window for employee store assignments.
 
-    Priority:
-      1) a_cfg.global_dates {start,end}
-      2) a_cfg.override.dates {start,end}
-      3) cfg.defaults.dates {start,end}
+    Priority (aligned with employees.py behavior):
+      1) employees.store_assignments.override.dates {start,end}
+      2) cfg.defaults.dates {start,end}
+      3) employees.store_assignments.global_dates {start,end}  (legacy; will warn)
       4) fallback (2021-01-01..2026-12-31)
     """
+    # 1) override.dates
+    ov = _as_dict(_as_dict(a_cfg.get("override")).get("dates"))
+    if ov and ov.get("start") and ov.get("end"):
+        gs = pd.to_datetime(ov["start"]).normalize()
+        ge = pd.to_datetime(ov["end"]).normalize()
+        if ge < gs:
+            warn(f"employee_store_assignments: override dates swapped (start={ov['start']!r}, end={ov['end']!r})")
+            gs, ge = ge, gs
+        return gs, ge
+
+    # 2) defaults.dates
+    dd = _as_dict(_as_dict(cfg.get("defaults")).get("dates"))
+    if dd and dd.get("start") and dd.get("end"):
+        gs = pd.to_datetime(dd["start"]).normalize()
+        ge = pd.to_datetime(dd["end"]).normalize()
+        if ge < gs:
+            warn(f"employee_store_assignments: defaults dates swapped (start={dd['start']!r}, end={dd['end']!r})")
+            gs, ge = ge, gs
+        return gs, ge
+
+    # 3) legacy global_dates
     gd = _as_dict(a_cfg.get("global_dates"))
     if gd and gd.get("start") and gd.get("end"):
+        warn("employee_store_assignments.global_dates is legacy; prefer defaults.dates or store_assignments.override.dates")
         gs = pd.to_datetime(gd["start"]).normalize()
         ge = pd.to_datetime(gd["end"]).normalize()
         if ge < gs:
+            warn(f"employee_store_assignments: global_dates swapped (start={gd['start']!r}, end={gd['end']!r})")
             gs, ge = ge, gs
         return gs, ge
 
-    override = _as_dict(a_cfg.get("override"))
-    od = _as_dict(override.get("dates"))
-    if od and od.get("start") and od.get("end"):
-        gs = pd.to_datetime(od["start"]).normalize()
-        ge = pd.to_datetime(od["end"]).normalize()
-        if ge < gs:
-            gs, ge = ge, gs
-        return gs, ge
+    # 4) fallback
+    return pd.Timestamp("2021-01-01"), pd.Timestamp("2026-12-31")
 
-    defaults = _as_dict(cfg.get("defaults"))
-    dd = _as_dict(defaults.get("dates"))
-    start = dd.get("start") or "2021-01-01"
-    end = dd.get("end") or "2026-12-31"
-
-    gs = pd.to_datetime(start).normalize()
-    ge = pd.to_datetime(end).normalize()
-    if ge < gs:
-        gs, ge = ge, gs
-    return gs, ge
-
-
-# -----------------------------------------------------------------------------
-# Core utilities
-# -----------------------------------------------------------------------------
 
 def _rand_dates_between(rng: np.random.Generator, start: pd.Timestamp, end: pd.Timestamp, n: int) -> pd.Series:
     start = pd.to_datetime(start).normalize()
     end = pd.to_datetime(end).normalize()
     if end < start:
         start, end = end, start
+
+    start_i = int(start.value // 86_400_000_000_000)  # days since epoch
+    end_i = int(end.value // 86_400_000_000_000)
+    days = rng.integers(start_i, end_i + 1, size=int(n), dtype=np.int64)
+    dt = pd.to_datetime(days.astype('datetime64[D]')).normalize()
+    return pd.Series(dt, dtype='datetime64[ns]')
 
     start_i = start.value // 10**9
     end_i = end.value // 10**9
@@ -134,8 +154,8 @@ def _infer_home_store_key(employees: pd.DataFrame) -> pd.Series:
     """
     If employees has StoreKey, use it.
     Else decode from EmployeeKey:
-      - Store managers: 30_000_000 + StoreKey
-      - Staff:         40_000_000 + StoreKey*1000 + idx
+      - Store managers: STORE_MGR_KEY_BASE + StoreKey
+      - Staff:         STAFF_KEY_BASE + StoreKey*1000 + idx
     """
     if "StoreKey" in employees.columns:
         return employees["StoreKey"].astype("Int64")
@@ -143,13 +163,13 @@ def _infer_home_store_key(employees: pd.DataFrame) -> pd.Series:
     ek = employees["EmployeeKey"].astype(np.int64)
     out = pd.Series([pd.NA] * len(employees), dtype="Int64")
 
-    mgr_mask = (ek >= 30_000_000) & (ek < 40_000_000)
+    mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE)
     if mgr_mask.any():
-        out.loc[mgr_mask] = (ek.loc[mgr_mask] - 30_000_000).astype("Int64")
+        out.loc[mgr_mask] = (ek.loc[mgr_mask] - STORE_MGR_KEY_BASE).astype("Int64")
 
-    staff_mask = ek >= 40_000_000
+    staff_mask = ek >= STAFF_KEY_BASE
     if staff_mask.any():
-        out.loc[staff_mask] = ((ek.loc[staff_mask] - 40_000_000) // 1000).astype("Int64")
+        out.loc[staff_mask] = ((ek.loc[staff_mask] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT).astype("Int64")
 
     return out
 
@@ -265,7 +285,7 @@ def generate_employee_store_assignments(
     # global knobs
     mover_share: float = 0.03,
     pool_scope: str = "district",  # district | all
-    allow_store_revisit: bool = False,
+    allow_store_revisit: bool = True,
     part_time_multiplier: float = 1.0,
 
     # assignment weighting for transfers
@@ -421,6 +441,19 @@ def generate_employee_store_assignments(
 
     rows: List[Dict[str, Any]] = []
 
+    def _emit(ek: int, role: str, store_key: int, seg_start: pd.Timestamp, seg_end: Any, is_primary: bool, fte_val: float) -> None:
+        rows.append(
+            dict(
+                EmployeeKey=int(ek),
+                StoreKey=int(store_key),
+                StartDate=pd.to_datetime(seg_start).normalize(),
+                EndDate=(pd.to_datetime(seg_end).normalize() if pd.notna(seg_end) else pd.NaT),
+                FTE=float(fte_val),
+                RoleAtStore=str(role),
+                IsPrimary=bool(is_primary),
+            )
+        )
+
     for i in range(len(emp)):
         ek = int(emp.iloc[i]["EmployeeKey"])
         did = emp.iloc[i]["DistrictId"]
@@ -490,19 +523,6 @@ def generate_employee_store_assignments(
 
         cur = pd.to_datetime(gen_start).normalize()
 
-        def _emit(store_key: int, seg_start: pd.Timestamp, seg_end: Any, is_primary: bool, fte_val: float) -> None:
-            rows.append(
-                dict(
-                    EmployeeKey=ek,
-                    StoreKey=int(store_key),
-                    StartDate=pd.to_datetime(seg_start).normalize(),
-                    EndDate=(pd.to_datetime(seg_end).normalize() if pd.notna(seg_end) else pd.NaT),
-                    FTE=float(fte_val),
-                    RoleAtStore=role,
-                    IsPrimary=bool(is_primary),
-                )
-            )
-
         # split home assignment around transfer episodes (exclusive)
         for (s, e, store, sec_fte) in episodes:
             s = pd.to_datetime(s).normalize()
@@ -510,23 +530,23 @@ def generate_employee_store_assignments(
 
             before_end = (s - pd.Timedelta(days=1)).normalize()
             if cur <= before_end:
-                _emit(home_store, cur, before_end, True, tgt)
+                _emit(ek, role, home_store, cur, before_end, True, tgt)
 
-            _emit(store, s, e, False, sec_fte)
+            _emit(ek, role, store, s, e, False, sec_fte)
             cur = (e + pd.Timedelta(days=1)).normalize()
 
         # final home segment
         if cur <= plan_end:
             if open_ended:
                 # employment continues beyond dataset end (or unknown end): keep open-ended validity
-                _emit(home_store, cur, pd.NaT, True, tgt)
+                _emit(ek, role, home_store, cur, pd.NaT, True, tgt)
             else:
                 # terminated within dataset window
                 final_end = pd.to_datetime(emp_term).normalize()
                 if final_end > window_end:
                     final_end = window_end
                 if final_end >= cur:
-                    _emit(home_store, cur, final_end, True, tgt)
+                    _emit(ek, role, home_store, cur, final_end, True, tgt)
 
     out = pd.DataFrame(rows, columns=cols)
     if out.empty:
@@ -581,6 +601,17 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     version_cfg.pop("_force_regenerate", None)
     version_cfg["schema_version"] = 7  # bump: dataset-window clamping + open-ended semantics
     version_cfg["_rows_employees"] = int(len(employees))
+    if "EmployeeKey" in employees.columns and len(employees) > 0:
+        ek = pd.to_numeric(employees["EmployeeKey"], errors="coerce").dropna().astype(np.int64)
+        if len(ek) > 0:
+            version_cfg["_emp_key_min"] = int(ek.min())
+            version_cfg["_emp_key_max"] = int(ek.max())
+            version_cfg["_emp_key_sum"] = int(ek.sum())
+    if "HireDate" in employees.columns and len(employees) > 0:
+        hd = pd.to_datetime(employees["HireDate"], errors="coerce").dropna()
+        if len(hd) > 0:
+            version_cfg["_hire_min"] = str(hd.min().date())
+            version_cfg["_hire_max"] = str(hd.max().date())
     version_cfg["_global_dates"] = {"start": str(global_start.date()), "end": str(global_end.date())}
 
     if not force and not should_regenerate("employee_store_assignments", version_cfg, out_path):
@@ -590,6 +621,8 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     role_profiles = _as_dict(a_cfg.get("role_profiles"))
 
     with stage("Generating EmployeeStoreAssignments"):
+        if "allow_store_revisit" not in a_cfg:
+            warn("employees.store_assignments.allow_store_revisit missing; defaulting to true")
         df = generate_employee_store_assignments(
             employees=employees,
             seed=seed,
@@ -598,7 +631,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
             enabled=bool(a_cfg.get("enabled", True)),
             mover_share=_float_or(a_cfg.get("mover_share", a_cfg.get("multi_store_share", 0.03)), 0.03),
             pool_scope=_str_or(a_cfg.get("pool_scope"), "district"),
-            allow_store_revisit=bool(a_cfg.get("allow_store_revisit", False)),
+            allow_store_revisit=bool(a_cfg.get("allow_store_revisit", True)),
             part_time_multiplier=_float_or(a_cfg.get("part_time_multiplier", 1.0), 1.0),
             secondary_fte_min=_float_or(a_cfg.get("secondary_fte_min", 0.10), 0.10),
             secondary_fte_max=_float_or(a_cfg.get("secondary_fte_max", 0.40), 0.40),

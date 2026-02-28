@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+import re
 
 from src.utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
@@ -62,7 +63,6 @@ def _humanize_col_name(name: str) -> str:
       - CalendarMonthIndex -> Calendar Month Index
       - FWYearWeekNumber -> FW Year Week Number
     """
-    import re
 
     s = name.replace("_", " ").strip()
     s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", s)          # aB / 1B -> a B
@@ -87,6 +87,12 @@ def _normalize_override_dates(dates_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+
+
+def warn(msg: str) -> None:
+    # Treat as WARN-level line using existing logging.
+    info(f"WARN  | {msg}")
+
 def _require_start_end(raw_start: Any, raw_end: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
     if raw_start is None or raw_end is None or raw_start == "" or raw_end == "":
         raise ValueError("Missing required start/end dates (defaults.dates or dates.override).")
@@ -94,6 +100,7 @@ def _require_start_end(raw_start: Any, raw_end: Any) -> Tuple[pd.Timestamp, pd.T
     start_ts = pd.to_datetime(raw_start).normalize()
     end_ts = pd.to_datetime(raw_end).normalize()
     if end_ts < start_ts:
+        warn(f"dates: start/end swapped (start={raw_start!r}, end={raw_end!r})")
         start_ts, end_ts = end_ts, start_ts
     return start_ts, end_ts
 
@@ -211,11 +218,16 @@ def _compute_weekly_fiscal_columns(
 
     # Assign FWYearNumber
     fw_year = np.full(len(df), -1, dtype=np.int32)
-    dates = df["Date"].dt.normalize()
+    dates = df["Date"].dt.normalize().to_numpy(dtype="datetime64[D]")
 
-    for y, (s, e) in bounds.items():
-        mask = (dates >= s) & (dates <= e)
-        fw_year[mask.to_numpy()] = int(y)
+    # Vectorized assignment: find the latest year-start <= date, then verify date <= year-end.
+    years_sorted = np.array(sorted(bounds.keys()), dtype=np.int32)
+    starts = np.array([bounds[int(y)][0].to_datetime64() for y in years_sorted], dtype="datetime64[D]")
+    ends = np.array([bounds[int(y)][1].to_datetime64() for y in years_sorted], dtype="datetime64[D]")
+    pos = np.searchsorted(starts, dates, side="right") - 1
+    pos_clip = np.clip(pos, 0, len(ends) - 1)
+    ok = (pos >= 0) & (dates <= ends[pos_clip])
+    fw_year[ok] = years_sorted[pos[ok]]
 
     # Rare fallback: month-based fiscal end-year label
     if (fw_year < 0).any():
@@ -236,7 +248,7 @@ def _compute_weekly_fiscal_columns(
     fw_week = ((fw_day_of_year.astype(int) - 1) // 7 + 1).astype(np.int16)
 
     week = fw_week.astype(int).to_numpy()
-    fw_period = np.where(week > 52, 14, (week + 3) // 4).astype(np.int16)
+    fw_period = np.where(week > 52, 13, (week + 3) // 4).astype(np.int16)
     fw_quarter = np.where(week > 52, 4, (week + 12) // 13).astype(np.int8)
 
     fw_quarter_s = pd.Series(fw_quarter, index=df.index, name="FWQuarterNumber")
@@ -291,10 +303,10 @@ def _compute_weekly_fiscal_columns(
 
     # Labels include year for readability
     y = fw_year_s.astype(str)
-    fw_quarter_label = "FQ" + fw_quarter_s.astype(str) + "-" + y
-    fw_week_label = "FW" + fw_week.astype(str).str.zfill(2) + "-" + y
-    fw_period_label = "P" + pd.Series(fw_period, index=df.index).astype(str).str.zfill(2) + "-" + y
-    fw_month_label = "FM " + (fw_start_month + pd.Timedelta(days=14)).dt.strftime("%b") + "-" + y
+    fw_quarter_label = "FQ" + fw_quarter_s.astype(str) + " - " + y
+    fw_week_label = "FW" + fw_week.astype(str).str.zfill(2) + " - " + y
+    fw_period_label = "P" + pd.Series(fw_period, index=df.index).astype(str).str.zfill(2) + " - " + y
+    fw_month_label = "FM " + (fw_start_month + pd.Timedelta(days=14)).dt.strftime("%b") + " - " + y
 
     # Convenience labels
     fw_year_week_label = fw_week_label
@@ -403,8 +415,8 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
         "FWWeekNumber",
         "FWWeekLabel",
         "FWYearWeekNumber",
-        "FWYearWeekLabel",
         "FWYearWeekOffset",
+        "FWYearWeekLabel",
         "FWPeriodNumber",
         "FWPeriodLabel",
         "FWStartOfYear",
@@ -567,7 +579,10 @@ def generate_date_table(
     fy_end_add = 0 if fy_start_month == 1 else 1
     fiscal_year_end = (df["FiscalYearStartYear"].astype(int) + fy_end_add).astype(np.int16)
 
-    df["FiscalYearBin"] = df["FiscalYearStartYear"].astype(str) + "-" + fiscal_year_end.astype(str)
+    if fy_start_month == 1:
+        df["FiscalYearBin"] = df["FiscalYearStartYear"].astype(str)
+    else:
+        df["FiscalYearBin"] = df["FiscalYearStartYear"].astype(str) + "-" + fiscal_year_end.astype(str)
     df["FiscalQuarterName"] = "Q" + df["FiscalQuarterNumber"].astype(str) + " FY" + fiscal_year_end.astype(str)
 
     df["FiscalYearMonthNumber"] = (df["FiscalYearStartYear"].astype(int) * 12 + df["FiscalMonthNumber"].astype(int)).astype(np.int32)
@@ -602,6 +617,7 @@ def generate_date_table(
     as_of = pd.to_datetime(as_of_date).normalize() if as_of_date else end_date
     # If config provides an as_of_date outside the generated date window, clamp to end_date to keep offsets meaningful.
     if as_of < start_date or as_of > end_date:
+        warn(f"dates: as_of_date {as_of.date()} outside generated window [{start_date.date()}..{end_date.date()}]; clamping to {end_date.date()}")
         as_of = end_date
     df["IsToday"] = (df["Date"] == as_of).astype(np.int8)
     df["IsCurrentYear"] = (df["Year"] == as_of.year).astype(np.int8)
@@ -620,8 +636,11 @@ def generate_date_table(
     iso_asof = as_of.isocalendar()
     as_of_iso_year = int(iso_asof.year)
     as_of_iso_week = int(iso_asof.week)
-    df["ISOYearWeekIndex"] = (df["ISOYear"].astype(int) * 53 + df["WeekOfYearISO"].astype(int)).astype(np.int32)
-    as_of_iso_year_week_index = as_of_iso_year * 53 + as_of_iso_week
+        # ISO week index: contiguous week number based on ISO week start (Monday) relative to a fixed ISO reference.
+    iso_ref = pd.Timestamp("2000-01-03")  # Monday of ISO week 1 in 2000
+    df["ISOYearWeekIndex"] = (((df["WeekStartDate"] - iso_ref).dt.days) // 7).astype(np.int32)
+    as_of_week_start = (as_of - pd.Timedelta(days=int(as_of.weekday()))).normalize()
+    as_of_iso_year_week_index = int(((as_of_week_start - iso_ref).days) // 7)
     df["ISOWeekOffset"] = (df["ISOYearWeekIndex"].astype(int) - int(as_of_iso_year_week_index)).astype(np.int32)
 
     # Monthly fiscal offsets (computed after fiscal indices exist)
@@ -660,7 +679,7 @@ def generate_date_table(
 
     df = df.assign(
         FiscalSystem="Monthly",
-        WeeklyFiscalSystem=f"Weekly ({weekly_cfg.quarter_week_type}, {str(weekly_cfg.weekly_type).strip().title()})",
+        WeeklyFiscalSystem=f"Weekly ({weekly_cfg.quarter_week_type} {str(weekly_cfg.weekly_type).strip().title()})",
     )
     return df
 
@@ -698,8 +717,11 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
     buffer_years = max(0, _int_or(dates_cfg.get("buffer_years", 1), 1))
     start_date = pd.Timestamp(raw_start_ts.year - buffer_years, 1, 1)
     end_date = pd.Timestamp(raw_end_ts.year + buffer_years, 12, 31)
+    info(f"Dates window: requested [{raw_start_ts.date()}..{raw_end_ts.date()}], generated [{start_date.date()}..{end_date.date()}] (buffer_years={buffer_years})")
 
     fiscal_start_month = _int_or(dates_cfg.get("fiscal_start_month") or dates_cfg.get("fiscal_month_offset", 5), 5)
+    if dates_cfg.get("fiscal_start_month") is None and "fiscal_month_offset" in dates_cfg:
+        warn("dates.fiscal_month_offset is treated as fiscal start month (1-12). Prefer dates.fiscal_start_month.")
     fiscal_start_month = 1 if fiscal_start_month < 1 else 12 if fiscal_start_month > 12 else fiscal_start_month
 
     as_of_date = dates_cfg.get("as_of_date") or str(raw_end_ts.date())
@@ -747,6 +769,9 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
             "FWWeekLabel",
             "FWYearWeekNumber",
             "FWYearWeekLabel",
+            "FWYearQuarterOffset",
+            "FWYearMonthOffset",
+            "FWYearWeekOffset",
             "FWPeriodNumber",
             "FWPeriodLabel",
             "FWStartOfYear",
