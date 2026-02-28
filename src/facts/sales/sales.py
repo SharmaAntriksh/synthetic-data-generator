@@ -93,6 +93,15 @@ def _int_or(value: Any, default: int) -> int:
         return int(default)
 
 
+def _float_or(value: Any, default: float) -> float:
+    try:
+        if value is None or value == "":
+            return float(default)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
 def _bool_or(value: Any, default: bool) -> bool:
     if value is None:
         return bool(default)
@@ -422,8 +431,17 @@ def generate_sales_fact(
     if facts_enabled:
         returns_enabled = bool(returns_enabled and ("returns" in {str(x).lower() for x in facts_enabled}))
 
-    returns_rate = float(returns_cfg.get("return_rate", 0.0))
-    returns_max_lag_days = int(returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)))
+    returns_rate = _float_or(returns_cfg.get("return_rate", 0.0), 0.0)
+    if not np.isfinite(returns_rate):
+        returns_rate = 0.0
+    # keep within [0, 1]
+    returns_rate = max(0.0, min(1.0, returns_rate))
+
+    returns_max_lag_days = _int_or(
+        returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)),
+        60,
+    )
+    returns_max_lag_days = max(0, returns_max_lag_days)
 
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
     if sales_output == "both" and not bool(skip_order_cols):
@@ -462,12 +480,35 @@ def generate_sales_fact(
     # Normalize delta_output_folder after OutputPaths decides defaults/abspath (if your class does that)
     delta_output_folder = output_paths.delta_output_folder
 
+    def _empty_manifest() -> SalesRunManifest:
+        """Build an empty manifest for early-exit paths."""
+        per_table: dict[str, TableOutputs] = {}
+        for t in tables:
+            per_table[t] = TableOutputs(
+                table=t,
+                file_format=file_format,
+                chunks=[],
+                merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
+                delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
+                delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
+            )
+
+        return SalesRunManifest(
+            sales_output=sales_output,
+            file_format=file_format,
+            out_folder=str(out_folder_p),
+            tables=per_table,
+        )
+
+
     # ------------------------------------------------------------
     # Optional auto chunk sizing
     # ------------------------------------------------------------
     total_rows = _int_or(total_rows, 0)
     if total_rows <= 0:
         skip("No sales rows to generate (total_rows <= 0).")
+        if return_manifest:
+            return ([], _empty_manifest())
         return []
 
     if workers is None:
@@ -563,14 +604,42 @@ def generate_sales_fact(
         # Full product path: keep backward compatibility if Brand is absent
         try:
             prod_df = load_parquet_df(products_path, ["ProductKey", "UnitPrice", "UnitCost", "Brand"])
-            product_np = prod_df[["ProductKey", "UnitPrice", "UnitCost"]].to_numpy()
+
+            # Force numeric dtypes (avoid object arrays)
+            prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
+            prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
+            prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
+            prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
+            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int64", copy=False)
+
+            product_np = np.column_stack(
+                [
+                    prod_df["ProductKey"].to_numpy(dtype=np.int64, copy=False),
+                    prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
+                    prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
+                ]
+            )
 
             codes = _brand_codes_from_series(prod_df["Brand"])
             product_brand_key = codes if not np.any(codes < 0) else None
 
         except Exception:
             prod_df = load_parquet_df(products_path, ["ProductKey", "UnitPrice", "UnitCost"])
-            product_np = prod_df[["ProductKey", "UnitPrice", "UnitCost"]].to_numpy()
+
+            # Force numeric dtypes (avoid object arrays)
+            prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
+            prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
+            prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
+            prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
+            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int64", copy=False)
+
+            product_np = np.column_stack(
+                [
+                    prod_df["ProductKey"].to_numpy(dtype=np.int64, copy=False),
+                    prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
+                    prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
+                ]
+            )
             product_brand_key = None
 
 
@@ -683,6 +752,8 @@ def generate_sales_fact(
 
     if not tasks:
         skip("No sales rows to generate.")
+        if return_manifest:
+            return ([], _empty_manifest())
         return []
 
     # ------------------------------------------------------------
@@ -864,7 +935,8 @@ def generate_sales_fact(
                 work(f"[{completed_units}/{total_units}] {tag} -> " + ", ".join(produced))
             return
 
-        # Unknown / unexpected return type: ignore quietly
+        # Unknown / unexpected return type: log (helps catch worker bugs)
+        info(f"[{completed_units}/{total_units}] Worker returned unsupported result type: {type(r).__name__}")
         return
     
     # ------------------------------------------------------------
@@ -936,7 +1008,10 @@ def generate_sales_fact(
             parts_dir = output_paths.delta_parts_dir(t)
             delta_dir = output_paths.delta_table_dir(t)
 
-            if not os.path.exists(parts_dir):
+            # parts_dir may exist (pre-created) even if no parts were written;
+            # validate there is at least one parquet file (supports partitioned subfolders).
+            part_files = glob.glob(os.path.join(parts_dir, "**", "*.parquet"), recursive=True)
+            if not part_files:
                 missing_parts.append((t, parts_dir))
                 continue
 

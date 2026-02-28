@@ -738,6 +738,13 @@ def build_chunk_table(
 
         _ensure_global_pool()
 
+        # Enforce invariant: never emit Store Manager keys (30,000,000..39,999,999)
+        # (If they leak into the global pool due to config, remove them.)
+        if global_pool is not None and len(global_pool) > 0:
+            gp = np.asarray(global_pool, dtype=np.int64)
+            gp = gp[(gp < 30_000_000) | (gp >= 40_000_000)]
+            global_pool = gp
+
         eff = getattr(State, "salesperson_effective_by_store", None)
 
         FAR_PAST = np.datetime64("1900-01-01", "D")
@@ -816,6 +823,14 @@ def build_chunk_table(
             order_date = order_dates[first_idx].astype("datetime64[D]", copy=False)
 
             salesperson_order = _sample_salesperson_for_store_dates(order_store, order_date)
+
+            # Enforce: base selection must not include Store Manager keys (30M..40M)
+            mgr_mask0 = (salesperson_order >= 30_000_000) & (salesperson_order < 40_000_000)
+            if np.any(mgr_mask0):
+                salesperson_order = np.asarray(salesperson_order, dtype=np.int64).copy()
+                if global_pool is not None and len(global_pool) > 0:
+                    salesperson_order[mgr_mask0] = rng.choice(global_pool, size=int(mgr_mask0.sum()), replace=True)
+
             salesperson_key_arr = salesperson_order[inv_idx]
         else:
             # Line-level fallback (when order ids do not exist)
@@ -824,6 +839,12 @@ def build_chunk_table(
                 np.asarray(order_dates, dtype="datetime64[D]")
             )
 
+            # Enforce: base selection must not include Store Manager keys (30M..40M)
+            mgr_mask0 = (salesperson_key_arr >= 30_000_000) & (salesperson_key_arr < 40_000_000)
+            if np.any(mgr_mask0):
+                salesperson_key_arr = np.asarray(salesperson_key_arr, dtype=np.int64).copy()
+                if global_pool is not None and len(global_pool) > 0:
+                    salesperson_key_arr[mgr_mask0] = rng.choice(global_pool, size=int(mgr_mask0.sum()), replace=True)
 
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------

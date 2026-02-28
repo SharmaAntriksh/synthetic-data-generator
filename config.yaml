@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2021-01-01"
-    end: "2026-12-31"
+    start: "2007-01-01"
+    end: "2009-12-31"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -31,12 +31,12 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 10004
+  total_rows: 100043
   chunk_size: 1000000
-  max_lines_per_order: 10
+  max_lines_per_order: 5
   
   file_format: "parquet"          # csv | parquet | deltaparquet
-  sales_output: "sales_order"           # sales | sales_order | both
+  sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -67,7 +67,7 @@ sales:
 
 returns:
   enabled: true
-  return_rate: 0.01          # fraction of Sales (line) rows that get a return
+  return_rate: 0.03          # fraction of Sales (line) rows that get a return
   min_days_after_sale: 1     # hard cap (pipeline-level)
   max_days_after_sale: 60    # hard cap (pipeline-level)
   override:
@@ -78,7 +78,7 @@ returns:
 # ---------------------------------------------------------------------
 products:
 
-  num_products: 381
+  num_products: 3381
   active_ratio: 0.94
   seed: 42
 
@@ -149,7 +149,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 80
+  total_customers: 18321
   active_ratio: 0.90
 
   pct_india: 10
@@ -177,9 +177,9 @@ customers:
 customer_segments:
   enabled: true
 
-  segment_count: 12
+  segment_count: 20
   segments_per_customer_min: 1
-  segments_per_customer_max: 4
+  segments_per_customer_max: 3
 
   include_score: true
   include_primary_flag: true
@@ -253,7 +253,7 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 5
+  num_stores: 20
   ensure_currency_coverage: true
   opening:
     start: "1995-01-01"
@@ -299,7 +299,7 @@ employees:
   store_assignments:
     enabled: true
 
-    mover_share: 0.10
+    mover_share: 0.25
     pool_scope: district
     allow_store_revisit: true
     part_time_multiplier: 1.5
@@ -322,10 +322,10 @@ employees:
 
       Sales Associate:
         role_multiplier: 2.50
-        episodes_min: 1
-        episodes_max: 4
-        duration_days_min: 60
-        duration_days_max: 240
+        episodes_min: 2
+        episodes_max: 6
+        duration_days_min: 45
+        duration_days_max: 210
 
       Cashier:
         role_multiplier: 1.10
@@ -345,13 +345,22 @@ employees:
 # ---------------------------------------------------------------------
 dates:
   fiscal_month_offset: 5
-  as_of_date: "2026-12-31"  # anchor for IsToday/IsCurrent* and CurrentDayOffset
+  as_of_date: null  # anchor for IsToday/IsCurrent* and CurrentDayOffset
                             # Treat end of dataset as “today” (default): omit it (it uses raw_end). 
                             # Anchor to last year end: as_of_date: "2025-12-31"
+  pretty_column_names: true
+  
   include:
     calendar: true        # always true (safe default)
-    iso: false            # ISO week columns
-    fiscal: false         # fiscal year / quarter / month columns
+    iso: true            # ISO week columns
+    fiscal: true         # fiscal year / quarter / month columns
+
+  weekly_calendar:
+    enabled: true
+    first_day_of_week: 0          # 0=Sunday, 1=Monday, ... 6=Saturday
+    weekly_type: "Last"           # "Last" or "Nearest"
+    quarter_week_type: "445"      # "445", "454", "544"
+    type_start_fiscal_year: 1     # 1=end-year labeling
 
   override:
     dates:

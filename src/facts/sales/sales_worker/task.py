@@ -158,12 +158,52 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
 
     _task_require_cols(source_table, RETURNS_REQUIRED_DETAIL_COLS, ctx="SalesReturn build requires")
 
+        # Sanitize config inputs defensively. We keep this tolerant so bad config values
+    # don't crash the worker pool; returns_builder enforces correctness but we
+    # normalize here to preserve backward compatibility.
+    rr_raw = getattr(State, "returns_rate", 0.0)
+    try:
+        rr = float(rr_raw if rr_raw not in (None, "") else 0.0)
+    except Exception:
+        rr = 0.0
+    if not np.isfinite(rr):
+        rr = 0.0
+    rr = max(0.0, min(1.0, rr))
+
+    lag_raw = getattr(State, "returns_max_lag_days", 60)
+    try:
+        max_lag = int(lag_raw if lag_raw not in (None, "") else 60)
+    except Exception:
+        max_lag = 60
+    max_lag = max(0, max_lag)
+
+    reason_keys = _as_list(getattr(State, "returns_reason_keys", None), default=[1])
+    reason_probs = _as_list(getattr(State, "returns_reason_probs", None), default=[1.0])
+
+    # Normalize reasons if malformed (length mismatch, negatives, NaNs, non-positive sum).
+    try:
+        rk = [int(x) for x in reason_keys] if reason_keys else [1]
+    except Exception:
+        rk = [1]
+
+    try:
+        rp = [float(x) for x in reason_probs] if reason_probs else [1.0]
+    except Exception:
+        rp = [1.0]
+
+    if len(rp) != len(rk):
+        rp = [1.0] * len(rk)
+
+    rp_arr = np.asarray(rp, dtype=np.float64)
+    if rp_arr.size == 0 or (not np.all(np.isfinite(rp_arr))) or np.any(rp_arr < 0) or float(rp_arr.sum()) <= 0.0:
+        rp_arr = np.full(max(len(rk), 1), 1.0, dtype=np.float64)
+
     cfg = ReturnsConfig(
         enabled=True,
-        return_rate=float(getattr(State, "returns_rate", 0.0) or 0.0),
-        max_lag_days=int(getattr(State, "returns_max_lag_days", 60) or 60),
-        reason_keys=_as_list(getattr(State, "returns_reason_keys", None), default=[1]),
-        reason_probs=_as_list(getattr(State, "returns_reason_probs", None), default=[1.0]),
+        return_rate=rr,
+        max_lag_days=max_lag,
+        reason_keys=rk,
+        reason_probs=rp_arr.tolist(),
     )
 
     returns_seed = int(chunk_seed) ^ 0x5A5A_1234
@@ -584,7 +624,7 @@ def _worker_task(args):
             if bool(getattr(State, "skip_order_cols_requested", False)):
                 sales_table = _drop_order_cols_for_sales(sales_table)
 
-            returns_table = _maybe_build_returns(detail_table, chunk_seed=int(idx_i))
+            returns_table = _maybe_build_returns(detail_table, chunk_seed=int(chunk_seed))
             sales_out = _project_for_table(TABLE_SALES, sales_table)
 
             if returns_table is None:
@@ -614,7 +654,7 @@ def _worker_task(args):
             TABLE_SALES_ORDER_HEADER, idx_i, _project_for_table(TABLE_SALES_ORDER_HEADER, header_table)
         )
 
-        returns_table = _maybe_build_returns(detail_table, chunk_seed=int(idx_i))
+        returns_table = _maybe_build_returns(detail_table, chunk_seed=int(chunk_seed))
         if returns_table is not None:
             out[TABLE_SALES_RETURN] = _write_table(
                 TABLE_SALES_RETURN, idx_i, _project_for_table(TABLE_SALES_RETURN, returns_table)  # type: ignore[arg-type]

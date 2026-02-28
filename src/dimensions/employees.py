@@ -189,9 +189,22 @@ _STAFF_TITLES_P = np.array([0.35, 0.25, 0.20, 0.10, 0.10], dtype=float)
 
 
 def _parse_global_dates(cfg: Dict[str, Any], emp_cfg: Dict[str, Any]) -> Tuple[pd.Timestamp, pd.Timestamp]:
+    """
+    Resolve the dataset-wide employee window.
+
+    Policy:
+      - Prefer cfg.defaults.dates.{start,end} as the global window.
+      - Fall back to employees.{start_date,end_date} only if defaults.dates is missing.
+
+    This prevents mismatches where Sales runs on a different global date window than Employees/Assignments.
+    """
     defaults = _as_dict(cfg.get("defaults"))
-    start = emp_cfg.get("start_date") or defaults.get("start_date") or "2010-01-01"
-    end = emp_cfg.get("end_date") or defaults.get("end_date") or "2012-12-31"
+    dd = _as_dict(defaults.get("dates"))
+
+    # Global first; fall back to employee-local if global is missing.
+    start = dd.get("start") or emp_cfg.get("start_date") or "2010-01-01"
+    end = dd.get("end") or emp_cfg.get("end_date") or "2012-12-31"
+
     global_start = pd.to_datetime(start).normalize()
     global_end = pd.to_datetime(end).normalize()
     if global_end < global_start:
@@ -364,8 +377,8 @@ def _enrich_employee_hr_columns(
     df["Status"] = np.where(df["IsActive"].astype(int) == 1, "Active", "Terminated").astype(object)
 
     # SalesPersonFlag
-    df["SalesPersonFlag"] = title.isin(["Sales Associate", "Store Manager"]).astype(np.int8)
-    df["IsSalesPerson"] = df["SalesPersonFlag"].astype(np.int8)  # compat alias used by some fact loaders
+    df["SalesPersonFlag"] = title.isin(["Sales Associate"]).astype(np.int8)
+    df["IsSalesPerson"] = df["SalesPersonFlag"].astype(np.int8)  # compat alias used by some fact loaders  # compat alias used by some fact loaders
 
     # DepartmentName
     dept = np.where(
