@@ -5,7 +5,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: c0b847b6-31d7-429b-bb1b-f1e8591d082a
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: SalesChannelKey
 
 		annotation SummarizationSetBy = Automatic
@@ -38,7 +38,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: a88f64d1-09bb-4495-b66c-f9eeafeb841a
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: SortOrder
 
 		annotation SummarizationSetBy = Automatic
@@ -47,7 +47,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: 49ca35ff-3529-4148-b088-266a7944f162
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: IsDigital
 
 		annotation SummarizationSetBy = Automatic
@@ -56,7 +56,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: 18447dd2-08ea-4fce-87ad-505b369f716c
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: IsPhysical
 
 		annotation SummarizationSetBy = Automatic
@@ -65,7 +65,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: 2d3b6057-64e3-4b86-9ed0-ed9ef5483f32
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: IsThirdParty
 
 		annotation SummarizationSetBy = Automatic
@@ -74,7 +74,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: e9f50a3a-9a3d-4dd0-b952-2ee857797649
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: IsB2B
 
 		annotation SummarizationSetBy = Automatic
@@ -83,7 +83,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: d5e375b7-73a4-43d6-b3b5-03d591a5625e
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: IsAssisted
 
 		annotation SummarizationSetBy = Automatic
@@ -92,7 +92,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: bf58235a-4910-42ee-b731-c05149c1d0b3
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: IsOwnedChannel
 
 		annotation SummarizationSetBy = Automatic
@@ -109,7 +109,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: b1505efe-a487-4d9a-87c9-e06d05f9253d
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: Is24x7
 
 		annotation SummarizationSetBy = Automatic
@@ -118,7 +118,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: 30e86a24-d2e3-484b-b6d7-9d0d2c5a8e56
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: OpenMinute
 
 		annotation SummarizationSetBy = Automatic
@@ -127,7 +127,7 @@ table SalesChannel
 		dataType: int64
 		formatString: 0
 		lineageTag: 14da5b15-542a-43ae-95f6-f218a90290e9
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: CloseMinute
 
 		annotation SummarizationSetBy = Automatic

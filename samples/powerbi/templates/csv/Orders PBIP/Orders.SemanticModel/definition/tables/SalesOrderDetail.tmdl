@@ -7,7 +7,7 @@ table SalesOrderDetail
 		isHidden
 		formatString: 0
 		lineageTag: 69d80e65-99c7-4ad3-bc29-5f988106b0bc
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
 
 		changedProperty = IsHidden
@@ -31,7 +31,7 @@ table SalesOrderDetail
 		isHidden
 		formatString: 0
 		lineageTag: d2f2bd07-44ab-4ba0-a266-f3865e969a07
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ProductKey
 
 		changedProperty = IsHidden

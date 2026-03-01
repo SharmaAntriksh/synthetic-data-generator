@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.5.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.6.0/schema.json",
   "name": "5297a18b86b04e8a5172",
   "position": {
     "x": 0,
@@ -71,7 +71,7 @@
                       "Entity": "MeasuresTable"
                     }
                   },
-                  "Property": "Sales Amount (SOD )"
+                  "Property": "Sales Amount (SOD)"
                 }
               },
               "queryRef": "Sales.Sales Amount (SOD )",

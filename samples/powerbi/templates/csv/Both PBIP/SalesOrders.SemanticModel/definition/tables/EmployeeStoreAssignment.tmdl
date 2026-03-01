@@ -8,6 +8,8 @@ table EmployeeStoreAssignment
 		summarizeBy: count
 		sourceColumn: EmployeeKey
 
+		changedProperty = IsHidden
+
 		annotation SummarizationSetBy = Automatic
 
 	column StoreKey
@@ -17,6 +19,8 @@ table EmployeeStoreAssignment
 		summarizeBy: count
 		sourceColumn: StoreKey
 
+		changedProperty = IsHidden
+
 		annotation SummarizationSetBy = Automatic
 
 	column StartDate
@@ -25,6 +29,8 @@ table EmployeeStoreAssignment
 		lineageTag: c7658cc4-37e6-41bf-a885-fdf2856452a6
 		summarizeBy: none
 		sourceColumn: StartDate
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
@@ -39,6 +45,8 @@ table EmployeeStoreAssignment
 		summarizeBy: none
 		sourceColumn: EndDate
 
+		changedProperty = IsHidden
+
 		annotation SummarizationSetBy = Automatic
 
 		annotation UnderlyingDateTimeDataType = Date
@@ -51,6 +59,8 @@ table EmployeeStoreAssignment
 		summarizeBy: sum
 		sourceColumn: FTE
 
+		changedProperty = IsHidden
+
 		annotation SummarizationSetBy = Automatic
 
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
@@ -61,6 +71,8 @@ table EmployeeStoreAssignment
 		summarizeBy: none
 		sourceColumn: RoleAtStore
 
+		changedProperty = IsHidden
+
 		annotation SummarizationSetBy = Automatic
 
 	column IsPrimary
@@ -70,6 +82,8 @@ table EmployeeStoreAssignment
 		summarizeBy: sum
 		sourceColumn: IsPrimary
 
+		changedProperty = IsHidden
+
 		annotation SummarizationSetBy = Automatic
 
 	column AssignmentSequence
@@ -78,6 +92,8 @@ table EmployeeStoreAssignment
 		lineageTag: 84c9528d-96ad-4b64-af58-5be3b02047f4
 		summarizeBy: sum
 		sourceColumn: AssignmentSequence
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
@@ -102,6 +118,8 @@ table EmployeeStoreAssignment
 				    )
 				in
 				    ChangedType
+
+	changedProperty = IsHidden
 
 	annotation PBI_NavigationStepName = Navigation
 

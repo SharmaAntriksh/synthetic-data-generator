@@ -5,7 +5,7 @@ table Products
 		dataType: int64
 		formatString: 0
 		lineageTag: 817fb5b9-efba-4622-9733-06c52a3785e4
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ProductKey
 
 		annotation SummarizationSetBy = Automatic
@@ -39,7 +39,7 @@ table Products
 		dataType: int64
 		formatString: 0
 		lineageTag: 169bba0b-83a5-49c2-ae55-f76e8d03183f
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: SubcategoryKey
 
 		annotation SummarizationSetBy = Automatic

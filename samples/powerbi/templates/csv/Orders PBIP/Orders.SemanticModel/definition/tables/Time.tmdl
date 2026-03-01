@@ -1,0 +1,196 @@
+table Time
+	lineageTag: cedb91b8-a86e-4d62-a6bc-41cd86c9b7cd
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 698d1084-547c-47f5-8ea0-0c9b2c6fdc1a
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column Hour
+		dataType: int64
+		formatString: 0
+		lineageTag: 88c12e18-de92-48db-a680-811c3e98a08a
+		summarizeBy: sum
+		sourceColumn: Hour
+
+		annotation SummarizationSetBy = Automatic
+
+	column Minute
+		dataType: int64
+		formatString: 0
+		lineageTag: 78168155-a4f1-46cb-a905-773c2e8a1376
+		summarizeBy: sum
+		sourceColumn: Minute
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeText
+		dataType: string
+		lineageTag: 91615826-d569-4dc0-acb0-5373562f67f4
+		summarizeBy: none
+		sourceColumn: TimeText
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey15
+		dataType: int64
+		formatString: 0
+		lineageTag: 596c3661-1c61-454d-a4a1-4144450d0a78
+		summarizeBy: sum
+		sourceColumn: TimeKey15
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin15Label
+		dataType: string
+		lineageTag: 26f4c4b2-049d-47b1-b2b1-71ce6296520a
+		summarizeBy: none
+		sourceColumn: Bin15Label
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey30
+		dataType: int64
+		formatString: 0
+		lineageTag: 30a09df1-c9da-4c7c-bd88-5c87de650f36
+		summarizeBy: sum
+		sourceColumn: TimeKey30
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin30Label
+		dataType: string
+		lineageTag: 9afcf8d3-d00c-4f90-9974-deb86f05a5de
+		summarizeBy: none
+		sourceColumn: Bin30Label
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey60
+		dataType: int64
+		formatString: 0
+		lineageTag: b211d386-4e23-446c-a651-872e1239ca0a
+		summarizeBy: sum
+		sourceColumn: TimeKey60
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin60Label
+		dataType: string
+		lineageTag: fafd9d1b-0590-42c9-abdb-5f022e87e4b0
+		summarizeBy: none
+		sourceColumn: Bin60Label
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey360
+		dataType: int64
+		formatString: 0
+		lineageTag: 70756fb8-38cb-45c6-8001-29b1ebfd591e
+		summarizeBy: sum
+		sourceColumn: TimeKey360
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin6hLabel
+		dataType: string
+		lineageTag: ded5d5ae-d875-4408-b7e9-d8fa6c336d7f
+		summarizeBy: none
+		sourceColumn: Bin6hLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey720
+		dataType: int64
+		formatString: 0
+		lineageTag: beae5101-2360-46ee-820c-b451bfe977ac
+		summarizeBy: sum
+		sourceColumn: TimeKey720
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin12hLabel
+		dataType: string
+		lineageTag: 62224048-e3ba-491a-ad22-aae637a46ed5
+		summarizeBy: none
+		sourceColumn: Bin12hLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeBucketKey4
+		dataType: int64
+		formatString: 0
+		lineageTag: da368749-2e67-4f92-bfc7-8e8fec5ce8fa
+		summarizeBy: sum
+		sourceColumn: TimeBucketKey4
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeBucket4
+		dataType: string
+		lineageTag: 605664ad-3651-4ba6-8715-e9e816d433a2
+		summarizeBy: none
+		sourceColumn: TimeBucket4
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeSeconds
+		dataType: int64
+		formatString: 0
+		lineageTag: 5fb14e79-cdc4-484f-9691-0d97e6081907
+		summarizeBy: sum
+		sourceColumn: TimeSeconds
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeOfDay
+		dataType: dateTime
+		formatString: Long Time
+		lineageTag: a809d142-f63f-42e1-93b4-2f87751caa63
+		summarizeBy: none
+		sourceColumn: TimeOfDay
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Time
+
+	partition Time = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "time" ),
+				    ChangedType = Table.TransformColumnTypes (
+				        Source,
+				        {
+				            { "TimeKey", Int64.Type },
+				            { "Hour", Int64.Type },
+				            { "Minute", Int64.Type },
+				            { "TimeText", type text },
+				            { "TimeKey15", Int64.Type },
+				            { "Bin15Label", type text },
+				            { "TimeKey30", Int64.Type },
+				            { "Bin30Label", type text },
+				            { "TimeKey60", Int64.Type },
+				            { "Bin60Label", type text },
+				            { "TimeKey360", Int64.Type },
+				            { "Bin6hLabel", type text },
+				            { "TimeKey720", Int64.Type },
+				            { "Bin12hLabel", type text },
+				            { "TimeBucketKey4", Int64.Type },
+				            { "TimeBucket4", type text },
+				            { "TimeSeconds", Int64.Type },
+				            { "TimeOfDay", type time }
+				        }
+				    )
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

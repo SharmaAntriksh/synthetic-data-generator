@@ -9,7 +9,7 @@ defaults:
 
   dates:
     start: "2023-01-01"
-    end: "2025-12-31"
+    end: "2026-02-28"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -31,12 +31,12 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 200543
-  chunk_size: 1000000
+  total_rows: 100154
+  chunk_size: 2000000
   max_lines_per_order: 5
   
-  file_format: "parquet"          # csv | parquet | deltaparquet
-  sales_output: "sales"           # sales | sales_order | both
+  file_format: "csv"          # csv | parquet | deltaparquet
+  sales_output: "sales_order"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -149,7 +149,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 18832
+  total_customers: 48832
   active_ratio: 0.90
 
   pct_india: 10
@@ -253,7 +253,7 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 10
+  num_stores: 20
   ensure_currency_coverage: true
 
   opening:

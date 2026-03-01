@@ -1,10 +1,10 @@
 table SalesReturns
-	lineageTag: 906e8d13-d2cb-4206-ab3c-0ff546485163
+	lineageTag: e5942e12-813c-4803-97fb-879b388a5987
 
 	column SalesOrderNumber
 		dataType: int64
 		formatString: 0
-		lineageTag: 945573d5-ee24-4af9-9175-113d3b447674
+		lineageTag: 6f44264e-b30f-45fd-bc01-cb9ec8c8f392
 		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
 
@@ -13,7 +13,7 @@ table SalesReturns
 	column SalesOrderLineNumber
 		dataType: int64
 		formatString: 0
-		lineageTag: 3edf0ed6-ac97-4dc4-9089-a6a70f01a113
+		lineageTag: 00d34491-6def-4c63-8e04-3d7a1e728452
 		summarizeBy: sum
 		sourceColumn: SalesOrderLineNumber
 
@@ -22,7 +22,7 @@ table SalesReturns
 	column ReturnDate
 		dataType: dateTime
 		formatString: Long Date
-		lineageTag: 6b5f5cd7-4ba8-41fc-a5e7-4a668ac9b2c3
+		lineageTag: 9451fe9a-f083-4190-8d6c-958bc37bcc4f
 		summarizeBy: none
 		sourceColumn: ReturnDate
 
@@ -33,7 +33,7 @@ table SalesReturns
 	column ReturnReasonKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 5ff39d9d-76d2-47e4-8ee7-7262d9a0c7cd
+		lineageTag: 319bbbca-fc01-4988-aaf9-cb327adf50c7
 		summarizeBy: count
 		sourceColumn: ReturnReasonKey
 
@@ -42,7 +42,7 @@ table SalesReturns
 	column ReturnQuantity
 		dataType: int64
 		formatString: 0
-		lineageTag: d71b7fc4-f1a7-4344-800f-40e8ce4b963c
+		lineageTag: d0a276e4-0664-4bf4-90f8-18f4b84bbb33
 		summarizeBy: sum
 		sourceColumn: ReturnQuantity
 
@@ -51,7 +51,7 @@ table SalesReturns
 	column ReturnNetPrice
 		dataType: decimal
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
-		lineageTag: 45c1e612-620b-4c4e-aacf-a1629ed594dd
+		lineageTag: 960bbb07-8532-45cc-a0be-e6c2de7189c0
 		summarizeBy: sum
 		sourceColumn: ReturnNetPrice
 
@@ -62,7 +62,7 @@ table SalesReturns
 	column ReturnEventKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 40183bd2-e77a-4143-8867-9795a7ac3048
+		lineageTag: 8692fdd7-113c-4d32-8ac6-601e19260d9a
 		summarizeBy: count
 		sourceColumn: ReturnEventKey
 
@@ -85,7 +85,7 @@ table SalesReturns
 				    CombineTables = Table.ExpandTableColumn (
 				        RemoveOtherCol,
 				        "Transform File",
-				        Table.ColumnNames ( Transform_Sales_File ( Sample_File_SalesReturns ) )
+				        Table.ColumnNames ( Transform_SalesReturns_File ( Sample_File_SalesReturns ) )
 				    ),
 				    ChangeType = Table.TransformColumnTypes (
 				        CombineTables,

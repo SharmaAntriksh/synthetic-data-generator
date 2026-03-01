@@ -1,10 +1,10 @@
 table SalesReturns
-	lineageTag: 5b6613aa-7a5b-4f47-b5df-0a29fcadedc8
+	lineageTag: 9898b162-1a5a-4975-b5c3-f5d0b4a062f9
 
 	column SalesOrderNumber
 		dataType: int64
 		formatString: 0
-		lineageTag: b126feb1-2a99-4d59-9b8f-b5fc5d1b30fd
+		lineageTag: f716a86b-63c9-41e3-9d65-3ff48cd380aa
 		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
 
@@ -13,7 +13,7 @@ table SalesReturns
 	column SalesOrderLineNumber
 		dataType: int64
 		formatString: 0
-		lineageTag: 22b98c5f-6d82-4417-a0aa-bb08f6aae022
+		lineageTag: ee3b718a-109c-4340-8c1e-8111f9d2dbf1
 		summarizeBy: sum
 		sourceColumn: SalesOrderLineNumber
 
@@ -22,7 +22,7 @@ table SalesReturns
 	column ReturnDate
 		dataType: dateTime
 		formatString: Long Date
-		lineageTag: 04f938f9-9c67-4c3d-b2bb-6ace68a3dcc3
+		lineageTag: ee1fda21-4916-4536-8a1d-9391b130cd50
 		summarizeBy: none
 		sourceColumn: ReturnDate
 
@@ -33,8 +33,8 @@ table SalesReturns
 	column ReturnReasonKey
 		dataType: int64
 		formatString: 0
-		lineageTag: da8e1926-be27-4727-9dda-8a13dc4744b2
-		summarizeBy: none
+		lineageTag: c14a824f-5101-48f9-bc47-0d8342d891b4
+		summarizeBy: count
 		sourceColumn: ReturnReasonKey
 
 		annotation SummarizationSetBy = Automatic
@@ -42,7 +42,7 @@ table SalesReturns
 	column ReturnQuantity
 		dataType: int64
 		formatString: 0
-		lineageTag: 3fcb9389-684f-45c9-8bf0-50f2d6109dc3
+		lineageTag: 28b95e13-448e-4f2b-84a6-7c71b11cee42
 		summarizeBy: sum
 		sourceColumn: ReturnQuantity
 
@@ -51,7 +51,7 @@ table SalesReturns
 	column ReturnNetPrice
 		dataType: decimal
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
-		lineageTag: 0288ed18-01f0-41c4-b598-8e223fbc2cd1
+		lineageTag: 8ba4d7a8-2b0c-49d2-83e9-025d014bcbb4
 		summarizeBy: sum
 		sourceColumn: ReturnNetPrice
 
@@ -62,7 +62,7 @@ table SalesReturns
 	column ReturnEventKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 2ecf48e5-7f38-4b62-9937-fed864153967
+		lineageTag: 4f8fe63a-f755-4723-9443-aef5bb80ac3a
 		summarizeBy: count
 		sourceColumn: ReturnEventKey
 
@@ -85,7 +85,7 @@ table SalesReturns
 				    CombineTables = Table.ExpandTableColumn (
 				        RemoveOtherCol,
 				        "Transform File",
-				        Table.ColumnNames ( Transform_Sales_File ( Sample_File_SalesReturns ) )
+				        Table.ColumnNames ( Transform_SalesReturns_File ( Sample_File_SalesReturns ) )
 				    ),
 				    ChangeType = Table.TransformColumnTypes (
 				        CombineTables,
