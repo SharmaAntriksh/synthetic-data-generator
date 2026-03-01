@@ -796,13 +796,6 @@ def build_chunk_table(
 
             salesperson_order = _sample_salesperson_for_store_dates(order_store, order_date)
 
-            # Enforce: base selection must not include Store Manager keys (30M..40M)
-            # mgr_mask0 = (salesperson_order >= 30_000_000) & (salesperson_order < 40_000_000)
-            # if np.any(mgr_mask0):
-            #     # Strict: do not substitute from a cross-store pool. Mark unknown.
-            #     salesperson_order = np.asarray(salesperson_order, dtype=np.int64).copy()
-            #     salesperson_order[mgr_mask0] = np.int64(-1)
-
             salesperson_key_arr = salesperson_order[inv_idx]
         else:
             # Line-level fallback (when order ids do not exist)
@@ -810,12 +803,6 @@ def build_chunk_table(
                 np.asarray(store_key_arr, dtype=np.int64),
                 np.asarray(order_dates, dtype="datetime64[D]")
             )
-
-            # Enforce: base selection must not include Store Manager keys (30M..40M)
-            mgr_mask0 = (salesperson_key_arr >= 30_000_000) & (salesperson_key_arr < 40_000_000)
-            if np.any(mgr_mask0):
-                salesperson_key_arr = np.asarray(salesperson_key_arr, dtype=np.int64).copy()
-                salesperson_key_arr[mgr_mask0] = np.int64(-1)
 
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------
