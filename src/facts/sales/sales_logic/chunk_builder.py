@@ -711,39 +711,9 @@ def build_chunk_table(
         # IMPORTANT: Never emit Store Manager keys (30_000_000 + StoreKey).
         # --------------------------------------------------------
 
-        global_pool = getattr(State, "salesperson_global_pool", None)
 
-        def _ensure_global_pool():
-            nonlocal global_pool
-            if global_pool is None or len(global_pool) == 0:
-                # Try to infer from effective map (union of emp_keys) if present
-                eff2 = getattr(State, "salesperson_effective_by_store", None)
-                if isinstance(eff2, dict) and eff2:
-                    acc = []
-                    for _store, entry in eff2.items():
-                        if entry is None:
-                            continue
-                        emp_keys = entry[0]
-                        if emp_keys is not None and len(emp_keys):
-                            acc.append(np.asarray(emp_keys, dtype=np.int64))
-                    if acc:
-                        global_pool = np.unique(np.concatenate(acc)).astype(np.int64, copy=False)
-
-            if global_pool is None or len(global_pool) == 0:
-                raise RuntimeError(
-                    "No eligible salespeople found. "
-                    "Bind State.salesperson_global_pool (Sales Associate only) in init.py, "
-                    "or ensure salesperson_effective_by_store contains eligible emp_keys."
-                )
-
-        _ensure_global_pool()
-
-        # Enforce invariant: never emit Store Manager keys (30,000,000..39,999,999)
-        # (If they leak into the global pool due to config, remove them.)
-        if global_pool is not None and len(global_pool) > 0:
-            gp = np.asarray(global_pool, dtype=np.int64)
-            gp = gp[(gp < 30_000_000) | (gp >= 40_000_000)]
-            global_pool = gp
+        # STRICT: no cross-store salesperson fallback. If no eligible salesperson exists, we emit -1.
+        # This guarantees SalesPersonEmployeeKey always corresponds to an effective-dated assignment in EmployeeStoreAssignments.
 
         eff = getattr(State, "salesperson_effective_by_store", None)
 
@@ -751,25 +721,33 @@ def build_chunk_table(
         FAR_FUTURE = np.datetime64("2262-04-11", "D")
 
         def _sample_salesperson_for_store_dates(store_ids: np.ndarray, dates_D: np.ndarray) -> np.ndarray:
-            """Sample one salesperson per (store_ids[i], dates_D[i]) row."""
-            out = np.empty(store_ids.shape[0], dtype=np.int64)
+            """Sample one salesperson per (store_ids[i], dates_D[i]) row.
+
+            STRICT: never assigns a salesperson outside an effective-dated assignment window.
+            If no eligible salesperson exists for a given (StoreKey, Date), emits -1.
+            """
+            out = np.full(store_ids.shape[0], -1, dtype=np.int64)
 
             if isinstance(eff, dict) and eff:
                 for store in np.unique(store_ids):
                     store_i = int(store)
                     idx_store = (store_ids == store)
-                    n_store = int(idx_store.sum())
-
                     entry = eff.get(store_i)
                     if entry is None:
-                        out[idx_store] = rng.choice(global_pool, size=n_store, replace=True)
                         continue
 
                     emp_keys, start_d, end_d, weights = entry
                     emp_keys = np.asarray(emp_keys, dtype=np.int64)
-                    start_d = np.asarray(start_d, dtype="datetime64[D]")
-                    end_d = np.asarray(end_d, dtype="datetime64[D]")
+                    start_d = np.asarray(start_d, dtype='datetime64[D]')
+                    end_d = np.asarray(end_d, dtype='datetime64[D]')
                     weights = np.asarray(weights, dtype=np.float64)
+
+                    # Never allow Store Manager keys (30M..40M) to appear as salespeople
+                    assert np.all((emp_keys < 30_000_000) | (emp_keys >= 40_000_000)), \
+                        "Store Manager keys leaked into salesperson pool"
+                    
+                    if emp_keys.size == 0:
+                        continue
 
                     if np.isnat(start_d).any():
                         start_d = start_d.copy()
@@ -778,23 +756,22 @@ def build_chunk_table(
                         end_d = end_d.copy()
                         end_d[np.isnat(end_d)] = FAR_FUTURE
 
-                    d_store = dates_D[idx_store].astype("datetime64[D]", copy=False)
+                    d_store = dates_D[idx_store].astype('datetime64[D]', copy=False)
                     u_dates, inv = np.unique(d_store, return_inverse=True)
-                    out_store = np.empty(d_store.shape[0], dtype=np.int64)
+                    out_store = np.full(d_store.shape[0], -1, dtype=np.int64)
 
                     for j, d in enumerate(u_dates):
                         sel = (inv == j)
                         sel_n = int(sel.sum())
-
                         active = (start_d <= d) & (d <= end_d)
                         if not np.any(active):
-                            out_store[sel] = rng.choice(global_pool, size=sel_n, replace=True)
                             continue
 
                         w = weights[active]
                         sw = float(w.sum())
                         if sw <= 1e-12:
-                            out_store[sel] = rng.choice(global_pool, size=sel_n, replace=True)
+                            # Uniform among active employees (still within window).
+                            out_store[sel] = rng.choice(emp_keys[active], size=sel_n, replace=True)
                             continue
 
                         p = (w / sw).astype(np.float64, copy=False)
@@ -803,18 +780,13 @@ def build_chunk_table(
                     out[idx_store] = out_store
                 return out
 
-            # No effective map -> fallback to month map (then global pool)
-            sp_map = getattr(State, "salesperson_by_store_month", None)
+            # No effective map -> fallback to month map (no global backfill).
+            sp_map = getattr(State, 'salesperson_by_store_month', None)
             if sp_map is not None:
                 out = sp_map[store_ids, int(m_offset)]
-                missing = out < 0
-                if np.any(missing):
-                    out = out.copy()
-                    out[missing] = rng.choice(global_pool, size=int(missing.sum()), replace=True)
                 return out.astype(np.int64, copy=False)
 
-            return rng.choice(global_pool, size=store_ids.shape[0], replace=True).astype(np.int64, copy=False)
-
+            return out
         # --- Sampling mode ---
         if not skip_cols and order_ids_int is not None:
             # Order-level salesperson: sample per unique order, then broadcast back to lines
@@ -825,11 +797,11 @@ def build_chunk_table(
             salesperson_order = _sample_salesperson_for_store_dates(order_store, order_date)
 
             # Enforce: base selection must not include Store Manager keys (30M..40M)
-            mgr_mask0 = (salesperson_order >= 30_000_000) & (salesperson_order < 40_000_000)
-            if np.any(mgr_mask0):
-                salesperson_order = np.asarray(salesperson_order, dtype=np.int64).copy()
-                if global_pool is not None and len(global_pool) > 0:
-                    salesperson_order[mgr_mask0] = rng.choice(global_pool, size=int(mgr_mask0.sum()), replace=True)
+            # mgr_mask0 = (salesperson_order >= 30_000_000) & (salesperson_order < 40_000_000)
+            # if np.any(mgr_mask0):
+            #     # Strict: do not substitute from a cross-store pool. Mark unknown.
+            #     salesperson_order = np.asarray(salesperson_order, dtype=np.int64).copy()
+            #     salesperson_order[mgr_mask0] = np.int64(-1)
 
             salesperson_key_arr = salesperson_order[inv_idx]
         else:
@@ -843,8 +815,7 @@ def build_chunk_table(
             mgr_mask0 = (salesperson_key_arr >= 30_000_000) & (salesperson_key_arr < 40_000_000)
             if np.any(mgr_mask0):
                 salesperson_key_arr = np.asarray(salesperson_key_arr, dtype=np.int64).copy()
-                if global_pool is not None and len(global_pool) > 0:
-                    salesperson_key_arr[mgr_mask0] = rng.choice(global_pool, size=int(mgr_mask0.sum()), replace=True)
+                salesperson_key_arr[mgr_mask0] = np.int64(-1)
 
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------

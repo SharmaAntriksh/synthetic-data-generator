@@ -584,13 +584,20 @@ def init_sales_worker(worker_cfg: dict) -> None:
     if employee_assign_employee_key is not None and employee_assign_store_key is not None:
         emp_key = np.asarray(employee_assign_employee_key, dtype=np.int64)
 
-        if employee_assign_role is not None:
-            role_arr = np.asarray(employee_assign_role).astype(str)
-            allowed = np.asarray(list(salesperson_roles), dtype=str)
-            mask = np.isin(role_arr, allowed)
-        else:
-            # fallback if role not provided: at least exclude Store Manager key range (30M..40M)
-            mask = emp_key >= EMPLOYEE_KEY_MIN_NON_MANAGER
+        if employee_assign_role is None:
+            raise RuntimeError(
+                "RoleAtStore is required in employee_store_assignments.parquet. "
+                "Regenerate the bridge table."
+            )
+        role_arr = np.asarray(employee_assign_role).astype(str)
+        allowed = np.asarray(list(salesperson_roles), dtype=str)
+        mask = np.isin(role_arr, allowed)
+
+        if not mask.any():
+            raise RuntimeError(
+                f"No employees with role in {salesperson_roles} found in bridge. "
+                f"Roles present: {np.unique(role_arr).tolist()}"
+            )
 
         employee_assign_store_key = np.asarray(employee_assign_store_key, dtype=np.int64)[mask]
         employee_assign_employee_key = emp_key[mask]

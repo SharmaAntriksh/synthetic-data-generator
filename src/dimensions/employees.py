@@ -202,18 +202,30 @@ def _parse_global_dates(cfg: Dict[str, Any], emp_cfg: Dict[str, Any]) -> Tuple[p
     """
     Resolve the dataset-wide employee window.
 
-    Policy:
-      - Prefer cfg.defaults.dates.{start,end} as the global window.
-      - Fall back to employees.{start_date,end_date} only if defaults.dates is missing.
-
-    This prevents mismatches where Sales runs on a different global date window than Employees/Assignments.
+    Policy (v2 — global dates ONLY):
+      - Uses defaults.dates.{start,end} exclusively.
+      - employees.start_date / end_date are IGNORED with a deprecation warning.
+      - This prevents date-window mismatches between Employees, Bridge, and Sales.
     """
+    # Warn if legacy keys are still present
+    if emp_cfg.get("start_date") is not None or emp_cfg.get("end_date") is not None:
+        warn(
+            "employees.start_date / employees.end_date are IGNORED. "
+            "Employee dates now follow defaults.dates exclusively. "
+            "Remove these keys from config.yaml to silence this warning."
+        )
+
     defaults = _as_dict(cfg.get("defaults"))
     dd = _as_dict(defaults.get("dates"))
 
-    # Global first; fall back to employee-local if global is missing.
-    start = dd.get("start") or emp_cfg.get("start_date") or "2010-01-01"
-    end = dd.get("end") or emp_cfg.get("end_date") or "2012-12-31"
+    start = dd.get("start")
+    end = dd.get("end")
+
+    if not start or not end:
+        raise KeyError(
+            "defaults.dates.start and defaults.dates.end are required for employee generation. "
+            "employees.start_date / employees.end_date are no longer supported."
+        )
 
     global_start = pd.to_datetime(start).normalize()
     global_end = pd.to_datetime(end).normalize()
@@ -478,12 +490,23 @@ def generate_employee_dimension(
     people_pools=None,
     iso_by_geo: dict[int, str] | None = None,
     default_region: str = "US",
+    primary_sales_role: str = "Sales Associate",
+    min_primary_sales_per_store: int = 1,
+    ensure_store_sales_coverage: bool = False,
 ) -> pd.DataFrame:
+
     """
     Build a parent-child employee hierarchy with stable keys.
 
     Defaults are intentionally small for demo-friendly datasets:
       - by default, ignores Store.EmployeeCount and samples staff_count ~ U[min_staff, max_staff]
+
+    Sales Associate lifecycle guarantee (v2):
+      - ALL Sales Associates are hired at or before global_start.
+      - ALL Sales Associates have no termination (NaT) — they outlive the dataset.
+      - This ensures the bridge table can assign every Sales Associate for the
+        full [global_start, global_end] window without date conflicts.
+      - Non-sales-associate staff still get random hire/termination dates.
     """
     if stores.empty:
         raise ValueError("stores dataframe is empty; cannot generate employees")
@@ -653,9 +676,13 @@ def generate_employee_dimension(
 
         mgr_key = _store_mgr_key(sk)
         titles = rng.choice(_STAFF_TITLES, size=n_staff, p=_STAFF_TITLES_P)
-        # Ensure at least one Sales Associate per staffed store (keeps salesperson pools non-empty)
-        if n_staff > 0 and not np.any(titles == "Sales Associate"):
-            titles[0] = "Sales Associate"
+
+        # Ensure at least N primary sales roles per staffed store.
+        ps_role = str(primary_sales_role or "Sales Associate")
+        k_ps = max(1, _int_or(min_primary_sales_per_store, 1))
+        k_ps = min(int(n_staff), int(k_ps))
+        if n_staff > 0:
+            titles[:k_ps] = ps_role
 
         for j in range(1, n_staff + 1):
             rows.append(
@@ -675,17 +702,39 @@ def generate_employee_dimension(
 
     df = pd.DataFrame(rows)
 
-    # --- Dates (date-only)
+    # ------------------------------------------------------------------
+    # Dates — with Sales Associate full-window guarantee
+    # ------------------------------------------------------------------
     n = len(df)
-    hire_start = global_start - pd.Timedelta(days=365 * 5)
-    hire_end = global_end
-    hire_dates = _rand_dates_between(rng, hire_start, hire_end, n)
+    ps_role = str(primary_sales_role or "Sales Associate")
+
+    # Identify Sales Associates (store-level staff with the primary sales role)
+    ek_all = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
+    is_sales_associate = (ek_all >= STAFF_KEY_BASE) & (df["Title"].astype(str) == ps_role)
+    sa_mask_np = is_sales_associate.to_numpy()
+
+    # --- Hire dates ---
+    # Non-SA: random hire within [global_start - 5y, global_end].
+    # Sales Associates: hired uniformly in [global_start - 5y, global_start]
+    #   so they appear as tenured employees who were already hired when data begins.
+    hire_start_general = global_start - pd.Timedelta(days=365 * 5)
+    hire_dates = _rand_dates_between(rng, hire_start_general, global_end, n)
+
+    n_sa = int(sa_mask_np.sum())
+    if n_sa > 0:
+        sa_hire = _rand_dates_between(rng, hire_start_general, global_start, n_sa)
+        hire_dates.iloc[sa_mask_np] = sa_hire.to_numpy()
+
     df["HireDate"] = hire_dates
 
-    # Terminations: reduced for senior levels
+    # --- Terminations ---
+    # Sales Associates: NEVER terminated (NaT) — they outlive the dataset window.
+    # Everyone else: probabilistic termination (reduced for senior levels).
     base_p = termination_rate
     level = df["OrgLevel"].astype(np.int16).to_numpy()
     p = np.where(level <= 4, base_p * 0.25, base_p)
+    # Force SA termination probability to 0
+    p[sa_mask_np] = 0.0
     term_mask = rng.random(n) < p
 
     term_dates = pd.Series([pd.NaT] * n, dtype="datetime64[ns]")
@@ -755,8 +804,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     version_cfg = dict(emp_cfg)
     version_cfg.pop("_force_regenerate", None)
-    # schema changed (names + integer enforcement) => bump
-    version_cfg["schema_version"] = 4
+    # schema v6: Sales Associates forced full-window, global-dates-only policy
+    version_cfg["schema_version"] = 6
     version_cfg["_stores_sig"] = _stores_signature(stores)
     version_cfg["_global_dates"] = {"start": str(global_start.date()), "end": str(global_end.date())}
 
@@ -784,6 +833,10 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         else:
             include_store_cols = False
             warn("employees.include_store_cols missing; defaulting to false")
+        sa_cfg = _as_dict(emp_cfg.get("store_assignments"))
+        primary_sales_role = str(sa_cfg.get("primary_sales_role") or "Sales Associate")
+        min_primary_sales_per_store = _int_or(sa_cfg.get("min_primary_sales_per_store"), 1)
+        ensure_store_sales_coverage = _bool_or(sa_cfg.get("ensure_store_sales_coverage"), False)
         df = generate_employee_dimension(
             stores=stores,
             seed=seed,
@@ -800,6 +853,9 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             people_pools=people_pools,
             iso_by_geo=iso_by_geo,
             default_region="US",
+            primary_sales_role=primary_sales_role,
+            min_primary_sales_per_store=min_primary_sales_per_store,
+            ensure_store_sales_coverage=ensure_store_sales_coverage,
         )
 
         hr_cfg = _as_dict(emp_cfg.get("hr"))

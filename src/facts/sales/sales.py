@@ -136,9 +136,12 @@ def _apply_cfg_default(current: Any, default: Any, cfg_value: Any) -> Any:
 
 def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional[str]) -> Tuple[str, str]:
     """
+    Resolve the *Sales* fact date window (raw, unbuffered).
+
     Priority:
       explicit args
       cfg.sales.override.dates.{start,end}
+      cfg.dates.override.dates.{start,end}          # global override
       cfg.defaults.dates.{start,end} (or cfg._defaults.dates)
     """
     if start_date is not None and end_date is not None:
@@ -149,13 +152,24 @@ def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional
     if not isinstance(defaults_dates, dict):
         raise KeyError("Missing defaults.dates in config")
 
-    ov_dates = _cfg_get(cfg, ["sales", "override", "dates"], default={})
-    ov_dates = ov_dates if isinstance(ov_dates, dict) else {}
+    ov_sales_dates = _cfg_get(cfg, ["sales", "override", "dates"], default={})
+    ov_sales_dates = ov_sales_dates if isinstance(ov_sales_dates, dict) else {}
+
+    ov_global_dates = _cfg_get(cfg, ["dates", "override", "dates"], default={})
+    ov_global_dates = ov_global_dates if isinstance(ov_global_dates, dict) else {}
 
     if start_date is None:
-        start_date = ov_dates.get("start") or defaults_dates.get("start")
+        start_date = (
+            ov_sales_dates.get("start")
+            or ov_global_dates.get("start")
+            or defaults_dates.get("start")
+        )
     if end_date is None:
-        end_date = ov_dates.get("end") or defaults_dates.get("end")
+        end_date = (
+            ov_sales_dates.get("end")
+            or ov_global_dates.get("end")
+            or defaults_dates.get("end")
+        )
 
     if not start_date or not end_date:
         raise KeyError("Could not resolve start/end dates from config")
@@ -437,11 +451,21 @@ def generate_sales_fact(
     # keep within [0, 1]
     returns_rate = max(0.0, min(1.0, returns_rate))
 
+    returns_min_lag_days = _int_or(
+        returns_cfg.get("min_days_after_sale", returns_cfg.get("returns_min_lag_days", 0)),
+        0,
+    )
+    returns_min_lag_days = max(0, returns_min_lag_days)
+
     returns_max_lag_days = _int_or(
         returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)),
         60,
     )
     returns_max_lag_days = max(0, returns_max_lag_days)
+
+    # Ensure min <= max (swap/clamp defensively)
+    if returns_min_lag_days > returns_max_lag_days:
+        returns_min_lag_days = returns_max_lag_days
 
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
     if sales_output == "both" and not bool(skip_order_cols):
@@ -825,7 +849,7 @@ def generate_sales_fact(
         # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
         order_id_stride_orders=int(chunk_size),
         order_id_run_id=int(order_id_run_id),
-        max_lines_per_order=int(sales_cfg.get("max_lines_per_order", 6) or 6),
+        max_lines_per_order=int(sales_cfg.get("max_lines_per_order", 5) or 5),
         
         sales_output=sales_output,
 
@@ -848,6 +872,7 @@ def generate_sales_fact(
         # Returns (optional)
         returns_enabled=bool(returns_enabled_effective),
         returns_rate=float(returns_rate),
+        returns_min_lag_days=int(returns_min_lag_days),
         returns_max_lag_days=int(returns_max_lag_days),
 
         # deterministic employee assignment lookup

@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2007-01-01"
-    end: "2009-12-31"
+    start: "2021-01-01"
+    end: "2026-12-31"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -31,12 +31,12 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 100043
+  total_rows: 200543
   chunk_size: 1000000
   max_lines_per_order: 5
   
-  file_format: "deltaparquet"          # csv | parquet | deltaparquet
-  sales_output: "both"           # sales | sales_order | both
+  file_format: "parquet"          # csv | parquet | deltaparquet
+  sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
 
@@ -78,7 +78,7 @@ returns:
 # ---------------------------------------------------------------------
 products:
 
-  num_products: 3381
+  num_products: 2338
   active_ratio: 0.94
   seed: 42
 
@@ -149,7 +149,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 18321
+  total_customers: 5832
   active_ratio: 0.90
 
   pct_india: 10
@@ -177,9 +177,9 @@ customers:
 customer_segments:
   enabled: true
 
-  segment_count: 20
+  segment_count: 10
   segments_per_customer_min: 1
-  segments_per_customer_max: 3
+  segments_per_customer_max: 2
 
   include_score: true
   include_primary_flag: true
@@ -253,14 +253,16 @@ promotions:
 # STORES / RETAIL OUTLETS
 # ---------------------------------------------------------------------
 stores:
-  num_stores: 20
+  num_stores: 10
   ensure_currency_coverage: true
+
   opening:
     start: "1995-01-01"
-    end: "2020-12-31"
+    end:   "2023-12-31"
 
-  closing_end: "2025-12-31"
+  closing_end: "2028-12-31"
 
+  # Only used if employees.use_store_employee_count: true
   employee_count:
     mode: by_type          # by_type | scaled_sqft
     open_by_type:
@@ -268,7 +270,7 @@ stores:
       Supermarket: [8, 16]
       Hypermarket: [12, 24]
       Online: [3, 8]
-    renovating_range: [0, 3]
+    renovating_range: [0, 2]
     closed_range: [0, 0]
     clamp_min: 0
     clamp_max: 40
@@ -281,31 +283,35 @@ stores:
 # EMPLOYEES (Dimension)
 # ---------------------------------------------------------------------
 employees:
-  start_date: "2020-01-01"
-  end_date: "2026-12-31"
-  # sizing (demo-friendly defaults)
+
+  # Use simple per-store sizing for predictable demos
   use_store_employee_count: false
-  min_staff_per_store: 2
-  max_staff_per_store: 6
-  staff_scale: 0.25         # only used if use_store_employee_count: true
+  min_staff_per_store: 6
+  max_staff_per_store: 12
+  staff_scale: 0.50          # ignored when use_store_employee_count: false
 
-  # schema choice
-  include_store_cols: false # if you want DimEmployee NOT to include StoreKey/GeographyKey
+  include_store_cols: false
 
-  # HR enrichment
   hr:
     email_domain: "contoso.com"
-    
+
   store_assignments:
     enabled: true
 
-    mover_share: 0.25
-    pool_scope: district
-    allow_store_revisit: true
-    part_time_multiplier: 1.5
+    # Hard guarantee: Sales employee+store+date always matches the bridge
+    ensure_store_sales_coverage: true
 
+    # Ensure you have "1 pinned + 1 movable" Sales Associate per store
+    min_primary_sales_per_store: 2
     primary_sales_role: "Sales Associate"
 
+    # Movement tuning
+    mover_share: 0.25
+    pool_scope: district
+    allow_store_revisit: false
+    part_time_multiplier: 1.0
+
+    # Keep non-sales roles from dominating movements/episodes
     max_non_sales_multiplier_frac: 0.35
     max_non_sales_episodes_frac: 0.50
 
@@ -314,7 +320,7 @@ employees:
 
     role_profiles:
       default:
-        role_multiplier: 0.20
+        role_multiplier: 0.25
         episodes_min: 0
         episodes_max: 1
         duration_days_min: 60
@@ -322,24 +328,24 @@ employees:
 
       Sales Associate:
         role_multiplier: 2.50
-        episodes_min: 2
-        episodes_max: 6
-        duration_days_min: 45
-        duration_days_max: 210
+        episodes_min: 1
+        episodes_max: 4
+        duration_days_min: 60
+        duration_days_max: 240
 
       Cashier:
         role_multiplier: 1.10
-        episodes_min: 1
+        episodes_min: 0
         episodes_max: 3
         duration_days_min: 14
         duration_days_max: 120
 
       Fulfillment Associate:
-        role_multiplier: 0.15
+        role_multiplier: 0.40
         episodes_min: 0
-        episodes_max: 1
-        duration_days_min: 90
-        duration_days_max: 240
+        episodes_max: 2
+        duration_days_min: 45
+        duration_days_max: 180
 # ---------------------------------------------------------------------
 # DATES (Dimension)
 # ---------------------------------------------------------------------
@@ -352,7 +358,7 @@ dates:
   include:
     calendar: true        # always true (safe default)
     iso: false            # ISO week columns
-    fiscal: false         # fiscal year / quarter / month columns
+    fiscal: true         # fiscal year / quarter / month columns
     weekly_fiscal: false
     
   weekly_calendar:
