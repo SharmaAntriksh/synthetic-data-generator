@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
-import re
 
 from src.utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
@@ -51,31 +50,6 @@ def _bool_or(value: Any, default: bool) -> bool:
         if s in {"false", "f", "0", "no", "n", "off"}:
             return False
     return bool(default)
-
-
-def _humanize_col_name(name: str) -> str:
-    """
-    Convert CamelCase / mixedCase names into space-separated "Title Case" names,
-    while preserving acronyms like ISO/FY/FW.
-
-    Examples:
-      - FiscalYearEndDate -> Fiscal Year End Date
-      - CalendarMonthIndex -> Calendar Month Index
-      - FWYearWeekNumber -> FW Year Week Number
-    """
-
-    s = name.replace("_", " ").strip()
-    s = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", s)          # aB / 1B -> a B
-    s = re.sub(r"(?<=[A-Z])(?=[A-Z][a-z])", " ", s)        # ISOWeek -> ISO Week
-
-    words = s.split()
-    out_words: List[str] = []
-    for w in words:
-        if w.isupper():
-            out_words.append(w)
-        else:
-            out_words.append(w[:1].upper() + w[1:])
-    return " ".join(out_words)
 
 
 def _normalize_override_dates(dates_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -755,70 +729,8 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
 
         df = df[cols]
 
-        # Option A: keep both monthly-fiscal and weekly-fiscal in one table, but disambiguate weekly-fiscal columns.
-        weekly_internal_cols = {
-            "FWYearNumber",
-            "FWYearLabel",
-            "FWQuarterNumber",
-            "FWQuarterLabel",
-            "FWYearQuarterNumber",
-            "FWMonthNumber",
-            "FWMonthLabel",
-            "FWYearMonthNumber",
-            "FWWeekNumber",
-            "FWWeekLabel",
-            "FWYearWeekNumber",
-            "FWYearWeekLabel",
-            "FWYearQuarterOffset",
-            "FWYearMonthOffset",
-            "FWYearWeekOffset",
-            "FWPeriodNumber",
-            "FWPeriodLabel",
-            "FWStartOfYear",
-            "FWEndOfYear",
-            "FWStartOfQuarter",
-            "FWEndOfQuarter",
-            "FWStartOfMonth",
-            "FWEndOfMonth",
-            "FWStartOfWeek",
-            "FWEndOfWeek",
-            "WeekDayNumber",
-            "WeekDayNameShort",
-            "FWDayOfYearNumber",
-            "FWDayOfQuarterNumber",
-            "FWDayOfMonthNumber",
-            "IsWorkingDay",
-            "DayType",
-            "FWWeekInQuarterNumber",
-            "FWYearMonthLabel",
-            "FWYearQuarterLabel",
-        }
+        # Keep canonical column names (no humanized/pretty column renaming).
 
-        rename_map: Dict[str, str] = {}
-        for c in df.columns:
-            human = _humanize_col_name(c)
-
-            if c in weekly_internal_cols:
-                if human.startswith("FW "):
-                    human = human[3:]
-                human = "Weekly Fiscal " + human
-
-                # Specific index renames for readability
-                if c == "FWYearMonthNumber":
-                    human = "Weekly Fiscal Year Month Index"
-                elif c == "FWYearQuarterNumber":
-                    human = "Weekly Fiscal Year Quarter Index"
-                elif c == "FWYearWeekNumber":
-                    human = "Weekly Fiscal Year Week Index"
-                elif c == "FWYearMonthOffset":
-                    human = "Weekly Fiscal Year Month Offset"
-                elif c == "FWYearQuarterOffset":
-                    human = "Weekly Fiscal Year Quarter Offset"
-                elif c == "FWYearWeekOffset":
-                    human = "Weekly Fiscal Year Week Offset"
-            rename_map[c] = human
-
-        df = df.rename(columns=rename_map)
 
         write_parquet_with_date32(
             df,

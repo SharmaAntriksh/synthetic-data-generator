@@ -8,8 +8,8 @@ defaults:
   seed: 42
 
   dates:
-    start: "2021-01-01"
-    end: "2026-12-31"
+    start: "2023-01-01"
+    end: "2025-12-31"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -78,7 +78,7 @@ returns:
 # ---------------------------------------------------------------------
 products:
 
-  num_products: 2338
+  num_products: 4338
   active_ratio: 0.94
   seed: 42
 
@@ -149,7 +149,7 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 5832
+  total_customers: 18832
   active_ratio: 0.90
 
   pct_india: 10
@@ -238,9 +238,9 @@ geography:
 # PROMOTIONS
 # ---------------------------------------------------------------------
 promotions:
-  num_seasonal: 21
-  num_clearance: 8
-  num_limited: 12
+  num_seasonal: 11
+  num_clearance: 4
+  num_limited: 5
 
   override:
     dates:
@@ -286,8 +286,8 @@ employees:
 
   # Use simple per-store sizing for predictable demos
   use_store_employee_count: false
-  min_staff_per_store: 6
-  max_staff_per_store: 12
+  min_staff_per_store: 3
+  max_staff_per_store: 8
   staff_scale: 0.50          # ignored when use_store_employee_count: false
 
   include_store_cols: false
@@ -359,7 +359,7 @@ dates:
     calendar: true        # always true (safe default)
     iso: false            # ISO week columns
     fiscal: true         # fiscal year / quarter / month columns
-    weekly_fiscal: false
+    weekly_fiscal: true
     
   weekly_calendar:
     enabled: true
