@@ -369,14 +369,22 @@ def _maybe_refresh_budget_cache(db_conn_str: str, *, target: str) -> None:
             _log("INFO", f"Executing dbo.sp_RefreshBudgetCache (@Target='{t}') ...")
             try:
                 cursor.execute(
-                    "EXEC dbo.sp_RefreshBudgetCache @RebuildIfSchemaChanged = 1, @Target = ?;",
+                    "EXEC dbo.sp_RefreshBudgetCache @Target = ?;",
                     (t,),
                 )
             except pyodbc.Error as exc:
-                # Backward-compatible fallback if someone has an older proc without @Target
+                # Backward-compatible fallback for older proc signatures:
+                #  - Old proc had @RebuildIfSchemaChanged + @Target
+                #  - Very old proc had only @RebuildIfSchemaChanged
                 msg = " ".join(str(x) for x in (exc.args or ()))
-                if "too many arguments" in msg.lower():
-                    cursor.execute("EXEC dbo.sp_RefreshBudgetCache @RebuildIfSchemaChanged = 1;")
+                if "not a parameter" in msg.lower() or "too many arguments" in msg.lower():
+                    try:
+                        cursor.execute(
+                            "EXEC dbo.sp_RefreshBudgetCache @RebuildIfSchemaChanged = 1, @Target = ?;",
+                            (t,),
+                        )
+                    except pyodbc.Error:
+                        cursor.execute("EXEC dbo.sp_RefreshBudgetCache @RebuildIfSchemaChanged = 1;")
                 else:
                     raise
 
