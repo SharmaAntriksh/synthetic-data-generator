@@ -464,7 +464,6 @@ def _write_bridge_streaming(
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
-
 def run_superpowers(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]:
     parquet_folder = Path(parquet_folder)
 
@@ -496,27 +495,42 @@ def run_superpowers(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]
         "mtime_ns": int(st.st_mtime_ns),
     }
 
+    sp_cfg = cfg.get("superpowers") if isinstance(cfg.get("superpowers"), dict) else {}
+    generate_bridge = bool(sp_cfg.get("generate_bridge", True))
+
+    # --- Version skip (bridge-aware) ---
     if not c._force_regenerate:
-        if out_dim.exists() and out_bridge.exists() and (not should_regenerate("superpowers", version_cfg, out_bridge)):
+        version_files_exist = out_dim.exists() and (out_bridge.exists() or not generate_bridge)
+        if version_files_exist and (not should_regenerate("superpowers", version_cfg, out_dim)):
+            # Clean up stale bridge from a previous run where generate_bridge was true
+            if not generate_bridge and out_bridge.exists():
+                out_bridge.unlink()
+                info("Removed stale customer_superpowers bridge file.")
             skip("Superpowers up-to-date; skipping.")
             return {"_regenerated": False, "reason": "version"}
 
     with stage("Generating Superpowers"):
         g_start, g_end = _parse_global_dates(cfg)
         dim = build_dim_superpowers(cfg)
-        customers = pd.read_parquet(customers_fp)
-
         dim.to_parquet(out_dim, index=False)
-        n_rows = _write_bridge_streaming(
-            customers=customers,
-            dim_powers=dim,
-            c=c,
-            g_start=g_start,
-            g_end=g_end,
-            out_bridge=out_bridge,
-        )
+        info(f"Superpowers written: {out_dim} ({len(dim):,} rows)")
 
-    save_version("superpowers", version_cfg, out_bridge)
-    info(f"Superpowers written: {out_dim} ({len(dim):,} rows)")
-    info(f"Customer superpowers written: {out_bridge} ({n_rows:,} rows)")
-    return {"_regenerated": True, "dim": str(out_dim), "bridge": str(out_bridge), "bridge_rows": int(n_rows)}
+        n_rows = 0
+        if generate_bridge:
+            customers = pd.read_parquet(customers_fp)
+            n_rows = _write_bridge_streaming(
+                customers=customers,
+                dim_powers=dim,
+                c=c,
+                g_start=g_start,
+                g_end=g_end,
+                out_bridge=out_bridge,
+            )
+            save_version("superpowers", version_cfg, out_bridge)
+            info(f"Customer superpowers written: {out_bridge} ({n_rows:,} rows)")
+        else:
+            skip("customer_superpowers bridge skipped (generate_bridge: false)")
+            if out_bridge.exists():
+                out_bridge.unlink()
+
+    return {"_regenerated": True, "dim": str(out_dim), "bridge": str(out_bridge) if generate_bridge else None, "bridge_rows": n_rows}

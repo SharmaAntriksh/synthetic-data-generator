@@ -225,6 +225,32 @@ def _ensure_clean_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
 
+def _excluded_dim_files(cfg: dict) -> set[str]:
+    """
+    Dimension files to exclude from final packaging based on config flags.
+    - enabled: false  → exclude both the dim table and the bridge table
+    - generate_bridge: false → exclude only the bridge table
+    """
+    excluded: set[str] = set()
+
+    seg_cfg = cfg.get("customer_segments")
+    if isinstance(seg_cfg, dict):
+        if not bool(seg_cfg.get("enabled", True)):
+            excluded.add("customer_segment.parquet")
+            excluded.add("customer_segment_membership.parquet")
+        elif not bool(seg_cfg.get("generate_bridge", True)):
+            excluded.add("customer_segment_membership.parquet")
+
+    sp_cfg = cfg.get("superpowers")
+    if isinstance(sp_cfg, dict):
+        if not bool(sp_cfg.get("enabled", True)):
+            excluded.add("superpowers.parquet")
+            excluded.add("customer_superpowers.parquet")
+        elif not bool(sp_cfg.get("generate_bridge", True)):
+            excluded.add("customer_superpowers.parquet")
+
+    return excluded
+
 def create_final_output_folder(
     final_folder_root: Path,
     parquet_dims: Path,
@@ -290,11 +316,15 @@ def create_final_output_folder(
         dim_force_date32 = bool(packaging_cfg.get("dim_force_date32", True))
 
         parquet_dims = Path(parquet_dims)
+        excluded_dims = _excluded_dim_files(cfg)
 
+        
         if ff == "parquet":
             import pandas as pd
 
             for f in parquet_dims.glob("*.parquet"):
+                if f.name in excluded_dims:
+                    continue
                 df = pd.read_parquet(f)
                 out_f = dims_out / f.name
                 write_parquet_with_date32(
@@ -310,6 +340,8 @@ def create_final_output_folder(
             import pandas as pd
 
             for f in parquet_dims.glob("*.parquet"):
+                if f.name in excluded_dims:
+                    continue
                 # Prefer nullable backend (also helps with your Int columns staying Int)
                 try:
                     df = pd.read_parquet(f, dtype_backend="numpy_nullable")
@@ -350,6 +382,8 @@ def create_final_output_folder(
             import pyarrow as pa
 
             for f in parquet_dims.glob("*.parquet"):
+                if f.name in excluded_dims:
+                    continue
                 dim_name = f.stem
                 delta_out = dims_out / dim_name
                 delta_out.mkdir(parents=True, exist_ok=True)

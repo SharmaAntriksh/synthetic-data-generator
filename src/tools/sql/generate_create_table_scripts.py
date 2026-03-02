@@ -170,12 +170,31 @@ def generate_all_create_tables(
         "",
     ]
 
+    skip_tables: set[str] = set()
+    seg_cfg = (cfg.get("customer_segments") or {})
+    if isinstance(seg_cfg, dict):
+        if not bool(seg_cfg.get("enabled", True)):
+            skip_tables.add("CustomerSegment")
+            skip_tables.add("CustomerSegmentMembership")
+        elif not bool(seg_cfg.get("generate_bridge", True)):
+            skip_tables.add("CustomerSegmentMembership")
+
+    sp_cfg = (cfg.get("superpowers") or {})
+    if isinstance(sp_cfg, dict):
+        if not bool(sp_cfg.get("enabled", True)):
+            skip_tables.add("Superpowers")
+            skip_tables.add("CustomerSuperpowers")
+        elif not bool(sp_cfg.get("generate_bridge", True)):
+            skip_tables.add("CustomerSuperpowers")
+
     # Dimensions
     dim_scripts: list[str] = []
     for table_name in sorted(STATIC_SCHEMAS.keys()):
         if table_name in _FACT_TABLE_NAMES:
             continue
-
+        if table_name in skip_tables:
+            continue
+        
         if table_name == "Dates":
             dates_cfg = cfg.get("dates")
             if dates_cfg is None:

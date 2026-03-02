@@ -851,7 +851,7 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
     """
     Generates:
       - customer_segment.parquet
-      - customer_segment_membership.parquet
+      - customer_segment_membership.parquet (unless generate_bridge: false)
 
     Depends on:
       - Customers parquet already generated in parquet_dims_folder.
@@ -861,6 +861,7 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
     seg_cfg = cfg.get("customer_segments") if isinstance(cfg.get("customer_segments"), dict) else {}
     enabled = bool(seg_cfg.get("enabled", False))
     force = bool(seg_cfg.get("_force_regenerate", False))
+    generate_bridge = bool(seg_cfg.get("generate_bridge", True))
 
     if not enabled:
         skip("Customer segments disabled; skipping.")
@@ -912,8 +913,14 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
         seg_cfg_for_version["upstream_global_dates"] = {"start": defaults_dates.get("start"), "end": defaults_dates.get("end")}
     seg_cfg_for_version["_schema_version"] = 2  # mode support + scd2 fast-path + simple mode
 
+    # --- Version skip (bridge-aware) ---
     if not force:
-        if dim_out.exists() and bridge_out.exists() and (not should_regenerate("customer_segments", seg_cfg_for_version, bridge_out)):
+        version_files_exist = dim_out.exists() and (bridge_out.exists() or not generate_bridge)
+        if version_files_exist and (not should_regenerate("customer_segments", seg_cfg_for_version, dim_out)):
+            # Clean up stale bridge from a previous run where generate_bridge was true
+            if not generate_bridge and bridge_out.exists():
+                bridge_out.unlink()
+                info("Removed stale customer_segment_membership bridge file.")
             skip("Customer segments up-to-date; skipping.")
             return {"_regenerated": False, "reason": "version"}
 
@@ -934,16 +941,20 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
         customers_for_bridge = customers_for_bridge[customers_for_bridge["IsActiveInSales"].fillna(0).astype("int64") == 1].copy()
 
     dim_seg = build_dim_customer_segment(cfg)
-    bridge = build_bridge_customer_segment_membership(customers=customers_for_bridge, cfg=cfg)
 
     dim_out.parent.mkdir(parents=True, exist_ok=True)
-    bridge_out.parent.mkdir(parents=True, exist_ok=True)
-
     dim_seg.to_parquet(dim_out, index=False)
-    bridge.to_parquet(bridge_out, index=False)
-
-    save_version("customer_segments", seg_cfg_for_version, bridge_out)
-
     done(f"Wrote customer_segment: {dim_out.name} ({len(dim_seg):,} rows)")
-    done(f"Wrote customer_segment_membership: {bridge_out.name} ({len(bridge):,} rows)")
-    return {"_regenerated": True, "dim": str(dim_out), "bridge": str(bridge_out)}
+
+    if generate_bridge:
+        bridge = build_bridge_customer_segment_membership(customers=customers_for_bridge, cfg=cfg)
+        bridge_out.parent.mkdir(parents=True, exist_ok=True)
+        bridge.to_parquet(bridge_out, index=False)
+        save_version("customer_segments", seg_cfg_for_version, bridge_out)
+        done(f"Wrote customer_segment_membership: {bridge_out.name} ({len(bridge):,} rows)")
+    else:
+        skip("customer_segment_membership bridge skipped (generate_bridge: false)")
+        if bridge_out.exists():
+            bridge_out.unlink()
+
+    return {"_regenerated": True, "dim": str(dim_out), "bridge": str(bridge_out) if generate_bridge else None}

@@ -35,7 +35,7 @@ sales:
   chunk_size: 2000000
   max_lines_per_order: 5
   
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -62,7 +62,7 @@ sales:
     seed: null
 
   partitioning:
-    enabled: false
+    enabled: true
     columns: ["Year", "Month"]
 
 returns:
@@ -175,7 +175,8 @@ customers:
 # CUSTOMER SEGMENTS
 # ---------------------------------------------------------------------
 customer_segments:
-  enabled: true
+  enabled: false
+  generate_bridge: false
 
   segment_count: 10
   segments_per_customer_min: 1
@@ -196,8 +197,9 @@ customer_segments:
 # SUPERPOWERS (Customers <-> Superpowers)
 # ---------------------------------------------------------------------
 superpowers:
-  enabled: true
-
+  enabled: false
+  generate_bridge: false
+  
   powers_count: 10              # <= catalog size in the script
   powers_per_customer_min: 1
   powers_per_customer_max: 2
