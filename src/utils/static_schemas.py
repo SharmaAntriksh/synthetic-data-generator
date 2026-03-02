@@ -367,15 +367,11 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("Month", INT_NN),
         ("MonthName", VARCHAR(10, not_null=True)),
         ("MonthShort", VARCHAR(10, not_null=True)),
-        ("MonthNameShort", VARCHAR(10, not_null=True)),
         ("MonthStartDate", DATE_NN),
         ("MonthEndDate", DATE_NN),
         ("MonthYear", VARCHAR(20, not_null=True)),
         ("MonthYearNumber", INT_NN),
-        ("YearMonthKey", INT_NN),
-        ("YearMonthLabel", VARCHAR(20, not_null=True)),
         ("YearQuarterKey", INT_NN),
-        ("YearQuarterLabel", VARCHAR(10, not_null=True)),
         ("CalendarMonthIndex", INT_NN),
         ("CalendarQuarterIndex", INT_NN),
         ("IsMonthStart", INT_NN),
@@ -386,7 +382,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("Day", INT_NN),
         ("DayName", VARCHAR(10, not_null=True)),
         ("DayShort", VARCHAR(10, not_null=True)),
-        ("DayNameShort", VARCHAR(10, not_null=True)),
         ("DayOfYear", INT_NN),
         ("DayOfWeek", INT_NN),
         ("IsWeekend", INT_NN),
@@ -420,8 +415,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("FiscalQuarterOffset", INT_NN),
         ("FiscalQuarterName", VARCHAR(20, not_null=True)),
         ("FiscalYearBin", VARCHAR(20, not_null=True)),
-        ("FiscalYearMonthNumber", INT_NN),
-        ("FiscalYearQuarterNumber", INT_NN),
         ("FiscalYearStartDate", DATE_NN),
         ("FiscalYearEndDate", DATE_NN),
         ("FiscalQuarterStartDate", DATE_NN),
@@ -450,7 +443,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("FWWeekLabel", VARCHAR(20, not_null=True)),
         ("FWYearWeekNumber", INT_NN),
         ("FWYearWeekOffset", INT_NN),
-        ("FWYearWeekLabel", VARCHAR(20, not_null=True)),
         ("FWPeriodNumber", INT_NN),
         ("FWPeriodLabel", VARCHAR(20, not_null=True)),
         ("FWStartOfYear", DATE_NN),
@@ -470,7 +462,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("DayType", VARCHAR(20, not_null=True)),
         ("FWWeekInQuarterNumber", INT_NN),
         ("FWYearMonthLabel", VARCHAR(20, not_null=True)),
-        ("FWYearQuarterLabel", VARCHAR(20, not_null=True)),
     ),
     "Time": (
         ("TimeKey", INT_NN),  # 0..1439 minute-of-day
@@ -645,7 +636,6 @@ _WF_INTERNAL_COLS: set[str] = {
     "FWWeekNumber",
     "FWWeekLabel",
     "FWYearWeekNumber",
-    "FWYearWeekLabel",
     "FWYearQuarterOffset",
     "FWYearMonthOffset",
     "FWYearWeekOffset",
@@ -668,7 +658,6 @@ _WF_INTERNAL_COLS: set[str] = {
     "DayType",
     "FWWeekInQuarterNumber",
     "FWYearMonthLabel",
-    "FWYearQuarterLabel",
 }
 
 
@@ -681,26 +670,35 @@ _WF_INTERNAL_COLS: set[str] = {
 
 
 # Internal Dates column groups (must match dates.py resolve_date_columns)
-_DATES_BASE_INTERNAL = ["Date", "DateKey", "SequentialDayIndex"]
+#
+# _DATES_BASE_INTERNAL: Always emitted regardless of include flags.
+# Contains the primary key columns plus fundamental date-part attributes
+# that every downstream consumer needs (Year, Month, Day, names, etc.).
+#
+# _DATES_CALENDAR_INTERNAL: Emitted only when include.calendar is true.
+# Contains calendar-specific flags (IsYearStart, IsMonthEnd, IsToday, etc.)
+# and relative offsets (CurrentDayOffset, YearOffset, etc.).
 
-_DATES_CAL_CORE_INTERNAL = [
-    "Year", "IsYearStart", "IsYearEnd",
+_DATES_BASE_INTERNAL = [
+    "Date", "DateKey", "SequentialDayIndex",
+    "Year",
     "Quarter", "QuarterStartDate", "QuarterEndDate",
-    "IsQuarterStart", "IsQuarterEnd",
     "QuarterYear",
-    "Month", "MonthName", "MonthShort", "MonthNameShort",
+    "Month", "MonthName", "MonthShort",
     "MonthStartDate", "MonthEndDate",
-    "MonthYear", "MonthYearNumber", "YearMonthKey", "YearMonthLabel",
-    "YearQuarterKey", "YearQuarterLabel",
+    "MonthYear", "MonthYearNumber",
+    "YearQuarterKey",
     "CalendarMonthIndex", "CalendarQuarterIndex",
-    "IsMonthStart", "IsMonthEnd",
     "WeekOfMonth",
-    "Day", "DayName", "DayShort", "DayNameShort", "DayOfYear", "DayOfWeek",
+    "Day", "DayName", "DayShort", "DayOfYear", "DayOfWeek",
     "IsWeekend", "IsBusinessDay",
     "NextBusinessDay", "PreviousBusinessDay",
 ]
 
-_DATES_CAL_EXTRAS_INTERNAL = [
+_DATES_CALENDAR_INTERNAL = [
+    "IsYearStart", "IsYearEnd",
+    "IsQuarterStart", "IsQuarterEnd",
+    "IsMonthStart", "IsMonthEnd",
     "IsToday", "IsCurrentYear", "IsCurrentMonth", "IsCurrentQuarter",
     "CurrentDayOffset", "YearOffset", "CalendarMonthOffset", "CalendarQuarterOffset",
 ]
@@ -718,7 +716,6 @@ _DATES_FISCAL_INTERNAL = [
     "FiscalYearStartYear", "FiscalMonthNumber", "FiscalQuarterNumber",
     "FiscalMonthIndex", "FiscalQuarterIndex", "FiscalMonthOffset", "FiscalQuarterOffset",
     "FiscalQuarterName", "FiscalYearBin",
-    "FiscalYearMonthNumber", "FiscalYearQuarterNumber",
     "FiscalYearStartDate", "FiscalYearEndDate",
     "FiscalQuarterStartDate", "FiscalQuarterEndDate",
     "IsFiscalYearStart", "IsFiscalYearEnd",
@@ -726,42 +723,39 @@ _DATES_FISCAL_INTERNAL = [
     "FiscalYear", "FiscalYearLabel", "FiscalSystem", "WeeklyFiscalSystem",
 ]
 
-_DATES_WEEKLY_INTERNAL = sorted(list(_WF_INTERNAL_COLS))  # order will be overridden by resolve list below
-
 
 def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
-    """Resolve internal output column list; mirrors dates.py resolve_date_columns semantics."""
+    """Resolve internal output column list for SQL CREATE TABLE generation.
+
+    Column inclusion logic:
+      - Base columns are always included (Date, DateKey, SequentialDayIndex,
+        plus fundamental date-part attributes: Year, Month, MonthName, Day,
+        DayName, Quarter, WeekOfMonth, etc.).
+      - include.calendar (default True) adds calendar flags and offsets
+        (IsYearStart, IsMonthEnd, IsToday, CurrentDayOffset, etc.).
+      - include.iso (default True) adds ISO week columns.
+      - include.fiscal (default True) adds monthly fiscal columns.
+      - include.weekly_fiscal (default True) + weekly_calendar.enabled adds
+        weekly fiscal (4-4-5) columns.
+
+    NOTE: dates.py resolve_date_columns must be updated to match this split
+    so that the parquet output and SQL schema stay in sync.
+    """
     dates_cfg = dates_cfg or {}
-    include_cfg = dates_cfg.get("include", None) if isinstance(dates_cfg, Mapping) else None
+    include = (dates_cfg.get("include", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
     weekly_cfg = (dates_cfg.get("weekly_calendar", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
 
-    has_include = isinstance(include_cfg, Mapping)
-    include = include_cfg or {}
+    cols: list[str] = list(_DATES_BASE_INTERNAL)
 
-    if not has_include:
-        include_calendar = True
-        include_iso = True
-        include_fiscal = True
-        include_weekly = True
-    else:
-        include_calendar = bool(include.get("calendar", True))
-        include_iso = bool(include.get("iso", False))
-        include_fiscal = bool(include.get("fiscal", False))
-        include_weekly = bool(include.get("weekly_fiscal", False))
-
-    cols: list[str] = []
-    cols += _DATES_BASE_INTERNAL
-    cols += _DATES_CAL_CORE_INTERNAL
-
-    if include_calendar:
-        cols += _DATES_CAL_EXTRAS_INTERNAL
-    if include_iso:
+    if include.get("calendar", True):
+        cols += _DATES_CALENDAR_INTERNAL
+    if include.get("iso", True):
         cols += _DATES_ISO_INTERNAL
-    if include_fiscal:
+    if include.get("fiscal", True):
         cols += _DATES_FISCAL_INTERNAL
 
-    if include_weekly and bool(weekly_cfg.get("enabled", True)):
-        # Keep weekly columns in a stable order matching the original STATIC_SCHEMAS ordering.
+    if include.get("weekly_fiscal", True) and bool(weekly_cfg.get("enabled", True)):
+        # Keep weekly columns in a stable order matching dates.py resolve_date_columns.
         cols += [
             "FWYearNumber",
             "FWYearLabel",
@@ -777,7 +771,6 @@ def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
             "FWWeekLabel",
             "FWYearWeekNumber",
             "FWYearWeekOffset",
-            "FWYearWeekLabel",
             "FWPeriodNumber",
             "FWPeriodLabel",
             "FWStartOfYear",
@@ -797,7 +790,6 @@ def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
             "DayType",
             "FWWeekInQuarterNumber",
             "FWYearMonthLabel",
-            "FWYearQuarterLabel",
         ]
 
     # Dedupe preserve order
@@ -810,18 +802,19 @@ def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
     return out
 
 DATE_COLUMN_GROUPS = {
-    # Base/core columns are always present in Dates output.
+    # Base columns are always present in Dates output (includes fundamental date-part attributes).
     "base": frozenset(_DATES_BASE_INTERNAL),
-    "calendar_core": frozenset(_DATES_CAL_CORE_INTERNAL),
-    "calendar_extras": frozenset(_DATES_CAL_EXTRAS_INTERNAL),
+
+    # Calendar flags and offsets (IsYearStart, IsToday, CurrentDayOffset, etc.).
+    "calendar": frozenset(_DATES_CALENDAR_INTERNAL),
 
     # Optional systems
     "iso": frozenset(_DATES_ISO_INTERNAL),
     "fiscal": frozenset(_DATES_FISCAL_INTERNAL),
     "weekly_fiscal": frozenset(_WF_INTERNAL_COLS),
 
-    # Back-compat convenience groups (common usage)
-    "calendar": frozenset(_DATES_BASE_INTERNAL + _DATES_CAL_CORE_INTERNAL + _DATES_CAL_EXTRAS_INTERNAL),
+    # Convenience: base + calendar combined
+    "base_calendar": frozenset(_DATES_BASE_INTERNAL + _DATES_CALENDAR_INTERNAL),
 }
 
 def get_sales_schema(skip_order_cols: bool) -> List[SchemaCol]:
@@ -845,13 +838,15 @@ def get_dates_schema(dates_cfg: Mapping) -> list[SchemaCol]:
     Return the Dates schema for SQL CREATE TABLE / BULK INSERT.
 
     The Dates generator emits SQL-friendly internal column names (no spaces).
-    This function mirrors dates.py resolve_date_columns() semantics:
 
-      - Base + calendar core columns are always included.
-      - include.calendar controls only calendar extras (IsToday/offsets).
-      - include.iso / include.fiscal / include.weekly_fiscal add their respective systems.
-      - If dates.include is missing, assume legacy "everything on".
-      - If dates.include exists, default to calendar-only unless explicitly enabled.
+      - Base columns are always included: primary keys (Date, DateKey,
+        SequentialDayIndex) plus fundamental date-part attributes (Year,
+        Month, MonthName, Day, DayName, Quarter, etc.).
+      - include.calendar (default True) adds calendar flags/offsets.
+      - include.iso (default True) adds ISO week columns.
+      - include.fiscal (default True) adds monthly fiscal columns.
+      - include.weekly_fiscal (default True) + weekly_calendar.enabled adds
+        weekly fiscal (4-4-5) columns.
     """
     dates_cfg = dates_cfg or {}
     internal_cols = _dates_internal_columns(dates_cfg)

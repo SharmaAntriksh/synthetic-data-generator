@@ -9,7 +9,7 @@ defaults:
 
   dates:
     start: "2023-01-01"
-    end: "2026-02-28"
+    end: "2026-12-31"
 
   paths:
     geography: "./data/parquet_dims/geography.parquet"
@@ -31,11 +31,11 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 2001540
+  total_rows: 200154
   chunk_size: 2000000
   max_lines_per_order: 5
   
-  file_format: "parquet"          # csv | parquet | deltaparquet
+  file_format: "csv"          # csv | parquet | deltaparquet
   sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -350,16 +350,16 @@ employees:
 # DATES (Dimension)
 # ---------------------------------------------------------------------
 dates:
-  fiscal_month_offset: 5
+  fiscal_start_month: 5
   as_of_date: null  # anchor for IsToday/IsCurrent* and CurrentDayOffset
                             # Treat end of dataset as “today” (default): omit it (it uses raw_end). 
                             # Anchor to last year end: as_of_date: "2025-12-31"
   
   include:
-    calendar: true        # always true (safe default)
+    calendar: false        # always true (safe default)
     iso: false            # ISO week columns
     fiscal: true         # fiscal year / quarter / month columns
-    weekly_fiscal: true
+    weekly_fiscal: false
     
   weekly_calendar:
     enabled: true
