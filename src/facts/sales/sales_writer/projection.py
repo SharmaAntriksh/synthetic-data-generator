@@ -2,19 +2,31 @@ from __future__ import annotations
 
 from typing import Any
 
+from .utils import _arrow, warn
 
-def project_table_to_schema(table: Any, schema: Any, *, cast_safe: bool = False) -> Any:
+
+def project_table_to_schema(
+    table: Any,
+    schema: Any,
+    *,
+    cast_safe: bool = False,
+    on_cast_error: str = "raise",
+) -> Any:
     """
     Project/align an Arrow table to the canonical schema:
       - reorder columns
       - add missing columns as typed nulls
       - cast columns to canonical types when safe/possible
+
+    Parameters
+    ----------
+    cast_safe : bool
+        Passed to pyarrow.compute.cast ``safe`` parameter.
+    on_cast_error : str
+        ``"raise"`` (default) – propagate cast errors.
+        ``"warn"``  – log a warning and keep the column in its original type.
     """
-    try:
-        import pyarrow as pa  # type: ignore
-        import pyarrow.compute as pc  # type: ignore
-    except Exception as e:
-        raise RuntimeError("pyarrow is required for schema projection") from e
+    pa, pc, _ = _arrow()
 
     if table.schema == schema:
         return table
@@ -31,13 +43,19 @@ def project_table_to_schema(table: Any, schema: Any, *, cast_safe: bool = False)
             continue
 
         col = table[name]  # ChunkedArray
-        if col.type != field.type:
+        if not col.type.equals(field.type):
             try:
                 col = pc.cast(col, field.type, safe=bool(cast_safe))
             except Exception as ex:
-                raise RuntimeError(
-                    f"Failed to cast column '{name}' from {col.type} to {field.type}: {ex}"
-                ) from ex
+                if on_cast_error == "warn":
+                    warn(
+                        f"[projection] Failed to cast column '{name}' "
+                        f"from {col.type} to {field.type}: {ex} – keeping original type"
+                    )
+                else:
+                    raise RuntimeError(
+                        f"Failed to cast column '{name}' from {col.type} to {field.type}: {ex}"
+                    ) from ex
 
         arrays.append(col)
 
@@ -46,4 +64,4 @@ def project_table_to_schema(table: Any, schema: Any, *, cast_safe: bool = False)
 
 def _project_table_to_schema(table: Any, schema: Any) -> Any:
     """Backward-compatible alias (many callers expect underscore name)."""
-    return project_table_to_schema(table, schema, cast_safe=False)
+    return project_table_to_schema(table, schema, cast_safe=False, on_cast_error="raise")

@@ -42,10 +42,8 @@ def schema_dict_cols(schema, exclude: Optional[Iterable[str]] = None) -> List[st
       - dictionary-encode string/binary-like columns
       - skip excluded columns
     """
-    try:
-        import pyarrow as pa  # type: ignore
-    except Exception as e:
-        raise RuntimeError("pyarrow is required for dictionary-encoding decisions") from e
+    from .utils import _arrow
+    pa, _, _ = _arrow()
 
     exclude_set = set(exclude or [])
     out: List[str] = []
@@ -96,9 +94,14 @@ def _schema_dict_cols(
     *,
     table_name: str | None = None,
 ) -> List[str]:
-    """Legacy name kept for compatibility with existing imports."""
-    _validate_required(schema, table_name=table_name)
+    """
+    Legacy name kept for compatibility with existing imports.
 
+    NOTE: This no longer calls _validate_required internally.
+    Callers that need validation should call _validate_required separately
+    before calling this function.  This avoids the double-validation issue
+    where merge_parquet_files would validate twice per merge.
+    """
     exclude_set = set(DICT_EXCLUDE)
     if exclude:
         exclude_set |= set(exclude)
