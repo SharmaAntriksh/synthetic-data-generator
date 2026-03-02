@@ -1,120 +1,98 @@
-# ============================================================
-# HIGH-LEVEL TUNING (preferred)
-# config_loader.apply_acquisition_tuning() can use these
-# ============================================================
+# ==========================================================================
+# SALES DATA GENERATION MODELS
+# ==========================================================================
+#
+# This file controls *how* the synthetic sales rows behave over time:
+#   - How many rows land in each month (activity / demand shaping)
+#   - How many items per order (quantity / basket size)
+#   - How prices drift with inflation and get snapped to realistic values
+#   - Customer lifecycle: who is eligible to buy, and when
+#   - Returns: rate, reasons, lag distribution
+#
+# The top-level "tuning" block gives you three easy sliders.
+# The "models" block gives you full control if you need it.
+#
+# TIP: Start by adjusting "tuning" knobs only. Dive into "models" only
+#      if the output doesn't match your needs.
+# ==========================================================================
+
+# ------------------------------------------------------------------
+# EASY TUNING (start here)
+# ------------------------------------------------------------------
+# These three sliders are translated into detailed model parameters
+# automatically by config_loader.apply_acquisition_tuning().
+#
+#   acquisition_intensity  — 0 = few new customers, 1 = many new customers
+#   acquisition_smoothness — 0 = spiky month-to-month, 1 = very flat spread
+#   acquisition_cycles     — 0 = no multi-year waves, 1 = dramatic waves
+# ------------------------------------------------------------------
 tuning:
-  acquisition_intensity: 0.55      # 0..1 (higher => more new customers)
-  acquisition_smoothness: 0.90     # 0..1 (higher => flatter spread)
-  acquisition_cycles: 0.35         # 0..1 (higher => bigger multi-year waves)
+  acquisition_intensity: 0.55
+  acquisition_smoothness: 0.90
+  acquisition_cycles: 0.35
+
 
 models:
 
-  # ============================================================
-  # ACTIVITY / TRANSACTION THINNING
-  # Shapes month-to-month order density (keeps rowcount if preserve_row_count=true)
-  # ============================================================
+  # ================================================================
+  # ACTIVITY — month-to-month order density shaping
+  # ================================================================
+  # Controls how many generated rows survive per calendar month.
+  # Think of this as a "seasonality + noise" filter applied after
+  # the raw row allocation.
+  #
+  # preserve_row_count: true  — keeps your exact total_rows target
+  # preserve_row_count: false — actually thins rows (use for realism)
+  # ================================================================
   activity:
     enabled: true
-    size_scale_threshold: 200000
-
-    # Keep TRUE if you must hit an exact row total (recommended for your pipeline)
     preserve_row_count: true
 
-    # Higher = smoother month-to-month continuity
+    # Retail-like monthly seasonality (12 values, Jan–Dec).
+    # Values > 1.0 = busier than average, < 1.0 = quieter.
+    monthly_baseline:
+      - 0.92   # Jan
+      - 0.86   # Feb
+      - 0.96   # Mar
+      - 1.00   # Apr
+      - 1.13   # May
+      - 1.25   # Jun
+      - 1.04   # Jul
+      - 1.02   # Aug
+      - 0.99   # Sep
+      - 1.06   # Oct
+      - 1.28   # Nov
+      - 1.46   # Dec
+
+    # Month-to-month smoothing (0 = no smoothing, 0.98 = very sticky).
     month_inertia: 0.73
 
-    # Retail-like year seasonality (12 values)
-    monthly_baseline:
-      - 0.92  # Jan
-      - 0.86  # Feb
-      - 0.96  # Mar
-      - 1.00  # Apr
-      - 1.13  # May
-      - 1.25  # Jun
-      - 1.04  # Jul
-      - 1.02  # Aug
-      - 0.99  # Sep
-      - 1.06  # Oct
-      - 1.28  # Nov
-      - 1.46  # Dec
+    # Random month-level spikiness (keep low for smooth curves).
+    volatility_sigma: 0.03
 
-    volatility:
-      # Higher => spikier months (try 0.02–0.08)
-      sigma: 0.03
+    # Row-level noise that spreads orders within a month.
+    row_noise_sigma: 0.10             # for datasets < split_threshold rows
+    row_noise_sigma_large: 0.30       # for datasets >= split_threshold rows
 
-    row_noise:
-      # Adds within-month variability; keep smaller for small datasets
-      sigma_small_dataset: 0.10
-      sigma_large_dataset: 0.30
-
+    # Clamp range for monthly row counts (as fraction of average).
     bounds:
-      dataset_split_threshold: 300000
-      small_dataset: { low: 0.82, high: 1.22 }
-      large_dataset: { low: 0.82, high: 1.18 }
+      split_threshold: 300000         # below = "small dataset" rules
+      small: { low: 0.82, high: 1.22 }
+      large: { low: 0.82, high: 1.18 }
 
-  brand_popularity:
-    enabled: true
-    seed: 123
-    winner_boost: 3.0
-    noise_sd: 0.25
-    min_share: 0.02
-    year_len_months: 12
+    # Internal: datasets below this size get reduced volatility scaling.
+    size_scale_threshold: 200000
 
-  # ============================================================
-  # MACRO DEMAND (row allocation shape per month)
-  # ============================================================
-  macro_demand:
-    base_level: 1.0
-    yearly_growth: 0.08            # keep low for stable yearly totals
-    seasonality_amplitude: 0.08
-    seasonality_phase: 0.0
-    noise_std: 0.06
-    eligible_blend: 0.20   # 20% eligibility, 80% macro
-      # eligible_blend is a slider that decides how much your "sales per month" should follow:
-      # the business demand curve you generated (trend/seasonality/noise), vs
-      # how many customers are available that month (eligible customers).
-      # eligible_blend: 0.0 → ignore customer availability. Months get rows mainly from the demand curve.
-      # eligible_blend: 0.2 → mostly demand, but a little influenced by how many customers exist that month.
-      # eligible_blend: 1.0 → ignore demand curve. Months get rows mainly because more customers exist in those months.
 
-    yoy_growth_schedule:
-      mode: "repeat"
-      values: [0.06, 0.09, -0.18, 0.19, -0.09]
-      # pattern: inc inc dec inc dec dec inc inc (then repeats)
-      
-    # Rare demand shocks to create “decline then recovery” windows
-    shock_probability: 0.10
-    shock_impact: [-0.25, 0.20]    # multiplicative range
-
-    # Prevent early months from concentrating too many rows on too few customers
-    early_month_cap:
-      enabled: true
-      max_rows_per_customer: 12
-      redistribute_excess: true
-
-  # ============================================================
-  # DISTINCT CUSTOMER PARTICIPATION (per month)
-  # This is the main knob for “some years down, next year up”
-  # ============================================================
-  customer_participation:
-    base_distinct_ratio: 0.55
-    min_distinct_customers: 250
-    max_distinct_ratio: 0.70
-
-    cycles:
-      enabled: true
-      period_months: 24     # 3-year waves (24 = 2-year; 48 = 4-year)
-      amplitude: 0.35       # +/- swing in distinct customers
-      phase: 0.0
-      noise_std: 0.06
-
-  # ============================================================
-  # QUANTITY / BASKET SIZE
-  # ============================================================
+  # ================================================================
+  # QUANTITY — items per order (basket size)
+  # ================================================================
   quantity:
-    base_poisson_lambda: 1.8
-    month_inertia: 0.82
+    base_poisson_lambda: 1.8          # average basket before monthly factors
+    min_qty: 1
+    max_qty: 4
 
+    # Monthly seasonal multipliers (12 values, Jan–Dec).
     monthly_factors:
       - 0.99
       - 0.98
@@ -129,86 +107,55 @@ models:
       - 1.06
       - 1.05
 
-    noise_sd: 0.12
-    min_qty: 1
-    max_qty: 4
+    month_inertia: 0.82               # smoothing across months
+    noise_sigma: 0.12                 # per-row gaussian jitter
 
-  # ============================================================
-  # CUSTOMER DISCOVERY (first-time appearance)
-  # ============================================================
-  customer_discovery:
-    base_discovery_rate: 0.08
-    min_discovery_rate: 0.05
-    max_discovery_rate: 0.20
-    seasonal_amplitude: 0.30
-    seasonal_period_months: 24
+    # Rare large orders (disabled by default).
+    tail_boost:
+      enabled: false
+      probability: 0.03               # chance per row
+      multiplier_range: [1.5, 3.0]    # random multiplier for boosted rows
 
-    # discovery shape
-    max_fraction_per_month: 0.015
-    orders_per_new_customer: 30
 
-    # floors (prevents “month has 1 new customer”)
-    min_new_customers_per_month: 80
-    min_new_customers_steady: 160
-    floor_ramp_months: 60
-    bootstrap_suppression_months: 6
-
-  # ============================================================
-  # OPTIONAL: Customer activity overlay (usually keep OFF)
-  # Uses CustomerStartMonth/EndMonth as base, then adds dormancy/reactivation.
-  # ============================================================
-  customer_activity_overlay:
-    enabled: false
-    base_monthly_activity_rate: 0.85
-    month_inertia: 0.75
-    monthly_reactivation_rate: 0.08
-    seasonal_amplitude: 0.10
-    seasonal_period_months: 12
-    per_customer_sigma: 0.20
-    seed: 1234
-
-  # ============================================================
-  # SALES-TIME PRICE DRIFT (uses Product UnitPrice/UnitCost as base)
-  # Promotions do NOT affect pricing here (analysis-time only via PromotionKey).
-  # ============================================================
+  # ================================================================
+  # PRICING — inflation drift + realistic price snapping
+  # ================================================================
+  # Pipeline: base price → inflation drift → snap to bands/endings
+  #           → apply markdown ladder → enforce caps → round to cents
+  # ================================================================
   pricing:
     month_inertia: 0.85
 
+    # --- Inflation ---
     inflation:
       annual_rate: 0.03
-      month_volatility_sigma: 0.0
-      factor_clip: [1.00, 1.25]
-      scale_discount: false        # keep DiscountAmount in ladder buckets (no drift scaling)
+      month_volatility_sigma: 0.0     # 0 = deterministic drift
+      factor_clip: [1.00, 1.25]       # hard bounds on cumulative factor
+      scale_discount: false            # true = discount grows with inflation
       volatility_seed: 123
 
+    # --- Seasonal price adjustment ---
     seasonality:
       enabled: true
       amplitude: 0.03
       sharpness: 1.2
       phase_shift_months: -1
 
+    # --- New-product ramp (disabled by default) ---
     ramp:
       months: 0
       min_multiplier: 1.0
       max_multiplier: 1.0
-      discount_scale: 1.0
-      discount_noise_sigma: 0.0
 
-    discount:
-      max_pct_of_price: 0.50        # cap for safety
-    floors:
-      min_net_price: 0.01
-
-    # ------------------------------------------------------------
-    # Sales.DiscountAmount (independent from Promotions)
-    # ------------------------------------------------------------
+    # --- Markdown / DiscountAmount ---
+    # Independent from Promotions (analysis-time only via PromotionKey).
     markdown:
       enabled: true
       max_pct_of_price: 0.50
       min_net_price: 0.01
       allow_negative_margin: false
 
-      # Target: few discrete discount amounts (0, 50, 100, 200, 300, 400, 500)
+      # Discrete discount amounts with weighted random selection.
       ladder:
         - { kind: none, value: 0.0,   weight: 0.35 }
         - { kind: amt,  value: 50.0,  weight: 0.22 }
@@ -218,17 +165,8 @@ models:
         - { kind: amt,  value: 400.0, weight: 0.04 }
         - { kind: amt,  value: 500.0, weight: 0.03 }
 
-      # Quantization inside compute_prices()
-      appearance:
-        quantize_discount: true
-        discount_rounding: floor      # never round UP into a bucket that violates caps
-        discount_bands:
-          - { max: 100,  step: 50 }     # yields 0, 50, 100
-          - { max: 1e18, step: 100 }    # yields 200, 300, 400, 500, ...
-
-    # ------------------------------------------------------------
-    # FINAL snapping AFTER drift (pricing_pipeline)
-    # ------------------------------------------------------------
+    # --- Final appearance snapping (after drift) ---
+    # Prices are quantized to realistic retail increments.
     appearance:
       enabled: true
 
@@ -251,34 +189,128 @@ models:
           - { max: 10000, step: 25 }
           - { max: 1e18,  step: 50 }
 
-      # Re-quantize DiscountAmount after drift/snapping so it stays in coarse buckets
       discount:
         rounding: floor
         bands:
-          - { max: 100,  step: 50 }     # 0, 50, 100
-          - { max: 1e18, step: 100 }    # 200, 300, 400, 500, ...
+          - { max: 100,  step: 50 }
+          - { max: 1e18, step: 100 }
 
+
+  # ================================================================
+  # MACRO DEMAND — overall row allocation shape per month
+  # ================================================================
+  # (Consumed by chunk_builder.py, not sales_models.)
+  # ================================================================
+  macro_demand:
+    base_level: 1.0
+    yearly_growth: 0.08
+    seasonality_amplitude: 0.08
+    seasonality_phase: 0.0
+    noise_std: 0.06
+    eligible_blend: 0.20
+
+    yoy_growth_schedule:
+      mode: "repeat"
+      values: [0.06, 0.09, -0.18, 0.19, -0.09]
+
+    shock_probability: 0.10
+    shock_impact: [-0.25, 0.20]
+
+    early_month_cap:
+      enabled: true
+      max_rows_per_customer: 12
+      redistribute_excess: true
+
+
+  # ================================================================
+  # BRAND POPULARITY — rotating "winner" brand each year
+  # ================================================================
+  # (Consumed by sales_worker/init.py, not sales_models.)
+  # ================================================================
+  brand_popularity:
+    enabled: true
+    seed: 123
+    winner_boost: 3.0
+    noise_sd: 0.25
+    min_share: 0.02
+    year_len_months: 12
+
+
+  # ================================================================
+  # CUSTOMER PARTICIPATION — distinct buyers per month
+  # ================================================================
+  # (Consumed by chunk_builder.py, not sales_models.)
+  # ================================================================
+  customer_participation:
+    base_distinct_ratio: 0.55
+    min_distinct_customers: 250
+    max_distinct_ratio: 0.70
+
+    cycles:
+      enabled: true
+      period_months: 24
+      amplitude: 0.35
+      phase: 0.0
+      noise_std: 0.06
+
+
+  # ================================================================
+  # CUSTOMER DISCOVERY — first-time buyer appearance rate
+  # ================================================================
+  # (Consumed by chunk_builder.py, not sales_models.)
+  # ================================================================
+  customer_discovery:
+    base_discovery_rate: 0.08
+    min_discovery_rate: 0.05
+    max_discovery_rate: 0.20
+    seasonal_amplitude: 0.30
+    seasonal_period_months: 24
+
+    max_fraction_per_month: 0.015
+    orders_per_new_customer: 30
+
+    min_new_customers_per_month: 80
+    min_new_customers_steady: 160
+    floor_ramp_months: 60
+    bootstrap_suppression_months: 6
+
+
+  # ================================================================
+  # CUSTOMER ACTIVITY OVERLAY (optional, usually disabled)
+  # ================================================================
+  # Adds dormancy / reactivation on top of CustomerStartMonth/EndMonth.
+  # Only enable if you want some eligible customers to "skip" months.
+  # ================================================================
+  customer_activity_overlay:
+    enabled: false
+    base_monthly_activity_rate: 0.85
+    month_inertia: 0.75
+    monthly_reactivation_rate: 0.08
+    seasonal_amplitude: 0.10
+    seasonal_period_months: 12
+    per_customer_sigma: 0.20
+    seed: 1234
+
+
+  # ================================================================
+  # RETURNS
+  # ================================================================
   returns:
     enabled: true
 
-    # ReturnReason dimension + sampling distribution
     reasons:
-      # keys will become ReturnReasonKey in the dimension (1..N)
-      # weights should sum ~1.0
-      - { key: 1, label: "Damaged / Defective",   weight: 0.28 }
-      - { key: 2, label: "Wrong Item",           weight: 0.12 }
-      - { key: 3, label: "Not as Described",     weight: 0.14 }
-      - { key: 4, label: "Arrived Late",         weight: 0.08 }
-      - { key: 5, label: "Better Price Elsewhere", weight: 0.06 }
-      - { key: 6, label: "No Longer Needed",     weight: 0.20 }
-      - { key: 7, label: "Size / Fit",           weight: 0.07 }
-      - { key: 8, label: "Other",                weight: 0.05 }
+      - { key: 1, label: "Damaged / Defective",       weight: 0.28 }
+      - { key: 2, label: "Wrong Item",                weight: 0.12 }
+      - { key: 3, label: "Not as Described",          weight: 0.14 }
+      - { key: 4, label: "Arrived Late",              weight: 0.08 }
+      - { key: 5, label: "Better Price Elsewhere",    weight: 0.06 }
+      - { key: 6, label: "No Longer Needed",          weight: 0.20 }
+      - { key: 7, label: "Size / Fit",                weight: 0.07 }
+      - { key: 8, label: "Other",                     weight: 0.05 }
 
-    # Lag distribution (shape), bounded by config.yaml min/max
     lag_days:
       distribution: triangular
       mode: 7
 
-    # Partial returns vs full-line returns
     quantity:
-      full_line_probability: 0.85   # otherwise return 1..Quantity
+      full_line_probability: 0.85

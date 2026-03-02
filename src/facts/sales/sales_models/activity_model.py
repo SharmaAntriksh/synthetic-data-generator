@@ -1,3 +1,12 @@
+"""
+Activity thinning model.
+
+Shapes month-to-month order density by keeping/dropping rows based on
+seasonal baselines, volatility, and per-row weighting.
+
+Config source: models.yaml -> models.activity
+Runtime state:  State.models_cfg  (the inner "models" dict)
+"""
 from __future__ import annotations
 
 import numpy as np
@@ -5,215 +14,242 @@ import numpy as np
 from src.facts.sales.sales_logic import State
 
 
-# ---------------------------------------------------------------------
-# Config cache (process-local; safe with multiprocessing)
-# ---------------------------------------------------------------------
-_ACT_CFG_CACHE_KEY = None
-_ACT_CFG_CACHE_VAL = None
+# ---------------------------------------------------------------
+# Config loading (process-local cache; safe with multiprocessing)
+# ---------------------------------------------------------------
+_CFG_VERSION: int = -1
+_CFG_CACHE: dict | None = None
 
 
-def _act_get_cfg():
+def _load_cfg() -> dict:
     """
-    Robustly load activity config.
+    Parse and validate the activity config block.
 
-    Expected structure (recommended):
-      models:
-        activity:
-          enabled: true
-          monthly_baseline: [..12 floats..]
-          size_scale_threshold: 200000
-          bounds:
-            dataset_split_threshold: 100000
-            small_dataset: {low: 0.60, high: 1.60}
-            large_dataset: {low: 0.80, high: 1.30}
-          volatility: {sigma: 0.12}
-          row_noise:
-            sigma_small_dataset: 0.8
-            sigma_large_dataset: 0.4
-          month_inertia: 0.35
-          preserve_row_count: false   # recommended for month-sliced generation
+    Defaults are aligned exactly with models.yaml so that missing keys
+    produce identical behavior to the shipped config.
     """
-    global _ACT_CFG_CACHE_KEY, _ACT_CFG_CACHE_VAL
+    global _CFG_VERSION, _CFG_CACHE
 
     models = getattr(State, "models_cfg", None) or {}
-    key = id(models)
-    if _ACT_CFG_CACHE_KEY == key and _ACT_CFG_CACHE_VAL is not None:
-        return _ACT_CFG_CACHE_VAL
+    version = id(models)
+    if version == _CFG_VERSION and _CFG_CACHE is not None:
+        return _CFG_CACHE
 
     cfg = models.get("activity", {}) or {}
 
+    # --- enabled ---
     enabled = bool(cfg.get("enabled", True))
 
-    monthly_baseline = cfg.get("monthly_baseline", None)
-    if monthly_baseline is None:
-        monthly_baseline = [1.0] * 12
-    if len(monthly_baseline) != 12:
+    # --- monthly baseline (must be exactly 12 floats) ---
+    baseline = cfg.get("monthly_baseline", None)
+    if baseline is None:
+        baseline = [0.92, 0.86, 0.96, 1.00, 1.13, 1.25,
+                    1.04, 1.02, 0.99, 1.06, 1.28, 1.46]
+    if len(baseline) != 12:
         raise ValueError("models.activity.monthly_baseline must have 12 values")
 
-    size_scale_threshold = float(cfg.get("size_scale_threshold", 200_000.0))
-    size_scale_threshold = max(size_scale_threshold, 1.0)
+    # --- size scaling ---
+    size_threshold = float(cfg.get("size_scale_threshold", 200_000))
+    size_threshold = max(size_threshold, 1.0)
 
-    bounds = cfg.get("bounds", None) or {
-        "dataset_split_threshold": 100_000,
-        "small_dataset": {"low": 0.60, "high": 1.60},
-        "large_dataset": {"low": 0.80, "high": 1.30},
-    }
+    # --- month inertia ---
+    inertia = float(np.clip(float(cfg.get("month_inertia", 0.73)), 0.0, 0.98))
 
-    volatility = cfg.get("volatility", None) or {"sigma": 0.12}
-    row_noise = cfg.get("row_noise", None) or {"sigma_small_dataset": 0.80, "sigma_large_dataset": 0.40}
+    # --- volatility ---
+    # Support both flat key and nested dict for backward compat.
+    vol_block = cfg.get("volatility", None)
+    if isinstance(vol_block, dict):
+        vol_sigma = float(vol_block.get("sigma", 0.03))
+    else:
+        vol_sigma = float(cfg.get("volatility_sigma", 0.03))
 
-    inertia = float(cfg.get("month_inertia", 0.35))
-    inertia = float(np.clip(inertia, 0.0, 0.98))
+    # --- row noise ---
+    # Support both flat keys and nested dict.
+    noise_block = cfg.get("row_noise", None)
+    if isinstance(noise_block, dict):
+        noise_small = float(noise_block.get("sigma_small_dataset", 0.10))
+        noise_large = float(noise_block.get("sigma_large_dataset", 0.30))
+    else:
+        noise_small = float(cfg.get("row_noise_sigma", 0.10))
+        noise_large = float(cfg.get("row_noise_sigma_large", 0.30))
 
-    preserve_row_count = bool(cfg.get("preserve_row_count", False))
+    # --- bounds ---
+    bounds = cfg.get("bounds", {}) or {}
+    split_threshold = int(bounds.get("split_threshold",
+                          bounds.get("dataset_split_threshold", 300_000)))
+
+    small_bounds = bounds.get("small", bounds.get("small_dataset",
+                   {"low": 0.82, "high": 1.22}))
+    large_bounds = bounds.get("large", bounds.get("large_dataset",
+                   {"low": 0.82, "high": 1.18}))
+
+    # --- preserve row count ---
+    preserve = bool(cfg.get("preserve_row_count", True))
 
     out = {
         "enabled": enabled,
-        "monthly_baseline": np.asarray(monthly_baseline, dtype=np.float64),
-        "size_scale_threshold": size_scale_threshold,
-        "bounds": bounds,
-        "volatility_sigma": float(volatility.get("sigma", 0.12)),
-        "row_noise": row_noise,
+        "monthly_baseline": np.asarray(baseline, dtype=np.float64),
+        "size_scale_threshold": size_threshold,
         "month_inertia": inertia,
-        "preserve_row_count": preserve_row_count,
+        "volatility_sigma": vol_sigma,
+        "row_noise_small": noise_small,
+        "row_noise_large": noise_large,
+        "split_threshold": split_threshold,
+        "bounds_small_low": float(small_bounds.get("low", 0.82)),
+        "bounds_small_high": float(small_bounds.get("high", 1.22)),
+        "bounds_large_low": float(large_bounds.get("low", 0.82)),
+        "bounds_large_high": float(large_bounds.get("high", 1.18)),
+        "preserve_row_count": preserve,
     }
 
-    _ACT_CFG_CACHE_KEY = key
-    _ACT_CFG_CACHE_VAL = out
+    _CFG_VERSION = version
+    _CFG_CACHE = out
     return out
 
 
-def _act_iter_groups_from_inv(inv: np.ndarray):
+def _reset_cache() -> None:
+    """Reset module cache.  Call from State.reset() or tests."""
+    global _CFG_VERSION, _CFG_CACHE
+    _CFG_VERSION = -1
+    _CFG_CACHE = None
+
+
+# ---------------------------------------------------------------
+# Fast month-group iteration
+# ---------------------------------------------------------------
+
+def _iter_month_groups(inv: np.ndarray):
     """
-    Yield (group_code, row_indices) for inv codes [0..U-1] in ascending group_code order,
-    without doing np.where(inv == m) repeatedly.
+    Yield (group_code, row_indices) for month codes in ascending order.
+
+    Uses argsort + boundary detection instead of repeated np.where.
     """
-    order = np.argsort(inv, kind="stable")
-    inv_sorted = inv[order]
-    if inv_sorted.size == 0:
+    if inv.size == 0:
         return
 
-    cuts = np.flatnonzero(inv_sorted[1:] != inv_sorted[:-1]) + 1
+    order = np.argsort(inv, kind="stable")
+    sorted_inv = inv[order]
+
+    cuts = np.flatnonzero(sorted_inv[1:] != sorted_inv[:-1]) + 1
     starts = np.r_[0, cuts]
-    ends = np.r_[cuts, inv_sorted.size]
+    ends = np.r_[cuts, sorted_inv.size]
 
     for s, e in zip(starts, ends):
-        code = int(inv_sorted[int(s)])
-        yield code, order[int(s) : int(e)]
+        yield int(sorted_inv[s]), order[s:e]
 
+
+# ---------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------
 
 def apply_activity_thinning(rng, order_dates):
     """
-    Produces a boolean keep_mask for the provided rows.
+    Produce a boolean keep_mask for the provided rows.
 
-    Recommended behavior in the new pipeline (month-sliced generation):
-      - preserve_row_count = False  (actually thins rows)
-    Legacy-compatible behavior:
-      - preserve_row_count = True   (returns exactly n True values)
+    - preserve_row_count = True  → returns exactly len(order_dates) True values
+    - preserve_row_count = False → actually thins rows for realism
 
-    Notes:
-    - Works for single-month input (common now) and multi-month input (legacy).
+    Works for single-month input (common) and multi-month input (legacy).
+
+    Parameters
+    ----------
+    rng : numpy.random.Generator
+    order_dates : array-like of datetime64
+
+    Returns
+    -------
+    np.ndarray[bool] of shape (n,)
     """
-    cfg = _act_get_cfg()
+    cfg = _load_cfg()
     n = len(order_dates)
 
-    if not cfg["enabled"]:
+    if not cfg["enabled"] or n == 0:
         return np.ones(n, dtype=bool)
-    if n == 0:
-        return np.zeros(0, dtype=bool)
 
-    # Dataset size scaling (kept intent)
-    threshold = cfg["size_scale_threshold"]
-    size_scale = min(1.0, float(n) / float(threshold))
+    # ---- Dataset-size scaling for volatility ----
+    size_scale = min(1.0, float(n) / cfg["size_scale_threshold"])
 
-    # Month buckets
+    # ---- Bucket rows by calendar month ----
     months = np.asarray(order_dates).astype("datetime64[M]", copy=False)
     unique_months, inv = np.unique(months, return_inverse=True)
-    U = int(unique_months.size)
-    if U == 0:
-        return np.zeros(n, dtype=bool)
+    n_months = unique_months.size
 
-    base_activity = cfg["monthly_baseline"]
+    if n_months == 0:
+        return np.ones(n, dtype=bool)
 
-    # Avg rows per month (avoid div by zero)
-    avg_per_month = max(1, n // max(1, U))
+    avg_per_month = max(1, n // max(1, n_months))
 
-    # Small vs large dataset behavior
-    bounds = cfg["bounds"]
-    split = int(bounds.get("dataset_split_threshold", 100_000))
-    is_small = n < split
+    # ---- Small vs large dataset parameters ----
+    is_small = (n < cfg["split_threshold"])
+    low = cfg["bounds_small_low"] if is_small else cfg["bounds_large_low"]
+    high = cfg["bounds_small_high"] if is_small else cfg["bounds_large_high"]
+    row_sigma = cfg["row_noise_small"] if is_small else cfg["row_noise_large"]
 
-    small_bounds = bounds.get("small_dataset", {"low": 0.60, "high": 1.60})
-    large_bounds = bounds.get("large_dataset", {"low": 0.80, "high": 1.30})
+    vol_sigma_eff = cfg["volatility_sigma"] * size_scale
+    inertia = cfg["month_inertia"]
+    baseline = cfg["monthly_baseline"]
 
-    low = float(small_bounds.get("low", 0.60) if is_small else large_bounds.get("low", 0.80))
-    high = float(small_bounds.get("high", 1.60) if is_small else large_bounds.get("high", 1.30))
-
-    row_noise = cfg["row_noise"]
-    row_sigma = float(
-        row_noise.get("sigma_small_dataset", 0.80) if is_small else row_noise.get("sigma_large_dataset", 0.40)
-    )
-
-    vol_sigma = float(cfg["volatility_sigma"])
-    vol_sigma_eff = float(vol_sigma * size_scale)
-
-    inertia = float(cfg["month_inertia"])
+    # ---- Month-of-year lookup (0–11) for each unique month ----
+    month_of_year = (unique_months.astype("int64") % 12).astype(np.int64)
 
     keep_mask = np.zeros(n, dtype=bool)
+    prev_target: float | None = None
 
-    # Month-of-year per unique month (0–11)
-    month_num = (unique_months.astype("int64") % 12).astype(np.int64, copy=False)
-
-    prev_target = None
-
-    # Iterate month groups efficiently
-    for m, month_rows in _act_iter_groups_from_inv(inv):
-        if month_rows.size == 0:
+    for m_idx, row_indices in _iter_month_groups(inv):
+        if row_indices.size == 0:
             continue
 
-        mn = int(month_num[m])
+        mn = int(month_of_year[m_idx])
 
-        # Month-level volatility
-        if vol_sigma_eff > 0.0:
-            volatility = float(rng.lognormal(mean=0.0, sigma=vol_sigma_eff))
-        else:
-            volatility = 1.0
+        # Month-level volatility (lognormal centered at 1.0)
+        volatility = (float(rng.lognormal(mean=0.0, sigma=vol_sigma_eff))
+                      if vol_sigma_eff > 0.0 else 1.0)
 
-        raw_target = float(avg_per_month) * float(base_activity[mn]) * volatility
+        raw_target = avg_per_month * float(baseline[mn]) * volatility
 
+        # Exponential smoothing
         if prev_target is None or inertia <= 0.0:
-            target_f = raw_target
+            smoothed = raw_target
         else:
-            target_f = inertia * float(prev_target) + (1.0 - inertia) * raw_target
+            smoothed = inertia * prev_target + (1.0 - inertia) * raw_target
 
-        # Clamp AFTER smoothing
-        target = int(np.clip(target_f, avg_per_month * low, avg_per_month * high))
-        prev_target = target
+        # Clamp to bounds and convert to int
+        target = int(np.clip(smoothed, avg_per_month * low, avg_per_month * high))
+        prev_target = float(target)
 
-        if month_rows.size <= target:
-            keep_mask[month_rows] = True
+        # If month has fewer rows than target, keep all
+        if row_indices.size <= target:
+            keep_mask[row_indices] = True
             continue
 
-        # Row weights (lognormal) + weighted sample without replacement
-        row_weights = rng.lognormal(mean=0.0, sigma=row_sigma, size=month_rows.size).astype(np.float64, copy=False)
-        s = float(row_weights.sum())
-        if s <= 0.0 or not np.isfinite(s):
-            chosen = rng.choice(month_rows, size=target, replace=False)
+        # Weighted sampling without replacement
+        weights = rng.lognormal(mean=0.0, sigma=row_sigma, size=row_indices.size)
+        weights = weights.astype(np.float64, copy=False)
+        total = float(weights.sum())
+
+        if total > 0.0 and np.isfinite(total):
+            weights /= total
+            chosen = rng.choice(row_indices, size=target, replace=False, p=weights)
         else:
-            row_weights /= s
-            chosen = rng.choice(month_rows, size=target, replace=False, p=row_weights)
+            chosen = rng.choice(row_indices, size=target, replace=False)
 
         keep_mask[chosen] = True
 
-    # Optional legacy balancing (kept exactly as before)
+    # ---- Legacy balancing: force exactly n rows kept ----
     if cfg["preserve_row_count"]:
         kept = int(keep_mask.sum())
-
-        if kept > n:
-            extra = rng.choice(np.where(keep_mask)[0], size=kept - n, replace=False)
-            keep_mask[extra] = False
-        elif kept < n:
-            missing = rng.choice(np.where(~keep_mask)[0], size=n - kept, replace=False)
-            keep_mask[missing] = True
+        if kept < n:
+            off_indices = np.flatnonzero(~keep_mask)
+            add_count = min(n - kept, off_indices.size)
+            if add_count > 0:
+                add = rng.choice(off_indices, size=add_count, replace=False)
+                keep_mask[add] = True
+        elif kept > n:
+            # Shouldn't happen (mask ⊆ [0,n)), but guard defensively.
+            on_indices = np.flatnonzero(keep_mask)
+            drop_count = min(kept - n, on_indices.size)
+            if drop_count > 0:
+                drop = rng.choice(on_indices, size=drop_count, replace=False)
+                keep_mask[drop] = False
 
     return keep_mask
