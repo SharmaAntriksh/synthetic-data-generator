@@ -16,7 +16,7 @@ import pyarrow.parquet as pq
 from src.utils.logging_utils import stage, info, done
 
 from .accumulator import BudgetAccumulator
-from .engine import load_budget_config, _compute_yearly_budget
+from .engine import load_budget_config, compute_budget
 
 
 def run_budget_pipeline(
@@ -54,18 +54,26 @@ def run_budget_pipeline(
 
     # ---- Finalize actuals from accumulated micro-aggregates ----
     actuals_monthly = accumulator.finalize_sales()
+    returns_annual = accumulator.finalize_returns()
 
     info(f"Budget actuals: {len(actuals_monthly):,} monthly grain rows "
          f"({actuals_monthly['Year'].nunique()} years × "
          f"{actuals_monthly['Country'].nunique()} countries × "
          f"{actuals_monthly['Category'].nunique()} categories)")
 
-    # ---- Compute yearly budget only ----
-    actuals_annual = actuals_monthly.groupby(
-        ["Country", "Category", "Year"], as_index=False
-    ).agg(SalesAmount=("SalesAmount", "sum"), SalesQuantity=("SalesQuantity", "sum"))
+    # ---- Resolve dimension inputs for channel/month allocation + FX ----
+    exchange_rates_path = parquet_dims / "exchange_rates.parquet"
+    country_to_currency = _load_country_to_currency(parquet_dims)
 
-    yearly = _compute_yearly_budget(actuals_annual, bcfg)
+    # ---- Compute all budget stages ----
+    yearly, channel_month, fx_budget = compute_budget(
+        actuals_monthly=actuals_monthly,
+        returns_annual=returns_annual,
+        exchange_rates_path=exchange_rates_path,
+        country_to_currency=country_to_currency,
+        country_labels=accumulator._country_labels,
+        bcfg=bcfg,
+    )
 
     # ---- Write output ----
     budget_out = fact_out / "budget"
@@ -73,13 +81,48 @@ def run_budget_pipeline(
 
     _write_budget(yearly, budget_out, "budget_yearly", file_format)
 
+    if channel_month is not None and len(channel_month) > 0:
+        _write_budget(channel_month, budget_out, "budget_channel_month", file_format)
+
+    if fx_budget is not None and len(fx_budget) > 0:
+        _write_budget(fx_budget, budget_out, "budget_channel_month_fx", file_format)
+
     elapsed = time.time() - t0
-    done(f"Budget completed in {elapsed:.1f}s ({len(yearly):,} yearly rows)")
+
+    yearly_rows = len(yearly)
+    cm_rows = len(channel_month) if channel_month is not None else 0
+    fx_rows = len(fx_budget) if fx_budget is not None else 0
+
+    done(f"Budget completed in {elapsed:.1f}s "
+         f"({yearly_rows:,} yearly, {cm_rows:,} channel-month, {fx_rows:,} FX rows)")
 
     return {
-        "yearly_rows": len(yearly),
+        "yearly_rows": yearly_rows,
+        "channel_month_rows": cm_rows,
+        "fx_rows": fx_rows,
         "elapsed_sec": elapsed,
     }
+
+
+def _load_country_to_currency(parquet_dims: Path) -> Dict[str, str]:
+    """
+    Build Country -> ISOCode (currency) mapping from the Geography dimension.
+
+    Falls back to empty dict if the parquet is missing or lacks the columns,
+    which causes the FX stage to be skipped gracefully.
+    """
+    geo_path = parquet_dims / "geography.parquet"
+    if not geo_path.exists():
+        info("Budget: geography.parquet not found, FX conversion will be skipped")
+        return {}
+
+    try:
+        geo = pd.read_parquet(geo_path, columns=["Country", "ISOCode"])
+        geo = geo.dropna(subset=["Country", "ISOCode"]).drop_duplicates("Country")
+        return dict(zip(geo["Country"], geo["ISOCode"]))
+    except Exception as exc:
+        info(f"Budget: could not load country->currency mapping: {exc}")
+        return {}
 
 
 def _write_budget(df: pd.DataFrame, out_dir: Path, name: str, file_format: str) -> None:
