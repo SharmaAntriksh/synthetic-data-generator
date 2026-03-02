@@ -20,6 +20,36 @@ from src.utils.name_pools import (
 )
 
 # ---------------------------------------------------------
+# Configurable defaults (extracted from inline magic numbers)
+# ---------------------------------------------------------
+PERSONAL_EMAIL_DOMAINS = np.array(
+    ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com"]
+)
+
+MARITAL_STATUS_LABELS = np.array(["Married", "Single"])
+MARITAL_STATUS_PROBS = np.array([0.55, 0.45])
+
+EDUCATION_LABELS = np.array(["High School", "Bachelors", "Masters", "PhD"])
+EDUCATION_PROBS = np.array([0.20, 0.50, 0.25, 0.05])
+
+OCCUPATION_LABELS = np.array(
+    ["Professional", "Clerical", "Skilled", "Service", "Executive"]
+)
+OCCUPATION_PROBS = np.array([0.50, 0.20, 0.15, 0.10, 0.05])
+
+AGE_MIN_DAYS = 18 * 365
+AGE_MAX_DAYS = 70 * 365
+INCOME_MIN = 20_000
+INCOME_MAX = 200_000
+MAX_CHILDREN = 5  # exclusive upper bound for rng.integers
+
+# Loyalty score component weights
+LOYALTY_W_WEIGHT = 0.55
+LOYALTY_W_TEMP = 0.30
+LOYALTY_W_INCOME = 0.15
+
+
+# ---------------------------------------------------------
 # Helper: timeline month index space
 # ---------------------------------------------------------
 def _parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
@@ -59,16 +89,16 @@ def _month_index_space(start_date: pd.Timestamp, end_date: pd.Timestamp):
     """
     Build a month index space [0..T-1] over the inclusive month range.
 
+    Assumes start_date / end_date are already normalized Timestamps
+    (as returned by _parse_cfg_dates).
+
     Returns:
       start_month0 : Timestamp at month start for start_date's month
       end_month0   : Timestamp at month start for end_date's month
       T            : int month count inclusive
     """
-    start_ts = pd.to_datetime(start_date).normalize()
-    end_ts = pd.to_datetime(end_date).normalize()
-
-    sp = start_ts.to_period("M")
-    ep = end_ts.to_period("M")
+    sp = start_date.to_period("M")
+    ep = end_date.to_period("M")
 
     if ep < sp:
         raise ValueError("defaults.dates.end must be >= defaults.dates.start")
@@ -157,30 +187,51 @@ def _simulate_end_month(
     """
     For each customer, possibly sample an end month (churn month).
     If churn is disabled, returns pd.NA for all entries.
+
+    Vectorized implementation: uses geometric sampling to determine
+    tenure length, avoiding per-customer Python loops.
     """
+    N = len(start_month)
+
     if not enable:
-        return np.full(len(start_month), pd.NA, dtype="object")
+        return np.full(N, pd.NA, dtype="object")
 
     if base_monthly_churn < 0:
         raise ValueError("base_monthly_churn must be >= 0")
 
-    end_month = np.full(len(start_month), pd.NA, dtype="object")
+    end_month = np.full(N, pd.NA, dtype="object")
     mt = max(int(min_tenure_months), 0)
 
-    for i in range(len(start_month)):
-        s = int(start_month[i])
-        if s < 0:
-            s = 0
-        if s >= T:
-            continue
+    # Clamp start months
+    s = np.clip(start_month.astype("int64"), 0, T)
 
-        hazard = min(max(base_monthly_churn * float(churn_bias[i]), 0.0), 0.95)
-        m = s + mt
-        while m < T:
-            if rng.random() < hazard:
-                end_month[i] = int(m)
-                break
-            m += 1
+    # Per-customer hazard rate
+    hazard = np.clip(base_monthly_churn * churn_bias.astype("float64"), 0.0, 0.95)
+
+    # Customers that can potentially churn: start < T and hazard > 0
+    eligible = (s < T) & (hazard > 0.0)
+
+    if not eligible.any():
+        return end_month
+
+    # For eligible customers, sample a geometric tenure from the earliest
+    # eligible month (start + min_tenure).  geometric(p) gives the number
+    # of Bernoulli trials until first success (1-based), so the churn
+    # happens at month = start + min_tenure + (sample - 1).
+    eligible_idx = np.where(eligible)[0]
+    h = hazard[eligible_idx]
+    tenure_samples = rng.geometric(p=h)  # shape: (eligible_count,)
+
+    # Churn month = start + min_tenure + (sample - 1)
+    churn_month = s[eligible_idx] + mt + (tenure_samples - 1)
+
+    # Only apply churn if it falls within the timeline
+    within = churn_month < T
+    apply_idx = eligible_idx[within]
+    apply_vals = churn_month[within]
+
+    for i, v in zip(apply_idx, apply_vals):
+        end_month[i] = int(v)
 
     return end_month
 
@@ -312,9 +363,12 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     pct_eu = float(cust_cfg["pct_eu"])
     pct_asia = float(cust_cfg.get("pct_asia", 0.0))  # optional; defaults to 0
     pct_org = float(cust_cfg["pct_org"])
-    p_in, p_us, p_eu, p_as = _validate_percentages(pct_india, pct_us, pct_eu, pct_asia)
 
-    PERSONAL_EMAIL_DOMAINS = np.array(["gmail.com", "yahoo.com", "outlook.com", "hotmail.com"])
+    # FIX: validate pct_org bounds (was unchecked — values >100 made everyone an org)
+    if not np.isfinite(pct_org) or pct_org < 0 or pct_org > 100:
+        raise ValueError("customers.pct_org must be a finite number in [0, 100]")
+
+    p_in, p_us, p_eu, p_as = _validate_percentages(pct_india, pct_us, pct_eu, pct_asia)
 
     # --- shared name pools ---
     names_folder = resolve_people_folder(cfg)
@@ -365,8 +419,9 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         include_middle=False,
         default_region="US",
     )
-    safe_first = np.where(FirstName == None, "", FirstName.astype(object))
-    safe_last = np.where(LastName == None, "", LastName.astype(object))
+    # FIX: use pd.isna for null checks instead of fragile `== None`
+    safe_first = np.where(pd.isna(FirstName), "", FirstName.astype(object))
+    safe_last = np.where(pd.isna(LastName), "", LastName.astype(object))
 
     # -----------------------------------------------------
     # Organization handling (meaningful org names from pool)
@@ -381,19 +436,31 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     )
 
     # -----------------------------------------------------
-    # Email
+    # Email (with deduplication via CustomerKey suffix)
     # -----------------------------------------------------
     Email = np.empty(N, dtype=object)
 
     personal_mask = ~IsOrg
-    if int(personal_mask.sum()):
-        domain = rng.choice(PERSONAL_EMAIL_DOMAINS, size=int(personal_mask.sum()), replace=True)
-        user = (safe_first[personal_mask].astype(str) + "." + safe_last[personal_mask].astype(str)).astype(str)
+    n_personal = int(personal_mask.sum())
+    if n_personal:
+        domain = rng.choice(PERSONAL_EMAIL_DOMAINS, size=n_personal, replace=True)
+        user = (
+            safe_first[personal_mask].astype(str)
+            + "."
+            + safe_last[personal_mask].astype(str)
+        ).astype(str)
         user = np.char.lower(np.char.replace(user, " ", ""))
-        Email[personal_mask] = user + "@" + domain
+        # FIX: append CustomerKey to prevent email collisions (e.g. two "John Smith")
+        suffix = CustomerKey[personal_mask].astype(str)
+        Email[personal_mask] = user + suffix + "@" + domain
 
     OrgDomain = np.empty(N, dtype=object)
-    OrgDomain[IsOrg] = np.array([slugify_domain_label(x) for x in OrgName[IsOrg].astype(str)], dtype=object) + ".com"
+    OrgDomain[IsOrg] = (
+        np.array(
+            [slugify_domain_label(x) for x in OrgName[IsOrg].astype(str)], dtype=object
+        )
+        + ".com"
+    )
     OrgDomain[~IsOrg] = None
     Email[IsOrg] = "info@" + OrgDomain[IsOrg]
 
@@ -409,32 +476,46 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     # Demographics
     # -----------------------------------------------------
-    BirthDate = np.empty(N, dtype=object)
+    # FIX: store BirthDate as datetime64[ns] instead of Python date objects
+    # (faster downstream, consistent dtype).  Final parquet write converts as needed.
+    BirthDate = np.full(N, np.datetime64("NaT"), dtype="datetime64[ns]")
     person_mask = ~IsOrg
-    if int(person_mask.sum()):
-        ages = rng.integers(18 * 365, 70 * 365, size=int(person_mask.sum()))
+    n_person = int(person_mask.sum())
+    if n_person:
+        ages = rng.integers(AGE_MIN_DAYS, AGE_MAX_DAYS, size=n_person)
         anchor = end_date.normalize()
         dates = anchor - pd.to_timedelta(ages, unit="D")
-        BirthDate[person_mask] = pd.to_datetime(dates).date
-    BirthDate[IsOrg] = None
+        BirthDate[person_mask] = pd.to_datetime(dates).to_numpy("datetime64[ns]")
 
     MaritalStatus = np.empty(N, dtype=object)
-    MaritalStatus[~IsOrg] = rng.choice(["Married", "Single"], size=int((~IsOrg).sum()), p=[0.55, 0.45])
+    MaritalStatus[~IsOrg] = rng.choice(
+        MARITAL_STATUS_LABELS,
+        size=int((~IsOrg).sum()),
+        p=MARITAL_STATUS_PROBS,
+    )
     MaritalStatus[IsOrg] = None
 
-    YearlyIncome = np.where(IsOrg, None, rng.integers(20000, 200000, size=N))
-    TotalChildren = pd.Series(np.where(IsOrg, pd.NA, rng.integers(0, 5, size=N)), dtype="Int64")
+    # FIX: produce proper numeric array + use pd.array with Int64 for nullable ints
+    income_raw = rng.integers(INCOME_MIN, INCOME_MAX, size=N).astype("int64")
+    YearlyIncome = pd.array(
+        np.where(IsOrg, pd.NA, income_raw), dtype="Int64"
+    )
+
+    TotalChildren = pd.array(
+        np.where(IsOrg, pd.NA, rng.integers(0, MAX_CHILDREN, size=N)),
+        dtype="Int64",
+    )
 
     Education = np.where(
         IsOrg,
         None,
-        rng.choice(["High School", "Bachelors", "Masters", "PhD"], size=N, p=[0.2, 0.5, 0.25, 0.05]),
+        rng.choice(EDUCATION_LABELS, size=N, p=EDUCATION_PROBS),
     )
 
     Occupation = np.where(
         IsOrg,
         None,
-        rng.choice(["Professional", "Clerical", "Skilled", "Service", "Executive"], size=N, p=[0.5, 0.2, 0.15, 0.1, 0.05]),
+        rng.choice(OCCUPATION_LABELS, size=N, p=OCCUPATION_PROBS),
     )
 
     # -----------------------------------------------------
@@ -515,13 +596,23 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
 
     tier_keys = loyalty_dim[loyalty_key_col].astype("int64").to_numpy()
 
+    # FIX: use nullable Int64 YearlyIncome — extract numeric values safely
     income = np.zeros(N, dtype="float64")
     if (~IsOrg).any():
-        income_ind = pd.to_numeric(pd.Series(YearlyIncome[~IsOrg]), errors="coerce").fillna(0).to_numpy(dtype="float64")
-        income[~IsOrg] = (income_ind - 20000.0) / (200000.0 - 20000.0)
+        income_series = pd.array(YearlyIncome, dtype="Int64")
+        income_ind = (
+            pd.to_numeric(pd.Series(income_series[~IsOrg]), errors="coerce")
+            .fillna(0)
+            .to_numpy(dtype="float64")
+        )
+        income[~IsOrg] = (income_ind - float(INCOME_MIN)) / float(INCOME_MAX - INCOME_MIN)
     income = np.clip(income, 0.0, 1.0)
 
-    score = (0.55 * np.log1p(CustomerWeight)) + (0.30 * CustomerTemperature) + (0.15 * income)
+    score = (
+        LOYALTY_W_WEIGHT * np.log1p(CustomerWeight)
+        + LOYALTY_W_TEMP * CustomerTemperature
+        + LOYALTY_W_INCOME * income
+    )
 
     probs = loyalty_cfg.get("probs_low_to_high")
     if probs is None:
