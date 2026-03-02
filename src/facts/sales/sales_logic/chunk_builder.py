@@ -32,6 +32,29 @@ from .columns import build_extra_columns
 # Helpers
 # ------------------------------------------------------------
 
+_EPOCH_D = np.datetime64("1970-01-01", "D")
+
+def _as_datetime64_D(x):
+    """Normalize array to datetime64[D]. Handles datetime64, integer, and fallback."""
+    x = np.asarray(x)
+
+    # Already a datetime64 -> normalize to day resolution
+    if np.issubdtype(x.dtype, np.datetime64):
+        return x.astype("datetime64[D]", copy=False)
+
+    # Integer -> interpret as epoch-based; handle both day-scale and ns-scale
+    if np.issubdtype(x.dtype, np.integer):
+        if x.size == 0:
+            return x.astype("datetime64[D]")
+        mx = int(np.max(np.abs(x)))
+        # days for 2020s are ~ 18k–22k; ns timestamps are ~ 1e18
+        if mx > 10_000_000:  # too large to be "days"
+            return x.astype("datetime64[ns]").astype("datetime64[D]")
+        return (_EPOCH_D + x.astype("timedelta64[D]")).astype("datetime64[D]")
+
+    # Fallback
+    return np.asarray(x, dtype="datetime64[D]")
+
 def _normalize_prob(p: np.ndarray) -> np.ndarray | None:
     p = np.asarray(p, dtype="float64")
     p = np.where(np.isfinite(p) & (p > 0), p, 0.0)
@@ -247,6 +270,137 @@ def _eligible_counts_fast(
     return counts.astype("float64", copy=False)
 
 
+def _to_pa_array(name: str, data: object, n_rows: int, schema_types: dict) -> pa.array:
+    """Convert a column's numpy/scalar data to a typed pa.Array."""
+    t = schema_types[name]
+
+    if data is None:
+        return pa.nulls(n_rows, type=t)
+
+    # Broadcast scalars
+    if np.isscalar(data):
+        data = np.full(n_rows, data)
+
+    # date32: build as timestamp first (inference), then cast to date32
+    if pa.types.is_date32(t):
+        dt = _as_datetime64_D(data)
+        arr = pa.array(np.asarray(dt).astype("datetime64[ns]"))
+        if arr.type != t:
+            arr = arr.cast(t, safe=False)
+        return arr
+
+    return pa.array(data, type=t, safe=False)
+
+
+_FAR_PAST = np.datetime64("1900-01-01", "D")
+_FAR_FUTURE = np.datetime64("2262-04-11", "D")
+
+
+def _sample_salesperson_vectorized(
+    store_ids: np.ndarray,
+    dates_D: np.ndarray,
+    eff: dict,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Sample one salesperson per (store, date) row using composite-key vectorization.
+
+    Replaces per-store Python loop + per-date inner loop with:
+      1. Composite key (store, date) → np.unique → contiguous slices
+      2. Batch-sample all rows sharing the same (store, date) in one rng call
+
+    STRICT: never assigns a salesperson outside an effective-dated assignment window.
+    If no eligible salesperson exists for a given (StoreKey, Date), emits -1.
+    """
+    n = store_ids.shape[0]
+    out = np.full(n, -1, dtype=np.int64)
+
+    if not isinstance(eff, dict) or not eff:
+        return out
+
+    # Composite key: encode (store, date) pairs
+    day_i64 = dates_D.astype("datetime64[D]").astype("int64")
+    day_min = int(day_i64.min())
+    day_range = int(day_i64.max()) - day_min + 1
+
+    sd_key = store_ids.astype(np.int64) * day_range + (day_i64 - day_min)
+    sd_uniq, sd_inv = np.unique(sd_key, return_inverse=True)
+    n_pairs = sd_uniq.size
+
+    # Decode back to store/date
+    pair_store = (sd_uniq // day_range).astype(np.int64)
+    pair_day64 = sd_uniq % day_range + day_min
+
+    # Sort by pair index for contiguous-slice access
+    pair_counts = np.bincount(sd_inv, minlength=n_pairs).astype(np.int64)
+    pair_order = np.argsort(sd_inv, kind="mergesort")
+    pair_starts = np.zeros(n_pairs + 1, dtype=np.int64)
+    np.cumsum(pair_counts, out=pair_starts[1:])
+
+    # Pre-process eff entries: cache cleaned arrays per store to avoid re-converting
+    _eff_cache: dict = {}
+
+    for i in range(n_pairs):
+        sk = int(pair_store[i])
+
+        # Lazily clean each store's eff entry once
+        if sk not in _eff_cache:
+            entry = eff.get(sk)
+            if entry is None:
+                _eff_cache[sk] = None
+            else:
+                emp_keys, start_d, end_d, weights = entry
+                emp_keys = np.asarray(emp_keys, dtype=np.int64)
+                start_d = np.asarray(start_d, dtype="datetime64[D]")
+                end_d = np.asarray(end_d, dtype="datetime64[D]")
+                weights = np.asarray(weights, dtype=np.float64)
+
+                # Never allow Store Manager keys (30M..40M)
+                non_mgr = (emp_keys < 30_000_000) | (emp_keys >= 40_000_000)
+                emp_keys = emp_keys[non_mgr]
+                start_d = start_d[non_mgr]
+                end_d = end_d[non_mgr]
+                weights = weights[non_mgr]
+
+                if emp_keys.size == 0:
+                    _eff_cache[sk] = None
+                else:
+                    if np.isnat(start_d).any():
+                        start_d = start_d.copy()
+                        start_d[np.isnat(start_d)] = _FAR_PAST
+                    if np.isnat(end_d).any():
+                        end_d = end_d.copy()
+                        end_d[np.isnat(end_d)] = _FAR_FUTURE
+                    _eff_cache[sk] = (emp_keys, start_d, end_d, weights)
+
+        rec = _eff_cache[sk]
+        if rec is None:
+            continue
+
+        emp_keys, start_d, end_d, weights = rec
+        d = np.datetime64(int(pair_day64[i]), "D")
+
+        ok = (start_d <= d) & (d <= end_d)
+        if not bool(ok.any()):
+            continue
+
+        emp2 = emp_keys[ok]
+        w2 = weights[ok]
+
+        count = int(pair_counts[i])
+        sw = float(w2.sum())
+
+        if sw <= 1e-12:
+            picked = emp2[rng.integers(0, emp2.size, size=count)]
+        else:
+            p = w2 / sw
+            picked = emp2[rng.choice(emp2.size, size=count, p=p)]
+
+        s, e = int(pair_starts[i]), int(pair_starts[i + 1])
+        out[pair_order[s:e]] = picked
+
+    return out
+
+
 def _empty_table(schema: pa.Schema) -> pa.Table:
     """Return a zero-row table with the exact schema types."""
     arrays = [pa.array([], type=f.type, safe=False) for f in schema]
@@ -424,7 +578,14 @@ def build_chunk_table(
     # ------------------------------------------------------------
     # Generate month-by-month
     # ------------------------------------------------------------
-    tables = []
+    # Accumulate raw numpy buffers per column; build ONE Arrow table at the end.
+    # This eliminates T × C Arrow array constructions + pa.concat_tables overhead.
+    col_buffers: dict[str, list] = {f.name: [] for f in schema}
+    total_rows = 0
+
+    # Salesperson effective-date map + fallback (constant across months)
+    eff = getattr(State, "salesperson_effective_by_store", None)
+    sp_map_fallback = getattr(State, 'salesperson_by_store_month', None)
 
     for m_offset in range(T):
         m_rows = int(rows_per_month[m_offset])
@@ -602,11 +763,17 @@ def build_chunk_table(
         # STORE → GEO → CURRENCY (guard missing mappings)
         #   Agreement: 1 Store per Order (when order ids exist)
         # --------------------------------------------------------
-        if not skip_cols:
-            # line_num is 1..k within each order; derive order index cheaply (no np.unique)
+        # Compute order_starts/order_idx ONCE — reused by store assignment and promotions
+        if not skip_cols and line_num is not None:
             order_starts = (np.asarray(line_num) == 1)
             order_idx = np.cumsum(order_starts.astype(np.int64)) - 1
             n_unique_orders = int(order_idx.max() + 1) if order_idx.size else 0
+        else:
+            order_starts = None
+            order_idx = None
+            n_unique_orders = 0
+
+        if not skip_cols:
             order_store = store_keys[rng.integers(0, len(store_keys), size=n_unique_orders)]
             store_key_arr = order_store[order_idx]
         else:
@@ -637,12 +804,7 @@ def build_chunk_table(
         # --------------------------------------------------------
         # PROMOTIONS  (make per-order when order ids exist)
         # --------------------------------------------------------
-        if (not skip_cols) and (line_num is not None):
-            # line_num is 1..k within each order
-            order_starts = (np.asarray(line_num) == 1)
-            order_idx = np.cumsum(order_starts.astype(np.int64)) - 1
-            n_unique_orders = int(order_idx.max() + 1) if order_idx.size else 0
-
+        if (not skip_cols) and (order_starts is not None):
             # use order-level dates (first line per order)
             order_dates_order = np.asarray(order_dates, dtype="datetime64[D]")[order_starts]
 
@@ -678,27 +840,20 @@ def build_chunk_table(
         if not keep_mask.any():
             continue
 
-        def _take(x):
-            if not isinstance(x, np.ndarray):
-                x = np.asarray(x)
-            return x[keep_mask]
-
-        customer_keys_out = _take(customer_keys_out)
-        product_keys = _take(product_keys)
-        unit_price = _take(unit_price)
-        unit_cost = _take(unit_cost)
-        store_key_arr = _take(store_key_arr)
-        currency_arr = _take(currency_arr)
-        order_dates = _take(order_dates)
-        promo_keys = _take(promo_keys)
+        customer_keys_out = customer_keys_out[keep_mask]
+        product_keys = product_keys[keep_mask]
+        unit_price = unit_price[keep_mask]
+        unit_cost = unit_cost[keep_mask]
+        store_key_arr = store_key_arr[keep_mask]
+        currency_arr = currency_arr[keep_mask]
+        order_dates = order_dates[keep_mask]
+        promo_keys = promo_keys[keep_mask]
 
         # Ensure order ids/line nums stay aligned after thinning
         if not skip_cols:
-            order_ids_int = _take(order_ids_int)
-            line_num = _take(line_num)
-            
+            order_ids_int = np.asarray(order_ids_int)[keep_mask]
+            line_num = np.asarray(line_num)[keep_mask]
         # --------------------------------------------------------
-                # --------------------------------------------------------
         # EMPLOYEE (SalesPersonEmployeeKey)
         #   Agreement:
         #     - If order identifiers exist (skip_cols == False): 1 salesperson per order (broadcast to all lines),
@@ -707,102 +862,42 @@ def build_chunk_table(
         # - Prefer DAY-accurate effective-dated bridge:
         #     State.salesperson_effective_by_store[store] = (emp_keys[int64], start_dates[D], end_dates[D], weights[f64])
         # - Fallback: State.salesperson_by_store_month (values may be -1)
-        # - Final fallback: State.salesperson_global_pool (sales-role only)
         # IMPORTANT: Never emit Store Manager keys (30_000_000 + StoreKey).
         # --------------------------------------------------------
 
-
         # STRICT: no cross-store salesperson fallback. If no eligible salesperson exists, we emit -1.
-        # This guarantees SalesPersonEmployeeKey always corresponds to an effective-dated assignment in EmployeeStoreAssignments.
 
-        eff = getattr(State, "salesperson_effective_by_store", None)
-
-        FAR_PAST = np.datetime64("1900-01-01", "D")
-        FAR_FUTURE = np.datetime64("2262-04-11", "D")
-
-        def _sample_salesperson_for_store_dates(store_ids: np.ndarray, dates_D: np.ndarray) -> np.ndarray:
-            """Sample one salesperson per (store_ids[i], dates_D[i]) row.
-
-            STRICT: never assigns a salesperson outside an effective-dated assignment window.
-            If no eligible salesperson exists for a given (StoreKey, Date), emits -1.
-            """
-            out = np.full(store_ids.shape[0], -1, dtype=np.int64)
-
-            if isinstance(eff, dict) and eff:
-                for store in np.unique(store_ids):
-                    store_i = int(store)
-                    idx_store = (store_ids == store)
-                    entry = eff.get(store_i)
-                    if entry is None:
-                        continue
-
-                    emp_keys, start_d, end_d, weights = entry
-                    emp_keys = np.asarray(emp_keys, dtype=np.int64)
-                    start_d = np.asarray(start_d, dtype='datetime64[D]')
-                    end_d = np.asarray(end_d, dtype='datetime64[D]')
-                    weights = np.asarray(weights, dtype=np.float64)
-
-                    # Never allow Store Manager keys (30M..40M) to appear as salespeople
-                    assert np.all((emp_keys < 30_000_000) | (emp_keys >= 40_000_000)), \
-                        "Store Manager keys leaked into salesperson pool"
-                    
-                    if emp_keys.size == 0:
-                        continue
-
-                    if np.isnat(start_d).any():
-                        start_d = start_d.copy()
-                        start_d[np.isnat(start_d)] = FAR_PAST
-                    if np.isnat(end_d).any():
-                        end_d = end_d.copy()
-                        end_d[np.isnat(end_d)] = FAR_FUTURE
-
-                    d_store = dates_D[idx_store].astype('datetime64[D]', copy=False)
-                    u_dates, inv = np.unique(d_store, return_inverse=True)
-                    out_store = np.full(d_store.shape[0], -1, dtype=np.int64)
-
-                    for j, d in enumerate(u_dates):
-                        sel = (inv == j)
-                        sel_n = int(sel.sum())
-                        active = (start_d <= d) & (d <= end_d)
-                        if not np.any(active):
-                            continue
-
-                        w = weights[active]
-                        sw = float(w.sum())
-                        if sw <= 1e-12:
-                            # Uniform among active employees (still within window).
-                            out_store[sel] = rng.choice(emp_keys[active], size=sel_n, replace=True)
-                            continue
-
-                        p = (w / sw).astype(np.float64, copy=False)
-                        out_store[sel] = rng.choice(emp_keys[active], size=sel_n, replace=True, p=p)
-
-                    out[idx_store] = out_store
-                return out
-
-            # No effective map -> fallback to month map (no global backfill).
-            sp_map = getattr(State, 'salesperson_by_store_month', None)
-            if sp_map is not None:
-                out = sp_map[store_ids, int(m_offset)]
-                return out.astype(np.int64, copy=False)
-
-            return out
         # --- Sampling mode ---
         if not skip_cols and order_ids_int is not None:
             # Order-level salesperson: sample per unique order, then broadcast back to lines
             uniq_orders, first_idx, inv_idx = np.unique(order_ids_int, return_index=True, return_inverse=True)
-            order_store = store_key_arr[first_idx]
-            order_date = order_dates[first_idx].astype("datetime64[D]", copy=False)
+            order_store_sp = store_key_arr[first_idx]
+            order_date_sp = order_dates[first_idx].astype("datetime64[D]", copy=False)
 
-            salesperson_order = _sample_salesperson_for_store_dates(order_store, order_date)
+            if isinstance(eff, dict) and eff:
+                salesperson_order = _sample_salesperson_vectorized(
+                    order_store_sp, order_date_sp, eff, rng)
+            else:
+                # Fallback: month map
+                sp_map = sp_map_fallback
+                if sp_map is not None:
+                    salesperson_order = sp_map[order_store_sp, int(m_offset)].astype(np.int64, copy=False)
+                else:
+                    salesperson_order = np.full(uniq_orders.size, -1, dtype=np.int64)
 
             salesperson_key_arr = salesperson_order[inv_idx]
         else:
             # Line-level fallback (when order ids do not exist)
-            salesperson_key_arr = _sample_salesperson_for_store_dates(
-                np.asarray(store_key_arr, dtype=np.int64),
-                np.asarray(order_dates, dtype="datetime64[D]")
-            )
+            s_ids = np.asarray(store_key_arr, dtype=np.int64)
+            d_ids = np.asarray(order_dates, dtype="datetime64[D]")
+            if isinstance(eff, dict) and eff:
+                salesperson_key_arr = _sample_salesperson_vectorized(s_ids, d_ids, eff, rng)
+            else:
+                sp_map = sp_map_fallback
+                if sp_map is not None:
+                    salesperson_key_arr = sp_map[s_ids, int(m_offset)].astype(np.int64, copy=False)
+                else:
+                    salesperson_key_arr = np.full(s_ids.size, -1, dtype=np.int64)
 
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------
@@ -842,27 +937,17 @@ def build_chunk_table(
         # - If columns.py returns a column not present in the schema, we raise (forces schema update).
         # --------------------------------------------------------
         n_rows = int(customer_keys_out.shape[0])
-        EPOCH_D = np.datetime64("1970-01-01", "D")
 
-        def _as_datetime64_D(x):
-            x = np.asarray(x)
-
-            # Already a datetime64 -> normalize to day resolution
-            if np.issubdtype(x.dtype, np.datetime64):
-                return x.astype("datetime64[D]", copy=False)
-
-            # Integer -> interpret as epoch-based; handle both day-scale and ns-scale
-            if np.issubdtype(x.dtype, np.integer):
-                if x.size == 0:
-                    return x.astype("datetime64[D]")
-                mx = int(np.max(np.abs(x)))
-                # days for 2020s are ~ 18k–22k; ns timestamps are ~ 1e18
-                if mx > 10_000_000:  # too large to be "days"
-                    return x.astype("datetime64[ns]").astype("datetime64[D]")
-                return (EPOCH_D + x.astype("timedelta64[D]")).astype("datetime64[D]")
-
-            # Fallback
-            return np.asarray(x, dtype="datetime64[D]")
+        # --------------------------------------------------------
+        # BUILD COLUMN DICT (schema-driven)
+        #
+        # Base columns are produced here.
+        # Extra columns are produced ONLY via sales_logic/columns.py (single extension point).
+        #
+        # Behavior:
+        # - If a schema field isn't produced, it is filled with typed nulls (at final build time).
+        # - If columns.py returns a column not present in the schema, we raise (forces schema update).
+        # --------------------------------------------------------
 
         # Base columns
         cols: dict[str, object] = {}
@@ -942,29 +1027,56 @@ def build_chunk_table(
                 )
             cols.update(extra)
 
-        def _to_array(name: str, data: object):
-            t = schema_types[name]
-
+        # Accumulate per-column numpy buffers (defer Arrow conversion to end)
+        for f in schema:
+            data = cols.get(f.name)
             if data is None:
-                return pa.nulls(n_rows, type=t)
+                # Typed null placeholder — will be converted at final table build
+                col_buffers[f.name].append(None)
+            else:
+                # Ensure numpy array
+                if np.isscalar(data):
+                    data = np.full(n_rows, data)
+                elif not isinstance(data, np.ndarray):
+                    data = np.asarray(data)
+                col_buffers[f.name].append(data)
+        total_rows += n_rows
 
-            # Broadcast scalars
-            if np.isscalar(data):
-                data = np.full(n_rows, data)
-
-            # date32: build as timestamp first (inference), then cast to date32
-            if pa.types.is_date32(t):
-                dt = _as_datetime64_D(data)
-                arr = pa.array(np.asarray(dt).astype("datetime64[ns]"))
-                if arr.type != t:
-                    arr = arr.cast(t, safe=False)
-                return arr
-
-            return pa.array(data, type=t, safe=False)
-
-        arrays = [_to_array(f.name, cols.get(f.name)) for f in schema]
-        tables.append(pa.Table.from_arrays(arrays, schema=schema))
-    if not tables:
+    # ------------------------------------------------------------------
+    # FINAL: Build ONE Arrow table from all accumulated month buffers
+    # ------------------------------------------------------------------
+    if total_rows == 0:
         return _empty_table(schema)
 
-    return pa.concat_tables(tables)
+    arrays = []
+    for f in schema:
+        bufs = col_buffers[f.name]
+        t = schema_types[f.name]
+
+        # Check if any month produced data for this column
+        has_data = any(b is not None for b in bufs)
+
+        if not has_data:
+            # Entire column is null across all months
+            arrays.append(pa.nulls(total_rows, type=t))
+            continue
+
+        # All-data fast path (common case: every month populates this column)
+        if all(b is not None for b in bufs):
+            combined = np.concatenate(bufs) if len(bufs) > 1 else bufs[0]
+            arrays.append(_to_pa_array(f.name, combined, total_rows, schema_types))
+            continue
+
+        # Mixed path (rare: some months null, others not)
+        # Build per-month Arrow arrays and concatenate via Arrow
+        month_arrays = []
+        for b in bufs:
+            if b is None:
+                continue  # skip null months (no rows to represent)
+            month_arrays.append(_to_pa_array(f.name, b, len(b), schema_types))
+        if month_arrays:
+            arrays.append(pa.concat_arrays(month_arrays))
+        else:
+            arrays.append(pa.nulls(total_rows, type=t))
+
+    return pa.Table.from_arrays(arrays, schema=schema)
