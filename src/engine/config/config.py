@@ -1,40 +1,112 @@
 from __future__ import annotations
 
 import json
+from datetime import date as _date
+from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
-import pandas as pd
+# ---------------------------------------------------------------------------
+# Lazy YAML import (resolved once, avoids per-call try/except overhead)
+# ---------------------------------------------------------------------------
 
-# ------------------------------------------------------------
+try:
+    import yaml as _yaml  # type: ignore
+except ImportError:
+    _yaml = None  # type: ignore[assignment]
+
+# ---------------------------------------------------------------------------
+# Format-specific key sets (defined before normalizers that reference them)
+# ---------------------------------------------------------------------------
+
+_PARQUET_ONLY_KEYS: frozenset[str] = frozenset(
+    {"row_group_size", "compression", "chunk_size", "workers"}
+)
+_PARQUET_MERGE_ONLY_KEYS: frozenset[str] = frozenset(
+    {"merge_parquet", "merged_file"}
+)
+_DELTA_ONLY_KEYS: frozenset[str] = frozenset(
+    {"partition_enabled", "partition_cols", "delta_output_folder"}
+)
+
+_VALID_FILE_FORMATS: frozenset[str] = frozenset(
+    {"csv", "parquet", "deltaparquet"}
+)
+
+_VALID_SEG_GRAINS: frozenset[str] = frozenset({"month", "day"})
+
+# ---------------------------------------------------------------------------
 # Section normalization registry (single source of truth)
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 SectionNormalizer = Callable[[Dict[str, Any]], Dict[str, Any]]
 
 # Sections that must be mappings if present but do not have a normalizer.
 # Keep this small; normalizer keys are automatically treated as mapping sections.
-_SECTION_MAPPING_ONLY_KEYS: set[str] = {
-    "customers",
-}
-
-# Sections that get normalized if present.
-# Add new table/config section normalizers here (pipeline loader will pick them up automatically).
-_SECTION_NORMALIZERS: Dict[str, SectionNormalizer] = {}
+_SECTION_MAPPING_ONLY_KEYS: frozenset[str] = frozenset({"customers"})
 
 # For config files that intentionally don't have defaults (e.g. models.yaml),
 # we keep normalization deliberately narrow to avoid surprising validation failures.
-_CONFIG_FILE_NORMALIZE_KEYS: set[str] = {
-    "customer_segments",
-}
+_CONFIG_FILE_NORMALIZE_KEYS: frozenset[str] = frozenset({"customer_segments"})
 
-# ------------------------------------------------------------
+# Populated inline after normalizer functions are defined (see bottom of file).
+_SECTION_NORMALIZERS: Dict[str, SectionNormalizer] = {}
+
+
+# ---------------------------------------------------------------------------
+# Lightweight helpers
+# ---------------------------------------------------------------------------
+
+def _clamp01(x: float) -> float:
+    """Clamp *x* to the [0.0, 1.0] interval."""
+    return max(0.0, min(1.0, float(x)))
+
+
+def _parse_date(value: Any, label: str) -> _date:
+    """Parse a date value into a :class:`datetime.date`.
+
+    Accepts ``datetime.date``, ``datetime.datetime``, and common ISO-style
+    strings (``YYYY-MM-DD``, ``YYYY/MM/DD``).  Raises :class:`ValueError`
+    with a clear message on failure.
+    """
+    if isinstance(value, _datetime):
+        return value.date()
+    if isinstance(value, _date):
+        return value
+
+    text = str(value).strip()
+    # Try ISO first (fast path), then slash-separated variant
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return _datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Cannot parse {label} date '{value}' (expected YYYY-MM-DD)")
+
+
+def _coerce_optional_int(cfg: Dict[str, Any], key: str) -> None:
+    """Cast *cfg[key]* to ``int`` in place if it is present and non-None."""
+    if key in cfg and cfg[key] is not None:
+        cfg[key] = int(cfg[key])
+
+
+def _coerce_optional_positive_int(
+    cfg: Dict[str, Any], key: str, section: str
+) -> None:
+    """Cast and validate *cfg[key]* as a positive int if present and non-None."""
+    if key in cfg and cfg[key] is not None:
+        val = int(cfg[key])
+        if val <= 0:
+            raise ValueError(f"{section}.{key} must be a positive integer, got {val}")
+        cfg[key] = val
+
+
+# ---------------------------------------------------------------------------
 # Public API
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def load_pipeline_config(path: str | Path = "config.yaml") -> dict:
-    """
-    Load the *pipeline* config (config.yaml) and normalize safely.
+    """Load the *pipeline* config (config.yaml) and normalize safely.
 
     This loader REQUIRES defaults (or _defaults) to exist because the pipeline
     depends on a global date window for lifecycle-aware generation.
@@ -47,19 +119,16 @@ def load_pipeline_config(path: str | Path = "config.yaml") -> dict:
 
 
 def load_config(path: str | Path = "config.yaml") -> dict:
-    """
-    Backward-compatible alias of load_pipeline_config().
-    """
+    """Backward-compatible alias of :func:`load_pipeline_config`."""
     return load_pipeline_config(path)
 
 
 def load_config_file(path: str | Path) -> dict:
-    """
-    Load a config file (YAML/JSON) that intentionally does NOT contain defaults,
-    e.g. models.yaml (top-level 'models' only).
+    """Load a config file (YAML/JSON) that intentionally does NOT contain defaults,
+    e.g. models.yaml (top-level ``models`` only).
 
     This applies only very safe, non-default-dependent transforms:
-      - tuning -> models mapping (if present)
+      - tuning → models mapping (if present)
       - customer_segments normalization (if present)
     """
     return _load_and_normalize(
@@ -69,28 +138,29 @@ def load_config_file(path: str | Path) -> dict:
     )
 
 
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # High-level acquisition tuning
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def apply_acquisition_tuning(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Translate high-level acquisition tuning knobs into detailed model parameters.
 
-    Expected config shape:
-      tuning:
-        acquisition_intensity: 0..1   (higher => more new customers)
-        acquisition_smoothness: 0..1  (higher => flatter / fewer dead months)
-        acquisition_cycles: 0..1      (higher => stronger multi-year waves)
+    Expected config shape::
+
+        tuning:
+          acquisition_intensity: 0..1   (higher ⇒ more new customers)
+          acquisition_smoothness: 0..1  (higher ⇒ flatter / fewer dead months)
+          acquisition_cycles: 0..1      (higher ⇒ stronger multi-year waves)
 
     Notes:
       - Does NOT require pipeline defaults, so safe for models.yaml too.
-      - Mutates only the 'models' subtree and only when 'tuning' exists.
+      - Mutates only the ``models`` subtree and only when ``tuning`` exists.
     """
     tuning = cfg.get("tuning")
     if not isinstance(tuning, dict):
         return cfg
 
-    cfg = dict(cfg)  # shallow copy
+    cfg = dict(cfg)  # shallow copy – intentional: tuning only touches models subtree
     models = cfg.get("models")
     if models is None:
         models = {}
@@ -102,12 +172,9 @@ def apply_acquisition_tuning(cfg: Dict[str, Any]) -> Dict[str, Any]:
     participation = models.setdefault("customer_participation", {})
     cycles = participation.setdefault("cycles", {})
 
-    def _clamp01(x: float) -> float:
-        return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x
-
-    intensity = _clamp01(float(tuning.get("acquisition_intensity", 0.5)))
-    smoothness = _clamp01(float(tuning.get("acquisition_smoothness", 0.5)))
-    cycle_strength = _clamp01(float(tuning.get("acquisition_cycles", 0.3)))
+    intensity = _clamp01(tuning.get("acquisition_intensity", 0.5))
+    smoothness = _clamp01(tuning.get("acquisition_smoothness", 0.5))
+    cycle_strength = _clamp01(tuning.get("acquisition_cycles", 0.3))
 
     # Discovery mapping
     discovery["orders_per_new_customer"] = int(round(40 - 30 * intensity))  # 40..10
@@ -122,15 +189,15 @@ def apply_acquisition_tuning(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return cfg
 
 
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Load + normalize (shared implementation)
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def _load_and_normalize(
     path: str | Path,
     *,
     require_defaults: bool,
-    normalize_keys: Optional[set[str]],
+    normalize_keys: Optional[frozenset[str] | set[str]],
 ) -> Dict[str, Any]:
     path = Path(path)
     if not path.exists():
@@ -151,16 +218,21 @@ def _load_and_normalize(
     return cfg
 
 
-def _normalize_sections(cfg: Dict[str, Any], *, normalize_keys: Optional[set[str]]) -> Dict[str, Any]:
+def _normalize_sections(
+    cfg: Dict[str, Any],
+    *,
+    normalize_keys: Optional[frozenset[str] | set[str]],
+) -> Dict[str, Any]:
     """Validate section shapes and apply per-section normalizers.
 
     - Always validates known mapping sections if present.
-    - Applies normalizers for sections in `normalize_keys` (or all registered normalizers if None).
+    - Applies normalizers for sections in *normalize_keys* (or all registered
+      normalizers if ``None``).
     """
     cfg = dict(cfg)
 
     # Validate mapping sections (mapping-only keys + all normalizer keys)
-    mapping_keys = set(_SECTION_MAPPING_ONLY_KEYS) | set(_SECTION_NORMALIZERS.keys())
+    mapping_keys = _SECTION_MAPPING_ONLY_KEYS | _SECTION_NORMALIZERS.keys()
     for key in mapping_keys:
         if key in cfg and not isinstance(cfg[key], dict):
             raise KeyError(f"Invalid '{key}' section in config (expected mapping)")
@@ -169,7 +241,7 @@ def _normalize_sections(cfg: Dict[str, Any], *, normalize_keys: Optional[set[str
     if normalize_keys is None:
         keys_to_normalize = set(_SECTION_NORMALIZERS.keys())
     else:
-        keys_to_normalize = set(normalize_keys) & set(_SECTION_NORMALIZERS.keys())
+        keys_to_normalize = set(normalize_keys) & _SECTION_NORMALIZERS.keys()
 
     for key in keys_to_normalize:
         if key in cfg:
@@ -178,64 +250,81 @@ def _normalize_sections(cfg: Dict[str, Any], *, normalize_keys: Optional[set[str
     return cfg
 
 
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Loaders
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def _load_any(path: Path) -> dict:
+    """Load a YAML or JSON config file.
+
+    When the extension is known (``.yaml``, ``.yml``, ``.json``) the matching
+    parser is used directly.  For unknown extensions the file is tried as YAML
+    first (structural errors are **not** swallowed) then as JSON.
+    """
     ext = path.suffix.lower()
 
     if ext in (".yaml", ".yml"):
-        try:
-            import yaml  # type: ignore
-        except Exception as e:
-            raise RuntimeError("PyYAML is required to load .yaml/.yml config files") from e
-
-        with path.open("r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        if not isinstance(cfg, dict):
-            raise ValueError("Top-level YAML config must be a mapping/object")
-        return cfg
+        return _load_yaml(path)
 
     if ext == ".json":
-        with path.open("r", encoding="utf-8") as f:
-            cfg = json.load(f) or {}
-        if not isinstance(cfg, dict):
-            raise ValueError("Top-level JSON config must be an object")
-        return cfg
+        return _load_json(path)
 
-    # If user passes no extension, attempt YAML then JSON
-    with path.open("r", encoding="utf-8") as f:
-        raw = f.read()
+    # Unknown extension – try YAML then JSON, but only swallow *format* errors
+    # so that genuine structural problems (bad indentation etc.) surface.
+    raw = path.read_text(encoding="utf-8")
 
-    try:
-        import yaml  # type: ignore
-        cfg = yaml.safe_load(raw) or {}
-        if isinstance(cfg, dict):
-            return cfg
-    except Exception:
-        pass
+    if _yaml is not None:
+        try:
+            cfg = _yaml.safe_load(raw) or {}
+            if isinstance(cfg, dict):
+                return cfg
+        except _yaml.YAMLError:
+            # Content is not valid YAML – fall through to JSON attempt.
+            pass
 
     try:
         cfg = json.loads(raw) or {}
         if isinstance(cfg, dict):
             return cfg
-    except Exception as e:
-        raise ValueError(f"Unable to parse config file as YAML or JSON: {path}") from e
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(
+            f"Unable to parse config file as YAML or JSON: {path}"
+        ) from exc
 
     raise ValueError(f"Unsupported or invalid config format: {path}")
 
 
-# ------------------------------------------------------------
+def _load_yaml(path: Path) -> dict:
+    if _yaml is None:
+        raise RuntimeError(
+            "PyYAML is required to load .yaml/.yml config files"
+        )
+    with path.open("r", encoding="utf-8") as fh:
+        cfg = _yaml.safe_load(fh) or {}
+    if not isinstance(cfg, dict):
+        raise ValueError("Top-level YAML config must be a mapping/object")
+    return cfg
+
+
+def _load_json(path: Path) -> dict:
+    with path.open("r", encoding="utf-8") as fh:
+        cfg = json.load(fh) or {}
+    if not isinstance(cfg, dict):
+        raise ValueError("Top-level JSON config must be an object")
+    return cfg
+
+
+# ---------------------------------------------------------------------------
 # Defaults normalization (dates)
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Canonicalize defaults:
-      - Accept 'defaults' or '_defaults'
-      - Ensure cfg['defaults'] exists (canonical)
-      - Validate defaults.dates.start/end exist and are parseable
+    """Canonicalize defaults:
+
+    - Accept ``defaults`` or ``_defaults``
+    - Ensure ``cfg["defaults"]`` exists (canonical)
+    - Remove stale ``_defaults`` alias to prevent duplication
+    - Validate defaults.dates.start/end exist and are parseable
     """
     cfg = dict(cfg)
 
@@ -243,12 +332,13 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
     underscore_defaults = cfg.get("_defaults")
 
     if defaults_section is None and underscore_defaults is not None:
-        cfg["defaults"] = underscore_defaults
-        defaults_section = cfg["defaults"]
+        defaults_section = underscore_defaults
+
+    # Clean up the underscore alias so only the canonical key survives
+    cfg.pop("_defaults", None)
 
     if defaults_section is None:
         raise KeyError("Missing 'defaults' (or '_defaults') section in config")
-
     if not isinstance(defaults_section, dict):
         raise KeyError("Invalid defaults section in config (expected mapping)")
 
@@ -256,77 +346,97 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(dates, dict):
         raise KeyError("Missing or invalid defaults.dates section in config")
 
-    start = dates.get("start")
-    end = dates.get("end")
-    if not start or not end:
+    raw_start = dates.get("start")
+    raw_end = dates.get("end")
+    if not raw_start or not raw_end:
         raise KeyError("Missing defaults.dates.start or defaults.dates.end in config")
 
     try:
-        start_ts = pd.to_datetime(start).normalize()
-        end_ts = pd.to_datetime(end).normalize()
-    except Exception as e:
-        raise ValueError("Missing or invalid defaults.dates.start/end in config.yaml") from e
+        start_date = _parse_date(raw_start, "defaults.dates.start")
+        end_date = _parse_date(raw_end, "defaults.dates.end")
+    except (ValueError, TypeError) as exc:
+        raise ValueError(
+            "Missing or invalid defaults.dates.start/end in config.yaml"
+        ) from exc
 
-    if pd.isna(start_ts) or pd.isna(end_ts) or start_ts >= end_ts:
+    if start_date >= end_date:
         raise ValueError("Invalid defaults.dates range (start must be < end)")
 
-    cfg_defaults = dict(cfg["defaults"])
-    cfg_dates = dict(cfg_defaults["dates"])
-    cfg_dates["start"] = str(start_ts.date())
-    cfg_dates["end"] = str(end_ts.date())
-    cfg_defaults["dates"] = cfg_dates
+    # Rebuild with canonical ISO strings
+    cfg_defaults = dict(defaults_section)
+    cfg_defaults["dates"] = {
+        "start": start_date.isoformat(),
+        "end": end_date.isoformat(),
+    }
     cfg["defaults"] = cfg_defaults
 
     return cfg
 
 
 def get_global_dates(cfg: Dict[str, Any]) -> Dict[str, str]:
-    """Return canonical defaults.dates dict with string ISO dates."""
+    """Return canonical defaults.dates dict with string ISO dates.
+
+    Normalizes the raw values through :func:`_parse_date` so the caller
+    always gets consistent ``YYYY-MM-DD`` strings regardless of whether
+    :func:`normalize_defaults` was called earlier.
+    """
     defaults_section = cfg.get("defaults") or cfg.get("_defaults")
     if not isinstance(defaults_section, dict):
         raise KeyError("Missing defaults section")
+
     dates = defaults_section.get("dates")
     if not isinstance(dates, dict):
         raise KeyError("Missing defaults.dates section")
-    if not dates.get("start") or not dates.get("end"):
+
+    raw_start = dates.get("start")
+    raw_end = dates.get("end")
+    if not raw_start or not raw_end:
         raise KeyError("Missing defaults.dates.start/end")
-    return {"start": dates["start"], "end": dates["end"]}
+
+    return {
+        "start": _parse_date(raw_start, "defaults.dates.start").isoformat(),
+        "end": _parse_date(raw_end, "defaults.dates.end").isoformat(),
+    }
 
 
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Sales config normalization
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
+
 def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
     sales_cfg = dict(sales_cfg)
 
+    # --- file_format ---
     file_format = sales_cfg.get("file_format")
     if not file_format:
         raise KeyError("sales.file_format is required")
-
     file_format = str(file_format).lower()
+    if file_format not in _VALID_FILE_FORMATS:
+        raise ValueError(
+            f"sales.file_format must be one of: {', '.join(sorted(_VALID_FILE_FORMATS))}"
+        )
     sales_cfg["file_format"] = file_format
 
+    # --- required scalar keys ---
     _validate_required_keys(
-        sales_cfg,
-        section="sales",
-        required=("total_rows", "skip_order_cols"),
+        sales_cfg, section="sales", required=("total_rows", "skip_order_cols"),
     )
-
-    sales_cfg["total_rows"] = int(sales_cfg["total_rows"])
+    total_rows = int(sales_cfg["total_rows"])
+    if total_rows <= 0:
+        raise ValueError(f"sales.total_rows must be a positive integer, got {total_rows}")
+    sales_cfg["total_rows"] = total_rows
     sales_cfg["skip_order_cols"] = bool(sales_cfg["skip_order_cols"])
 
-    if "chunk_size" in sales_cfg and sales_cfg["chunk_size"] is not None:
-        sales_cfg["chunk_size"] = int(sales_cfg["chunk_size"])
-    if "row_group_size" in sales_cfg and sales_cfg["row_group_size"] is not None:
-        sales_cfg["row_group_size"] = int(sales_cfg["row_group_size"])
-    if "workers" in sales_cfg and sales_cfg["workers"] is not None:
-        sales_cfg["workers"] = int(sales_cfg["workers"])
+    # --- optional numeric keys ---
+    _coerce_optional_positive_int(sales_cfg, "chunk_size", "sales")
+    _coerce_optional_positive_int(sales_cfg, "row_group_size", "sales")
+    _coerce_optional_positive_int(sales_cfg, "workers", "sales")
 
-    # Support nested config: sales.partitioning.{enabled, columns}
+    # --- nested partitioning block → flat keys ---
     part = sales_cfg.get("partitioning")
     if isinstance(part, dict):
         if "partition_enabled" not in sales_cfg and part.get("enabled") is not None:
-            sales_cfg["partition_enabled"] = bool(part.get("enabled"))
+            sales_cfg["partition_enabled"] = bool(part["enabled"])
 
         # Use `"columns" in part` so explicit null is respected
         if "partition_cols" not in sales_cfg and "columns" in part:
@@ -335,10 +445,12 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
                 sales_cfg["partition_cols"] = None
             else:
                 if not isinstance(cols, list):
-                    raise ValueError("sales.partitioning.columns must be a list of column names")
+                    raise ValueError(
+                        "sales.partitioning.columns must be a list of column names"
+                    )
                 sales_cfg["partition_cols"] = [str(c) for c in cols]
 
-    # Normalize / validate flat keys
+    # --- normalize / validate flat partitioning keys ---
     if "partition_enabled" in sales_cfg:
         sales_cfg["partition_enabled"] = bool(sales_cfg["partition_enabled"])
         if sales_cfg["partition_enabled"] is False:
@@ -349,32 +461,28 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError("sales.partition_cols must be a list of column names")
         sales_cfg["partition_cols"] = [str(c) for c in sales_cfg["partition_cols"]]
 
-    sales_cfg.setdefault("_ignored_keys", [])
+    # --- ignored keys per format (built as a set, sorted once) ---
+    ignored: set[str] = set(sales_cfg.get("_ignored_keys") or [])
 
     if file_format == "csv":
-        sales_cfg["_ignored_keys"].extend(k for k in _PARQUET_ONLY_KEYS if k in sales_cfg)
-        sales_cfg["_ignored_keys"].extend(k for k in _DELTA_ONLY_KEYS if k in sales_cfg)
+        ignored.update(k for k in _PARQUET_ONLY_KEYS if k in sales_cfg)
+        ignored.update(k for k in _DELTA_ONLY_KEYS if k in sales_cfg)
 
     elif file_format == "parquet":
-        sales_cfg["_ignored_keys"].extend(k for k in _DELTA_ONLY_KEYS if k in sales_cfg)
+        ignored.update(k for k in _DELTA_ONLY_KEYS if k in sales_cfg)
 
     elif file_format == "deltaparquet":
-        sales_cfg["_ignored_keys"].extend(k for k in _PARQUET_MERGE_ONLY_KEYS if k in sales_cfg)
+        ignored.update(k for k in _PARQUET_MERGE_ONLY_KEYS if k in sales_cfg)
         sales_cfg.setdefault("partition_enabled", True)
         sales_cfg.setdefault("partition_cols", ["Year", "Month"])
 
-    else:
-        raise ValueError("sales.file_format must be one of: csv, parquet, deltaparquet")
-
-    sales_cfg["_ignored_keys"] = sorted(set(sales_cfg["_ignored_keys"]))
+    sales_cfg["_ignored_keys"] = sorted(ignored)
     return sales_cfg
 
 
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Customer segments normalization
-# ------------------------------------------------------------
-
-_VALID_SEG_GRAINS = {"month", "day"}
+# ---------------------------------------------------------------------------
 
 def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any]:
     seg_cfg = dict(seg_cfg)
@@ -384,25 +492,48 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
     if not seg_cfg["enabled"]:
         return seg_cfg
 
-    # NEW: deterministic seed (top-level)
+    # --- deterministic seed (top-level) ---
     seg_cfg.setdefault("seed", 123)
     if seg_cfg["seed"] is not None:
         seg_cfg["seed"] = int(seg_cfg["seed"])
 
+    # --- segment counts with range validation ---
     seg_cfg.setdefault("segment_count", 12)
     seg_cfg.setdefault("segments_per_customer_min", 1)
     seg_cfg.setdefault("segments_per_customer_max", 4)
 
-    seg_cfg["segment_count"] = int(seg_cfg["segment_count"])
-    seg_cfg["segments_per_customer_min"] = int(seg_cfg["segments_per_customer_min"])
-    seg_cfg["segments_per_customer_max"] = int(seg_cfg["segments_per_customer_max"])
+    seg_count = int(seg_cfg["segment_count"])
+    seg_min = int(seg_cfg["segments_per_customer_min"])
+    seg_max = int(seg_cfg["segments_per_customer_max"])
 
-    # ... keep your existing validations ...
+    if seg_count <= 0:
+        raise ValueError(
+            f"customer_segments.segment_count must be > 0, got {seg_count}"
+        )
+    if seg_min < 1:
+        raise ValueError(
+            f"customer_segments.segments_per_customer_min must be >= 1, got {seg_min}"
+        )
+    if seg_max < seg_min:
+        raise ValueError(
+            f"customer_segments.segments_per_customer_max ({seg_max}) "
+            f"must be >= segments_per_customer_min ({seg_min})"
+        )
+    if seg_max > seg_count:
+        raise ValueError(
+            f"customer_segments.segments_per_customer_max ({seg_max}) "
+            f"must be <= segment_count ({seg_count})"
+        )
 
+    seg_cfg["segment_count"] = seg_count
+    seg_cfg["segments_per_customer_min"] = seg_min
+    seg_cfg["segments_per_customer_max"] = seg_max
+
+    # --- boolean flags ---
     seg_cfg.setdefault("include_score", True)
     seg_cfg.setdefault("include_primary_flag", True)
 
-    # NEW: auto-enable validity if validity block exists (prevents “silent ignore”)
+    # Auto-enable validity if a validity block exists (prevents "silent ignore")
     if "include_validity" not in seg_cfg:
         seg_cfg["include_validity"] = ("validity" in seg_cfg)
 
@@ -410,7 +541,7 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
     seg_cfg["include_primary_flag"] = bool(seg_cfg["include_primary_flag"])
     seg_cfg["include_validity"] = bool(seg_cfg["include_validity"])
 
-    # validity block
+    # --- validity block ---
     validity = seg_cfg.get("validity") or {}
     if seg_cfg["include_validity"]:
         if not isinstance(validity, dict):
@@ -418,15 +549,22 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
 
         grain = str(validity.get("grain", "month")).lower()
         if grain not in _VALID_SEG_GRAINS:
-            raise ValueError("customer_segments.validity.grain must be one of: month, day")
+            raise ValueError(
+                f"customer_segments.validity.grain must be one of: "
+                f"{', '.join(sorted(_VALID_SEG_GRAINS))}"
+            )
 
         churn = float(validity.get("churn_rate_qtr", 0.08))
-        if churn < 0.0 or churn > 1.0:
-            raise ValueError("customer_segments.validity.churn_rate_qtr must be between 0 and 1")
+        if not 0.0 <= churn <= 1.0:
+            raise ValueError(
+                "customer_segments.validity.churn_rate_qtr must be between 0 and 1"
+            )
 
         new_months = int(validity.get("new_customer_months", 2))
         if new_months < 0:
-            raise ValueError("customer_segments.validity.new_customer_months must be >= 0")
+            raise ValueError(
+                "customer_segments.validity.new_customer_months must be >= 0"
+            )
 
         seg_cfg["validity"] = {
             "grain": grain,
@@ -434,12 +572,13 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
             "new_customer_months": new_months,
         }
     else:
-        # NEW: if user supplied validity but include_validity is off, record it as ignored
+        # If user supplied validity but include_validity is off, record it as ignored
         if "validity" in seg_cfg:
-            seg_cfg.setdefault("_ignored_keys", [])
-            seg_cfg["_ignored_keys"].append("validity")
-            seg_cfg["_ignored_keys"] = sorted(set(seg_cfg["_ignored_keys"]))
+            ignored: set[str] = set(seg_cfg.get("_ignored_keys") or [])
+            ignored.add("validity")
+            seg_cfg["_ignored_keys"] = sorted(ignored)
 
+    # --- override block ---
     override = seg_cfg.get("override") or {}
     if not isinstance(override, dict):
         raise KeyError("customer_segments.override must be a mapping/object")
@@ -447,7 +586,6 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
     override.setdefault("dates", {})
     override.setdefault("paths", {})
 
-    # NEW: normalize override.seed type if present
     if override["seed"] is not None:
         override["seed"] = int(override["seed"])
 
@@ -460,19 +598,21 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
     return seg_cfg
 
 
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Validation helpers
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
-def _validate_required_keys(cfg: Dict[str, Any], section: str, required: Iterable[str]) -> None:
+def _validate_required_keys(
+    cfg: Dict[str, Any], section: str, required: Iterable[str]
+) -> None:
     missing = [k for k in required if k not in cfg]
     if missing:
         raise KeyError(f"Missing required keys in '{section}' config: {missing}")
 
 
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Path preparation (optional utility)
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def prepare_paths(
     cfg: Dict[str, Any],
@@ -488,7 +628,8 @@ def prepare_paths(
 
     if not parquet_folder or not out_folder:
         raise KeyError(
-            "Missing parquet/out folders. Provide overrides or set sales.parquet_folder and sales.out_folder."
+            "Missing parquet/out folders. Provide overrides or set "
+            "sales.parquet_folder and sales.out_folder."
         )
 
     parquet_dims = Path(parquet_folder).resolve()
@@ -500,18 +641,9 @@ def prepare_paths(
     return parquet_dims, fact_out
 
 
-# ------------------------------------------------------------
-# Constants
-# ------------------------------------------------------------
-
-_PARQUET_ONLY_KEYS = {"row_group_size", "compression", "chunk_size", "workers"}
-_PARQUET_MERGE_ONLY_KEYS = {"merge_parquet", "merged_file"}
-_DELTA_ONLY_KEYS = {"partition_enabled", "partition_cols", "delta_output_folder"}
-
-
-# ------------------------------------------------------------
-# Register section normalizers (keep at bottom so functions exist)
-# ------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Register section normalizers
+# ---------------------------------------------------------------------------
 
 _SECTION_NORMALIZERS.update(
     {
