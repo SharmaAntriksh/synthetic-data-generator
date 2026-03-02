@@ -111,7 +111,7 @@ def _write_table(table_name: str, idx: int, table: pa.Table) -> Union[str, Dict[
         idx=int(idx),
         table=table,
         write_csv_fn=lambda t, p: _write_csv(t, p, table_name=table_name),
-        write_parquet_fn=lambda t, p: _write_parquet_table(t, p, table_name=table_name),
+        write_parquet_fn=lambda t, p: _write_parquet_table(t, p, table_name=table_name, is_chunk=True),
     )
 
 
@@ -158,63 +158,16 @@ def _maybe_build_returns(source_table: pa.Table, *, chunk_seed: int) -> Optional
 
     _task_require_cols(source_table, RETURNS_REQUIRED_DETAIL_COLS, ctx="SalesReturn build requires")
 
-    # Sanitize config inputs defensively. We keep this tolerant so bad config values
-    # don't crash the worker pool; returns_builder enforces correctness but we
-    # normalize here to preserve backward compatibility.
-    rr_raw = getattr(State, "returns_rate", 0.0)
-    try:
-        rr = float(rr_raw if rr_raw not in (None, "") else 0.0)
-    except Exception:
-        rr = 0.0
-    if not np.isfinite(rr):
-        rr = 0.0
-    rr = max(0.0, min(1.0, rr))
-
-    min_lag_raw = getattr(State, "returns_min_lag_days", 0)
-    try:
-        min_lag = int(min_lag_raw if min_lag_raw not in (None, "") else 0)
-    except Exception:
-        min_lag = 0
-    min_lag = max(0, min_lag)
-
-    lag_raw = getattr(State, "returns_max_lag_days", 60)
-    try:
-        max_lag = int(lag_raw if lag_raw not in (None, "") else 60)
-    except Exception:
-        max_lag = 60
-    max_lag = max(0, max_lag)
-
-    if min_lag > max_lag:
-        min_lag = max_lag
-
-    reason_keys = _as_list(getattr(State, "returns_reason_keys", None), default=[1])
-    reason_probs = _as_list(getattr(State, "returns_reason_probs", None), default=[1.0])
-
-    # Normalize reasons if malformed (length mismatch, negatives, NaNs, non-positive sum).
-    try:
-        rk = [int(x) for x in reason_keys] if reason_keys else [1]
-    except Exception:
-        rk = [1]
-
-    try:
-        rp = [float(x) for x in reason_probs] if reason_probs else [1.0]
-    except Exception:
-        rp = [1.0]
-
-    if len(rp) != len(rk):
-        rp = [1.0] * len(rk)
-
-    rp_arr = np.asarray(rp, dtype=np.float64)
-    if rp_arr.size == 0 or (not np.all(np.isfinite(rp_arr))) or np.any(rp_arr < 0) or float(rp_arr.sum()) <= 0.0:
-        rp_arr = np.full(max(len(rk), 1), 1.0, dtype=np.float64)
-
+    # Read config values from State and pass directly to ReturnsConfig.
+    # Validation is handled by returns_builder._validate_cfg — bad values will
+    # raise clear errors rather than being silently clamped.
     cfg = ReturnsConfig(
         enabled=True,
-        return_rate=rr,
-        min_lag_days=min_lag,
-        max_lag_days=max_lag,
-        reason_keys=rk,
-        reason_probs=rp_arr.tolist(),
+        return_rate=float(getattr(State, "returns_rate", 0.0) or 0.0),
+        min_lag_days=int(getattr(State, "returns_min_lag_days", 0) or 0),
+        max_lag_days=int(getattr(State, "returns_max_lag_days", 60) or 60),
+        reason_keys=_as_list(getattr(State, "returns_reason_keys", None), default=[1]),
+        reason_probs=_as_list(getattr(State, "returns_reason_probs", None), default=[1.0]),
     )
 
     returns_seed = int(chunk_seed) ^ 0x5A5A_1234
@@ -322,6 +275,9 @@ _ASSISTED_HOUR_W = np.array(
 )
 
 
+_HOUR_WEIGHTS = [_RETAIL_HOUR_W, _DIGITAL_HOUR_W, _BUSINESS_HOUR_W, _ASSISTED_HOUR_W]
+
+
 def _normalize_prob(w: np.ndarray) -> np.ndarray:
     w = np.asarray(w, dtype=np.float64)
     w = np.where(np.isfinite(w) & (w > 0), w, 0.0)
@@ -339,6 +295,20 @@ def _sample_hour_weighted_minute(rng: np.random.Generator, size: int, hour_w: np
     hours = rng.choice(24, size=size, p=p).astype(np.int32)
     mins = rng.integers(0, 60, size=size, dtype=np.int32)
     return (hours * 60 + mins).astype(np.int16, copy=False)
+
+
+def _sample_time_keys_by_profile(
+    rng: np.random.Generator,
+    prof: np.ndarray,
+    size: int,
+) -> np.ndarray:
+    """Sample minute-of-day TimeKey values based on channel profile codes (0-3)."""
+    out = np.empty(size, dtype=np.int16)
+    for code, weights in enumerate(_HOUR_WEIGHTS):
+        mask = prof == code
+        if mask.any():
+            out[mask] = _sample_hour_weighted_minute(rng, int(mask.sum()), weights)
+    return out
 
 
 def _profile_lut_from_dim() -> Optional[np.ndarray]:
@@ -442,19 +412,7 @@ def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
             per_order_sc = sc_np[first]
             prof = profile_lut[np.clip(per_order_sc.astype(np.int64), 0, profile_lut.shape[0] - 1)]
 
-            per_order_time = np.empty(n_orders, dtype=np.int16)
-            m0 = prof == 0
-            if m0.any():
-                per_order_time[m0] = _sample_hour_weighted_minute(rng, int(m0.sum()), _RETAIL_HOUR_W)
-            m1 = prof == 1
-            if m1.any():
-                per_order_time[m1] = _sample_hour_weighted_minute(rng, int(m1.sum()), _DIGITAL_HOUR_W)
-            m2 = prof == 2
-            if m2.any():
-                per_order_time[m2] = _sample_hour_weighted_minute(rng, int(m2.sum()), _BUSINESS_HOUR_W)
-            m3 = prof == 3
-            if m3.any():
-                per_order_time[m3] = _sample_hour_weighted_minute(rng, int(m3.sum()), _ASSISTED_HOUR_W)
+            per_order_time = _sample_time_keys_by_profile(rng, prof, n_orders)
 
             per_order_arr = pa.array(per_order_time, type=pa.int16())
             time_col = pc.take(per_order_arr, enc.indices)
@@ -475,20 +433,7 @@ def _ensure_time_key_on_lines(table: pa.Table, *, seed: int) -> pa.Table:
             sc_col = sc_col.combine_chunks()
         sc_np = np.asarray(sc_col.to_numpy(zero_copy_only=False), dtype=np.int16)
         prof = profile_lut[np.clip(sc_np.astype(np.int64), 0, profile_lut.shape[0] - 1)]
-        out = np.empty(table.num_rows, dtype=np.int16)
-
-        m0 = prof == 0
-        if m0.any():
-            out[m0] = _sample_hour_weighted_minute(rng, int(m0.sum()), _RETAIL_HOUR_W)
-        m1 = prof == 1
-        if m1.any():
-            out[m1] = _sample_hour_weighted_minute(rng, int(m1.sum()), _DIGITAL_HOUR_W)
-        m2 = prof == 2
-        if m2.any():
-            out[m2] = _sample_hour_weighted_minute(rng, int(m2.sum()), _BUSINESS_HOUR_W)
-        m3 = prof == 3
-        if m3.any():
-            out[m3] = _sample_hour_weighted_minute(rng, int(m3.sum()), _ASSISTED_HOUR_W)
+        out = _sample_time_keys_by_profile(rng, prof, table.num_rows)
 
         time_col = pa.array(out, type=pa.int16())
     else:

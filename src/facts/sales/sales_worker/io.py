@@ -9,6 +9,9 @@ import pyarrow as pa
 
 from ..sales_logic import State
 
+# NOTE: Hard Arrow imports are intentional here. io.py is only ever used in
+# contexts where Arrow is already required (worker processes), so lazy-loading
+# would add complexity without benefit.
 import pyarrow.compute as pc
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
@@ -81,7 +84,6 @@ def normalize_to_schema(
             f"Expected:\n{expected}\n\nGot:\n{table.schema}"
         )
 
-    arrays = []
     cast_safe = bool(getattr(State, "cast_safe", True))
     arrays = []
     for field in expected:
@@ -258,8 +260,6 @@ def _ensure_year_month_if_needed_for_table(
 
 
 def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
-    import pyarrow.compute as pc  # type: ignore
-
     if "IsOrderDelayed" in table.column_names:
         idx = table.schema.get_field_index("IsOrderDelayed")
         table = table.set_column(
@@ -270,22 +270,16 @@ def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
     return table
 
 
-def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str] = None, is_chunk: Optional[bool] = None) -> None:
+def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str] = None, is_chunk: bool = False) -> None:
     tn = table_name or "Sales"
     expected = _expected_schema(tn)
-
-    if is_chunk is None:
-        # Heuristic: worker chunk files are typically written via output_paths.chunk_path()
-        # and contain a part identifier.
-        p = str(path).lower()
-        is_chunk = (".part" in p) or ("chunk" in p) or ("parts" in p)
 
     write_stats_chunks = bool(getattr(State, "write_statistics_chunks", False))
     write_stats_merged = bool(getattr(State, "write_statistics", True))
     cfg = ChunkIOConfig(
         compression=getattr(State, "compression", "snappy"),
         row_group_size=int(getattr(State, "row_group_size", 1_000_000)),
-        write_statistics=write_stats_chunks if bool(is_chunk) else write_stats_merged,
+        write_statistics=write_stats_chunks if is_chunk else write_stats_merged,
     )
 
     need_ym = _schema_needs_year_month(expected)

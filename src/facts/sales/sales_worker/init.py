@@ -10,10 +10,10 @@ from ..output_paths import (
     TABLE_SALES,
     TABLE_SALES_ORDER_DETAIL,
     TABLE_SALES_ORDER_HEADER,
+    TABLE_SALES_RETURN,
 )
 from ..sales_logic import bind_globals
 from .schemas import build_worker_schemas
-from ..output_paths import TABLE_SALES_RETURN
 
 
 EMPLOYEE_KEY_MIN_NON_MANAGER = 40_000_000
@@ -118,17 +118,12 @@ def infer_T_from_date_pool(date_pool: Any) -> int:
     return int(np.unique(dp.astype("datetime64[M]")).size)
 
 
-# back-compat aliases (keep older imports stable)
-_build_buckets_from_brand_key = lambda brand_key: build_buckets_from_key(brand_key, max_key=int(np.asarray(brand_key, dtype=np.int64).max()) if np.asarray(brand_key).size else None)
-
-# Prefer direct names in new code.
-_int_or = int_or
-_float_or = float_or
-_str_or = str_or
-_as_int64 = as_int64
-_as_f64 = as_f64
-_dense_map = dense_map
-_infer_T_from_date_pool = infer_T_from_date_pool
+# back-compat alias (keep older imports stable)
+def _build_buckets_from_brand_key(brand_key) -> list:
+    """Back-compat alias for build_buckets_from_key. Prefer direct call in new code."""
+    arr = np.asarray(brand_key, dtype=np.int64)
+    max_key = int(arr.max()) if arr.size > 0 else None
+    return build_buckets_from_key(brand_key, max_key=max_key)
 
 
 # ---------------------------------------------------------------------

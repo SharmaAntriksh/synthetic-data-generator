@@ -50,13 +50,13 @@ def iter_imap_unordered(
         initargs=initargs,
         maxtasksperchild=spec.maxtasksperchild,
     ) as pool:
-        pending = []
-        start_times = {}
+        pending: set = set()
+        start_times: dict = {}
 
         try:
             for i, t in enumerate(tasks):
                 ar = pool.apply_async(task_fn, (t,))
-                pending.append(ar)
+                pending.add(ar)
                 start_times[ar] = time.monotonic()
 
             while pending:
@@ -71,7 +71,7 @@ def iter_imap_unordered(
                 ready = [ar for ar in pending if ar.ready()]
                 if ready:
                     for ar in ready:
-                        pending.remove(ar)
+                        pending.discard(ar)
                         start_times.pop(ar, None)
                         yield ar.get()
                     continue
