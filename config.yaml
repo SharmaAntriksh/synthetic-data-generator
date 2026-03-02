@@ -31,11 +31,11 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 200154
+  total_rows: 5001500
   chunk_size: 2000000
   max_lines_per_order: 5
   
-  file_format: "csv"          # csv | parquet | deltaparquet
+  file_format: "parquet"          # csv | parquet | deltaparquet
   sales_output: "sales"           # sales | sales_order | both
   write_delta: true
   delta_output_folder: "./data/fact_out/delta"
@@ -395,3 +395,22 @@ exchange_rates:
       start: "2009-01-01"
       end: "2025-11-18"        # optional (ignored if use_global_dates=true)
     seed: null
+# ---------------------------------------------------------------------
+# BUDGET
+# ---------------------------------------------------------------------
+budget:
+  enabled: true
+  report_currency: "USD"
+  scenarios:
+    Low: -0.03
+    Medium: 0.00
+    High: 0.05
+  growth_caps:
+    high: 0.30
+    low: -0.20
+  weights:
+    local: 0.60
+    category: 0.30
+    global: 0.10
+  default_backcast_growth: 0.05
+  return_rate_cap: 0.30

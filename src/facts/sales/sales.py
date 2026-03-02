@@ -24,6 +24,14 @@ from .output_paths import (
     TABLE_SALES_RETURN,
 )
 
+# Budget streaming aggregation (lazy import to avoid hard dependency)
+try:
+    from src.facts.budget.lookups import build_budget_lookups
+    from src.facts.budget.accumulator import BudgetAccumulator
+    _BUDGET_AVAILABLE = True
+except ImportError:
+    _BUDGET_AVAILABLE = False
+
 
 @dataclass(frozen=True)
 class TableOutputs:
@@ -899,6 +907,35 @@ def generate_sales_fact(
         salesperson_roles=salesperson_roles,
     )
 
+    # ------------------------------------------------------------
+    # Budget streaming aggregation (optional)
+    # ------------------------------------------------------------
+    budget_cfg = cfg.get("budget") if isinstance(cfg.get("budget"), dict) else {}
+    budget_enabled = _BUDGET_AVAILABLE and bool(budget_cfg.get("enabled", False))
+    budget_acc = None  # type: Optional[BudgetAccumulator]
+
+    if budget_enabled:
+        try:
+            budget_lookups = build_budget_lookups(parquet_folder_p)
+            # Pass dense arrays to workers via worker_cfg (tiny — few KB, pickle fine)
+            worker_cfg["budget_enabled"] = True
+            worker_cfg["budget_store_to_country"] = budget_lookups["budget_store_to_country"]
+            worker_cfg["budget_product_to_cat"] = budget_lookups["budget_product_to_cat"]
+            worker_cfg["parquet_folder"] = str(parquet_folder_p)
+
+            budget_acc = BudgetAccumulator(
+                country_labels=budget_lookups["budget_country_labels"],
+                category_labels=budget_lookups["budget_category_labels"],
+            )
+            info("Budget streaming aggregation: enabled")
+        except Exception as exc:
+            info(f"Budget streaming aggregation: disabled ({type(exc).__name__}: {exc})")
+            budget_enabled = False
+            budget_acc = None
+            worker_cfg["budget_enabled"] = False
+    else:
+        worker_cfg["budget_enabled"] = False
+
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)
     created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
     created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
@@ -909,7 +946,13 @@ def generate_sales_fact(
         - str (legacy 'sales' mode): path
         - dict(table_name -> write_result): multi-table modes
             write_result is str for csv/parquet, or {"part":..., "rows":...} for delta
+            May also contain _budget_agg / _returns_agg (popped before recording).
         """
+
+        # ---- Extract budget micro-aggregates (if present) ----
+        if budget_acc is not None and isinstance(r, dict):
+            budget_acc.add_sales(r.pop("_budget_agg", None))
+            budget_acc.add_returns(r.pop("_returns_agg", None))
 
         def _chunk_tag(path_like: str) -> str:
             b = os.path.basename(path_like)
@@ -1060,11 +1103,11 @@ def generate_sales_fact(
             raise RuntimeError(f"No delta parts found for any table. {msg}")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest) if return_manifest else created_files
+        return (created_files, manifest, budget_acc) if return_manifest else created_files
 
     if file_format == "csv":
         manifest = _build_sales_manifest()
-        return (created_files, manifest) if return_manifest else created_files
+        return (created_files, manifest, budget_acc) if return_manifest else created_files
 
     if file_format == "parquet":
         if merge_parquet:
@@ -1109,6 +1152,6 @@ def generate_sales_fact(
                 info("Merge parquet: none")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest) if return_manifest else created_files
+        return (created_files, manifest, budget_acc) if return_manifest else created_files
 
     raise ValueError(f"Unknown file_format: {file_format}")

@@ -126,6 +126,14 @@ class State:
     # --------------------------------------------------------------
     # Mappings
     # --------------------------------------------------------------
+
+    # --------------------------------------------------------------
+    # Budget streaming aggregation (worker-side lookups)
+    # --------------------------------------------------------------
+    budget_enabled = None
+    budget_store_to_country = None   # dense int32 array: StoreKey -> country_id
+    budget_product_to_cat = None     # dense int32 array: ProductKey -> category_id
+    
     store_to_geo_arr = None
     geo_to_currency_arr = None
 

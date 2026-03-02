@@ -708,6 +708,11 @@ def init_sales_worker(worker_cfg: dict) -> None:
         models_cfg=models_cfg if isinstance(models_cfg, dict) else None,
     )
 
+    # ---- Budget lookups (already built in main process, passed as flat keys) ----
+    budget_enabled = bool(worker_cfg.get("budget_enabled", False))
+    budget_store_to_country = worker_cfg.get("budget_store_to_country")
+    budget_product_to_cat = worker_cfg.get("budget_product_to_cat")
+
     bind_globals(
         {
             "product_np": product_np,
@@ -771,5 +776,10 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "salesperson_effective_by_store": salesperson_effective_by_store,
             "salesperson_by_store_month": salesperson_by_store_month,
             "salesperson_global_pool": salesperson_global_pool,
+
+            "budget_enabled": budget_enabled,
+            "budget_store_to_country": budget_store_to_country,
+            "budget_product_to_cat": budget_product_to_cat,
+
         }
     )

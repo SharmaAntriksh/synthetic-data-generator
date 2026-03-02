@@ -25,6 +25,13 @@ from .init import int_or
 from .io import _write_csv, _write_parquet_table
 from .returns_builder import ReturnsConfig, RETURNS_REQUIRED_DETAIL_COLS, build_sales_returns_from_detail
 
+# Budget streaming aggregation (lazy import to avoid hard dependency)
+try:
+    from src.facts.budget.micro_agg import micro_aggregate_sales, micro_aggregate_returns
+    _BUDGET_AGG_AVAILABLE = True
+except ImportError:
+    _BUDGET_AGG_AVAILABLE = False
+
 Task = Tuple[int, int, Any]  # (idx, batch_size, seed)
 TaskArgs = Union[Task, Sequence[Task]]
 
@@ -454,9 +461,8 @@ def _ensure_salesperson_employee_key_effective(table: pa.Table, *, seed: int) ->
       after their assignment ended (e.g., an assignment ending 2024-08-29 still used in 2025).
 
     Strategy:
-      - If SalesOrderNumber exists: sample ONE salesperson per order (constant within order),
-        using StoreKey + OrderDate to filter eligible employees in that store for that date.
-      - Else: sample one salesperson per (StoreKey, OrderDate) group to avoid O(rows) Python loops.
+      Resolve per unique (StoreKey, OrderDate) pair (~29K), then batch-sample and broadcast.
+      When SalesOrderNumber exists, employee is constant within each order.
 
     If no assignment map is available (State.salesperson_effective_by_store), the table is returned unchanged.
     """
@@ -480,79 +486,115 @@ def _ensure_salesperson_employee_key_effective(table: pa.Table, *, seed: int) ->
 
     rng = np.random.default_rng(int(seed))
 
-    def _pick_for(store_k: int, day: np.datetime64) -> int:
-        rec = eff.get(int(store_k))
-        if rec is None:
-            return -1
+    out_emp = table.column("SalesPersonEmployeeKey").to_numpy(zero_copy_only=False).astype("int64", copy=True)
 
-        emp, startD, endD, w = rec
-        # Ensure comparable dtypes
-        d = np.datetime64(day, "D")
+    # ---- Resolve at (store, date) grain then broadcast ----
+    # Step 1: If orders exist, reduce from row-level to order-level first
+    has_orders = "SalesOrderNumber" in table.column_names
+
+    if has_orders:
+        # Dictionary-encode to get order indices (O(n), no sort)
+        order_col = table["SalesOrderNumber"]
+        if isinstance(order_col, pa.ChunkedArray):
+            order_col = order_col.combine_chunks()
+        enc = pc.dictionary_encode(order_col)
+        n_orders = len(enc.dictionary)
+        order_inv = np.asarray(enc.indices.to_numpy(zero_copy_only=False), dtype=np.int64)
+
+        # First-row index per order for (store, date) lookup
+        first = np.full(n_orders, order_inv.size, dtype=np.int64)
+        pos = np.arange(order_inv.size, dtype=np.int64)
+        np.minimum.at(first, order_inv, pos)
+        first[first == order_inv.size] = 0
+
+        # Order-level store and date
+        ord_store = store[first]
+        ord_date = odD[first]
+    else:
+        # No orders: work at row level, but resolve per (store, date) pair
+        ord_store = store
+        ord_date = odD
+        n_orders = len(store)
+        order_inv = None  # no broadcast needed
+
+    # Step 2: Find unique (store, date) pairs using bincount-friendly encoding
+    day_i64 = ord_date.astype("datetime64[D]").astype("int64")
+    # Composite key: store * day_range + day_offset
+    day_min = int(day_i64.min())
+    day_range = int(day_i64.max()) - day_min + 1
+    store_max = int(ord_store.max()) + 1
+    sd_key = ord_store * day_range + (day_i64 - day_min)
+
+    sd_uniq, sd_inv = np.unique(sd_key, return_inverse=True)
+    n_pairs = sd_uniq.size
+
+    # Decode back to store/date
+    pair_store = (sd_uniq // day_range).astype(np.int64)
+    pair_day64 = (sd_uniq % day_range + day_min)
+
+    # Step 3: For each unique (store, date), resolve eligible pool once
+    # Count how many orders/rows map to each pair
+    pair_counts = np.bincount(sd_inv, minlength=n_pairs).astype(np.int64)
+
+    # Pre-allocate output for order-level employee keys
+    ord_emp = np.full(n_orders, -1, dtype=np.int64)
+
+    # Sort by pair index so we can slice contiguous ranges (no per-pair mask scan)
+    pair_order = np.argsort(sd_inv, kind="mergesort")
+    pair_starts = np.zeros(n_pairs + 1, dtype=np.int64)
+    np.cumsum(pair_counts, out=pair_starts[1:])
+
+    for i in range(n_pairs):
+        sk = int(pair_store[i])
+        rec = eff.get(sk)
+        if rec is None:
+            continue
+
+        emp_arr, startD, endD, w_arr = rec
+        d = np.datetime64(int(pair_day64[i]), "D")
 
         ok = (startD <= d) & (d <= endD)
         if not bool(ok.any()):
-            return -1
+            continue
 
-        emp2 = np.asarray(emp[ok], dtype=np.int64)
-        w2 = np.asarray(w[ok], dtype=np.float64)
+        emp2 = np.asarray(emp_arr[ok], dtype=np.int64)
+        w2 = np.asarray(w_arr[ok], dtype=np.float64)
 
         # Never emit Store Manager keys (30,000,000..39,999,999)
         non_mgr = (emp2 < 30_000_000) | (emp2 >= 40_000_000)
         if not bool(non_mgr.any()):
-            return -1
+            continue
 
         emp2 = emp2[non_mgr]
         w2 = w2[non_mgr]
 
         sw = float(w2.sum())
+        count = int(pair_counts[i])
+
+        # Batch-sample all orders/rows at this (store, date) in one call
         if sw <= 1e-12:
-            return int(emp2[int(rng.integers(0, emp2.size))])
-
-        p = w2 / sw
-        return int(emp2[int(rng.choice(emp2.size, p=p))])
-
-    n = table.num_rows
-    out_emp = table.column("SalesPersonEmployeeKey").to_numpy(zero_copy_only=False).astype("int64", copy=True)
-
-    if "SalesOrderNumber" in table.column_names:
-        so = table.column("SalesOrderNumber").to_numpy(zero_copy_only=False).astype("int64", copy=False)
-        order = np.argsort(so, kind="mergesort")
-        so_sorted = so[order]
-        starts = np.flatnonzero(np.r_[True, so_sorted[1:] != so_sorted[:-1]])
-        ends = np.r_[starts[1:], so_sorted.size]
-
-        for s, e in zip(starts, ends):
-            idx = order[int(s):int(e)]
-            if idx.size == 0:
-                continue
-            i0 = int(idx[0])
-            emp_k = _pick_for(int(store[i0]), odD[i0])
-            if emp_k >= 0:
-                out_emp[idx] = emp_k
-    else:
-        # Group by (StoreKey, OrderDate[D]) to avoid per-row Python loop when orders are not present.
-        day_i64 = odD.astype("int64", copy=False)
-        keys = np.empty(n, dtype=[("s", "i8"), ("d", "i8")])
-        keys["s"] = store
-        keys["d"] = day_i64
-        uniq, inv = np.unique(keys, return_inverse=True)
-        picked = np.empty(uniq.shape[0], dtype="int64")
-        for i in range(uniq.shape[0]):
-            store_k = int(uniq["s"][i])
-            d = np.datetime64(int(uniq["d"][i]), "D")
-            picked[i] = _pick_for(store_k, d)
-        # Only overwrite where we successfully picked
-        m = picked[inv]
-        ok = m >= 0
-        out_emp[ok] = m[ok]
-
-    cols = []
-    for name in table.column_names:
-        if name == "SalesPersonEmployeeKey":
-            cols.append(pa.array(out_emp, type=pa.int64()))
+            picked = emp2[rng.integers(0, emp2.size, size=count)]
         else:
-            cols.append(table.column(name))
-    return pa.Table.from_arrays(cols, names=list(table.column_names))
+            p = w2 / sw
+            picked = emp2[rng.choice(emp2.size, size=count, p=p)]
+
+        # Assign to the orders/rows belonging to this pair (contiguous slice)
+        s, e = int(pair_starts[i]), int(pair_starts[i + 1])
+        ord_emp[pair_order[s:e]] = picked
+
+    # Step 4: Broadcast from order-level to row-level
+    if has_orders:
+        # Broadcast order-level picks to all rows of each order
+        row_emp = ord_emp[order_inv]
+        valid = row_emp >= 0
+        out_emp[valid] = row_emp[valid]
+    else:
+        valid = ord_emp >= 0
+        out_emp[valid] = ord_emp[valid]
+
+    # Step 5: Rebuild table with updated column
+    idx = table.schema.get_field_index("SalesPersonEmployeeKey")
+    return table.set_column(idx, "SalesPersonEmployeeKey", pa.array(out_emp, type=pa.int64()))
 
 
 def build_header_from_detail(detail: pa.Table) -> pa.Table:
@@ -629,6 +671,80 @@ def build_header_from_detail(detail: pa.Table) -> pa.Table:
     return pa.Table.from_arrays(cols, names=names)
 
 
+def _budget_enabled() -> bool:
+    """Check if budget streaming aggregation is active for this worker."""
+    return (
+        _BUDGET_AGG_AVAILABLE
+        and bool(getattr(State, "budget_enabled", False))
+        and getattr(State, "budget_store_to_country", None) is not None
+        and getattr(State, "budget_product_to_cat", None) is not None
+    )
+
+
+def _maybe_budget_agg(detail_table: pa.Table) -> Optional[Dict[str, Any]]:
+    """Compute budget micro-aggregate from a detail chunk. Returns None if disabled."""
+    if not _budget_enabled():
+        return None
+    # Requires SalesChannelKey on the detail table (added by _ensure_sales_channel_key_on_lines)
+    if "SalesChannelKey" not in detail_table.column_names:
+        return None
+    return micro_aggregate_sales(
+        detail_table,
+        store_to_country=State.budget_store_to_country,
+        product_to_cat=State.budget_product_to_cat,
+    )
+
+
+def _maybe_returns_agg(
+    returns_table: Optional[pa.Table],
+    detail_table: pa.Table,
+) -> Optional[Dict[str, Any]]:
+    """Compute returns micro-aggregate from a returns chunk. Returns None if disabled."""
+    if not _budget_enabled():
+        return None
+    if returns_table is None or returns_table.num_rows == 0:
+        return None
+    return micro_aggregate_returns(
+        returns_table, detail_table,
+        store_to_country=State.budget_store_to_country,
+        product_to_cat=State.budget_product_to_cat,
+    )
+
+
+def _attach_budget(
+    result: Any,
+    budget_agg: Optional[Dict[str, Any]],
+    returns_agg: Optional[Dict[str, Any]],
+    table_name_fallback: str = TABLE_SALES,
+) -> Any:
+    """
+    Attach budget micro-aggregates to a worker result.
+
+    Normalizes bare str/dict results into a dict so the main process can
+    pop _budget_agg / _returns_agg without breaking existing result handling.
+
+    If budget is disabled (both aggs are None), returns the original result untouched
+    to preserve backward compatibility for non-budget runs.
+    """
+    if budget_agg is None and returns_agg is None:
+        return result
+
+    # Normalize: bare string path -> dict
+    if isinstance(result, str):
+        result = {table_name_fallback: result}
+
+    if not isinstance(result, dict):
+        # Unexpected type — don't break the pipeline, just skip budget
+        return result
+
+    if budget_agg is not None:
+        result["_budget_agg"] = budget_agg
+    if returns_agg is not None:
+        result["_returns_agg"] = returns_agg
+
+    return result
+
+
 def _worker_task(args):
     tasks, single = normalize_tasks(args)
     results = []
@@ -668,6 +784,9 @@ def _worker_task(args):
         if not isinstance(detail_table, pa.Table):
             raise TypeError("chunk_builder must return pyarrow.Table")
 
+        # ---- Budget micro-aggregate (computed once from enriched detail_table) ----
+        budget_agg = _maybe_budget_agg(detail_table)
+
         mode = _mode()
 
         if mode in {"sales_order", "both"}:
@@ -697,13 +816,15 @@ def _worker_task(args):
             sales_out = _project_for_table(TABLE_SALES, sales_table)
 
             if returns_table is None:
-                results.append(_write_table(TABLE_SALES, idx_i, sales_out))
+                result = _write_table(TABLE_SALES, idx_i, sales_out)
+                results.append(_attach_budget(result, budget_agg, None, TABLE_SALES))
                 continue
 
             out: Dict[str, Any] = {TABLE_SALES: _write_table(TABLE_SALES, idx_i, sales_out)}
             returns_out = _project_for_table(TABLE_SALES_RETURN, returns_table)  # type: ignore[arg-type]
             out[TABLE_SALES_RETURN] = _write_table(TABLE_SALES_RETURN, idx_i, returns_out)  # type: ignore[arg-type]
-            results.append(out)
+            returns_agg = _maybe_returns_agg(returns_table, detail_table)
+            results.append(_attach_budget(out, budget_agg, returns_agg))
             continue
 
         out: Dict[str, Any] = {}
@@ -729,6 +850,7 @@ def _worker_task(args):
                 TABLE_SALES_RETURN, idx_i, _project_for_table(TABLE_SALES_RETURN, returns_table)  # type: ignore[arg-type]
             )
 
-        results.append(out)
+        returns_agg = _maybe_returns_agg(returns_table, detail_table)
+        results.append(_attach_budget(out, budget_agg, returns_agg))
 
     return results[0] if single else results
