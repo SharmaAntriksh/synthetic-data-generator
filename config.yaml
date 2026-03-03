@@ -31,7 +31,7 @@ sales:
   parquet_folder: "./data/parquet_dims"
   out_folder: "./data/fact_out"
 
-  total_rows: 10015000
+  total_rows: 1001500
   chunk_size: 1000000
   max_lines_per_order: 5
   
@@ -78,7 +78,7 @@ returns:
 # ---------------------------------------------------------------------
 products:
 
-  num_products: 433800
+  num_products: 43380
   active_ratio: 0.94
   seed: 42
 
@@ -149,13 +149,13 @@ products:
 # CUSTOMERS
 # ---------------------------------------------------------------------
 customers:
-  total_customers: 1488320
+  total_customers: 14883
   active_ratio: 0.90
 
   pct_india: 10
   pct_us: 51
   pct_eu: 39
-  pct_org: 10
+  pct_org: 1
 
   names_folder: "./data/customer_names"
 

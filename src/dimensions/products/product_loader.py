@@ -513,6 +513,158 @@ def _enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int) -> pd
     rw = np.where(bt == "Premium", 90, np.where(bt == "Mainstream", 60, 30))
     out["ReturnWindowDays"] = pd.Series(rw, index=out.index).astype("int32")
 
+    # --- Sourcing & Compliance ---
+    _COUNTRY_OF_ORIGIN = ["China", "USA", "Germany", "India", "Vietnam", "Mexico", "Japan", "Taiwan"]
+    _COO_PROBS_BY_MATERIAL = {
+        "Steel":      [0.30, 0.15, 0.20, 0.10, 0.05, 0.05, 0.10, 0.05],
+        "Aluminum":   [0.35, 0.10, 0.15, 0.10, 0.05, 0.10, 0.10, 0.05],
+        "Plastic":    [0.40, 0.10, 0.10, 0.10, 0.15, 0.10, 0.03, 0.02],
+        "Cotton":     [0.20, 0.05, 0.05, 0.30, 0.25, 0.05, 0.05, 0.05],
+        "Wood":       [0.25, 0.15, 0.10, 0.10, 0.20, 0.10, 0.05, 0.05],
+    }
+    _COO_DEFAULT_PROBS = [0.35, 0.12, 0.10, 0.12, 0.12, 0.08, 0.06, 0.05]
+
+    u_coo = _base_uniform(b_u64, seed, 0x1A1A1A1A)[inv]
+    mat_vals = out["Material"].astype(str).to_numpy()
+    coo = np.empty(N, dtype=object)
+    assigned = np.zeros(N, dtype=bool)
+    for mat_key, probs in _COO_PROBS_BY_MATERIAL.items():
+        mask = (~assigned) & (mat_vals == mat_key)
+        if mask.any():
+            cum = np.cumsum(probs)
+            idx = np.searchsorted(cum, u_coo[mask])
+            idx = np.clip(idx, 0, len(_COUNTRY_OF_ORIGIN) - 1)
+            coo[mask] = np.array(_COUNTRY_OF_ORIGIN)[idx]
+            assigned[mask] = True
+    if (~assigned).any():
+        cum = np.cumsum(_COO_DEFAULT_PROBS)
+        idx = np.searchsorted(cum, u_coo[~assigned])
+        idx = np.clip(idx, 0, len(_COUNTRY_OF_ORIGIN) - 1)
+        coo[~assigned] = np.array(_COUNTRY_OF_ORIGIN)[idx]
+    out["CountryOfOrigin"] = pd.Series(coo, index=out.index, dtype="string")
+
+    u_sus = _base_uniform(b_u64, seed, 0x2A2A2A2A)[inv]
+    tier_num = np.where(bt == "Premium", 0.7, np.where(bt == "Mainstream", 0.5, 0.3))
+    mat_eco_bonus = np.where(
+        np.isin(mat_vals, ["Cotton", "Wood", "Ceramic"]), 0.15, 0.0
+    )
+    sus_raw = (tier_num + mat_eco_bonus + u_sus * 0.3) / 1.15 * 100
+    out["SustainabilityScore"] = pd.Series(np.clip(sus_raw, 1, 100).astype("int32"), index=out.index)
+
+    _CERT_TYPES = ["CE", "UL", "ISO", "FDA", "None"]
+    u_cert = _base_uniform(b_u64, seed, 0x3A3A3A3A)[inv]
+    cert = np.where(
+        u_cert < 0.25, "CE",
+        np.where(u_cert < 0.45, "UL",
+        np.where(u_cert < 0.60, "ISO",
+        np.where(u_cert < 0.68, "FDA", "None"))),
+    )
+    out["CertificationType"] = pd.Series(cert, index=out.index, dtype="string")
+
+    u_asm = _base_uniform(b_u64, seed, 0x4A4A4A4A)[inv]
+    asm_prob = np.where(size_bucket[inv] == 2, 0.55, np.where(size_bucket[inv] == 1, 0.25, 0.08))
+    out["AssemblyRequired"] = pd.Series(
+        np.where(u_asm < asm_prob, "Yes", "No"), index=out.index, dtype="string"
+    )
+
+    # --- Inventory & Supply Chain ---
+    u_pop = _base_uniform(b_u64, seed, 0x5A5A5A5A)[inv]
+    tier_pop_base = np.where(bt == "Premium", 0.6, np.where(bt == "Value", 0.3, 0.45))
+    pop_raw = (tier_pop_base + u_pop * 0.5) / 1.1 * 100
+    PopularityScore = np.clip(pop_raw, 1, 100).astype("int32")
+    out["PopularityScore"] = pd.Series(PopularityScore, index=out.index)
+
+    up_arr = pd.to_numeric(out.get("UnitPrice", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
+    velocity_est = np.clip(PopularityScore / 100.0, 0.01, 1.0)
+    abc_value = up_arr * velocity_est
+    abc_rank = np.argsort(np.argsort(-abc_value))
+    abc_n = len(abc_rank)
+    abc_class = np.where(
+        abc_rank < abc_n * 0.20, "A",
+        np.where(abc_rank < abc_n * 0.50, "B", "C"),
+    )
+    out["ABCClassification"] = pd.Series(abc_class, index=out.index, dtype="string")
+
+    lead_arr = out["LeadTimeDays"].to_numpy(dtype=np.int64, copy=False)
+    u_rop = _base_uniform(b_u64, seed, 0x6A6A6A6A)[inv]
+    rop_base = velocity_est * 30 * (lead_arr / 10.0)
+    ReorderPointUnits = np.clip((rop_base * (0.5 + u_rop)).astype("int64"), 10, 5000)
+    out["ReorderPointUnits"] = pd.Series(ReorderPointUnits, index=out.index).astype("int32")
+
+    u_ss = _base_uniform(b_u64, seed, 0x7A7A7A7A)[inv]
+    SafetyStockUnits = np.clip((ReorderPointUnits * (0.2 + u_ss * 0.3)).astype("int64"), 5, 1000)
+    out["SafetyStockUnits"] = pd.Series(SafetyStockUnits, index=out.index).astype("int32")
+
+    _PKG_TYPES = ["Box", "Blister", "Bag", "Bulk", "Pallet"]
+    u_pkg = _base_uniform(b_u64, seed, 0x8A8A8A8A)[inv]
+    pkg = np.where(
+        size_bucket[inv] == 2,
+        np.where(u_pkg < 0.40, "Pallet", np.where(u_pkg < 0.75, "Bulk", "Box")),
+        np.where(
+            size_bucket[inv] == 1,
+            np.where(u_pkg < 0.60, "Box", np.where(u_pkg < 0.85, "Bag", "Blister")),
+            np.where(u_pkg < 0.35, "Blister", np.where(u_pkg < 0.70, "Box", "Bag")),
+        ),
+    )
+    out["PackagingType"] = pd.Series(pkg, index=out.index, dtype="string")
+
+    # --- Market & Customer Perception ---
+    u_rat = _base_uniform(b_u64, seed, 0x9A9A9A9A)[inv]
+    defect_arr = out["DefectRateBase"].to_numpy(dtype=np.float64, copy=False)
+    rat_base = 4.2 - defect_arr * 30
+    tier_rat_bonus = np.where(bt == "Premium", 0.3, np.where(bt == "Value", -0.2, 0.0))
+    AvgCustomerRating = np.clip(
+        np.round((rat_base + tier_rat_bonus + u_rat * 0.6), 1), 1.0, 5.0
+    )
+    out["AvgCustomerRating"] = pd.Series(AvgCustomerRating, index=out.index).astype("float32")
+
+    u_rev = _base_uniform(b_u64, seed, 0xAA1A1A1A)[inv]
+    review_base = PopularityScore * 50 + u_rev * 2000
+    ReviewCount = np.clip(review_base.astype("int64"), 0, 10000)
+    out["ReviewCount"] = pd.Series(ReviewCount, index=out.index).astype("int32")
+
+    u_cpi = _base_uniform(b_u64, seed, 0xBB1B1B1B)[inv]
+    cpi_base = np.where(bt == "Premium", 1.05, np.where(bt == "Value", 0.85, 0.95))
+    CompetitorPriceIndex = np.clip(
+        np.round(cpi_base + (u_cpi - 0.5) * 0.3, 2), 0.70, 1.40
+    )
+    out["CompetitorPriceIndex"] = pd.Series(CompetitorPriceIndex, index=out.index).astype("float32")
+
+    cost_arr = pd.to_numeric(out.get("UnitCost", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
+    margin_pct = np.where(up_arr > 0, (up_arr - cost_arr) / up_arr, 0.0)
+    margin_cat = np.where(
+        margin_pct < 0.15, "Low",
+        np.where(margin_pct < 0.30, "Standard",
+        np.where(margin_pct < 0.50, "High", "Premium")),
+    )
+    out["MarginCategory"] = pd.Series(margin_cat, index=out.index, dtype="string")
+
+    # --- Fun / Beginner-Friendly ---
+    u_gift = _base_uniform(b_u64, seed, 0xCC1C1C1C)[inv]
+    gift_prob = np.where(size_bucket[inv] == 0, 0.70, np.where(size_bucket[inv] == 1, 0.50, 0.20))
+    out["IsGiftEligible"] = pd.Series(
+        np.where(u_gift < gift_prob, "Yes", "No"), index=out.index, dtype="string"
+    )
+
+    pop_rank = np.argsort(np.argsort(-PopularityScore))
+    out["IsBestseller"] = pd.Series(
+        np.where(pop_rank < N * 0.15, "Yes", "No"), index=out.index, dtype="string"
+    )
+
+    sus_arr = out["SustainabilityScore"].to_numpy(dtype=np.int32, copy=False)
+    out["IsEcoFriendly"] = pd.Series(
+        np.where(sus_arr > 70, "Yes", "No"), index=out.index, dtype="string"
+    )
+
+    _GENDER_MALE_KW = ("men", " male", "boy", "gentleman")
+    _GENDER_FEMALE_KW = ("women", "woman", " female", "girl", "lady", "ladies")
+    tg = pd.Series("Unisex", index=out.index, dtype="string")
+    for kw in _GENDER_FEMALE_KW:
+        tg = tg.mask((tg == "Unisex") & text_l.str.contains(kw, regex=False), "Female")
+    for kw in _GENDER_MALE_KW:
+        tg = tg.mask((tg == "Unisex") & text_l.str.contains(kw, regex=False), "Male")
+    out["TargetGender"] = tg
+
     return out
 
 
@@ -599,7 +751,9 @@ def load_product_dimension(config, output_folder: Path):
     force = bool(p.get("_force_regenerate", False))
     if not force and not should_regenerate("products", version_key, parquet_path):
         skip("Products up-to-date; skipping regeneration")
-        return pd.read_parquet(parquet_path), False
+        profile_path = output_folder / "product_profile.parquet"
+        profile_df = pd.read_parquet(profile_path) if profile_path.exists() else pd.DataFrame()
+        return pd.read_parquet(parquet_path), profile_df, False
 
     # Base catalog
     base_df = load_contoso_products(output_folder)
@@ -679,6 +833,31 @@ def load_product_dimension(config, output_folder: Path):
 
     df["IsActiveInSales"] = df["ProductKey"].isin(active_product_set).astype("int64")
 
+    # --- Date-dependent enrichment (needs LaunchDate + global dates) ---
+    global_start, global_end = _resolve_global_date_range(config)
+    launch_ts = pd.to_datetime(df["LaunchDate"])
+    days_since_launch = (global_end - launch_ts).dt.days.to_numpy(dtype=np.float64, copy=False)
+    months_since_launch = days_since_launch / 30.44
+
+    df["IsNewArrival"] = pd.Series(
+        np.where(months_since_launch <= 6, "Yes", "No"),
+        index=df.index, dtype="string",
+    )
+
+    pop_arr = df["PopularityScore"].to_numpy(dtype=np.float64, copy=False)
+    pop_norm = pop_arr / 100.0
+    stage = np.where(
+        months_since_launch <= 6, "New",
+        np.where(
+            (months_since_launch <= 18) & (pop_norm > 0.4), "Growing",
+            np.where(
+                (months_since_launch <= 36) | (pop_norm > 0.3), "Mature",
+                "Declining",
+            ),
+        ),
+    )
+    df["ProductLifecycleStage"] = pd.Series(stage, index=df.index, dtype="string")
+
     # Minimal required fields for Sales
     required = [
         "ProductKey",
@@ -688,22 +867,36 @@ def load_product_dimension(config, output_folder: Path):
         "UnitPrice",
         "UnitCost",
         "IsActiveInSales",
-        "LaunchDate",
-        "LaunchDateKey",
-        "DiscontinuedDate",
-        "DiscontinuedDateKey",
-        "IsDiscontinued",
     ]
-    if sup_enabled:
-        required.append("SupplierKey")
 
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Missing required field(s) in Products: {missing}")
 
-    df.to_parquet(parquet_path, index=False)
+    # -----------------------------------------------------------------
+    # Split into Products (core) and ProductProfile (analytical)
+    # -----------------------------------------------------------------
+    _PRODUCTS_CORE_COLS = [
+        "ProductKey", "ProductCode", "ProductName", "ProductDescription",
+        "SubcategoryKey", "Brand", "Class", "Color",
+        "StockTypeCode", "StockType",
+        "UnitCost", "UnitPrice",
+        "BaseProductKey", "VariantIndex",
+        "IsActiveInSales",
+    ]
+
+    core_cols = [c for c in _PRODUCTS_CORE_COLS if c in df.columns]
+    profile_cols = ["ProductKey"] + [c for c in df.columns if c not in core_cols]
+
+    products_df = df[core_cols].copy()
+    profile_df = df[profile_cols].copy()
+
+    profile_path = output_folder / "product_profile.parquet"
+    products_df.to_parquet(parquet_path, index=False)
+    profile_df.to_parquet(profile_path, index=False)
+
     save_version("products", version_key, parquet_path)
-    return df, True
+    return products_df, profile_df, True
 
 
 def _version_key(p: dict) -> dict:
@@ -717,5 +910,5 @@ def _version_key(p: dict) -> dict:
         "active_ratio": p.get("active_ratio", 1.0),
         "lifecycle": p.get("lifecycle"),
         # bump whenever you add/remove enrichment columns (forces one regen)
-        "enrichment_v": 1,
+        "enrichment_v": 2,
     }

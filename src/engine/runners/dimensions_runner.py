@@ -162,7 +162,7 @@ DIM_SPECS: List[DimensionSpec] = [
         run_fn=run_customers,
         date_dependent=True,
         inject_global_dates=True,
-        outputs_all=("customers.parquet",),
+        outputs_all=("customers.parquet", "customer_profile.parquet", "organization_profile.parquet"),
     ),
 
     # 2.5) Customer Segments (depends on customers)
@@ -258,7 +258,7 @@ DIM_SPECS: List[DimensionSpec] = [
         deps=("suppliers",),
         force_also=("suppliers",),
         regenerated_from_return_key="_regenerated",
-        outputs_all=("products.parquet",),
+        outputs_all=("products.parquet", "product_profile.parquet"),
     ),
 
     # 6) Dates

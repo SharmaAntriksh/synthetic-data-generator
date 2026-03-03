@@ -481,11 +481,12 @@ def assign_person_names(
     h_last = hash_u64(keys_u64, int(seed), 29)
 
     # Normalize region codes: upper, fallback to default
-    def _norm_region(x: Any) -> str:
-        s = str(x).upper() if x is not None else ""
-        return s if s in pools.regions else default_region
-
-    region_norm = np.asarray([_norm_region(r) for r in region], dtype=object)
+    valid_codes = set(pools.regions.keys())
+    region_upper = np.array(
+        [str(r).upper() if r is not None else "" for r in region], dtype=object
+    )
+    is_valid = np.isin(region_upper, list(valid_codes))
+    region_norm = np.where(is_valid, region_upper, default_region).astype(object)
 
     for rc, salt_base in ((REGION_IN, 1000), (REGION_US, 2000), (REGION_EU, 3000), (REGION_AS, 4000)):
         if rc not in pools.regions:

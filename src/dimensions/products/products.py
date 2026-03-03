@@ -36,7 +36,7 @@ def generate_product_dimension(config, output_folder: Path):
         started = True
 
     # ---------------- Products ----------------
-    df_prod, regen_prod = load_product_dimension(config, output_folder)
+    df_prod, df_prod_profile, regen_prod = load_product_dimension(config, output_folder)
     if regen_prod and not started:
         info("Starting Product Dimension")
         started = True
@@ -47,6 +47,7 @@ def generate_product_dimension(config, output_folder: Path):
         "category": df_cat,
         "subcategory": df_sub,
         "product": df_prod,
+        "product_profile": df_prod_profile,
         "_regenerated": regenerated,
     }
 
