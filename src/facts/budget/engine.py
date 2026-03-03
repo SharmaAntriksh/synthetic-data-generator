@@ -106,11 +106,20 @@ def _jitter_pct(country: str, category: str, year: int) -> float:
 
 
 def _jitter_series(df: pd.DataFrame) -> pd.Series:
-    """Vectorized jitter over a DataFrame with Country, Category, BudgetYear."""
-    return df.apply(
-        lambda r: _jitter_pct(r["Country"], r["Category"], int(r["BudgetYear"])),
-        axis=1,
-    )
+    """
+    Jitter over a DataFrame with Country, Category, BudgetYear columns.
+
+    Builds composite key strings with vectorized pandas ops, then hashes
+    each unique key once via list comprehension — avoids per-row apply overhead.
+    """
+    keys = (
+        df["Country"] + "|" + df["Category"] + "|" + df["BudgetYear"].astype(str)
+    ).tolist()
+    values = [
+        ((int(hashlib.md5(k.encode()).hexdigest(), 16) % 401) - 200) / 10000.0
+        for k in keys
+    ]
+    return pd.Series(values, index=df.index, dtype=float)
 
 
 # ================================================================
@@ -202,14 +211,15 @@ def _compute_yearly_budget(
 
     combined = pd.concat([standard, backfill_same, backfill_prior], ignore_index=True)
 
+    # Jitter depends only on Country/Category/BudgetYear — compute once, reuse per scenario
+    combined["Jitter"] = _jitter_series(combined)
+
     # ---- Expand across scenarios ----
     rows = []
     for scenario_name, scenario_adj in bcfg.scenarios.items():
         s = combined.copy()
         s["Scenario"] = scenario_name
-        s["ScenarioAdj"] = scenario_adj
-        s["Jitter"] = _jitter_series(s)
-        s["BudgetGrowthPct"] = s["BaseGrowth"] + s["Jitter"] + s["ScenarioAdj"]
+        s["BudgetGrowthPct"] = s["BaseGrowth"] + s["Jitter"] + scenario_adj
         s["BudgetSalesAmount"] = s["SalesAmount"] * (1.0 + s["BudgetGrowthPct"])
         s["BudgetSalesQuantity"] = s["SalesQuantity"] * (1.0 + s["BudgetGrowthPct"])
         rows.append(s)
@@ -343,10 +353,11 @@ def _compute_monthly_budget(
     )
 
     # ---- 4. Build BudgetMonthStart date ----
-    budget_months["BudgetMonthStart"] = pd.to_datetime(
-        budget_months["BudgetYear"].astype(str) + "-"
-        + budget_months["Month"].astype(str).str.zfill(2) + "-01"
-    )
+    budget_months["BudgetMonthStart"] = pd.to_datetime({
+        "year":  budget_months["BudgetYear"],
+        "month": budget_months["Month"],
+        "day":   1,
+    })
 
     budget_months["BudgetMethod"] = "Monthly: yearly total x seasonal share"
 

@@ -34,45 +34,54 @@ def _delta_import_write_deltalake():
             ) from e2
 
 
+def _resolve_part_entry(
+    p: Union[str, dict],
+    parts_folder: Optional[str],
+) -> Optional[str]:
+    """
+    Resolve a single part entry (str path or dict with a ``"part"`` key) to
+    an absolute parquet file path.  Returns ``None`` if the entry is invalid
+    or the file does not exist.
+    """
+    if isinstance(p, dict):
+        name: str = p.get("part", "") or ""
+        if not name:
+            return None
+    else:
+        name = p
+
+    if os.path.isabs(name):
+        pf = name
+    elif parts_folder:
+        pf = os.path.join(parts_folder, name)
+    else:
+        raise ValueError("parts_folder is required when passing relative part names")
+
+    pf = os.path.abspath(pf)
+    return pf if (pf.endswith(".parquet") and os.path.exists(pf)) else None
+
+
 def _delta_resolve_part_files(
     *,
     parts_folder: Optional[str],
     parts: Optional[Iterable[Union[str, dict]]],
 ) -> List[str]:
-    part_files: List[str] = []
-
     if parts is not None:
+        result: List[str] = []
         for p in parts:
-            if isinstance(p, dict):
-                name = p.get("part")
-                if not name:
-                    continue
-                if os.path.isabs(name):
-                    pf = name
-                else:
-                    if not parts_folder:
-                        raise ValueError("parts_folder is required when passing relative part names")
-                    pf = os.path.join(parts_folder, name)
-                if os.path.exists(pf) and pf.endswith(".parquet"):
-                    part_files.append(os.path.abspath(pf))
-            elif isinstance(p, str):
-                pf = p
-                if not os.path.isabs(pf) and parts_folder:
-                    pf = os.path.join(parts_folder, pf)
-                pf = os.path.abspath(pf)
-                if os.path.exists(pf) and pf.endswith(".parquet"):
-                    part_files.append(pf)
-    else:
-        if not parts_folder or not os.path.exists(parts_folder):
-            raise FileNotFoundError(f"Parts folder not found: {parts_folder}")
-        part_files = sorted(
-            os.path.join(parts_folder, f)
-            for f in os.listdir(parts_folder)
-            if f.endswith(".parquet")
-        )
-        part_files = [os.path.abspath(p) for p in part_files]
+            resolved = _resolve_part_entry(p, parts_folder)
+            if resolved is not None:
+                result.append(resolved)
+        return result
 
-    return part_files
+    if not parts_folder or not os.path.exists(parts_folder):
+        raise FileNotFoundError(f"Parts folder not found: {parts_folder}")
+
+    return sorted(
+        os.path.join(parts_folder, f)
+        for f in os.listdir(parts_folder)
+        if f.endswith(".parquet")
+    )
 
 
 def _schema_fields_equal(schema_a, schema_b) -> bool:
@@ -141,6 +150,7 @@ def write_delta_from_parquet_parts(
     if not part_files:
         raise RuntimeError("No delta part files found.")
 
+    # Open the first file once and reuse the handle in the main loop.
     first_pf = pq.ParquetFile(part_files[0])
     canonical_schema = first_pf.schema_arrow
 
@@ -164,10 +174,10 @@ def write_delta_from_parquet_parts(
     info(f"[DELTA] Writing {len(part_files)} parts (Arrow -> Delta){suffix}")
 
     first = True
-    for pf_path in part_files:
-        pf = pq.ParquetFile(pf_path)
+    for i, pf_path in enumerate(part_files):
+        # Reuse the already-open handle for the first file; open fresh for the rest.
+        pf = first_pf if i == 0 else pq.ParquetFile(pf_path)
 
-        # Determine total rows from metadata (single open, fixes double-read)
         num_rows = 0
         try:
             if pf.metadata is not None:
@@ -179,7 +189,6 @@ def write_delta_from_parquet_parts(
         needs_projection = not _schema_fields_equal(pf.schema_arrow, canonical_schema)
 
         if needs_sort:
-            # Must read the full table to sort — read from the already-opened ParquetFile
             table = pf.read()
             if needs_projection:
                 table = project_table_to_schema(
@@ -196,7 +205,6 @@ def write_delta_from_parquet_parts(
                 first=first, pcols=pcols, max_partitions=max_partitions,
             )
         else:
-            # Stream row-group-by-row-group to limit memory usage
             for rg in range(pf.num_row_groups):
                 table = pf.read_row_group(rg)
                 if needs_projection:
@@ -207,12 +215,10 @@ def write_delta_from_parquet_parts(
                     write_deltalake, delta_output_abs, table,
                     first=first, pcols=pcols, max_partitions=max_partitions,
                 )
-                # Only the very first write across all files is "overwrite"
                 first = False
 
         first = False
 
-    # Verify delta output before cleanup
     if cleanup_parts_folder and parts is None and parts_folder_abs:
         delta_log = os.path.join(delta_output_abs, "_delta_log")
         if not os.path.isdir(delta_log):
@@ -242,23 +248,20 @@ def write_delta_partitioned(
     sort_small_parts: bool = True,
     sort_row_limit: int = 2_000_000,
     table_name: str | None = None,
-):
-    # Preserve current behavior:
-    # - if table_name is None: partition cols missing => error
-    # - else: drop missing partition cols and continue
+) -> DeltaWriteResult:
     on_missing = "error" if table_name is None else "drop"
 
-    write_delta_from_parquet_parts(
+    return write_delta_from_parquet_parts(
         parts_folder=parts_folder,
         delta_output_folder=delta_output_folder,
         partition_cols=partition_cols,
         parts=parts,
         table_name=table_name,
-        validate_schema=_validate_required,          # Sales policy
-        on_missing_partition_cols=on_missing,        # Sales policy
+        validate_schema=_validate_required,
+        on_missing_partition_cols=on_missing,
         sort_small_parts=sort_small_parts,
         sort_row_limit=sort_row_limit,
-        cleanup_parts_folder=(parts is None),        # matches current folder-mode cleanup
+        cleanup_parts_folder=(parts is None),
     )
 
 

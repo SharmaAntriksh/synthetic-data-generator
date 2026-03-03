@@ -7,10 +7,16 @@ import numpy as np
 from ..globals import State
 
 
-# ---------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Module-level constants
+# ---------------------------------------------------------------------------
+_MIN_PROFIT: float = 0.01   # 1 cent; keeps net margin positive after rounding
+
+
+# ---------------------------------------------------------------------------
 # Caching (models_cfg is stable during a run; avoid re-parsing every call)
-# ---------------------------------------------------------------------
-_MD_CACHE_KEY = None
+# ---------------------------------------------------------------------------
+_MD_CACHE_KEY = None   # holds a reference to the cached models dict (not just its id)
 _MD_CACHE_VAL = None
 
 
@@ -63,8 +69,10 @@ def _cfg_markdown():
     global _MD_CACHE_KEY, _MD_CACHE_VAL
 
     models = getattr(State, "models_cfg", None) or {}
-    key = id(models)
-    if _MD_CACHE_KEY == key and _MD_CACHE_VAL is not None:
+
+    # Use object identity (``is``) rather than id() so the reference is held
+    # and the cache cannot silently match a different dict at the same address.
+    if _MD_CACHE_KEY is models and _MD_CACHE_VAL is not None:
         return _MD_CACHE_VAL
 
     pricing = models.get("pricing", {}) or {}
@@ -82,18 +90,14 @@ def _cfg_markdown():
             {"kind": "amt",  "value": 25.0, "weight": 0.05},
         ]
 
-    max_pct = float(md.get("max_pct_of_price", 0.50))
-    max_pct = float(np.clip(max_pct, 0.0, 1.0))
-
-    min_net = float(md.get("min_net_price", 0.01))
-    min_net = max(0.0, min_net)
-
+    max_pct = float(np.clip(float(md.get("max_pct_of_price", 0.50)), 0.0, 1.0))
+    min_net = max(0.0, float(md.get("min_net_price", 0.01)))
     allow_neg_margin = bool(md.get("allow_negative_margin", False))
 
     # Sanitize ladder into compact arrays
-    kind_codes = []
-    values = []
-    weights = []
+    kind_codes: list[int] = []
+    values: list[float] = []
+    weights: list[float] = []
 
     for item in ladder:
         if not isinstance(item, dict):
@@ -130,8 +134,8 @@ def _cfg_markdown():
     s = float(probs.sum())
     probs = probs / s if s > 0 else np.array([1.0], dtype=np.float64)
 
-    kind_codes = np.asarray(kind_codes, dtype=np.int8)
-    values = np.asarray(values, dtype=np.float64)
+    kind_codes_arr = np.asarray(kind_codes, dtype=np.int8)
+    values_arr = np.asarray(values, dtype=np.float64)
 
     # Appearance
     appearance = md.get("appearance", {}) or {}
@@ -144,8 +148,8 @@ def _cfg_markdown():
     bands = appearance.get("discount_bands")
     if not isinstance(bands, list) or len(bands) == 0:
         bands = [
-            {"max": 50, "step": 0.50},
-            {"max": 200, "step": 1},
+            {"max": 50,   "step": 0.50},
+            {"max": 200,  "step": 1},
             {"max": 1000, "step": 5},
             {"max": 5000, "step": 10},
             {"max": 1e18, "step": 25},
@@ -164,8 +168,8 @@ def _cfg_markdown():
 
     out = (
         enabled,
-        kind_codes,
-        values,
+        kind_codes_arr,
+        values_arr,
         probs,
         max_pct,
         min_net,
@@ -176,14 +180,14 @@ def _cfg_markdown():
         band_step,
     )
 
-    _MD_CACHE_KEY = key
+    _MD_CACHE_KEY = models
     _MD_CACHE_VAL = out
     return out
 
 
-# ----------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Helpers
-# ----------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def _as_f64(x, n: int) -> np.ndarray:
     a = np.asarray(x, dtype=np.float64)
@@ -199,7 +203,6 @@ def _step_for_price(up: np.ndarray, band_max: np.ndarray, band_step: np.ndarray)
     """
     # band_max is sorted ascending
     idx = np.searchsorted(band_max, up, side="left")
-    # If up > last max (shouldn't happen if last max is huge), clamp to last
     idx = np.minimum(idx, band_step.size - 1)
     step = band_step[idx]
     return np.where(step > 0.0, step, 0.01)
@@ -214,12 +217,13 @@ def _quantize_discount(
 ) -> np.ndarray:
     """
     Quantize discount to clean increments chosen per-row based on UnitPrice,
-    then apply a ".99" ending (e.g., 5.00 -> 4.99, 10.00 -> 9.99) for demo-friendly visuals.
+    then apply a ".99" ending (e.g. 5.00 -> 4.99, 10.00 -> 9.99) for
+    demo-friendly visuals.
 
     Note:
-      - 0 stays 0
-      - This makes discounts slightly smaller, so it will NOT violate max_pct/min_net constraints
-        (those constraints are re-applied after quantization anyway).
+      - 0 stays 0.
+      - The .99 ending makes discounts slightly smaller, so it will NOT violate
+        max_pct/min_net constraints (those are re-applied after quantization).
     """
     step = _step_for_price(up, band_max, band_step)
 
@@ -228,14 +232,30 @@ def _quantize_discount(
     else:
         q = np.floor(disc / step) * step
 
-    # Apply ".99" ending for non-zero discounts
-    q = np.where(q > 0.0, q, 0.0)
+    # Apply ".99" ending: non-zero quantized discounts get 1 cent shaved off
+    # so the resulting net price ends in .99 / .01 (e.g. 9.99, 19.99).
+    q = np.where(q > 0.0, q - 0.01, 0.0)
     return q
 
 
-# ----------------------------------------------------------------
+def _apply_disc_constraints(
+    disc: np.ndarray,
+    up: np.ndarray,
+    max_pct: float,
+    min_net: float,
+) -> np.ndarray:
+    """Apply max_pct, min_net, and upper-bound constraints to a discount array."""
+    disc = np.maximum(disc, 0.0)
+    disc = np.minimum(disc, up * max_pct)
+    if min_net > 0.0:
+        disc = np.minimum(disc, np.maximum(up - min_net, 0.0))
+    disc = np.minimum(disc, up)
+    return disc
+
+
+# ---------------------------------------------------------------------------
 # Main pricing entry point
-# ----------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def compute_prices(
     rng,
@@ -269,15 +289,16 @@ def compute_prices(
     pp = float(price_pressure) if price_pressure is not None else 1.0
     if not np.isfinite(pp) or pp <= 0.0:
         pp = 1.0
-    up *= pp
-    uc *= pp
+    if pp != 1.0:
+        up = up * pp
+        uc = uc * pp
 
     # Optional per-row jitter (defaults OFF)
     j = float(row_price_jitter_pct) if row_price_jitter_pct is not None else 0.0
     if np.isfinite(j) and j > 0.0:
         mult = rng.uniform(1.0 - j, 1.0 + j, size=n).astype(np.float64, copy=False)
-        up *= mult
-        uc *= mult
+        up = up * mult
+        uc = uc * mult
 
     up = np.maximum(up, 0.0)
     uc = np.maximum(uc, 0.0)
@@ -301,63 +322,43 @@ def compute_prices(
     if enabled:
         idx = rng.choice(kind_codes.size, size=n, replace=True, p=probs)
 
-        kc = kind_codes[idx]      # 0/1/2
-        v = values[idx]           # pct or amt
+        kc = kind_codes[idx]   # 0/1/2
+        v  = values[idx]       # pct or amt
 
-        # Vectorized ladder application
-        # pct: up * v
-        disc = np.where(kc == 1, up * v, disc)
-        # amt: v
-        disc = np.where(kc == 2, v, disc)
+        disc = np.where(kc == 1, up * v, disc)   # pct
+        disc = np.where(kc == 2, v,      disc)   # amt
         # none: keep 0
 
-    # Base constraints before quantization
-    disc = np.maximum(disc, 0.0)
-    disc = np.minimum(disc, up * max_pct)
-    if min_net > 0.0:
-        disc = np.minimum(disc, np.maximum(up - min_net, 0.0))
-    disc = np.minimum(disc, up)
+    disc = _apply_disc_constraints(disc, up, max_pct, min_net)
 
-    # Quantize to clean increments
     if enabled and quantize_discount:
         disc = _quantize_discount(disc, up, band_max, band_step, discount_rounding)
-
-        # Re-apply constraints after quantization
-        disc = np.maximum(disc, 0.0)
-        disc = np.minimum(disc, up * max_pct)
-        if min_net > 0.0:
-            disc = np.minimum(disc, np.maximum(up - min_net, 0.0))
-        disc = np.minimum(disc, up)
+        disc = _apply_disc_constraints(disc, up, max_pct, min_net)
 
     net = np.maximum(up - disc, 0.0)
 
     # Invariants
     uc = np.minimum(uc, up)
     if not allow_neg_margin:
-        # Demo-friendly: avoid negative AND avoid exact break-even after rounding to cents.
-        MIN_PROFIT = 0.01  # 1 cent
-        uc = np.minimum(uc, np.maximum(net - MIN_PROFIT, 0.0))
+        uc = np.minimum(uc, np.maximum(net - _MIN_PROFIT, 0.0))
 
     # Round to cents for storage
-    up = np.round(up, 2)
-    uc = np.round(uc, 2)
+    up   = np.round(up,   2)
+    uc   = np.round(uc,   2)
     disc = np.round(disc, 2)
 
-    # Post-round safety (avoid rare disc>up due to rounding)
-    disc = np.minimum(disc, up)
-    if min_net > 0.0:
-        disc = np.minimum(disc, np.maximum(up - min_net, 0.0))
+    # Post-round safety (avoid rare disc > up due to rounding)
+    disc = _apply_disc_constraints(disc, up, max_pct, min_net)
 
     net = np.round(up - disc, 2)
     net = np.maximum(net, 0.0)
 
     if not allow_neg_margin:
-        MIN_PROFIT = 0.01  # 1 cent
-        uc = np.minimum(uc, np.maximum(net - MIN_PROFIT, 0.0))
+        uc = np.minimum(uc, np.maximum(net - _MIN_PROFIT, 0.0))
 
     return {
         "final_unit_price": up,
-        "final_unit_cost": uc,
-        "discount_amt": disc,
-        "final_net_price": net,
+        "final_unit_cost":  uc,
+        "discount_amt":     disc,
+        "final_net_price":  net,
     }

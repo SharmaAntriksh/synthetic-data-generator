@@ -139,6 +139,28 @@ def _iter_month_groups(inv: np.ndarray):
 
 
 # ---------------------------------------------------------------
+# Weighted row selection
+# ---------------------------------------------------------------
+
+def _select_keep(rng, row_indices: np.ndarray, target: int, row_sigma: float) -> np.ndarray:
+    """
+    Return up to `target` indices chosen from `row_indices` via lognormal-weighted
+    sampling without replacement.  Returns the full array when target >= size.
+    """
+    if row_indices.size <= target:
+        return row_indices
+
+    weights = rng.lognormal(mean=0.0, sigma=row_sigma, size=row_indices.size)
+    total = weights.sum()
+
+    if total > 0.0 and np.isfinite(total):
+        weights /= total
+        return rng.choice(row_indices, size=target, replace=False, p=weights)
+
+    return rng.choice(row_indices, size=target, replace=False)
+
+
+# ---------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------
 
@@ -169,18 +191,8 @@ def apply_activity_thinning(rng, order_dates):
     # ---- Dataset-size scaling for volatility ----
     size_scale = min(1.0, float(n) / cfg["size_scale_threshold"])
 
-    # ---- Bucket rows by calendar month ----
-    months = np.asarray(order_dates).astype("datetime64[M]", copy=False)
-    unique_months, inv = np.unique(months, return_inverse=True)
-    n_months = unique_months.size
-
-    if n_months == 0:
-        return np.ones(n, dtype=bool)
-
-    avg_per_month = max(1, n // max(1, n_months))
-
     # ---- Small vs large dataset parameters ----
-    is_small = (n < cfg["split_threshold"])
+    is_small = n < cfg["split_threshold"]
     low = cfg["bounds_small_low"] if is_small else cfg["bounds_large_low"]
     high = cfg["bounds_small_high"] if is_small else cfg["bounds_large_high"]
     row_sigma = cfg["row_noise_small"] if is_small else cfg["row_noise_large"]
@@ -189,11 +201,41 @@ def apply_activity_thinning(rng, order_dates):
     inertia = cfg["month_inertia"]
     baseline = cfg["monthly_baseline"]
 
-    # ---- Month-of-year lookup (0–11) for each unique month ----
+    months = np.asarray(order_dates).astype("datetime64[M]", copy=False)
+
+    # ---- Fast path: single-month chunk (most common call pattern) ----
+    # Avoids np.unique (O(n log n)) and the grouping argsort entirely.
+    m0 = months[0]
+    if (months == m0).all():
+        mn = int(m0.astype("int64") % 12)
+        volatility = float(rng.lognormal(mean=0.0, sigma=vol_sigma_eff)) if vol_sigma_eff > 0.0 else 1.0
+        raw_target = n * float(baseline[mn]) * volatility
+        target = int(np.clip(raw_target, n * low, n * high))
+
+        keep_mask = np.zeros(n, dtype=bool)
+        chosen = _select_keep(rng, np.arange(n), target, row_sigma)
+        keep_mask[chosen] = True
+
+        if cfg["preserve_row_count"] and chosen.size < n:
+            off = np.flatnonzero(~keep_mask)
+            add_count = n - chosen.size
+            if add_count > 0:
+                keep_mask[rng.choice(off, size=add_count, replace=False)] = True
+
+        return keep_mask
+
+    # ---- Multi-month path ----
+    unique_months, inv = np.unique(months, return_inverse=True)
+    n_months = unique_months.size
+    avg_per_month = max(1, n // n_months)
+
+    # Month-of-year lookup (0–11) for each unique month
     month_of_year = (unique_months.astype("int64") % 12).astype(np.int64)
 
     keep_mask = np.zeros(n, dtype=bool)
-    prev_target: float | None = None
+    # Track the pre-clamp smoothed value so the EMA state is not anchored to
+    # clamp boundaries when seasonal bounds are hit.
+    ema_state: float | None = None
 
     for m_idx, row_indices in _iter_month_groups(inv):
         if row_indices.size == 0:
@@ -202,54 +244,28 @@ def apply_activity_thinning(rng, order_dates):
         mn = int(month_of_year[m_idx])
 
         # Month-level volatility (lognormal centered at 1.0)
-        volatility = (float(rng.lognormal(mean=0.0, sigma=vol_sigma_eff))
-                      if vol_sigma_eff > 0.0 else 1.0)
-
+        volatility = float(rng.lognormal(mean=0.0, sigma=vol_sigma_eff)) if vol_sigma_eff > 0.0 else 1.0
         raw_target = avg_per_month * float(baseline[mn]) * volatility
 
-        # Exponential smoothing
-        if prev_target is None or inertia <= 0.0:
+        # Exponential smoothing over unclamped signal
+        if ema_state is None or inertia <= 0.0:
             smoothed = raw_target
         else:
-            smoothed = inertia * prev_target + (1.0 - inertia) * raw_target
+            smoothed = inertia * ema_state + (1.0 - inertia) * raw_target
 
-        # Clamp to bounds and convert to int
+        ema_state = smoothed  # preserve pre-clamp value for next iteration
         target = int(np.clip(smoothed, avg_per_month * low, avg_per_month * high))
-        prev_target = float(target)
 
-        # If month has fewer rows than target, keep all
-        if row_indices.size <= target:
-            keep_mask[row_indices] = True
-            continue
-
-        # Weighted sampling without replacement
-        weights = rng.lognormal(mean=0.0, sigma=row_sigma, size=row_indices.size)
-        weights = weights.astype(np.float64, copy=False)
-        total = float(weights.sum())
-
-        if total > 0.0 and np.isfinite(total):
-            weights /= total
-            chosen = rng.choice(row_indices, size=target, replace=False, p=weights)
-        else:
-            chosen = rng.choice(row_indices, size=target, replace=False)
-
+        chosen = _select_keep(rng, row_indices, target, row_sigma)
         keep_mask[chosen] = True
 
-    # ---- Legacy balancing: force exactly n rows kept ----
+    # ---- Balancing: restore full row count when preserve_row_count is set ----
     if cfg["preserve_row_count"]:
         kept = int(keep_mask.sum())
         if kept < n:
             off_indices = np.flatnonzero(~keep_mask)
             add_count = min(n - kept, off_indices.size)
             if add_count > 0:
-                add = rng.choice(off_indices, size=add_count, replace=False)
-                keep_mask[add] = True
-        elif kept > n:
-            # Shouldn't happen (mask ⊆ [0,n)), but guard defensively.
-            on_indices = np.flatnonzero(keep_mask)
-            drop_count = min(kept - n, on_indices.size)
-            if drop_count > 0:
-                drop = rng.choice(on_indices, size=drop_count, replace=False)
-                keep_mask[drop] = False
+                keep_mask[rng.choice(off_indices, size=add_count, replace=False)] = True
 
     return keep_mask

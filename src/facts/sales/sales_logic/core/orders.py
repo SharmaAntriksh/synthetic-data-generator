@@ -30,6 +30,10 @@ def build_month_demand(
     return seasonal.astype(np.float64, copy=False)
 
 
+# Precomputed once at import time; build_orders uses this directly.
+_MONTH_DEMAND: np.ndarray = build_month_demand()
+
+
 def _safe_normalized_prob(p):
     """
     Normalize p to sum to 1, handling None, zeros, and NaNs.
@@ -40,15 +44,11 @@ def _safe_normalized_prob(p):
     p = np.asarray(p, dtype=np.float64)
     if p.size == 0:
         return None
+    p = np.where(np.isfinite(p) & (p > 0.0), p, 0.0)
     s = float(p.sum())
-    if not np.isfinite(s) or s <= 0.0:
+    if s <= 0.0:
         return None
-    p = p / s
-    p = np.clip(p, 0.0, 1.0)
-    s2 = float(p.sum())
-    if s2 <= 0.0:
-        return None
-    return p / s2
+    return p / s
 
 
 def build_orders(
@@ -62,7 +62,7 @@ def build_orders(
     _len_date_pool: int,
     _len_customers: int,
     *,
-    order_id_start: int | None = None,  # NEW
+    order_id_start: int | None = None,
 ):
 
     """
@@ -78,7 +78,7 @@ def build_orders(
       - order_dates (len n, datetime64[D])
       - if skip_cols=False: order_ids_int, line_num, order_ids_str
     """
-    if skip_cols not in (True, False):
+    if not isinstance(skip_cols, bool):
         raise RuntimeError("skip_cols must be a boolean")
 
     n = int(n)
@@ -170,15 +170,13 @@ def build_orders(
     # ------------------------------------------------------------
     # Lines per order (vectorized)
     # ------------------------------------------------------------
-    month_demand = build_month_demand()
 
     # month-of-year (0-11)
     months = (order_dates.astype("datetime64[M]").astype(np.int64) % 12).astype(np.int64, copy=False)
-    month_factor = month_demand[months]
+    month_factor = _MONTH_DEMAND[months]
     holiday_boost = month_factor > 1.10
 
     # Discrete outcomes (respect max_lines_per_order)
-    # max_lines already computed earlier in build_orders
     if max_lines == 1:
         k = np.array([1], dtype=np.int16)
         base_p = np.array([1.0], dtype=np.float64)
@@ -198,7 +196,6 @@ def build_orders(
             holiday_p /= holiday_p.sum()
         else:
             # Add a small "long tail" probability mass for 6..max_lines
-            # (keeps 1..5 relative proportions nearly identical)
             base_tail_mass = 0.03   # ~3% of orders can be 6+ lines
             hol_tail_mass  = 0.06   # holidays: heavier baskets
 
@@ -210,67 +207,118 @@ def build_orders(
             holiday_p = np.concatenate([hol_p5 * (1.0 - hol_tail_mass), decay * hol_tail_mass])
 
     # Vectorized categorical sampling via inverse CDF:
-    # pick base/holiday cdf per order, then digitize U~[0,1)
     cdf_base = np.cumsum(base_p)
     cdf_hol = np.cumsum(holiday_p)
+
+    # Clamp the last CDF bucket to exactly 1.0 so that searchsorted never
+    # returns an index == len(k), which would be out of bounds.
+    cdf_base[-1] = 1.0
+    cdf_hol[-1] = 1.0
 
     u = rng.random(order_count)  # one uniform per order
     lines_per_order = np.empty(order_count, dtype=np.int16)
 
-    # base orders
     base_mask = ~holiday_boost
     if base_mask.any():
-        lines_per_order[base_mask] = k[np.searchsorted(cdf_base, u[base_mask], side="right")]
+        idx = np.searchsorted(cdf_base, u[base_mask], side="right")
+        lines_per_order[base_mask] = k[np.clip(idx, 0, len(k) - 1)]
     if holiday_boost.any():
-        lines_per_order[holiday_boost] = k[np.searchsorted(cdf_hol, u[holiday_boost], side="right")]
+        idx = np.searchsorted(cdf_hol, u[holiday_boost], side="right")
+        lines_per_order[holiday_boost] = k[np.clip(idx, 0, len(k) - 1)]
 
     repeats = lines_per_order.astype(np.int64, copy=False)
     expanded_len = int(repeats.sum())
 
     # ------------------------------------------------------------
-    # Ensure we create exactly `n` line rows WITHOUT creating a single
-    # giant order. Cap repeats and distribute adjustments across orders.
+    # Ensure we create exactly `n` line rows without creating a single
+    # giant order. Single-pass vectorized adjustment where possible,
+    # with a bounded loop fallback for residual corrections.
     # ------------------------------------------------------------
-
-    # Ensure feasibility: need at least ceil(n / max_lines) orders
-    min_orders = (int(n) + max_lines - 1) // max_lines
-    if order_count < min_orders:
-        order_count = int(min_orders)
-        # NOTE: if you change order_count here, you must also regenerate:
-        # - order_dates
-        # - order_ids_int
-        # - order_customers
-        # In practice, keep order_count calculation earlier consistent with max_lines.
-        # (Preferred: apply min_orders right after order_count is first computed.)
 
     delta = int(n) - int(expanded_len)
 
     if delta > 0:
-        need = delta
-        while need > 0:
-            candidates = np.flatnonzero(repeats < max_lines)
-            if candidates.size == 0:
-                raise RuntimeError(
-                    f"Need {need} more lines but all orders are at max_lines_per_order={max_lines}. "
-                    "Increase max_lines_per_order or increase order_count."
-                )
-            take = min(need, int(candidates.size))
-            chosen = rng.choice(candidates, size=take, replace=False)
+        # Need more lines: increment orders that are below max_lines
+        candidates = np.flatnonzero(repeats < max_lines)
+        if candidates.size == 0:
+            raise RuntimeError(
+                f"Need {delta} more lines but all orders are at max_lines_per_order={max_lines}. "
+                "Increase max_lines_per_order or increase order_count."
+            )
+
+        headroom = max_lines - repeats[candidates]
+        total_headroom = int(headroom.sum())
+
+        if total_headroom < delta:
+            raise RuntimeError(
+                f"Need {delta} more lines but only {total_headroom} headroom available. "
+                "Increase max_lines_per_order or increase order_count."
+            )
+
+        if delta <= candidates.size:
+            # Simple case: just pick 'delta' candidates and add 1 each
+            chosen = rng.choice(candidates, size=delta, replace=False)
             repeats[chosen] += 1
-            need -= take
+        else:
+            # Distribute proportionally: floor-fill then fix remainder
+            share = np.minimum(
+                np.floor(headroom * (delta / max(total_headroom, 1))).astype(np.int64),
+                headroom,
+            )
+            repeats[candidates] += share
+            remaining = delta - int(share.sum())
+
+            # Bounded cleanup loop for the small remainder
+            for _ in range(8):
+                if remaining <= 0:
+                    break
+                still_open = candidates[repeats[candidates] < max_lines]
+                if still_open.size == 0:
+                    break
+                take = min(remaining, int(still_open.size))
+                chosen = rng.choice(still_open, size=take, replace=False)
+                repeats[chosen] += 1
+                remaining -= take
 
     elif delta < 0:
+        # Need fewer lines: decrement orders that have > 1 line
         excess = -delta
-        while excess > 0:
-            candidates = np.flatnonzero(repeats > 1)
-            if candidates.size == 0:
-                raise RuntimeError(
-                    "Unable to reduce repeats to match n without violating min 1 line/order."
-                )
-            take = min(excess, int(candidates.size))
-            chosen = rng.choice(candidates, size=take, replace=False)
+        candidates = np.flatnonzero(repeats > 1)
+        if candidates.size == 0:
+            raise RuntimeError(
+                "Unable to reduce repeats to match n without violating min 1 line/order."
+            )
+
+        shrink_room = repeats[candidates] - 1
+        total_shrink = int(shrink_room.sum())
+
+        if excess <= candidates.size:
+            # Simple case: pick 'excess' candidates and subtract 1 each
+            chosen = rng.choice(candidates, size=excess, replace=False)
             repeats[chosen] -= 1
-            excess -= take
+        elif total_shrink >= excess:
+            # Distribute proportionally
+            share = np.minimum(
+                np.floor(shrink_room * (excess / max(total_shrink, 1))).astype(np.int64),
+                shrink_room,
+            )
+            repeats[candidates] -= share
+            remaining = excess - int(share.sum())
+
+            for _ in range(8):
+                if remaining <= 0:
+                    break
+                still_open = candidates[repeats[candidates] > 1]
+                if still_open.size == 0:
+                    break
+                take = min(remaining, int(still_open.size))
+                chosen = rng.choice(still_open, size=take, replace=False)
+                repeats[chosen] -= 1
+                remaining -= take
+        else:
+            raise RuntimeError(
+                "Unable to reduce repeats to match n without violating min 1 line/order."
+            )
 
     expanded_len = int(repeats.sum())
     if expanded_len != n:
@@ -291,7 +339,8 @@ def build_orders(
         + 1
     )
 
-        # Output
+    # ------------------------------------------------------------
+    # Output
     # ------------------------------------------------------------
     result = {
         "customer_keys": customer_keys.astype(np.int64, copy=False),
@@ -301,9 +350,6 @@ def build_orders(
     if not skip_cols:
         result["order_ids_int"] = sales_order_num_int
         result["line_num"] = line_num
-        # Keep for downstream compatibility (string conversion can be expensive but optional)
-        result["order_ids_str"] = sales_order_num_int.astype(str)
         result["_order_count"] = int(order_count)
-
 
     return result

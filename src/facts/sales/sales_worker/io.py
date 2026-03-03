@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Optional, Sequence, Tuple
 
 import numpy as np
@@ -90,8 +90,8 @@ def normalize_to_schema(
         col = table[field.name]
         if col.type != field.type:
             try:
-                # If projecting to a DECIMAL and source is floating, round to the target scale first
-                # to avoid float artifacts prior to cast.
+                # If projecting to a DECIMAL and source is floating, round to the target scale
+                # first to avoid float artifacts prior to cast.
                 if pa.types.is_decimal(field.type) and pa.types.is_floating(col.type):
                     col = pc.round(col, ndigits=int(field.type.scale))
                 col = pc.cast(col, field.type, safe=cast_safe)
@@ -125,7 +125,7 @@ def write_parquet_table(
         ensure_cols_fn=ensure_cols_fn,
     )
 
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
     writer = pq.ParquetWriter(
         path,
@@ -162,7 +162,7 @@ def write_csv_table(
     if postprocess is not None:
         table = postprocess(table)
 
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
 
     pacsv.write_csv(
         table,
@@ -191,15 +191,14 @@ def _schema_needs_year_month(expected: pa.Schema) -> bool:
 
 
 def _derive_year_month_from_int_order_date(order_date: pa.ChunkedArray) -> Tuple[np.ndarray, np.ndarray]:
-    x = order_date.combine_chunks().to_numpy(zero_copy_only=False)
-    x = np.asarray(x)
+    xi = order_date.combine_chunks().to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
 
-    if x.dtype.kind not in {"i", "u"}:
-        raise RuntimeError(f"OrderDate integer derivation expected int dtype, got {x.dtype}")
+    if xi.dtype.kind not in {"i", "u"}:
+        raise RuntimeError(f"OrderDate integer derivation expected int dtype, got {xi.dtype}")
 
-    xi = x.astype(np.int64, copy=False)
     if xi.size == 0:
-        return xi.astype(np.int16), xi.astype(np.int16)
+        empty = xi.astype(np.int16)
+        return empty, empty
 
     if np.any(xi == np.iinfo(np.int64).min):
         raise RuntimeError("OrderDate contains nulls; cannot derive Year/Month")
@@ -207,18 +206,19 @@ def _derive_year_month_from_int_order_date(order_date: pa.ChunkedArray) -> Tuple
     mx = int(np.max(xi))
     mn = int(np.min(xi))
 
-    if 19_000_000 <= mx <= 210_012_31 and 19_000_000 <= mn <= 210_012_31:
+    # YYYYMMDD integer range: 1900-01-01 (19_000_101) to 2100-12-31 (21_001_231)
+    if 19_000_101 <= mn and mx <= 21_001_231:
         year = (xi // 10_000).astype(np.int16, copy=False)
         month = ((xi // 100) % 100).astype(np.int16, copy=False)
         return year, month
 
-    if -100_000 <= mn <= 200_000 and -100_000 <= mx <= 200_000:
+    # Epoch-days integer range
+    if -100_000 <= mn and mx <= 200_000:
         epoch = np.datetime64("1970-01-01", "D")
-        dt = (epoch + xi.astype("timedelta64[D]")).astype("datetime64[D]", copy=False)
+        dt = (epoch + xi.astype("timedelta64[D]")).astype("datetime64[M]")
 
         year = (dt.astype("datetime64[Y]").astype(np.int32) + 1970).astype(np.int16)
-        months = dt.astype("datetime64[M]").astype(np.int32)
-        month = ((months % 12) + 1).astype(np.int16)
+        month = ((dt.astype(np.int32) % 12) + 1).astype(np.int16)
         return year, month
 
     raise RuntimeError(f"OrderDate integer format not recognized; min={mn} max={mx}")
@@ -236,7 +236,7 @@ def _ensure_year_month_if_needed_for_table(
     if ("Year" in table.column_names) and ("Month" in table.column_names):
         return table
 
-    policy = getattr(State, "date_cols_by_table", {}) or {}
+    policy = getattr(State, "date_cols_by_table") or {}
     candidates = policy.get(table_name) or ["DeliveryDate", "OrderDate"]
 
     usable: list[str] = []
@@ -270,6 +270,16 @@ def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
     return table
 
 
+def _build_ensure_fn(
+    tn: str,
+    expected: pa.Schema,
+) -> Optional[EnsureColsFn]:
+    """Return the year/month ensure callable if the schema requires it, else None."""
+    if not _schema_needs_year_month(expected):
+        return None
+    return lambda t: _ensure_year_month_if_needed_for_table(t, table_name=tn, expected_schema=expected)
+
+
 def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str] = None, is_chunk: bool = False) -> None:
     tn = table_name or "Sales"
     expected = _expected_schema(tn)
@@ -282,12 +292,7 @@ def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str
         write_statistics=write_stats_chunks if is_chunk else write_stats_merged,
     )
 
-    need_ym = _schema_needs_year_month(expected)
-    ensure_fn = (
-        (lambda t: _ensure_year_month_if_needed_for_table(t, table_name=tn, expected_schema=expected))
-        if need_ym
-        else None
-    )
+    ensure_fn = _build_ensure_fn(tn, expected)
 
     write_parquet_table(
         table,
@@ -296,7 +301,7 @@ def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str
         cfg=cfg,
         use_dictionary=_dict_cols(tn),
         table_name=tn,
-        ensure_cols=("Year", "Month") if need_ym else (),
+        ensure_cols=("Year", "Month") if ensure_fn else (),
         ensure_cols_fn=ensure_fn,
     )
 
@@ -304,21 +309,14 @@ def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str
 def _write_csv(table: pa.Table, path: str, *, table_name: Optional[str] = None) -> None:
     tn = table_name or "Sales"
     expected = _expected_schema(tn)
-
-    need_ym = _schema_needs_year_month(expected)
-
-    ensure_fn = (
-        (lambda t: _ensure_year_month_if_needed_for_table(t, table_name=tn, expected_schema=expected))
-        if need_ym
-        else None
-    )
+    ensure_fn = _build_ensure_fn(tn, expected)
 
     write_csv_table(
         table,
         path,
         expected_schema=expected,
         table_name=tn,
-        ensure_cols=("Year", "Month") if need_ym else (),
+        ensure_cols=("Year", "Month") if ensure_fn else (),
         ensure_cols_fn=ensure_fn,
         postprocess=_csv_postprocess_sales,
     )

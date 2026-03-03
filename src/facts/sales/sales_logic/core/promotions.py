@@ -43,27 +43,6 @@ def _sanitize_weights(promo_weight_all, promo_valid_glob):
     return w if w.sum() > 0.0 else None
 
 
-def _group_by_inverse(inv: np.ndarray):
-    """
-    Efficient grouping for inv codes:
-      inv: int array (len n) with values in [0..U-1]
-    Yields tuples (code, row_idx_array)
-    """
-    order = np.argsort(inv, kind="stable")
-    inv_sorted = inv[order]
-    if inv_sorted.size == 0:
-        return
-
-    # boundaries where code changes
-    cuts = np.flatnonzero(inv_sorted[1:] != inv_sorted[:-1]) + 1
-    starts = np.r_[0, cuts]
-    ends = np.r_[cuts, inv_sorted.size]
-
-    for s, e in zip(starts, ends):
-        code = int(inv_sorted[int(s)])
-        yield code, order[int(s):int(e)]
-
-
 # ----------------------------------------------------------------
 # Main promotion assignment
 # ----------------------------------------------------------------
@@ -135,35 +114,45 @@ def apply_promotions(
     # Group rows by unique date (fast path for month-sliced generation)
     # ------------------------------------------------------------
     unique_dates, inv = np.unique(order_dates, return_inverse=True)
+    U = unique_dates.size
 
-    # Precompute active promos per unique date: U x P comparisons
-    # U is typically <= 31 when month-sliced; safe & fast.
-    # active_u: list of index arrays of promos active that day
-    active_u = []
+    # Precompute active promo indices per unique date
+    # U is typically <= 31 when month-sliced; building lists is fast and avoids a U×P boolean matrix
+    active_indices_per_date = []
     for d in unique_dates:
         active = promo_valid_glob & (d >= promo_start_all) & (d <= promo_end_all)
-        idx = np.nonzero(active)[0]
-        active_u.append(idx)
+        active_indices_per_date.append(np.nonzero(active)[0])
 
-    # Assign per-group (date)
-    for code, rows in _group_by_inverse(inv):
-        idx = active_u[code]
+    # Precompute per-group row counts and contiguous offsets for scatter-free assignment
+    group_counts = np.bincount(inv, minlength=U).astype(np.int64)
+    group_order = np.argsort(inv, kind="mergesort")
+    group_starts = np.zeros(U + 1, dtype=np.int64)
+    np.cumsum(group_counts, out=group_starts[1:])
+
+    # Assign per unique-date group — one vectorized rng call per group
+    for code in range(U):
+        idx = active_indices_per_date[code]
         if idx.size == 0:
             continue
 
+        count = int(group_counts[code])
+        gs = int(group_starts[code])
+        ge = int(group_starts[code + 1])
+        rows = group_order[gs:ge]
+
         if weights is None:
             # uniform among active promos
-            chosen = idx[rng.integers(0, idx.size, size=rows.size)]
+            chosen = idx[rng.integers(0, idx.size, size=count)]
         else:
-            # weighted among active promos, vectorized via CDF + searchsorted
+            # weighted among active promos via CDF + searchsorted
             w = weights[idx]
             s = float(w.sum())
             if s <= 0.0:
-                chosen = idx[rng.integers(0, idx.size, size=rows.size)]
+                chosen = idx[rng.integers(0, idx.size, size=count)]
             else:
                 cdf = np.cumsum(w, dtype=np.float64)
                 cdf /= cdf[-1]
-                u = rng.random(rows.size)
+                u = rng.random(count)
                 j = np.searchsorted(cdf, u, side="right")
                 chosen = idx[np.minimum(j, idx.size - 1)]
 

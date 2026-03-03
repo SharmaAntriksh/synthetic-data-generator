@@ -89,11 +89,13 @@ def _sample_product_row_indices(
     Safe fallback:
       - If anything is missing/invalid -> uniform sampling over product_np (old behavior).
     """
+    n_int = int(n)
+    n_products = len(product_np)
+
     if not enabled:
-        return rng.integers(0, len(product_np), size=int(n)).astype("int64", copy=False)
+        return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
 
     # Prefer "active" buckets if we're using active_product_np upstream.
-    # If active buckets aren't provided, fall back to brand_to_row_idx and let the mx-guard validate alignment.
     if getattr(State, "active_product_np", None) is not None and product_np is State.active_product_np:
         brand_to_rows = getattr(State, "active_brand_to_row_idx", None)
         if brand_to_rows is None:
@@ -106,13 +108,13 @@ def _sample_product_row_indices(
         for b in brand_to_rows:
             if b is not None and len(b) > 0:
                 mx = max(mx, int(np.max(b)))
-        if mx >= len(product_np):
+        if mx >= n_products:
             brand_to_rows = None  # force uniform fallback
 
     brand_probs_by_month = _get_state_attr("brand_prob_by_month", default=None)
 
     if brand_to_rows is None or len(brand_to_rows) == 0:
-        return rng.integers(0, len(product_np), size=int(n)).astype("int64", copy=False)
+        return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
 
     B = int(len(brand_to_rows))
 
@@ -132,30 +134,46 @@ def _sample_product_row_indices(
     if p is None:
         avail = np.asarray([len(x) > 0 for x in brand_to_rows], dtype="float64")
         if float(avail.sum()) <= 0:
-            return rng.integers(0, len(product_np), size=int(n)).astype("int64", copy=False)
+            return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
         p = avail / float(avail.sum())
 
-    brand_ids = rng.choice(B, size=int(n), p=p)
+    brand_ids = rng.choice(B, size=n_int, p=p)
 
-    # Fill output by grouping same-brand rows (minimizes Python overhead)
-    out = np.empty(int(n), dtype="int64")
-
-    order = np.argsort(brand_ids)
-    b_sorted = brand_ids[order]
-
-    starts = np.flatnonzero(np.r_[True, b_sorted[1:] != b_sorted[:-1]])
-    ends = np.r_[starts[1:], b_sorted.size]
-
-    for s, e in zip(starts, ends):
-        b = int(b_sorted[int(s)])
+    # Build a flat index array + offsets for all brands to eliminate per-brand Python loop.
+    # This converts per-brand row lists into a single contiguous array for vectorized indexing.
+    flat_parts = []
+    offsets = np.zeros(B + 1, dtype="int64")
+    for b in range(B):
         bucket = brand_to_rows[b]
-        k = int(e - s)
-
-        if bucket is None or len(bucket) == 0:
-            out[order[s:e]] = rng.integers(0, len(product_np), size=k).astype("int64", copy=False)
+        if bucket is not None and len(bucket) > 0:
+            flat_parts.append(np.asarray(bucket, dtype="int64"))
+            offsets[b + 1] = offsets[b] + len(bucket)
         else:
-            sel = rng.integers(0, len(bucket), size=k).astype("int64", copy=False)
-            out[order[s:e]] = np.asarray(bucket, dtype="int64")[sel]
+            offsets[b + 1] = offsets[b]
+
+    if offsets[-1] == 0:
+        return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
+
+    flat_idx = np.concatenate(flat_parts) if flat_parts else np.empty(0, dtype="int64")
+
+    # Vectorized sampling: for each order, pick a random offset within its brand's bucket
+    bucket_sizes = offsets[1:] - offsets[:-1]
+    sizes_per_order = bucket_sizes[brand_ids]
+
+    # Handle empty buckets (shouldn't happen given avail filter, but be safe)
+    empty_mask = sizes_per_order == 0
+    sizes_per_order[empty_mask] = 1  # temporary to avoid division by zero
+
+    rand_within = rng.integers(0, np.iinfo(np.int64).max, size=n_int, dtype="int64")
+    rand_within = np.abs(rand_within) % sizes_per_order
+
+    abs_idx = offsets[brand_ids] + rand_within
+    out = flat_idx[abs_idx]
+
+    # Fix up any rows that landed on empty buckets with uniform fallback
+    if empty_mask.any():
+        n_empty = int(empty_mask.sum())
+        out[empty_mask] = rng.integers(0, n_products, size=n_empty).astype("int64", copy=False)
 
     return out
 
@@ -260,7 +278,6 @@ def _eligible_counts_fast(
     finite = e >= 0
     if finite.any():
         endp1 = e[finite] + 1
-        # endp1==T doesn't affect delta[:-1] cumsum; skip
         endp1 = endp1[(endp1 > 0) & (endp1 < T)]
         if endp1.size:
             np.add.at(delta, endp1, -1)
@@ -926,7 +943,7 @@ def build_chunk_table(
             price=price,
         )
 
-                # --------------------------------------------------------
+        # --------------------------------------------------------
         # BUILD ARROW TABLE (schema-driven)
         #
         # Base columns are produced here.
@@ -937,17 +954,6 @@ def build_chunk_table(
         # - If columns.py returns a column not present in the schema, we raise (forces schema update).
         # --------------------------------------------------------
         n_rows = int(customer_keys_out.shape[0])
-
-        # --------------------------------------------------------
-        # BUILD COLUMN DICT (schema-driven)
-        #
-        # Base columns are produced here.
-        # Extra columns are produced ONLY via sales_logic/columns.py (single extension point).
-        #
-        # Behavior:
-        # - If a schema field isn't produced, it is filled with typed nulls (at final build time).
-        # - If columns.py returns a column not present in the schema, we raise (forces schema update).
-        # --------------------------------------------------------
 
         # Base columns
         cols: dict[str, object] = {}

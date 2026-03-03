@@ -41,6 +41,36 @@ _CFG_VERSION: int = -1
 _CFG_CACHE: dict | None = None
 
 
+def _resolve_multiplier_range(user_tb: dict | None, merged: dict) -> tuple[float, float]:
+    """
+    Resolve tail-boost multiplier bounds from user overrides and merged defaults.
+
+    Precedence:
+      1. user_tb["multiplier_range"]  (list/tuple of 2)
+      2. user_tb["multiplier_min"] / user_tb["multiplier_max"]
+      3. merged["multiplier_range"]
+      4. merged["multiplier_min"] / merged["multiplier_max"]
+    """
+    if user_tb is not None and isinstance(user_tb, dict):
+        user_range = user_tb.get("multiplier_range", None)
+        if isinstance(user_range, (list, tuple)) and len(user_range) == 2:
+            return float(user_range[0]), float(user_range[1])
+        if "multiplier_min" in user_tb or "multiplier_max" in user_tb:
+            return (
+                float(user_tb.get("multiplier_min", merged.get("multiplier_min", 1.5))),
+                float(user_tb.get("multiplier_max", merged.get("multiplier_max", 3.0))),
+            )
+
+    merged_range = merged.get("multiplier_range", None)
+    if isinstance(merged_range, (list, tuple)) and len(merged_range) == 2:
+        return float(merged_range[0]), float(merged_range[1])
+
+    return (
+        float(merged.get("multiplier_min", 1.5)),
+        float(merged.get("multiplier_max", 3.0)),
+    )
+
+
 def _load_cfg() -> dict:
     """
     Load, validate, and cache the quantity config.
@@ -50,11 +80,15 @@ def _load_cfg() -> dict:
     """
     global _CFG_VERSION, _CFG_CACHE
 
-    models = getattr(State, "models_cfg", None) or {}
-    version = id(models)
+    # Use the object identity of models_cfg itself as the cache key.
+    # Avoid `or {}` here: that would create a new dict on every call when
+    # models_cfg is None/empty, making id() unstable and the cache useless.
+    models_cfg = getattr(State, "models_cfg", None)
+    version = id(models_cfg)
     if version == _CFG_VERSION and _CFG_CACHE is not None:
         return _CFG_CACHE
 
+    models = models_cfg or {}
     raw = models.get("quantity", {}) or {}
     if not isinstance(raw, dict):
         raise ValueError("models.quantity must be a mapping")
@@ -65,7 +99,7 @@ def _load_cfg() -> dict:
         raise ValueError("models.quantity.base_poisson_lambda must be >= 0")
 
     inertia = float(np.clip(
-        float(raw.get("month_inertia", _DEFAULTS["month_inertia"])),
+        raw.get("month_inertia", _DEFAULTS["month_inertia"]),
         0.0, 0.98,
     ))
 
@@ -82,6 +116,11 @@ def _load_cfg() -> dict:
     factors = raw.get("monthly_factors", None)
     if factors is None:
         factors = list(_DEFAULTS["monthly_factors"])
+    if not isinstance(factors, (list, tuple, np.ndarray)):
+        raise ValueError(
+            "models.quantity.monthly_factors must be a list of 12 floats, "
+            f"got {type(factors).__name__}"
+        )
     if len(factors) != 12:
         raise ValueError("models.quantity.monthly_factors must be a list of 12 floats")
     factors_arr = np.asarray(factors, dtype=np.float64)
@@ -90,18 +129,14 @@ def _load_cfg() -> dict:
     # --- tail boost (deep-merge defaults with user overrides) ---
     user_tb = raw.get("tail_boost", None)
     tb_defaults = _DEFAULTS["tail_boost"]
-
-    if user_tb is None or not isinstance(user_tb, dict):
-        tb = dict(tb_defaults)
-    else:
-        # Deep merge: start from defaults, overlay user keys
-        tb = dict(tb_defaults)
+    tb = dict(tb_defaults)
+    if isinstance(user_tb, dict):
         tb.update(user_tb)
 
     tb_enabled = bool(tb.get("enabled", False))
 
     # Resolve probability: prefer user-supplied key (either name) over merged default.
-    if user_tb is not None and isinstance(user_tb, dict):
+    if isinstance(user_tb, dict):
         raw_prob = user_tb.get("probability", user_tb.get("p", None))
     else:
         raw_prob = None
@@ -109,31 +144,7 @@ def _load_cfg() -> dict:
         raw_prob = tb.get("probability", tb.get("p", 0.03))
     tb_prob = float(np.clip(float(raw_prob), 0.0, 0.50))
 
-    # Resolve multiplier range: prefer user-supplied keys over merged defaults.
-    if user_tb is not None and isinstance(user_tb, dict):
-        user_range = user_tb.get("multiplier_range", None)
-        if isinstance(user_range, (list, tuple)) and len(user_range) == 2:
-            tb_min = float(user_range[0])
-            tb_max = float(user_range[1])
-        elif "multiplier_min" in user_tb or "multiplier_max" in user_tb:
-            tb_min = float(user_tb.get("multiplier_min", tb.get("multiplier_min", 1.5)))
-            tb_max = float(user_tb.get("multiplier_max", tb.get("multiplier_max", 3.0)))
-        else:
-            # No user override; use merged dict
-            merged_range = tb.get("multiplier_range", None)
-            if isinstance(merged_range, (list, tuple)) and len(merged_range) == 2:
-                tb_min, tb_max = float(merged_range[0]), float(merged_range[1])
-            else:
-                tb_min = float(tb.get("multiplier_min", 1.5))
-                tb_max = float(tb.get("multiplier_max", 3.0))
-    else:
-        merged_range = tb.get("multiplier_range", None)
-        if isinstance(merged_range, (list, tuple)) and len(merged_range) == 2:
-            tb_min, tb_max = float(merged_range[0]), float(merged_range[1])
-        else:
-            tb_min = float(tb.get("multiplier_min", 1.5))
-            tb_max = float(tb.get("multiplier_max", 3.0))
-
+    tb_min, tb_max = _resolve_multiplier_range(user_tb if isinstance(user_tb, dict) else None, tb)
     if tb_max < tb_min:
         tb_min, tb_max = tb_max, tb_min
     tb_min = max(1.0, tb_min)
@@ -176,7 +187,7 @@ def build_quantity(rng, order_dates):
       1. Draw from Poisson(λ) + 1  (minimum 1 item)
       2. Multiply by smoothed monthly seasonal factors
       3. Optionally boost a small fraction of rows (tail boost)
-      4. Add Gaussian noise
+      4. Apply multiplicative lognormal noise (mean-corrected to be unbiased)
       5. Round and clamp to [min_qty, max_qty]
 
     Parameters
@@ -189,7 +200,7 @@ def build_quantity(rng, order_dates):
     np.ndarray[int64] of shape (n,)
     """
     cfg = _load_cfg()
-    n = int(len(order_dates))
+    n = len(order_dates)
     if n <= 0:
         return np.zeros(0, dtype=np.int64)
 
@@ -197,7 +208,7 @@ def build_quantity(rng, order_dates):
     qty = rng.poisson(cfg["base_poisson_lambda"], n).astype(np.float64) + 1.0
 
     # 2. Monthly seasonal factors with inertia smoothing
-    order_months = np.asarray(order_dates).astype("datetime64[M]", copy=False)
+    order_months = np.asarray(order_dates, copy=False).astype("datetime64[M]", copy=False)
     unique_months, inv = np.unique(order_months, return_inverse=True)
     month_of_year = (unique_months.astype("int64") % 12).astype(np.int64)
 
@@ -223,13 +234,12 @@ def build_quantity(rng, order_dates):
         if count > 0:
             qty[mask] *= rng.uniform(cfg["tb_min"], cfg["tb_max"], size=count)
 
-    # 4. Gaussian noise
-    # Use lognormal-style multiplicative noise to avoid negative values.
-    # This prevents the truncation bias that additive Gaussian noise causes
-    # when qty values are small relative to sigma.
+    # 4. Multiplicative lognormal noise.
+    # mean = -σ²/2 centres the expected multiplier at exactly 1.0, avoiding
+    # the upward bias that mean=0.0 would introduce (E[lognormal(0,σ)] = e^(σ²/2)).
     sigma = cfg["noise_sigma"]
     if sigma > 0.0:
-        noise = rng.lognormal(mean=0.0, sigma=sigma, size=n)
+        noise = rng.lognormal(mean=-0.5 * sigma * sigma, sigma=sigma, size=n)
         qty *= noise
 
     # 5. Round and clamp

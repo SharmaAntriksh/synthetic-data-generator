@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 
 
@@ -46,7 +48,7 @@ def _safe_prob(w: np.ndarray) -> np.ndarray:
     w = np.asarray(w, dtype="float64")
     w = np.where(np.isfinite(w), w, 0.0)
     w = np.clip(w, 0.0, None)
-    s = float(w.sum())
+    s = w.sum()
     if s <= 0.0:
         # fallback uniform
         return np.full(w.shape[0], 1.0 / max(1, w.shape[0]), dtype="float64")
@@ -68,9 +70,53 @@ def _distribute_remainder_multinomial(
     return base_rows + add.astype("int64", copy=False)
 
 
+def _remove_rows_stochastic(
+    rng: np.random.Generator,
+    rows: np.ndarray,
+    need: int,
+    candidates: np.ndarray,
+    weights: np.ndarray,
+    max_iters: int = 8,
+) -> None:
+    """
+    Remove *exactly* `need` rows from `rows` at `candidates` indices,
+    weighted by `weights`, iterating until the full amount is removed or
+    no candidates remain.
+
+    Mutates `rows` in-place.
+    """
+    # Pre-allocate the lookup table once at the max possible size
+    idx_map_size = int(candidates.max()) + 1 if candidates.size > 0 else 0
+    idx_map = np.empty(idx_map_size, dtype="int64") if idx_map_size > 0 else None
+
+    for _ in range(max_iters):
+        if need <= 0:
+            break
+        # refresh: only candidates that still have rows
+        active_mask = rows[candidates] > 0
+        active = candidates[active_mask]
+        if active.size == 0:
+            break
+
+        probs = _safe_prob(weights[active])
+        pick = rng.choice(active, size=need, replace=True, p=probs)
+
+        # Reuse pre-allocated lookup table for position mapping
+        idx_map[active] = np.arange(active.size, dtype="int64")
+
+        inv = idx_map[pick]
+        dec = np.bincount(inv, minlength=active.size).astype("int64", copy=False)
+        dec = np.minimum(dec, rows[active])
+        rows[active] -= dec
+        need -= int(dec.sum())
+
+
 # ----------------------------------------------------------------
 # Macro demand weights
 # ----------------------------------------------------------------
+
+_GROWTH_RATIO_WARN_THRESHOLD = 1e6
+
 
 def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarray:
     """
@@ -108,6 +154,9 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     shock_lo, shock_hi = cfg.get("shock_impact", [-0.25, -0.08])
     shock_lo = float(shock_lo)
     shock_hi = float(shock_hi)
+
+    if shock_p > 0.0 and shock_lo > shock_hi:
+        raise ValueError("shock_impact must be [low, high] with low <= high")
 
     m = np.arange(T, dtype="float64")
 
@@ -158,6 +207,19 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
 
         g = g * year_factor[np.minimum(year_idx, n_years - 1)]
 
+    # Warn if growth compounding creates extreme weight skew
+    if isinstance(g, np.ndarray):
+        g_finite = g[np.isfinite(g)]
+        if g_finite.size > 0:
+            ratio = g_finite.max() / max(g_finite.min(), 1e-30)
+            if ratio > _GROWTH_RATIO_WARN_THRESHOLD:
+                warnings.warn(
+                    f"Extreme growth ratio detected ({ratio:.1e}). "
+                    f"yearly_growth={yearly_growth} over {T} months causes "
+                    f"heavy skew — most rows will land in a few months.",
+                    stacklevel=2,
+                )
+
     # seasonality: sin wave (12-month cycle)
     if amp != 0.0:
         s = 1.0 + amp * np.sin((2.0 * np.pi * m / 12.0) + phase)
@@ -176,8 +238,6 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
         shock = np.ones(T, dtype="float64")
         hit = rng.random(T) < shock_p
         if hit.any():
-            if shock_lo > shock_hi:
-                raise ValueError("shock_impact must be [low, high] with low <= high")
             shock[hit] = 1.0 + rng.uniform(shock_lo, shock_hi, size=int(hit.sum()))
             upper = max(1.0, 1.0 + shock_hi)  # allow positive shocks
             shock = np.clip(shock, 0.1, upper)
@@ -187,7 +247,7 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     w = base_level * g * s * n * shock
     w = np.where(np.isfinite(w), w, 0.0)
     w = np.clip(w, 1e-9, None)
-    return w / float(w.sum())
+    return w / w.sum()
 
 
 # ----------------------------------------------------------------
@@ -225,8 +285,9 @@ def build_rows_per_month(
 
     eligible_nonzero = eligible_counts > 0
 
-    macro_cfg = macro_cfg or {}
-    use_macro = bool(macro_cfg)
+    use_macro = macro_cfg is not None and len(macro_cfg) > 0
+    if not use_macro:
+        macro_cfg = {}
 
     # ------------------------------------------------------------------
     # Macro demand allocation
@@ -236,26 +297,26 @@ def build_rows_per_month(
 
         # months with no eligible customers cannot receive demand
         macro_w = macro_w * eligible_nonzero.astype("float64")
-        if float(macro_w.sum()) <= 0.0:
+        if macro_w.sum() <= 0.0:
             return np.zeros(T, dtype="int64")
-        macro_w = macro_w / float(macro_w.sum())
+        macro_w = macro_w / macro_w.sum()
 
         # Optional: blend macro weights with eligibility weights (0.0 = macro-only)
         blend = float(macro_cfg.get("eligible_blend", 0.0))
         if blend > 0.0:
             blend = float(np.clip(blend, 0.0, 1.0))
             elig_w = eligible_counts.astype("float64")
-            elig_w = elig_w * eligible_nonzero.astype("float64")
-            if float(elig_w.sum()) > 0.0:
-                elig_w = elig_w / float(elig_w.sum())
+            elig_s = elig_w.sum()
+            if elig_s > 0.0:
+                elig_w = elig_w / elig_s
                 macro_w = (1.0 - blend) * macro_w + blend * elig_w
                 macro_w = _safe_prob(macro_w)
 
         # Initial floor allocation
         rows_per_month = np.floor(macro_w * total_rows).astype("int64")
 
-        # Fix rounding: distribute remainder stochastically (seed-deterministic)
-        remainder = int(total_rows - int(rows_per_month.sum()))
+        # Distribute remainder stochastically (seed-deterministic)
+        remainder = int(total_rows - rows_per_month.sum())
         rows_per_month = _distribute_remainder_multinomial(rng, rows_per_month, remainder, macro_w)
 
         # --------------------------------------------------------------
@@ -265,27 +326,35 @@ def build_rows_per_month(
         cap_cfg = macro_cfg.get("early_month_cap", None)
         if isinstance(cap_cfg, dict) and cap_cfg:
             cap_enabled = bool(cap_cfg.get("enabled", True))
-            per_customer_cap = int(cap_cfg.get("max_rows_per_customer", 12))
+            raw_cap = cap_cfg.get("max_rows_per_customer", 12)
+            per_customer_cap = int(round(float(raw_cap)))
             redistribute = bool(cap_cfg.get("redistribute_excess", True))
 
             if cap_enabled and per_customer_cap > 0:
-                max_rows = eligible_counts * int(per_customer_cap)
+                max_rows = eligible_counts * per_customer_cap
                 # months with no eligible customers stay at 0 cap
                 max_rows = np.where(eligible_nonzero, max_rows, 0).astype("int64", copy=False)
 
-                before = int(rows_per_month.sum())
                 capped = np.minimum(rows_per_month, max_rows)
-                after = int(capped.sum())
-                excess = int(before - after)
+                excess = int(rows_per_month.sum() - capped.sum())
 
                 rows_per_month = capped
 
                 if redistribute and excess > 0:
-                    # Try to respect capacity; if impossible, relax cap as a last resort
                     capacity = (max_rows - rows_per_month).astype("int64", copy=False)
                     capacity = np.maximum(capacity, 0)
 
-                    # iterative redistribution (small T; stays fast)
+                    # Single-pass proportional fill + one multinomial for leftovers
+                    cap_f = capacity.astype("float64")
+                    cap_total = cap_f.sum()
+                    if cap_total > 0.0:
+                        share = np.floor(cap_f / cap_total * excess).astype("int64")
+                        share = np.minimum(share, capacity)
+                        rows_per_month += share
+                        capacity -= share
+                        excess -= int(share.sum())
+
+                    # Stochastic cleanup for remaining units (typically 0–T)
                     for _ in range(8):
                         if excess <= 0:
                             break
@@ -296,81 +365,59 @@ def build_rows_per_month(
                         probs = _safe_prob(macro_w[cap_months])
                         add = rng.multinomial(excess, probs).astype("int64", copy=False)
 
-                        # apply add, clamp to capacity
                         add = np.minimum(add, capacity[cap_months])
                         rows_per_month[cap_months] += add
                         capacity[cap_months] -= add
                         excess -= int(add.sum())
 
                     # Last resort: preserve total_rows even if cap is too tight.
-                    # Distribute remaining excess across eligible months without capacity limit.
                     if excess > 0:
                         elig_months = np.flatnonzero(eligible_nonzero)
                         if elig_months.size > 0:
                             probs = _safe_prob(macro_w[elig_months])
                             add = rng.multinomial(excess, probs).astype("int64", copy=False)
                             rows_per_month[elig_months] += add
-                            excess = 0
 
-        # Final guard: exact total rows
-        diff = int(total_rows - int(rows_per_month.sum()))
+        # Final guard: exact total rows with robust negative-diff handling
+        diff = int(total_rows - rows_per_month.sum())
         if diff != 0:
-            # Adjust stochastically to avoid deterministic bias
             eligible_months = np.flatnonzero(eligible_nonzero)
             if eligible_months.size == 0:
                 return rows_per_month
 
-            probs = _safe_prob(macro_w[eligible_months])
-
             if diff > 0:
+                probs = _safe_prob(macro_w[eligible_months])
                 add = rng.multinomial(diff, probs).astype("int64", copy=False)
                 rows_per_month[eligible_months] += add
             else:
-                # remove -diff rows from months with >0 rows, weighted by probs
-                need = -diff
-                candidates = eligible_months[rows_per_month[eligible_months] > 0]
-                if candidates.size > 0:
-                    probs2 = _safe_prob(macro_w[candidates])
-                    pick = rng.choice(candidates, size=need, replace=True, p=probs2)
-                    # bincount over indices in candidates space
-                    # map picks to positions 0..len(candidates)-1
-                    inv = np.searchsorted(candidates, pick)
-                    dec = np.bincount(inv, minlength=candidates.size).astype("int64", copy=False)
-                    dec = np.minimum(dec, rows_per_month[candidates])
-                    rows_per_month[candidates] -= dec
+                _remove_rows_stochastic(
+                    rng, rows_per_month, -diff, eligible_months, macro_w,
+                )
 
         return rows_per_month
 
     # ------------------------------------------------------------------
     # Legacy allocation (eligible-count proportional) + stochastic remainder
     # ------------------------------------------------------------------
-    month_weights = eligible_counts.astype("float64") / float(elig_sum)
-    month_weights = month_weights * eligible_nonzero.astype("float64")
+    month_weights = eligible_counts.astype("float64") / elig_sum
     month_weights = _safe_prob(month_weights)
 
     rows = np.floor(month_weights * total_rows).astype("int64")
-    remainder = int(total_rows - int(rows.sum()))
+    remainder = int(total_rows - rows.sum())
     rows = _distribute_remainder_multinomial(rng, rows, remainder, month_weights)
 
     # exact guard (should already match)
-    diff = int(total_rows - int(rows.sum()))
+    diff = int(total_rows - rows.sum())
     if diff != 0:
-        # apply minimal correction
         eligible_months = np.flatnonzero(eligible_nonzero)
         if eligible_months.size > 0:
-            probs = _safe_prob(month_weights[eligible_months])
             if diff > 0:
+                probs = _safe_prob(month_weights[eligible_months])
                 add = rng.multinomial(diff, probs).astype("int64", copy=False)
                 rows[eligible_months] += add
             else:
-                need = -diff
-                candidates = eligible_months[rows[eligible_months] > 0]
-                if candidates.size > 0:
-                    probs2 = _safe_prob(month_weights[candidates])
-                    pick = rng.choice(candidates, size=need, replace=True, p=probs2)
-                    inv = np.searchsorted(candidates, pick)
-                    dec = np.bincount(inv, minlength=candidates.size).astype("int64", copy=False)
-                    dec = np.minimum(dec, rows[candidates])
-                    rows[candidates] -= dec
+                _remove_rows_stochastic(
+                    rng, rows, -diff, eligible_months, month_weights,
+                )
 
     return rows

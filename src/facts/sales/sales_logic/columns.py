@@ -104,8 +104,6 @@ def _load_sales_channels(State: Any) -> Optional[Tuple[np.ndarray, np.ndarray, n
     if not pth.exists():
         return None
 
-    # Read what exists (your current dim guarantees these 3 columns) :contentReference[oaicite:4]{index=4}
-    # If you later add TimeProfile or SamplingWeight, they will be used automatically.
     cols = ["SalesChannelKey", "ChannelGroup"]
     tab = pq.read_table(pth, columns=[c for c in cols if True])
     keys = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int16)
@@ -119,7 +117,7 @@ def _load_sales_channels(State: Any) -> Optional[Tuple[np.ndarray, np.ndarray, n
     if keys.size == 0:
         return None
 
-    # Sampling prob: uniform across keys (you can later add weights to the dim and load them here)
+    # Sampling prob: uniform across keys
     p = np.full(keys.shape[0], 1.0 / keys.shape[0], dtype=np.float64)
 
     # Profile LUT by key based on ChannelGroup
@@ -219,13 +217,10 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
             prof = profile_lut[sales_channel.astype(np.int64)]
             if order_ids_int is not None:
                 oid = np.asarray(order_ids_int, dtype=np.int64)
-                unique_orders, inv = np.unique(oid, return_inverse=True)
-                # per-order profile from first occurrence
-                first_idx = np.full(unique_orders.shape[0], -1, dtype=np.int64)
-                for i in range(inv.shape[0]):
-                    j = inv[i]
-                    if first_idx[j] == -1:
-                        first_idx[j] = i
+                # Vectorized first-occurrence index via np.unique with return_index
+                unique_orders, first_idx, inv = np.unique(
+                    oid, return_index=True, return_inverse=True,
+                )
                 per_order_prof = prof[first_idx]
                 per_order_time = _sample_timekey_by_profile(rng, per_order_prof)
                 timekey = per_order_time[inv]
