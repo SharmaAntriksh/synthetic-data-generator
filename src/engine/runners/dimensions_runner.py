@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
-from src.utils.logging_utils import info, skip
+from src.utils.logging_utils import info, skip, stage
 
 from src.dimensions.geography import run_geography
 from src.dimensions.customers import run_customers
@@ -455,31 +455,30 @@ def generate_dimensions(
 
     regenerated: Dict[str, bool] = {}
 
-    for spec in specs_ordered:
-        forced = spec.name in force_set
-        enabled = spec.enabled(cfg) or forced
-        if not enabled:
-            regenerated[spec.name] = False
-            continue
+    with stage("Generating Dimensions"):
+        for spec in specs_ordered:
+            forced = spec.name in force_set
+            enabled = spec.enabled(cfg) or forced
+            if not enabled:
+                regenerated[spec.name] = False
+                continue
 
-        cfg_run = cfg
-        if spec.inject_global_dates:
-            cfg_run = _cfg_with_global_dates(cfg_run, spec.cfg_key, global_dates)
-        cfg_run = _cfg_for_dimension(cfg_run, spec.cfg_key, forced)
+            cfg_run = cfg
+            if spec.inject_global_dates:
+                cfg_run = _cfg_with_global_dates(cfg_run, spec.cfg_key, global_dates)
+            cfg_run = _cfg_for_dimension(cfg_run, spec.cfg_key, forced)
 
-        before = _snapshot(parquet_dims_folder, spec)
-        out = spec.run_fn(cfg_run, parquet_dims_folder)
-        after = _snapshot(parquet_dims_folder, spec)
+            before = _snapshot(parquet_dims_folder, spec)
+            out = spec.run_fn(cfg_run, parquet_dims_folder)
+            after = _snapshot(parquet_dims_folder, spec)
 
-        # Prefer explicit return signal if available (products)
-        if spec.regenerated_from_return_key and isinstance(out, dict):
-            regen = bool(out.get(spec.regenerated_from_return_key))
-        else:
-            io_regen = _detect_regen_from_io(before, after)
-            regen = bool(io_regen) if io_regen is not None else False
+            if spec.regenerated_from_return_key and isinstance(out, dict):
+                regen = bool(out.get(spec.regenerated_from_return_key))
+            else:
+                io_regen = _detect_regen_from_io(before, after)
+                regen = bool(io_regen) if io_regen is not None else False
 
-        # Forced means “we requested regen” even if output detection is inconclusive
-        regenerated[spec.name] = bool(regen or forced)
+            regenerated[spec.name] = bool(regen or forced)
 
     return {
         "global_dates": global_dates,

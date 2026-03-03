@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -8,11 +7,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from src.utils import info, skip, stage
+from src.utils import info, warn, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 
-_log = logging.getLogger(__name__)
 
 # Excel serial-date epoch: 1899-12-30 (not 12/31) due to the intentional
 # Lotus 1-2-3 compatibility bug that treats 1900 as a leap year.
@@ -92,7 +90,7 @@ def _require_start_end(raw_start: Any, raw_end: Any) -> Tuple[pd.Timestamp, pd.T
     start_ts = pd.to_datetime(raw_start).normalize()
     end_ts = pd.to_datetime(raw_end).normalize()
     if end_ts < start_ts:
-        _log.warning("dates: start/end swapped (start=%r, end=%r)", raw_start, raw_end)
+        warn(f"Dates: start/end swapped ({raw_start} / {raw_end})")
         start_ts, end_ts = end_ts, start_ts
     return start_ts, end_ts
 
@@ -241,11 +239,7 @@ def _compute_weekly_fiscal_columns(
     # are assigned the month-based fiscal end-year as a best-effort label.
     n_fallback = int((fw_year < 0).sum())
     if n_fallback:
-        _log.warning(
-            "dates: %d date(s) fell outside all weekly-fiscal year boundaries; "
-            "using month-based fiscal year as fallback.",
-            n_fallback,
-        )
+        warn(f"Fiscal year: {n_fallback} date(s) outside weekly boundaries, using month-based fallback")
         fy_start_year = np.where(df["Month"] >= first_fiscal_month, df["Year"], df["Year"] - 1).astype(int)
         fy_end_add = 0 if first_fiscal_month == 1 else 1
         fy_end_year = (fy_start_year + fy_end_add).astype(int)
@@ -670,10 +664,7 @@ def generate_date_table(
     as_of = _safe_parse_as_of(as_of_date, fallback=end_date)
     # Clamp as_of into the generated date window to keep offsets meaningful.
     if as_of < start_date or as_of > end_date:
-        _log.warning(
-            "dates: as_of_date %s outside generated window [%s..%s]; clamping to %s",
-            as_of.date(), start_date.date(), end_date.date(), end_date.date(),
-        )
+        warn(f"Dates: as_of_date {as_of.date()} outside [{start_date.date()}..{end_date.date()}], clamping to {end_date.date()}")
         as_of = end_date
 
     df["IsToday"] = (df["Date"] == as_of).astype(np.int8)
@@ -780,7 +771,7 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
 
     fiscal_start_month = _int_or(dates_cfg.get("fiscal_start_month") or dates_cfg.get("fiscal_month_offset", 5), 5)
     if dates_cfg.get("fiscal_start_month") is None and "fiscal_month_offset" in dates_cfg:
-        _log.warning("dates.fiscal_month_offset is treated as fiscal start month (1-12). Prefer dates.fiscal_start_month.")
+        warn("Dates: fiscal_month_offset is deprecated, use fiscal_start_month instead")
     fiscal_start_month = _clamp_month(fiscal_start_month)
 
     as_of_date = dates_cfg.get("as_of_date") or str(raw_end_ts.date())

@@ -10,6 +10,7 @@ from src.utils import info, skip, stage
 from src.versioning import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
 from src.utils.name_pools import (
+    PeopleNamePools,
     resolve_people_folder,
     load_people_pools,
     assign_person_names,
@@ -746,7 +747,7 @@ def _generate_org_profile(
     customer_start_date: np.ndarray,
     churn_bias: np.ndarray,
     customer_weight: np.ndarray,
-    people_pools: "PeopleNamePools",
+    people_pools: PeopleNamePools,
     end_date: pd.Timestamp,
     seed: int,
 ) -> pd.DataFrame:
@@ -1697,11 +1698,14 @@ def run_customers(cfg: Dict, parquet_folder: Path):
         customers_df, profile_df, org_profile_df, _active = generate_synthetic_customers(cfg, parquet_folder)
         customers_df.to_parquet(out_path, index=False)
         profile_df.to_parquet(profile_out_path, index=False)
+
+        n_ind = int((customers_df["CustomerType"] == "Individual").sum())
+        n_org = int((customers_df["CustomerType"] == "Organization").sum())
+        info(f"Customers: {len(customers_df):,} rows ({n_ind:,} individual, {n_org:,} org)")
+        info(f"CustomerProfile: {len(profile_df):,} rows")
+
         if not org_profile_df.empty:
             org_profile_df.to_parquet(org_profile_out_path, index=False)
+            info(f"OrganizationProfile: {len(org_profile_df):,} rows")
 
     save_version("customers", version_cfg, out_path)
-    info(f"Customers dimension written: {out_path}")
-    info(f"CustomerProfile dimension written: {profile_out_path}")
-    if not org_profile_df.empty:
-        info(f"OrganizationProfile dimension written: {org_profile_out_path}")

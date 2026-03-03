@@ -769,14 +769,14 @@ def load_product_dimension(config, output_folder: Path):
         raise ValueError("products.num_products must be a positive integer")
 
     if "num_products" in p and "use_contoso_products" in p:
-        info("products.use_contoso_products is deprecated; ignoring it because products.num_products is set.")
+        info("products.use_contoso_products is deprecated; ignoring (num_products is set)")
 
     if target_n < base_count:
-        info(f"TRIMMING CONTOSO PRODUCTS: {base_count} -> {target_n} (stratified by SubcategoryKey)")
+        info(f"Trimming Contoso: {base_count:,} -> {target_n:,} (stratified by SubcategoryKey)")
     elif target_n == base_count:
-        info(f"USING CONTOSO PRODUCTS (standardized identity): {target_n}")
+        info(f"Using Contoso catalog (standardized): {target_n:,}")
     else:
-        info(f"EXPANDING CONTOSO PRODUCTS: {base_count} -> {target_n} (variants)")
+        info(f"Expanding Contoso: {base_count:,} -> {target_n:,} (variants)")
 
     df = expand_contoso_products(
         base_products=base_df,

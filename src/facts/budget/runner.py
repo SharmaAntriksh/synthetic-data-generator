@@ -13,7 +13,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.utils.logging_utils import stage, info, done
+from src.utils.logging_utils import stage, info, done, short_path
 
 from .accumulator import BudgetAccumulator
 from .engine import load_budget_config, compute_budget
@@ -49,7 +49,6 @@ def run_budget_pipeline(
         info("Budget generation: no sales actuals accumulated, skipping")
         return None
 
-    stage("Generating Budget")
     t0 = time.time()
 
     # ---- Finalize actuals from accumulated micro-aggregates ----
@@ -77,9 +76,6 @@ def run_budget_pipeline(
     yearly_rows = len(yearly)
     monthly_rows = len(monthly)
 
-    done(f"Budget completed in {elapsed:.1f}s "
-         f"({yearly_rows:,} yearly, {monthly_rows:,} monthly rows)")
-
     return {
         "yearly_rows": yearly_rows,
         "monthly_rows": monthly_rows,
@@ -99,7 +95,7 @@ def _write_budget(df: pd.DataFrame, out_dir: Path, name: str, file_format: str) 
         except ImportError:
             from deltalake.writer import write_deltalake
         write_deltalake(str(delta_dir), table, mode="overwrite")
-        info(f"  Wrote {name}: {len(df):,} rows -> {delta_dir.name}/ (delta)")
+        info(f"Wrote {name}: {len(df):,} rows -> {short_path(delta_dir)}/")
         return
 
     # Parquet (always written for parquet and csv formats)
@@ -115,9 +111,9 @@ def _write_budget(df: pd.DataFrame, out_dir: Path, name: str, file_format: str) 
         csv_path = out_dir / f"{name}.csv"
         csv_df = _prepare_budget_csv(df, name)
         csv_df.to_csv(str(csv_path), index=False)
-        info(f"  Wrote {name}: {len(df):,} rows -> {parquet_path.name}, {csv_path.name}")
+        info(f"Wrote {name}: {len(df):,} rows -> {short_path(csv_path)}")
     else:
-        info(f"  Wrote {name}: {len(df):,} rows -> {parquet_path.name}")
+        info(f"Wrote {name}: {len(df):,} rows -> {short_path(parquet_path)}")
 
 
 # ----------------------------------------------------------------

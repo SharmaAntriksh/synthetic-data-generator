@@ -39,17 +39,21 @@ def short_path(p: Any) -> Any:
 
 def _shorten_path_in_msg(msg: Any) -> Any:
     """
-    Backward-compatible behavior:
-    - If message ends with a path after ': ', shorten that trailing path.
-    - Otherwise return msg unchanged.
+    If message ends with a path-like string, shorten it.
+    Handles both ``prefix: some\\path`` and ``prefix -> some\\path`` forms.
     """
     if not isinstance(msg, str):
         return msg
 
+    # Try "-> path" first (e.g. "Wrote budget_yearly: 840 rows -> data\\fact_out\\x.csv")
+    arrow_head, arrow_sep, arrow_tail = msg.rpartition("-> ")
+    if arrow_sep and (("\\" in arrow_tail) or ("/" in arrow_tail)):
+        return f"{arrow_head}{arrow_sep}{short_path(arrow_tail)}"
+
+    # Fall back to ": path" (e.g. "Geography dimension written: data\\dims\\geo.parquet")
     head, sep, tail = msg.rpartition(": ")
     if sep and (("\\" in tail) or ("/" in tail)):
-        shortened = short_path(tail)
-        return f"{head}{sep}{shortened}"
+        return f"{head}{sep}{short_path(tail)}"
 
     return msg
 
@@ -82,6 +86,19 @@ _PRINT_LOCK = threading.Lock()
 _LOG_DIR_READY = False
 _LOG_FD: Optional[int] = None
 _LOG_FILE_PATH: Optional[Path] = None
+
+_INDENT = threading.local()
+_INDENT_STR = "  "
+
+
+def _indent_level() -> int:
+    """Current nesting depth (0 = top level)."""
+    return getattr(_INDENT, "level", 0)
+
+
+def _indent_prefix() -> str:
+    """Whitespace prefix for the current nesting depth."""
+    return _INDENT_STR * _indent_level()
 
 
 def _is_tty() -> bool:
@@ -163,7 +180,7 @@ def _format_level(level: str) -> str:
 
 def _line(level: str, msg: Any) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-    return f"{ts} | {_format_level(level)} | {msg}"
+    return f"{ts} | {_format_level(level)} | {_indent_prefix()}{msg}"
 
 
 def _ensure_log_file_open() -> None:
@@ -271,12 +288,13 @@ class stage:
     def __enter__(self) -> "stage":
         self.start = time.time()
         info(self.msg)
+        _INDENT.level = _indent_level() + 1
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
+        _INDENT.level = max(_indent_level() - 1, 0)
         elapsed = fmt_sec(time.time() - (self.start or time.time()))
         if exc_type is not None:
-            # Include exception type + message, but keep it compact
             fail(f"{self.msg} failed in {elapsed}: {exc_type.__name__}: {exc}")
             return False  # re-raise
         done(f"{self.msg} completed in {elapsed}")
