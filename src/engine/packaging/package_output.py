@@ -64,28 +64,58 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     facts_out = final_folder / "facts"
     facts_out.mkdir(parents=True, exist_ok=True)
 
+    def _copy_budget_if_exists():
+        """Copy budget outputs into the packaged facts folder (format-aware)."""
+        budget_src = fact_out / "budget"
+        if not budget_src.exists():
+            return
+
+        if file_format == "parquet":
+            # Parquet: budget parquets go flat into facts/ (alongside sales.parquet)
+            for f in budget_src.glob("*.parquet"):
+                shutil.copy2(f, facts_out / f.name)
+        elif file_format == "csv":
+            # CSV: budget CSVs go into facts/budget/ subfolder
+            budget_dst = facts_out / "budget"
+            budget_dst.mkdir(parents=True, exist_ok=True)
+            for f in budget_src.glob("*.csv"):
+                shutil.copy2(f, budget_dst / f.name)
+        else:
+            # Delta: budget delta table dirs go into facts/budget/ subfolder
+            budget_dst = facts_out / "budget"
+            budget_dst.mkdir(parents=True, exist_ok=True)
+            for item in budget_src.iterdir():
+                target = budget_dst / item.name
+                if item.is_dir():
+                    shutil.copytree(item, target, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, target)
+
     tables = tables_from_sales_cfg(sales_cfg, cfg)
 
     if file_format == "parquet":
         copy_parquet_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)
+        _copy_budget_if_exists()
         return final_folder
 
     if file_format == "deltaparquet":
         copy_delta_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)
+        _copy_budget_if_exists()
         return final_folder
 
     if file_format != "csv":
         raise ValueError(f"Unsupported file_format in packaging: {file_format!r}")
 
     copy_csv_facts(fact_out=fact_out, facts_out=facts_out, tables=tables)
-        
+    _copy_budget_if_exists()
+
     # SQL SCRIPT GENERATION — CSV ONLY
     if is_csv:
         sql_root = final_folder / "sql"
 
         # Schema scripts (numbered)
         write_create_table_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
-        compose_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg)
+        compose_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
         copy_views_sql(sql_root=sql_root)
 
         # Load scripts
