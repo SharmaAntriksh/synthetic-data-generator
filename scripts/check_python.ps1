@@ -5,7 +5,7 @@
 #   0 = OK
 #   1 = Python missing / too old / not runnable
 #
-# Usage examples:
+# Usage:
 #   .\scripts\check_python.ps1
 #   .\scripts\check_python.ps1 -MinPythonVersion 3.11
 # ------------------------------------------------------------
@@ -19,56 +19,15 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-function Get-PythonRunner {
-    param([version]$MinV)
-
-    $maj = $MinV.Major
-    $min = $MinV.Minor
-
-    # Prefer Windows Python Launcher if available.
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        # Try to target the requested minor version first (e.g., py -3.10)
-        $candidates = @(
-            @{ Cmd = 'py'; Args = @("-$maj.$min") },
-            @{ Cmd = 'py'; Args = @('-3') }
-        )
-
-        foreach ($cand in $candidates) {
-            try {
-                $null = & $cand.Cmd @($cand.Args) -c "import sys" 2>$null
-                if ($LASTEXITCODE -eq 0) { return $cand }
-            } catch { }
-        }
-    }
-
-    # Fallback to python on PATH.
-    if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @{ Cmd = 'python'; Args = @() }
-    }
-
-    return $null
-}
-
-function Get-PythonVersion {
-    param($Runner)
-
-    $code = 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")'
-    $out = & $Runner.Cmd @($Runner.Args) -c $code 2>$null
-
-    if ($LASTEXITCODE -ne 0 -or -not $out) {
-        throw 'Python was found but could not be executed.'
-    }
-
-    return [version]$out.Trim()
-}
+. (Join-Path $PSScriptRoot "_common.ps1")
 
 try {
-    $runner = Get-PythonRunner -MinV $MinPythonVersion
+    $runner = Get-PythonRunner -MinVersion $MinPythonVersion
     if (-not $runner) {
         if (-not $Quiet) {
-            Write-Host "Python not found." -ForegroundColor Red
-            Write-Host "Install Python $MinPythonVersion+ and ensure either 'py' or 'python' is available." -ForegroundColor Yellow
-            Write-Host "Windows installer: https://www.python.org/downloads/" -ForegroundColor DarkGray
+            Write-Step "Python not found." -Level err
+            Write-Step "Install Python $MinPythonVersion+ and ensure either 'py' or 'python' is available." -Level warn
+            Write-Step "Windows installer: https://www.python.org/downloads/" -Level info
         }
         exit 1
     }
@@ -77,27 +36,23 @@ try {
 
     if ($pyVer -lt $MinPythonVersion) {
         if (-not $Quiet) {
-            Write-Host "Python version too old: $pyVer" -ForegroundColor Red
-            Write-Host "Required: $MinPythonVersion or newer" -ForegroundColor Yellow
+            Write-Step "Python version too old: $pyVer (required: $MinPythonVersion+)" -Level err
         }
         exit 1
     }
 
     if (-not $Quiet) {
+        $label = Format-RunnerLabel -Runner $runner
         $cmdPath = (Get-Command $runner.Cmd -ErrorAction SilentlyContinue).Source
-        $args = ($runner.Args -join ' ')
-        if ([string]::IsNullOrWhiteSpace($args)) { $args = '(none)' }
-
-        Write-Host "Found Python $pyVer" -ForegroundColor Green
-        Write-Host "Command: $($runner.Cmd)  Args: $args" -ForegroundColor DarkGray
-        if ($cmdPath) { Write-Host "Resolved: $cmdPath" -ForegroundColor DarkGray }
+        Write-Step "Python $pyVer  [$label]" -Level ok
+        if ($cmdPath) { Write-Step "  Path: $cmdPath" -Level info }
     }
 
     exit 0
 }
 catch {
     if (-not $Quiet) {
-        Write-Host "Python check failed: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Step "Python check failed: $($_.Exception.Message)" -Level err
     }
     exit 1
 }
