@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import time
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import pandas as pd
+import pyarrow.parquet as pq
 
 from src.utils.logging_utils import stage, info, done
 from src.engine.packaging import package_output
@@ -25,6 +24,12 @@ def _require_key(d: Dict[str, Any], key: str, ctx: str) -> Any:
     return d[key]
 
 
+def _require_keys(d: Dict[str, Any], keys: tuple[str, ...], ctx: str) -> None:
+    missing = [k for k in keys if k not in d]
+    if missing:
+        raise RuntimeError(f"Missing required config keys: {', '.join(f'{ctx}.{k}' for k in missing)}")
+
+
 def _normalize_file_format(sales_cfg: Dict[str, Any]) -> str:
     fmt = str(_require_key(sales_cfg, "file_format", "sales")).strip().lower()
     if fmt not in {"csv", "parquet", "deltaparquet"}:
@@ -32,13 +37,11 @@ def _normalize_file_format(sales_cfg: Dict[str, Any]) -> str:
     return fmt
 
 
+_SALES_OUT_FOLDERS = {"csv": "csv", "parquet": "parquet"}
+
+
 def _resolve_sales_out_folder(fact_out: Path, fmt: str) -> Path:
-    # Preserve your existing folder conventions
-    if fmt == "csv":
-        return fact_out / "csv"
-    if fmt == "parquet":
-        return fact_out / "parquet"
-    return fact_out / "sales"  # deltaparquet
+    return fact_out / _SALES_OUT_FOLDERS.get(fmt, "sales")
 
 
 def _safe_clean_folder(path: Path) -> None:
@@ -48,16 +51,16 @@ def _safe_clean_folder(path: Path) -> None:
 
 def _compute_returns_effective(cfg: Dict[str, Any], sales_cfg: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
     """
-    Apply your rule:
+    Apply the rule:
       - returns.enabled can be requested at top-level cfg
-      - but if sales_output == 'sales' AND skip_order_cols == True -> warn and skip returns (do not fail)
+      - but if sales_output == 'sales' AND skip_order_cols == True -> warn and skip returns
     Returns (cfg_for_run, returns_enabled_effective)
     """
     returns_cfg = cfg.get("returns", {}) if isinstance(cfg, dict) else {}
     requested = bool(returns_cfg.get("enabled", False))
 
-    sales_output = str(_require_key(sales_cfg, "sales_output", "sales")).strip().lower()
-    skip_order_cols = bool(_require_key(sales_cfg, "skip_order_cols", "sales"))
+    sales_output = str(sales_cfg["sales_output"]).strip().lower()
+    skip_order_cols = bool(sales_cfg["skip_order_cols"])
 
     effective = requested
     if requested and sales_output == "sales" and skip_order_cols:
@@ -68,21 +71,17 @@ def _compute_returns_effective(cfg: Dict[str, Any], sales_cfg: Dict[str, Any]) -
         )
         effective = False
 
-    # If we changed effective value, copy cfg and override returns.enabled so downstream sees consistent truth
-    if isinstance(cfg, dict) and (effective != requested):
-        cfg_for_run = dict(cfg)
-        rr = dict(cfg.get("returns", {}) or {})
-        rr["enabled"] = effective
-        cfg_for_run["returns"] = rr
-        return cfg_for_run, effective
+    if effective == requested:
+        return cfg, effective
 
-    return cfg, effective
+    cfg_for_run = {**cfg, "returns": {**(cfg.get("returns") or {}), "enabled": effective}}
+    return cfg_for_run, effective
 
 
 def _load_active_products(parquet_dims: Path) -> Any:
     """
     Loads active products pool: (ProductKey, UnitPrice, UnitCost)
-    Raises clear errors if file/columns missing or no active products.
+    Uses PyArrow directly to avoid pandas overhead.
     """
     products_path = parquet_dims / "products.parquet"
     if not products_path.exists():
@@ -90,29 +89,29 @@ def _load_active_products(parquet_dims: Path) -> Any:
 
     wanted_cols = ["ProductKey", "IsActiveInSales", "UnitPrice", "UnitCost"]
     try:
-        products_df = pd.read_parquet(products_path, columns=wanted_cols)
+        table = pq.read_table(str(products_path), columns=wanted_cols)
     except Exception as e:
         raise RuntimeError(
             f"Failed reading {products_path} with columns {wanted_cols}. "
             f"Underlying error: {type(e).__name__}: {e}"
         ) from e
 
-    missing = [c for c in wanted_cols if c not in products_df.columns]
+    missing = [c for c in wanted_cols if c not in table.schema.names]
     if missing:
-        raise RuntimeError(f"products.parquet missing required columns: {missing}. Found: {list(products_df.columns)}")
+        raise RuntimeError(f"products.parquet missing required columns: {missing}. Found: {table.schema.names}")
 
-    active = products_df.loc[products_df["IsActiveInSales"] == 1, ["ProductKey", "UnitPrice", "UnitCost"]]
-    if active.empty:
+    import pyarrow.compute as pc
+    mask = pc.equal(table.column("IsActiveInSales"), 1)
+    active = table.filter(mask).select(["ProductKey", "UnitPrice", "UnitCost"])
+
+    if active.num_rows == 0:
         raise RuntimeError("No active products found for sales generation (IsActiveInSales == 1)")
 
-    return active.to_numpy()
+    return active.to_pandas().to_numpy()
 
 
 def _bind_runner_globals(skip_order_cols: bool, active_product_np: Any) -> None:
-    """
-    Bind ONLY runner-level globals (keep your contract).
-    Guard State.models_cfg access.
-    """
+    """Bind runner-level globals (keep the contract)."""
     models_cfg = getattr(State, "models_cfg", None)
     bind_globals(
         {
@@ -134,32 +133,12 @@ def _normalize_partitioning(sales_cfg: Dict[str, Any]) -> Tuple[bool, Optional[l
     return True, partition_cols
 
 
-def _run_step(label: str, fn) -> None:
+def _run_step(label: str, fn) -> Any:
     stage(label)
-    t0 = time.time()
-    fn()
-    done(f"{label} completed in {time.time() - t0:.1f}s")
-
-
-# =========================================================
-# Pipeline Context
-# =========================================================
-
-@dataclass
-class SalesRunContext:
-    sales_cfg: Dict[str, Any]
-    cfg: Dict[str, Any]
-    fact_out: Path
-    parquet_dims: Path
-
-    fmt: str
-    sales_out_folder: Path
-    cfg_for_run: Dict[str, Any]
-    returns_enabled_effective: bool
-    skip_order_cols: bool
-    active_product_np: Any
-    partition_enabled: bool
-    partition_cols: Optional[list]
+    t0 = time.perf_counter()
+    result = fn()
+    done(f"{label} completed in {time.perf_counter() - t0:.1f}s")
+    return result
 
 
 # =========================================================
@@ -184,19 +163,16 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     fmt = _normalize_file_format(sales_cfg)
     sales_out_folder = _resolve_sales_out_folder(fact_out_p, fmt)
 
-    # --- Validate critical config early (same semantics, clearer errors)
-    _require_key(sales_cfg, "skip_order_cols", "sales")
-    _require_key(sales_cfg, "sales_output", "sales")
-    _require_key(sales_cfg, "total_rows", "sales")
+    # --- Validate critical config early
+    _require_keys(sales_cfg, ("skip_order_cols", "sales_output", "total_rows"), "sales")
 
     skip_order_cols = bool(sales_cfg["skip_order_cols"])
 
     if force_regenerate:
         info("Sales will regenerate (forced).")
 
-    # --- Clean outputs where safe (preserve your rule)
-    # CSV and Delta must be regenerated every run
-    # Parquet must NOT be deleted before packaging (keep existing behavior)
+    # --- Clean outputs where safe
+    # CSV and Delta must be regenerated every run; Parquet must NOT be deleted before packaging
     if fmt != "parquet" and force_regenerate:
         _safe_clean_folder(sales_out_folder)
 
@@ -214,78 +190,55 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     # --- Partitioning normalization
     partition_enabled, partition_cols = _normalize_partitioning(sales_cfg)
 
-    ctx = SalesRunContext(
-        sales_cfg=sales_cfg,
-        cfg=cfg,
-        fact_out=fact_out_p,
-        parquet_dims=parquet_dims_p,
-        fmt=fmt,
-        sales_out_folder=sales_out_folder,
-        cfg_for_run=cfg_for_run,
-        returns_enabled_effective=returns_enabled_effective,
-        skip_order_cols=skip_order_cols,
-        active_product_np=active_product_np,
-        partition_enabled=partition_enabled,
-        partition_cols=partition_cols,
-    )
-
     # --- Step 1: Generate sales
-    budget_acc = None
-
     def _do_generate():
-        nonlocal budget_acc
-        result = generate_sales_fact(
-            ctx.cfg_for_run,
-            parquet_folder=str(ctx.parquet_dims),
-            out_folder=str(ctx.sales_out_folder),
-            total_rows=ctx.sales_cfg["total_rows"],
-            file_format=ctx.sales_cfg["file_format"],
-            # Parquet merge options
-            merge_parquet=ctx.sales_cfg.get("merge_parquet", False),
-            merged_file=ctx.sales_cfg.get("merged_file", "sales.parquet"),
-            # Performance / execution
-            row_group_size=ctx.sales_cfg.get("row_group_size", 2_000_000),
-            compression=ctx.sales_cfg.get("compression", "snappy"),
-            chunk_size=ctx.sales_cfg.get("chunk_size", 1_000_000),
-            workers=ctx.sales_cfg.get("workers"),
-            # Partitioning / delta
-            partition_enabled=ctx.partition_enabled,
-            partition_cols=ctx.partition_cols,
-            delta_output_folder=str(ctx.sales_out_folder),
-            skip_order_cols=ctx.skip_order_cols,
+        return generate_sales_fact(
+            cfg_for_run,
+            parquet_folder=str(parquet_dims_p),
+            out_folder=str(sales_out_folder),
+            total_rows=sales_cfg["total_rows"],
+            file_format=sales_cfg["file_format"],
+            merge_parquet=sales_cfg.get("merge_parquet", False),
+            merged_file=sales_cfg.get("merged_file", "sales.parquet"),
+            row_group_size=sales_cfg.get("row_group_size", 2_000_000),
+            compression=sales_cfg.get("compression", "snappy"),
+            chunk_size=sales_cfg.get("chunk_size", 1_000_000),
+            workers=sales_cfg.get("workers"),
+            partition_enabled=partition_enabled,
+            partition_cols=partition_cols,
+            delta_output_folder=str(sales_out_folder),
+            skip_order_cols=skip_order_cols,
             return_manifest=True,
         )
-        if isinstance(result, tuple) and len(result) >= 3:
-            _, _, budget_acc = result
 
-    _run_step("Generating Sales", _do_generate)
+    result = _run_step("Generating Sales", _do_generate)
+
+    budget_acc = None
+    if isinstance(result, tuple) and len(result) >= 3:
+        _, _, budget_acc = result
 
     # --- Step 2: Budget generation (optional, must run before packaging)
     if budget_acc is not None and budget_acc.has_data:
         from src.facts.budget.runner import run_budget_pipeline
 
-        def _do_budget():
-            run_budget_pipeline(
+        _run_step(
+            "Generating Budget",
+            lambda: run_budget_pipeline(
                 accumulator=budget_acc,
-                parquet_dims=ctx.parquet_dims,
-                fact_out=ctx.fact_out,
-                cfg=ctx.cfg,
-                file_format=ctx.fmt,
-            )
-
-        _run_step("Generating Budget", _do_budget)
+                parquet_dims=parquet_dims_p,
+                fact_out=fact_out_p,
+                cfg=cfg,
+                file_format=fmt,
+            ),
+        )
 
     # --- Step 3: Package output + PBIP
     def _do_package():
-        final_folder = package_output(ctx.cfg_for_run, ctx.sales_cfg, ctx.parquet_dims, ctx.fact_out)
-
-        # PBIP templates now live under:
-        #   samples/powerbi/templates/{csv|parquet}/{Sales|Orders|Sales and Orders}
-        # deltaparquet intentionally skips PBIP.
+        final_folder = package_output(cfg_for_run, sales_cfg, parquet_dims_p, fact_out_p)
         maybe_attach_pbip_project(
             final_folder=final_folder,
-            file_format=ctx.sales_cfg["file_format"],
-            sales_output=ctx.sales_cfg["sales_output"],
+            file_format=sales_cfg["file_format"],
+            sales_output=sales_cfg["sales_output"],
         )
 
     _run_step("Packaging Output", _do_package)

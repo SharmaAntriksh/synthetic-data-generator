@@ -41,54 +41,45 @@ _CFG_VERSION: int = -1
 _CFG_CACHE: dict | None = None
 
 
-def _resolve_multiplier_range(user_tb: dict | None, merged: dict) -> tuple[float, float]:
+def _resolve_range(source: dict | None, default_lo: float, default_hi: float):
     """
-    Resolve tail-boost multiplier bounds from user overrides and merged defaults.
+    Extract (lo, hi) multiplier bounds from a config dict.
 
-    Precedence:
-      1. user_tb["multiplier_range"]  (list/tuple of 2)
-      2. user_tb["multiplier_min"] / user_tb["multiplier_max"]
-      3. merged["multiplier_range"]
-      4. merged["multiplier_min"] / merged["multiplier_max"]
+    Supports two formats:
+      - multiplier_range: [lo, hi]          (preferred)
+      - multiplier_min / multiplier_max     (legacy flat keys)
+
+    Returns a sorted, clamped pair with lo >= 1.0.
     """
-    if user_tb is not None and isinstance(user_tb, dict):
-        user_range = user_tb.get("multiplier_range", None)
-        if isinstance(user_range, (list, tuple)) and len(user_range) == 2:
-            return float(user_range[0]), float(user_range[1])
-        if "multiplier_min" in user_tb or "multiplier_max" in user_tb:
-            return (
-                float(user_tb.get("multiplier_min", merged.get("multiplier_min", 1.5))),
-                float(user_tb.get("multiplier_max", merged.get("multiplier_max", 3.0))),
-            )
+    if source is None:
+        return default_lo, default_hi
 
-    merged_range = merged.get("multiplier_range", None)
-    if isinstance(merged_range, (list, tuple)) and len(merged_range) == 2:
-        return float(merged_range[0]), float(merged_range[1])
+    rng = source.get("multiplier_range")
+    if isinstance(rng, (list, tuple)) and len(rng) == 2:
+        lo, hi = float(rng[0]), float(rng[1])
+    else:
+        lo = float(source.get("multiplier_min", default_lo))
+        hi = float(source.get("multiplier_max", default_hi))
 
-    return (
-        float(merged.get("multiplier_min", 1.5)),
-        float(merged.get("multiplier_max", 3.0)),
-    )
+    if hi < lo:
+        lo, hi = hi, lo
+    return max(1.0, lo), max(lo, hi)
 
 
 def _load_cfg() -> dict:
     """
     Load, validate, and cache the quantity config.
 
-    Supports both the new simplified keys and legacy nested keys
+    Supports both the current simplified keys and legacy nested keys
     for backward compatibility.
     """
     global _CFG_VERSION, _CFG_CACHE
 
-    # Use the object identity of models_cfg itself as the cache key.
-    # Avoid `or {}` here: that would create a new dict on every call when
-    # models_cfg is None/empty, making id() unstable and the cache useless.
-    models_cfg = getattr(State, "models_cfg", None)
-    version = id(models_cfg)
+    models = getattr(State, "models_cfg", None) or {}
+    version = id(models)
     if version == _CFG_VERSION and _CFG_CACHE is not None:
         return _CFG_CACHE
 
-    models = models_cfg or {}
     raw = models.get("quantity", {}) or {}
     if not isinstance(raw, dict):
         raise ValueError("models.quantity must be a mapping")
@@ -103,9 +94,8 @@ def _load_cfg() -> dict:
         0.0, 0.98,
     ))
 
-    # Support both "noise_sigma" (new) and "noise_sd" (legacy)
-    noise = float(raw.get("noise_sigma", raw.get("noise_sd", _DEFAULTS["noise_sigma"])))
-    noise = max(0.0, noise)
+    # Support both "noise_sigma" (current) and "noise_sd" (legacy)
+    noise = max(0.0, float(raw.get("noise_sigma", raw.get("noise_sd", _DEFAULTS["noise_sigma"]))))
 
     min_qty = int(raw.get("min_qty", _DEFAULTS["min_qty"]))
     max_qty = int(raw.get("max_qty", _DEFAULTS["max_qty"]))
@@ -113,42 +103,33 @@ def _load_cfg() -> dict:
         min_qty, max_qty = max_qty, min_qty
 
     # --- monthly factors (must be 12 floats) ---
-    factors = raw.get("monthly_factors", None)
+    factors = raw.get("monthly_factors")
     if factors is None:
         factors = list(_DEFAULTS["monthly_factors"])
-    if not isinstance(factors, (list, tuple, np.ndarray)):
-        raise ValueError(
-            "models.quantity.monthly_factors must be a list of 12 floats, "
-            f"got {type(factors).__name__}"
-        )
     if len(factors) != 12:
         raise ValueError("models.quantity.monthly_factors must be a list of 12 floats")
     factors_arr = np.asarray(factors, dtype=np.float64)
     factors_arr = np.where(np.isfinite(factors_arr), factors_arr, 1.0)
 
-    # --- tail boost (deep-merge defaults with user overrides) ---
-    user_tb = raw.get("tail_boost", None)
+    # --- tail boost ---
     tb_defaults = _DEFAULTS["tail_boost"]
-    tb = dict(tb_defaults)
-    if isinstance(user_tb, dict):
-        tb.update(user_tb)
+    user_tb = raw.get("tail_boost")
+    if not isinstance(user_tb, dict):
+        user_tb = None
 
-    tb_enabled = bool(tb.get("enabled", False))
+    tb_enabled = bool((user_tb or tb_defaults).get("enabled", False))
 
-    # Resolve probability: prefer user-supplied key (either name) over merged default.
-    if isinstance(user_tb, dict):
-        raw_prob = user_tb.get("probability", user_tb.get("p", None))
-    else:
-        raw_prob = None
-    if raw_prob is None:
-        raw_prob = tb.get("probability", tb.get("p", 0.03))
-    tb_prob = float(np.clip(float(raw_prob), 0.0, 0.50))
+    # Probability: support "probability" and legacy "p" alias
+    tb_prob_raw = None
+    if user_tb is not None:
+        tb_prob_raw = user_tb.get("probability", user_tb.get("p"))
+    if tb_prob_raw is None:
+        tb_prob_raw = tb_defaults.get("probability", 0.03)
+    tb_prob = float(np.clip(float(tb_prob_raw), 0.0, 0.50))
 
-    tb_min, tb_max = _resolve_multiplier_range(user_tb if isinstance(user_tb, dict) else None, tb)
-    if tb_max < tb_min:
-        tb_min, tb_max = tb_max, tb_min
-    tb_min = max(1.0, tb_min)
-    tb_max = max(tb_min, tb_max)
+    # Multiplier range: prefer user overrides, fall back to defaults
+    default_range = tb_defaults.get("multiplier_range", [1.5, 3.0])
+    tb_min, tb_max = _resolve_range(user_tb, default_range[0], default_range[1])
 
     out = {
         "base_poisson_lambda": lam,
@@ -187,7 +168,7 @@ def build_quantity(rng, order_dates):
       1. Draw from Poisson(λ) + 1  (minimum 1 item)
       2. Multiply by smoothed monthly seasonal factors
       3. Optionally boost a small fraction of rows (tail boost)
-      4. Apply multiplicative lognormal noise (mean-corrected to be unbiased)
+      4. Add Gaussian noise
       5. Round and clamp to [min_qty, max_qty]
 
     Parameters
@@ -200,7 +181,7 @@ def build_quantity(rng, order_dates):
     np.ndarray[int64] of shape (n,)
     """
     cfg = _load_cfg()
-    n = len(order_dates)
+    n = int(len(order_dates))
     if n <= 0:
         return np.zeros(0, dtype=np.int64)
 
@@ -208,7 +189,7 @@ def build_quantity(rng, order_dates):
     qty = rng.poisson(cfg["base_poisson_lambda"], n).astype(np.float64) + 1.0
 
     # 2. Monthly seasonal factors with inertia smoothing
-    order_months = np.asarray(order_dates, copy=False).astype("datetime64[M]", copy=False)
+    order_months = np.asarray(order_dates).astype("datetime64[M]", copy=False)
     unique_months, inv = np.unique(order_months, return_inverse=True)
     month_of_year = (unique_months.astype("int64") % 12).astype(np.int64)
 
@@ -234,13 +215,13 @@ def build_quantity(rng, order_dates):
         if count > 0:
             qty[mask] *= rng.uniform(cfg["tb_min"], cfg["tb_max"], size=count)
 
-    # 4. Multiplicative lognormal noise.
-    # mean = -σ²/2 centres the expected multiplier at exactly 1.0, avoiding
-    # the upward bias that mean=0.0 would introduce (E[lognormal(0,σ)] = e^(σ²/2)).
+    # 4. Gaussian noise
+    # Use lognormal-style multiplicative noise to avoid negative values.
+    # This prevents the truncation bias that additive Gaussian noise causes
+    # when qty values are small relative to sigma.
     sigma = cfg["noise_sigma"]
     if sigma > 0.0:
-        noise = rng.lognormal(mean=-0.5 * sigma * sigma, sigma=sigma, size=n)
-        qty *= noise
+        qty *= rng.lognormal(mean=0.0, sigma=sigma, size=n)
 
     # 5. Round and clamp
     qty = np.rint(qty).astype(np.int64)
