@@ -1,10 +1,37 @@
+/*
+  00_dimensions.sql – Dimension table constraints (PKs, UKs, FKs).
+  Idempotent: every statement is guarded; safe to re-run.
+
+  Design notes
+  ────────────
+  • All primary keys are NONCLUSTERED because a clustered columnstore index
+    (CCI) is applied separately via create_drop_cci.sql.  Tables remain heaps
+    until CCI creation; NONCLUSTERED PKs coexist with the CCI for point
+    lookups and FK enforcement.
+
+  • Candidate-key checks use a robust sys.indexes / sys.index_columns pattern
+    that detects ANY unique index on the target column(s), regardless of name.
+    This avoids silent re-creation if an index is renamed out-of-band.
+
+  • COL_LENGTH guards are applied uniformly to tables whose schema may vary
+    depending on config (Stores, Promotions, Employees, SalesChannels, Time,
+    ReturnReason).  Core tables with guaranteed schemas omit the guard for
+    clarity.
+
+  • Each logical section is separated by GO so a failure in one batch does
+    not roll back unrelated constraints.  Individual statements are
+    independently guarded, so partial execution leaves the database in a
+    consistent state.
+*/
+
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
 -----------------------------------------------------------------------
--- PRIMARY KEYS
+-- 1. PRIMARY KEYS
 -----------------------------------------------------------------------
 
+-- Customers
 IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -17,6 +44,34 @@ BEGIN
     ADD CONSTRAINT PK_Customers PRIMARY KEY NONCLUSTERED ([CustomerKey]);
 END;
 
+
+-- CustomerProfile (1:1 with Customers)
+IF OBJECT_ID(N'dbo.CustomerProfile', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_CustomerProfile'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerProfile')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerProfile
+    ADD CONSTRAINT PK_CustomerProfile PRIMARY KEY NONCLUSTERED ([CustomerKey]);
+END;
+
+-- OrganizationProfile (1:1 with org-type Customers)
+IF OBJECT_ID(N'dbo.OrganizationProfile', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_OrganizationProfile'
+      AND parent_object_id = OBJECT_ID(N'dbo.OrganizationProfile')
+)
+BEGIN
+    ALTER TABLE dbo.OrganizationProfile
+    ADD CONSTRAINT PK_OrganizationProfile PRIMARY KEY NONCLUSTERED ([CustomerKey]);
+END;
+
+-- Products
 IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -29,6 +84,20 @@ BEGIN
     ADD CONSTRAINT PK_Products PRIMARY KEY NONCLUSTERED ([ProductKey]);
 END;
 
+-- ProductProfile (1:1 with Products)
+IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_ProductProfile'
+      AND parent_object_id = OBJECT_ID(N'dbo.ProductProfile')
+)
+BEGIN
+    ALTER TABLE dbo.ProductProfile
+    ADD CONSTRAINT PK_ProductProfile PRIMARY KEY NONCLUSTERED ([ProductKey]);
+END;
+
+-- ProductSubcategory
 IF OBJECT_ID(N'dbo.ProductSubcategory', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -41,6 +110,7 @@ BEGIN
     ADD CONSTRAINT PK_ProductSubcategory PRIMARY KEY NONCLUSTERED ([SubcategoryKey]);
 END;
 
+-- ProductCategory
 IF OBJECT_ID(N'dbo.ProductCategory', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -53,6 +123,7 @@ BEGIN
     ADD CONSTRAINT PK_ProductCategory PRIMARY KEY NONCLUSTERED ([CategoryKey]);
 END;
 
+-- Geography
 IF OBJECT_ID(N'dbo.Geography', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -65,6 +136,7 @@ BEGIN
     ADD CONSTRAINT PK_Geography PRIMARY KEY NONCLUSTERED ([GeographyKey]);
 END;
 
+-- Currency
 IF OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -77,6 +149,7 @@ BEGIN
     ADD CONSTRAINT PK_Currency PRIMARY KEY NONCLUSTERED ([CurrencyKey]);
 END;
 
+-- Dates
 IF OBJECT_ID(N'dbo.Dates', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -89,6 +162,7 @@ BEGIN
     ADD CONSTRAINT PK_Dates PRIMARY KEY NONCLUSTERED ([Date]);
 END;
 
+-- ExchangeRates (composite PK)
 IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -101,6 +175,7 @@ BEGIN
     ADD CONSTRAINT PK_ExchangeRates PRIMARY KEY NONCLUSTERED ([Date], [FromCurrency], [ToCurrency]);
 END;
 
+-- Stores (schema may vary)
 IF OBJECT_ID(N'dbo.Stores', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.Stores', N'StoreKey') IS NOT NULL
 AND NOT EXISTS (
@@ -114,6 +189,7 @@ BEGIN
     ADD CONSTRAINT PK_Stores PRIMARY KEY NONCLUSTERED ([StoreKey]);
 END;
 
+-- Promotions (schema may vary)
 IF OBJECT_ID(N'dbo.Promotions', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.Promotions', N'PromotionKey') IS NOT NULL
 AND NOT EXISTS (
@@ -127,150 +203,87 @@ BEGIN
     ADD CONSTRAINT PK_Promotions PRIMARY KEY NONCLUSTERED ([PromotionKey]);
 END;
 
------------------------------------------------------------------------
--- UNIQUE CONSTRAINTS
------------------------------------------------------------------------
-
-IF OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
+-- Employees (schema may vary; BIGINT key)
+IF OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Employees', N'EmployeeKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.key_constraints
-    WHERE name = N'UQ_Currency_ToCurrency'
-      AND parent_object_id = OBJECT_ID(N'dbo.Currency')
+    WHERE parent_object_id = OBJECT_ID(N'dbo.Employees')
+      AND [type] = N'PK'
 )
 BEGIN
-    ALTER TABLE dbo.Currency
-    ADD CONSTRAINT UQ_Currency_ToCurrency UNIQUE NONCLUSTERED ([ToCurrency]);
+    ALTER TABLE dbo.Employees
+    ADD CONSTRAINT PK_Employees PRIMARY KEY NONCLUSTERED ([EmployeeKey]);
 END;
 
------------------------------------------------------------------------
--- FOREIGN KEYS (WITH CHECK)
------------------------------------------------------------------------
-
--- Product hierarchy
-IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
+-- Suppliers (schema may vary)
+IF OBJECT_ID(N'dbo.Suppliers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Suppliers', N'SupplierKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
-    FROM sys.foreign_keys
-    WHERE name = N'FK_Products_ProductSubcategory'
-      AND parent_object_id = OBJECT_ID(N'dbo.Products')
+    FROM sys.key_constraints
+    WHERE name = N'PK_Suppliers'
+      AND parent_object_id = OBJECT_ID(N'dbo.Suppliers')
 )
 BEGIN
-    ALTER TABLE dbo.Products WITH CHECK
-    ADD CONSTRAINT FK_Products_ProductSubcategory
-        FOREIGN KEY ([SubcategoryKey])
-        REFERENCES dbo.ProductSubcategory ([SubcategoryKey]);
-
-    ALTER TABLE dbo.Products CHECK CONSTRAINT FK_Products_ProductSubcategory;
+    ALTER TABLE dbo.Suppliers
+    ADD CONSTRAINT PK_Suppliers PRIMARY KEY NONCLUSTERED ([SupplierKey]);
 END;
 
-IF OBJECT_ID(N'dbo.ProductSubcategory', N'U') IS NOT NULL
+-- SalesChannels (schema may vary)
+IF OBJECT_ID(N'dbo.SalesChannels', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.SalesChannels', N'SalesChannelKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
-    FROM sys.foreign_keys
-    WHERE name = N'FK_ProductSubcategory_ProductCategory'
-      AND parent_object_id = OBJECT_ID(N'dbo.ProductSubcategory')
+    FROM sys.key_constraints
+    WHERE name = N'PK_SalesChannels'
+      AND parent_object_id = OBJECT_ID(N'dbo.SalesChannels')
 )
 BEGIN
-    ALTER TABLE dbo.ProductSubcategory WITH CHECK
-    ADD CONSTRAINT FK_ProductSubcategory_ProductCategory
-        FOREIGN KEY ([CategoryKey])
-        REFERENCES dbo.ProductCategory ([CategoryKey]);
-
-    ALTER TABLE dbo.ProductSubcategory CHECK CONSTRAINT FK_ProductSubcategory_ProductCategory;
+    ALTER TABLE dbo.SalesChannels
+    ADD CONSTRAINT PK_SalesChannels PRIMARY KEY NONCLUSTERED ([SalesChannelKey]);
 END;
 
--- Customer geography
-IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+-- Time (schema may vary)
+IF OBJECT_ID(N'dbo.Time', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Time', N'TimeKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
-    FROM sys.foreign_keys
-    WHERE name = N'FK_Customers_Geography'
-      AND parent_object_id = OBJECT_ID(N'dbo.Customers')
+    FROM sys.key_constraints
+    WHERE name = N'PK_Time'
+      AND parent_object_id = OBJECT_ID(N'dbo.Time')
 )
 BEGIN
-    ALTER TABLE dbo.Customers WITH CHECK
-    ADD CONSTRAINT FK_Customers_Geography
-        FOREIGN KEY ([GeographyKey])
-        REFERENCES dbo.Geography ([GeographyKey]);
-
-    ALTER TABLE dbo.Customers CHECK CONSTRAINT FK_Customers_Geography;
+    ALTER TABLE dbo.Time
+    ADD CONSTRAINT PK_Time PRIMARY KEY NONCLUSTERED ([TimeKey]);
 END;
 
--- ExchangeRates links
-IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
+-- ReturnReason (schema may vary)
+IF OBJECT_ID(N'dbo.ReturnReason', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.ReturnReason', N'ReturnReasonKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
-    FROM sys.foreign_keys
-    WHERE name = N'FK_ExchangeRates_FromCurrency'
-      AND parent_object_id = OBJECT_ID(N'dbo.ExchangeRates')
+    FROM sys.key_constraints
+    WHERE name = N'PK_ReturnReason'
+      AND parent_object_id = OBJECT_ID(N'dbo.ReturnReason')
 )
 BEGIN
-    ALTER TABLE dbo.ExchangeRates WITH CHECK
-    ADD CONSTRAINT FK_ExchangeRates_FromCurrency
-        FOREIGN KEY ([FromCurrency])
-        REFERENCES dbo.Currency ([ToCurrency]);
-
-    ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_FromCurrency;
+    ALTER TABLE dbo.ReturnReason
+    ADD CONSTRAINT PK_ReturnReason PRIMARY KEY NONCLUSTERED ([ReturnReasonKey]);
 END;
-
-IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
-AND NOT EXISTS (
-    SELECT 1
-    FROM sys.foreign_keys
-    WHERE name = N'FK_ExchangeRates_ToCurrency'
-      AND parent_object_id = OBJECT_ID(N'dbo.ExchangeRates')
-)
-BEGIN
-    ALTER TABLE dbo.ExchangeRates WITH CHECK
-    ADD CONSTRAINT FK_ExchangeRates_ToCurrency
-        FOREIGN KEY ([ToCurrency])
-        REFERENCES dbo.Currency ([ToCurrency]);
-
-    ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_ToCurrency;
-END;
+GO
 
 -----------------------------------------------------------------------
--- EMPLOYEES: ensure candidate key on EmployeeKey (required for FKs)
+-- 2. CANDIDATE KEYS FOR FK TARGETS
+--
+-- These ensure a unique index exists on columns referenced by foreign
+-- keys in downstream scripts (10_sales.sql etc.), even when the PK
+-- uses a different column.  The sys.indexes check detects any existing
+-- unique index on the target column regardless of naming.
 -----------------------------------------------------------------------
-IF OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Employees', N'EmployeeKey') IS NOT NULL
-BEGIN
-    -- If Employees has no PK, add one on EmployeeKey.
-    IF NOT EXISTS (
-        SELECT 1
-        FROM sys.key_constraints
-        WHERE parent_object_id = OBJECT_ID(N'dbo.Employees')
-          AND [type] = N'PK'
-    )
-    BEGIN
-        ALTER TABLE dbo.Employees
-        ADD CONSTRAINT PK_Employees PRIMARY KEY NONCLUSTERED ([EmployeeKey]);
-    END;
 
-    -- If a different PK exists, ensure EmployeeKey is still a candidate key for FKs.
-    IF EXISTS (
-        SELECT 1
-        FROM sys.key_constraints
-        WHERE parent_object_id = OBJECT_ID(N'dbo.Employees')
-          AND [type] = N'PK'
-          AND name <> N'PK_Employees'
-    )
-    AND NOT EXISTS (
-        SELECT 1
-        FROM sys.key_constraints
-        WHERE parent_object_id = OBJECT_ID(N'dbo.Employees')
-          AND name = N'UX_Employees_EmployeeKey'
-    )
-    BEGIN
-        ALTER TABLE dbo.Employees
-        ADD CONSTRAINT UX_Employees_EmployeeKey UNIQUE ([EmployeeKey]);
-    END;
-END;
-
------------------------------------------------------------------------
--- Ensure candidate key for FK targets: dbo.Employees(EmployeeKey)
------------------------------------------------------------------------
+-- Employees(EmployeeKey) – needed when PK is on a different column
 IF OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.Employees', N'EmployeeKey') IS NOT NULL
 AND NOT EXISTS (
@@ -293,9 +306,30 @@ BEGIN
 END;
 GO
 
------------------------------------------------------------------------
--- Ensure candidate key for FK targets: dbo.SalesChannels(SalesChannelKey)
------------------------------------------------------------------------
+-- Currency(ToCurrency) – referenced by ExchangeRates FKs
+IF OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Currency', N'ToCurrency') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.indexes i
+    JOIN sys.index_columns ic
+      ON i.object_id = ic.object_id AND i.index_id = ic.index_id
+    JOIN sys.columns c
+      ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+    WHERE i.object_id = OBJECT_ID(N'dbo.Currency')
+      AND i.is_unique = 1
+      AND ic.is_included_column = 0
+    GROUP BY i.index_id
+    HAVING COUNT(*) = 1
+       AND MAX(CASE WHEN c.name = N'ToCurrency' AND ic.key_ordinal = 1 THEN 1 ELSE 0 END) = 1
+)
+BEGIN
+    CREATE UNIQUE INDEX [UX_Currency_ToCurrency]
+    ON dbo.Currency([ToCurrency]);
+END;
+GO
+
+-- SalesChannels(SalesChannelKey)
 IF OBJECT_ID(N'dbo.SalesChannels', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.SalesChannels', N'SalesChannelKey') IS NOT NULL
 AND NOT EXISTS (
@@ -318,9 +352,7 @@ BEGIN
 END;
 GO
 
------------------------------------------------------------------------
--- Ensure candidate key for FK targets: dbo.Time(TimeKey)
------------------------------------------------------------------------
+-- Time(TimeKey)
 IF OBJECT_ID(N'dbo.Time', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.Time', N'TimeKey') IS NOT NULL
 AND NOT EXISTS (
@@ -343,9 +375,7 @@ BEGIN
 END;
 GO
 
------------------------------------------------------------------------
--- Ensure candidate key for FK targets: dbo.ReturnReason(ReturnReasonKey)
------------------------------------------------------------------------
+-- ReturnReason(ReturnReasonKey)
 IF OBJECT_ID(N'dbo.ReturnReason', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.ReturnReason', N'ReturnReasonKey') IS NOT NULL
 AND NOT EXISTS (
@@ -369,26 +399,208 @@ END;
 GO
 
 -----------------------------------------------------------------------
--- Ensure candidate key for FK targets: dbo.Currency(ToCurrency)
+-- 3. FOREIGN KEYS (WITH CHECK)
 -----------------------------------------------------------------------
-IF OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Currency', N'ToCurrency') IS NOT NULL
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+
+-- Product hierarchy: Products -> ProductSubcategory
+IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.ProductSubcategory', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
-    FROM sys.indexes i
-    JOIN sys.index_columns ic
-      ON i.object_id = ic.object_id AND i.index_id = ic.index_id
-    JOIN sys.columns c
-      ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-    WHERE i.object_id = OBJECT_ID(N'dbo.Currency')
-      AND i.is_unique = 1
-      AND ic.is_included_column = 0
-    GROUP BY i.index_id
-    HAVING COUNT(*) = 1
-       AND MAX(CASE WHEN c.name = N'ToCurrency' AND ic.key_ordinal = 1 THEN 1 ELSE 0 END) = 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Products_ProductSubcategory'
+      AND parent_object_id = OBJECT_ID(N'dbo.Products')
 )
 BEGIN
-    CREATE UNIQUE INDEX [UX_Currency_ToCurrency]
-    ON dbo.Currency([ToCurrency]);
+    ALTER TABLE dbo.Products WITH CHECK
+    ADD CONSTRAINT FK_Products_ProductSubcategory
+        FOREIGN KEY ([SubcategoryKey])
+        REFERENCES dbo.ProductSubcategory ([SubcategoryKey]);
+
+    ALTER TABLE dbo.Products CHECK CONSTRAINT FK_Products_ProductSubcategory;
+END;
+
+-- Product hierarchy: ProductSubcategory -> ProductCategory
+IF OBJECT_ID(N'dbo.ProductSubcategory', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.ProductCategory', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ProductSubcategory_ProductCategory'
+      AND parent_object_id = OBJECT_ID(N'dbo.ProductSubcategory')
+)
+BEGIN
+    ALTER TABLE dbo.ProductSubcategory WITH CHECK
+    ADD CONSTRAINT FK_ProductSubcategory_ProductCategory
+        FOREIGN KEY ([CategoryKey])
+        REFERENCES dbo.ProductCategory ([CategoryKey]);
+
+    ALTER TABLE dbo.ProductSubcategory CHECK CONSTRAINT FK_ProductSubcategory_ProductCategory;
+END;
+
+-- ProductProfile -> Products (1:1)
+IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ProductProfile_Products'
+      AND parent_object_id = OBJECT_ID(N'dbo.ProductProfile')
+)
+BEGIN
+    ALTER TABLE dbo.ProductProfile WITH CHECK
+    ADD CONSTRAINT FK_ProductProfile_Products
+        FOREIGN KEY ([ProductKey])
+        REFERENCES dbo.Products ([ProductKey]);
+
+    ALTER TABLE dbo.ProductProfile CHECK CONSTRAINT FK_ProductProfile_Products;
+END;
+
+-- ProductProfile -> Suppliers (SupplierKey lives on ProductProfile)
+IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Suppliers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.ProductProfile', N'SupplierKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ProductProfile_Suppliers'
+      AND parent_object_id = OBJECT_ID(N'dbo.ProductProfile')
+)
+BEGIN
+    ALTER TABLE dbo.ProductProfile WITH CHECK
+    ADD CONSTRAINT FK_ProductProfile_Suppliers
+        FOREIGN KEY ([SupplierKey])
+        REFERENCES dbo.Suppliers ([SupplierKey]);
+
+    ALTER TABLE dbo.ProductProfile CHECK CONSTRAINT FK_ProductProfile_Suppliers;
+END;
+
+-- Customers -> Geography
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Geography', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Customers_Geography'
+      AND parent_object_id = OBJECT_ID(N'dbo.Customers')
+)
+BEGIN
+    ALTER TABLE dbo.Customers WITH CHECK
+    ADD CONSTRAINT FK_Customers_Geography
+        FOREIGN KEY ([GeographyKey])
+        REFERENCES dbo.Geography ([GeographyKey]);
+
+    ALTER TABLE dbo.Customers CHECK CONSTRAINT FK_Customers_Geography;
+END;
+
+-- CustomerProfile -> Customers (1:1)
+IF OBJECT_ID(N'dbo.CustomerProfile', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_CustomerProfile_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerProfile')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerProfile WITH CHECK
+    ADD CONSTRAINT FK_CustomerProfile_Customers
+        FOREIGN KEY ([CustomerKey])
+        REFERENCES dbo.Customers ([CustomerKey]);
+
+    ALTER TABLE dbo.CustomerProfile CHECK CONSTRAINT FK_CustomerProfile_Customers;
+END;
+
+-- OrganizationProfile -> Customers (1:1, org-type rows only)
+IF OBJECT_ID(N'dbo.OrganizationProfile', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_OrganizationProfile_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.OrganizationProfile')
+)
+BEGIN
+    ALTER TABLE dbo.OrganizationProfile WITH CHECK
+    ADD CONSTRAINT FK_OrganizationProfile_Customers
+        FOREIGN KEY ([CustomerKey])
+        REFERENCES dbo.Customers ([CustomerKey]);
+
+    ALTER TABLE dbo.OrganizationProfile CHECK CONSTRAINT FK_OrganizationProfile_Customers;
+END;
+
+-- Stores -> Geography
+IF OBJECT_ID(N'dbo.Stores', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Geography', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Stores', N'GeographyKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Stores_Geography'
+      AND parent_object_id = OBJECT_ID(N'dbo.Stores')
+)
+BEGIN
+    ALTER TABLE dbo.Stores WITH CHECK
+    ADD CONSTRAINT FK_Stores_Geography
+        FOREIGN KEY ([GeographyKey])
+        REFERENCES dbo.Geography ([GeographyKey]);
+
+    ALTER TABLE dbo.Stores CHECK CONSTRAINT FK_Stores_Geography;
+END;
+
+-- ExchangeRates -> Currency (FromCurrency)
+IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ExchangeRates_FromCurrency'
+      AND parent_object_id = OBJECT_ID(N'dbo.ExchangeRates')
+)
+BEGIN
+    ALTER TABLE dbo.ExchangeRates WITH CHECK
+    ADD CONSTRAINT FK_ExchangeRates_FromCurrency
+        FOREIGN KEY ([FromCurrency])
+        REFERENCES dbo.Currency ([ToCurrency]);
+
+    ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_FromCurrency;
+END;
+
+-- ExchangeRates -> Currency (ToCurrency)
+IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ExchangeRates_ToCurrency'
+      AND parent_object_id = OBJECT_ID(N'dbo.ExchangeRates')
+)
+BEGIN
+    ALTER TABLE dbo.ExchangeRates WITH CHECK
+    ADD CONSTRAINT FK_ExchangeRates_ToCurrency
+        FOREIGN KEY ([ToCurrency])
+        REFERENCES dbo.Currency ([ToCurrency]);
+
+    ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_ToCurrency;
+END;
+
+-- ExchangeRates -> Dates (Date)
+IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Dates', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ExchangeRates_Dates'
+      AND parent_object_id = OBJECT_ID(N'dbo.ExchangeRates')
+)
+BEGIN
+    ALTER TABLE dbo.ExchangeRates WITH CHECK
+    ADD CONSTRAINT FK_ExchangeRates_Dates
+        FOREIGN KEY ([Date])
+        REFERENCES dbo.Dates ([Date]);
+
+    ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_Dates;
 END;
 GO

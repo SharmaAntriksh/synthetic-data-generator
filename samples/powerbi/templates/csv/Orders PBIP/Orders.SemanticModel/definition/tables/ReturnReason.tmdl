@@ -5,7 +5,7 @@ table ReturnReason
 		dataType: int64
 		formatString: 0
 		lineageTag: e304753d-034e-4184-b25f-48e6e484253d
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ReturnReasonKey
 
 		annotation SummarizationSetBy = Automatic

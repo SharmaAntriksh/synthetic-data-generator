@@ -3,22 +3,28 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Iterable, Optional, Sequence, Set, Union
 
-from .utils import _arrow, _ensure_dir_for_file, done, info, skip
+from .utils import _arrow, _ensure_dir_for_file, done, info, skip, warn
 from .projection import _project_table_to_schema
 from .encoding import _schema_dict_cols, _validate_required, required_pricing_cols_for_table
 
 PathLike = Union[str, os.PathLike]
 
+# ---------------------------------------------------------------------------
+# Module-level cache for _expected_cols_for_table imports
+# ---------------------------------------------------------------------------
+_EXPECTED_COLS_CACHE: dict[str, tuple[str, ...]] = {}
+_EXPECTED_COLS_LOADED = False
+
 
 def _pm_open_parquet(path: str, pa, pq):
     try:
         source = pa.memory_map(path, "r")
-    except Exception:
+    except OSError:
         source = pa.OSFile(path, "rb")
     reader = pq.ParquetFile(source)
     try:
         setattr(reader, "path", path)
-    except Exception:
+    except AttributeError:
         pass
     return source, reader
 
@@ -29,7 +35,7 @@ def _pm_schema_equals(schema_a, schema_b, *, check_metadata: bool) -> bool:
     if len(schema_a) != len(schema_b):
         return False
     for fa, fb in zip(schema_a, schema_b):
-        if fa != fb:
+        if fa.name != fb.name or not fa.type.equals(fb.type):
             return False
     if check_metadata:
         return getattr(schema_a, "metadata", None) == getattr(schema_b, "metadata", None)
@@ -46,14 +52,7 @@ def _pm_build_canonical_schema(
     if not parquet_files:
         raise ValueError("parquet_files cannot be empty")
 
-    src0, r0 = _pm_open_parquet(parquet_files[0], pa, pq)
-    try:
-        base = r0.schema_arrow
-    finally:
-        try:
-            src0.close()
-        except Exception:
-            pass
+    base = pq.read_schema(parquet_files[0])
 
     if schema_strategy == "first":
         return base
@@ -62,18 +61,10 @@ def _pm_build_canonical_schema(
         raise ValueError(f"Unknown schema_strategy={schema_strategy!r} (use 'first' or 'union')")
 
     fields_by_name = {f.name: f for f in base}
-    ordered_names = [f.name for f in base]
+    ordered_names = list(fields_by_name)
 
     for path in parquet_files[1:]:
-        src, r = _pm_open_parquet(path, pa, pq)
-        try:
-            sch = r.schema_arrow
-        finally:
-            try:
-                src.close()
-            except Exception:
-                pass
-
+        sch = pq.read_schema(path)
         for f in sch:
             if f.name not in fields_by_name:
                 fields_by_name[f.name] = f
@@ -99,11 +90,17 @@ def _pm_restrict_schema_to_expected(schema, expected_cols: Sequence[str], pa, *,
 def _pm_nulls_of_type(pa, pc, n: int, typ):
     try:
         return pa.nulls(n, type=typ)
-    except Exception:
+    except (TypeError, ValueError):
         return pc.cast(pa.nulls(n), typ, safe=False)
 
 
 def _pm_project_table_to_schema(table, schema, *, cast_safe: bool, pa, pc):
+    """Performance-optimized projection that accepts pre-imported pa/pc to avoid
+    repeated module lookups on the hot path (merging many row groups).
+
+    Semantically equivalent to ``projection.project_table_to_schema``
+    with ``on_cast_error="raise"``.
+    """
     cols = []
     names = set(table.schema.names)
     nrows = table.num_rows
@@ -125,7 +122,7 @@ def _pm_row_group_num_rows(reader, rg_index: int) -> int:
         md = reader.metadata
         if md is not None:
             return int(md.row_group(rg_index).num_rows)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         pass
     return -1
 
@@ -135,15 +132,14 @@ def _pm_read_row_group_projected(
     rg_index: int,
     schema,
     *,
+    available: Set[str],
     required_cols: Optional[Set[str]] = None,
     cast_safe: bool = True,
     pa=None,
     pc=None,
 ):
-    available = set(reader.schema_arrow.names)
-
     if required_cols:
-        missing_required = set(required_cols) - available
+        missing_required = required_cols - available
         if missing_required:
             raise RuntimeError(
                 f"Parquet chunk is missing required columns {sorted(missing_required)}; "
@@ -238,13 +234,15 @@ def _merge_parquet_files_common(
         writer_kwargs.pop("compression_level", None)
         writer = pq.ParquetWriter(merged_file_abs, schema, **writer_kwargs)
 
-    try:
-        expected_set = set(expected_cols) if expected_cols else None
+    expected_set = frozenset(expected_cols) if expected_cols else None
+    schema_names = schema.names
 
+    try:
         for path in files:
             src, reader = _pm_open_parquet(path, pa, pq)
             try:
-                chunk_cols = set(reader.schema_arrow.names)
+                chunk_schema = reader.schema_arrow
+                chunk_cols = set(chunk_schema.names)
 
                 if expected_set and strict_expected:
                     missing = sorted(expected_set - chunk_cols)
@@ -256,8 +254,10 @@ def _merge_parquet_files_common(
                     if extra:
                         raise RuntimeError(f"Chunk has unexpected columns {extra}: {path}")
 
-                schema_exact = _pm_schema_equals(reader.schema_arrow, schema, check_metadata=True)
-                schema_same_fields = _pm_schema_equals(reader.schema_arrow, schema, check_metadata=False)
+                schema_exact = _pm_schema_equals(chunk_schema, schema, check_metadata=True)
+                schema_same_fields = (
+                    schema_exact or _pm_schema_equals(chunk_schema, schema, check_metadata=False)
+                )
 
                 for rg in range(reader.num_row_groups):
                     if schema_exact and not expected_cols:
@@ -265,14 +265,17 @@ def _merge_parquet_files_common(
                         continue
 
                     if schema_same_fields:
-                        t = reader.read_row_group(rg, columns=schema.names)
-                        writer.write_table(_pm_project_table_to_schema(t, schema, cast_safe=cast_safe, pa=pa, pc=pc))
+                        t = reader.read_row_group(rg, columns=schema_names)
+                        writer.write_table(
+                            _pm_project_table_to_schema(t, schema, cast_safe=cast_safe, pa=pa, pc=pc)
+                        )
                         continue
 
                     t = _pm_read_row_group_projected(
                         reader,
                         rg,
                         schema,
+                        available=chunk_cols,
                         required_cols=required_cols,
                         cast_safe=cast_safe,
                         pa=pa,
@@ -282,7 +285,7 @@ def _merge_parquet_files_common(
             finally:
                 try:
                     src.close()
-                except Exception:
+                except OSError:
                     pass
     finally:
         writer.close()
@@ -291,35 +294,48 @@ def _merge_parquet_files_common(
         for path in files:
             try:
                 os.remove(path)
-            except Exception:
-                pass
+            except OSError as ex:
+                warn(f"[merge] Failed to delete chunk {os.path.basename(path)}: {ex}")
 
     if log:
         done(f"{log_prefix}Merged chunks: {os.path.basename(merged_file_abs)}".strip())
     return merged_file_abs
 
 
+def _load_expected_cols_schemas():
+    """One-time import of static column tuples from static_schemas."""
+    global _EXPECTED_COLS_LOADED
+    if _EXPECTED_COLS_LOADED:
+        return
+
+    try:
+        from ....utils.static_schemas import (
+            _SALES_ORDER_HEADER_COLS,
+            _SALES_ORDER_DETAIL_COLS,
+        )
+    except (ImportError, ValueError):
+        from src.utils.static_schemas import (
+            _SALES_ORDER_HEADER_COLS,
+            _SALES_ORDER_DETAIL_COLS,
+        )
+
+    _EXPECTED_COLS_CACHE["salesorderheader"] = _SALES_ORDER_HEADER_COLS
+    _EXPECTED_COLS_CACHE["salesorderdetail"] = _SALES_ORDER_DETAIL_COLS
+    _EXPECTED_COLS_LOADED = True
+
+
 def _expected_cols_for_table(table_name: str | None) -> tuple[str, ...] | None:
     if not table_name:
         return None
 
+    _load_expected_cols_schemas()
+
     norm = table_name.replace("_", "").replace(" ", "").casefold()
-
-    from src.utils.static_schemas import (
-        _SALES_ORDER_HEADER_COLS,
-        _SALES_ORDER_DETAIL_COLS,
-    )
-
-    if norm == "salesorderheader":
-        return _SALES_ORDER_HEADER_COLS
-    if norm == "salesorderdetail":
-        return _SALES_ORDER_DETAIL_COLS
-    return None
+    return _EXPECTED_COLS_CACHE.get(norm)
 
 
 def _read_row_group_projected(reader, rg_index: int, schema, *, table_name: str | None):
-    """
-    Back-compat symbol: sales code may import this.
+    """Back-compat symbol: sales code may import this.
 
     Sales-specific required pricing columns enforcement + projection to canonical schema.
     """
@@ -371,7 +387,8 @@ def merge_parquet_files(
     _validate_required(canonical_schema, table_name=table_name)
     dict_cols = _schema_dict_cols(canonical_schema, table_name=table_name)
 
-    required_cols = required_pricing_cols_for_table(table_name) or None
+    required_set = required_pricing_cols_for_table(table_name)
+    required_cols = required_set if required_set else None
 
     return _merge_parquet_files_common(
         files,
@@ -386,6 +403,6 @@ def merge_parquet_files(
         reject_extra_cols=bool(expected_cols),
         required_cols=required_cols,
         use_dictionary=dict_cols,
-        sort_files=True,
+        sort_files=False,
         log=log,
     )

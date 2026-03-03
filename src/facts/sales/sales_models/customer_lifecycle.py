@@ -1,15 +1,19 @@
 """
-NEW ROLE (post-overhaul):
-- Customer existence over time is encoded in customers.parquet:
+Customer lifecycle: eligibility + optional activity overlay.
+
+Customer existence is encoded in customers.parquet:
     IsActiveInSales, CustomerStartMonth, CustomerEndMonth
-- This module optionally applies a *monthly activity overlay* on top of that:
-    temporary inactivity (dormancy), optional reactivation, mild seasonality/noise
 
-IMPORTANT:
-- Do NOT use this module to "grow the customer base" anymore.
-  That conflicts with CustomerStartMonth/CustomerEndMonth generated in customers.py.
+This module:
+  1. Builds per-month eligibility masks from those fields.
+  2. Optionally applies a monthly activity overlay (dormancy / reactivation).
+
+IMPORTANT: Do NOT use this module to "grow the customer base".
+That is handled by CustomerStartMonth/CustomerEndMonth in customers.py.
+
+Config source: models.yaml -> models.customer_activity_overlay
+Runtime state:  State.models_cfg  (the inner "models" dict)
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,120 +24,144 @@ import numpy as np
 from src.facts.sales.sales_logic import State
 
 
+# ---------------------------------------------------------------
+# Overlay config
+# ---------------------------------------------------------------
+
 @dataclass(frozen=True)
 class ActivityOverlayCfg:
+    """Configuration for the optional customer activity overlay."""
+
     enabled: bool = False
 
     # Base probability that an eligible customer is "active" in a given month.
-    # If enabled=False, activity mask == eligibility mask.
     base_monthly_activity_rate: float = 0.85
 
-    # Noise applied to base activity rate each month (multiplicative)
-    monthly_noise: float = 0.08
+    # Smoothing: blends current month's rate with previous month's state.
+    # 0 = no smoothing, 0.98 = very sticky.
+    month_inertia: float = 0.75
 
-    # Seasonality (multiplicative): activity_rate *= 1 + seasonal_amplitude*sin(2πm/period)
-    seasonal_amplitude: float = 0.15
-    seasonal_period_months: int = 24
+    # Monthly reactivation: fraction of inactive-but-eligible customers
+    # that re-enter the active pool each month.
+    monthly_reactivation_rate: float = 0.08
 
-    # Reactivation: fraction of inactive customers that can return each month
-    monthly_reactivation_rate: float = 0.10
+    # Multiplicative seasonal cycle on the base rate.
+    seasonal_amplitude: float = 0.10
+    seasonal_period_months: int = 12
 
-    # Optional: if customer_temperature array exists, scale volatility
-    # Effective noise = monthly_noise * (1 + temperature_noise_scale*(temp-1))
+    # Per-customer volatility scaling (requires customer_temperature array).
+    # Effective noise = per_customer_sigma * (1 + temperature_noise_scale * (temp - 1))
+    per_customer_sigma: float = 0.20
     temperature_noise_scale: float = 0.50
+
+    # Reproducibility seed offset.
+    seed: int = 1234
 
 
 def _load_overlay_cfg() -> ActivityOverlayCfg:
     """
-    Reads config from State.models_cfg if present.
+    Load activity overlay config from State.models_cfg.
 
-    Recommended config location (doesn't break old configs):
-      customer_activity_overlay:
-        enabled: true
-        base_monthly_activity_rate: 0.85
-        monthly_noise: 0.08
-        seasonal_amplitude: 0.15
-        seasonal_period_months: 24
-        monthly_reactivation_rate: 0.10
-        temperature_noise_scale: 0.50
-
-    If absent, returns disabled overlay (no behavior change).
+    Reads from ``models.customer_activity_overlay``.
+    Returns a disabled config if the section is absent.
     """
-    cfg = (getattr(State, "models_cfg", None) or {})
-    block = cfg.get("customer_activity_overlay", {}) or {}
+    models = getattr(State, "models_cfg", None) or {}
+    block = models.get("customer_activity_overlay", {}) or {}
+
+    if not isinstance(block, dict) or not block:
+        return ActivityOverlayCfg()
+
     try:
         return ActivityOverlayCfg(
             enabled=bool(block.get("enabled", False)),
-            base_monthly_activity_rate=float(block.get("base_monthly_activity_rate", 0.85)),
-            monthly_noise=float(block.get("monthly_noise", 0.08)),
-            seasonal_amplitude=float(block.get("seasonal_amplitude", 0.15)),
-            seasonal_period_months=int(block.get("seasonal_period_months", 24)),
-            monthly_reactivation_rate=float(block.get("monthly_reactivation_rate", 0.10)),
-            temperature_noise_scale=float(block.get("temperature_noise_scale", 0.50)),
+            base_monthly_activity_rate=float(
+                block.get("base_monthly_activity_rate", 0.85)),
+            month_inertia=float(
+                block.get("month_inertia", 0.75)),
+            monthly_reactivation_rate=float(
+                block.get("monthly_reactivation_rate", 0.08)),
+            seasonal_amplitude=float(
+                block.get("seasonal_amplitude", 0.10)),
+            seasonal_period_months=int(
+                block.get("seasonal_period_months", 12)),
+            per_customer_sigma=float(
+                block.get("per_customer_sigma", 0.20)),
+            temperature_noise_scale=float(
+                block.get("temperature_noise_scale", 0.50)),
+            seed=int(block.get("seed", 1234)),
         )
-    except Exception as e:
+    except (TypeError, ValueError) as e:
         raise ValueError(f"Invalid customer_activity_overlay config: {e}") from e
 
 
+# ---------------------------------------------------------------
+# End-month normalization
+# ---------------------------------------------------------------
+
 def _normalize_end_month(end_month_arr, n: int) -> np.ndarray:
     """
-    Convert nullable end-month representations into an int64 array with -1 meaning "no end".
+    Convert nullable end-month representations to int64 with -1 = "no end".
+
+    Handles: int arrays, float arrays (NaN → -1), object arrays (None/pd.NA → -1).
     """
-    n = int(n)
     if end_month_arr is None:
         return np.full(n, -1, dtype=np.int64)
 
     a = np.asarray(end_month_arr)
 
-    # ints
+    # Integer arrays: straightforward
     if np.issubdtype(a.dtype, np.integer):
-        out = a.astype(np.int64, copy=False)
-        out = np.where(out < 0, -1, out)
+        out = a.astype(np.int64, copy=True)
+        out[out < 0] = -1
         return out
 
-    # floats (NaN -> -1)
+    # Float arrays: NaN → -1
     if np.issubdtype(a.dtype, np.floating):
         out = np.where(np.isnan(a), -1, a).astype(np.int64)
         out[out < 0] = -1
         return out
 
-    # objects / nullable ints (pd.NA/None)
+    # Object arrays (pd.NA, None, mixed)
     if a.dtype == object:
         try:
             import pandas as pd
-
-            s = pd.Series(a, copy=False)
-            num = pd.to_numeric(s, errors="coerce")
-            out = num.fillna(-1).astype("int64").to_numpy()
+            s = pd.to_numeric(pd.Series(a, copy=False), errors="coerce")
+            out = s.fillna(-1).astype("int64").to_numpy()
             out[out < 0] = -1
             return out
         except Exception:
-            out = np.full(n, -1, dtype=np.int64)
-            lim = min(n, a.shape[0])
-            for i in range(lim):
-                v = a[i]
-                if v is None:
-                    continue
-                try:
-                    if v is np.nan:  # noqa: E721
-                        continue
-                except Exception:
-                    pass
-                try:
-                    iv = int(v)
-                    out[i] = iv if iv >= 0 else -1
-                except Exception:
-                    pass
-            return out
+            pass
 
-    # last resort
+        # Manual fallback
+        out = np.full(n, -1, dtype=np.int64)
+        for i in range(min(n, a.shape[0])):
+            v = a[i]
+            if v is None:
+                continue
+            try:
+                if np.isnan(v):
+                    continue
+            except (TypeError, ValueError):
+                pass
+            try:
+                iv = int(v)
+                out[i] = iv if iv >= 0 else -1
+            except (TypeError, ValueError):
+                pass
+        return out
+
+    # Last resort
     try:
-        out = a.astype(np.int64, copy=False)
+        out = a.astype(np.int64, copy=True)
         out[out < 0] = -1
         return out
     except Exception:
         return np.full(n, -1, dtype=np.int64)
 
+
+# ---------------------------------------------------------------
+# Eligibility masks
+# ---------------------------------------------------------------
 
 def build_eligibility_by_month(
     start_month_arr: np.ndarray,
@@ -143,58 +171,77 @@ def build_eligibility_by_month(
     end_month: int,
 ) -> Dict[int, np.ndarray]:
     """
-    Build month -> eligibility mask over customers (aligned by customer row index).
+    Build month → eligibility mask over customers (aligned by row index).
 
-    Eligibility rule:
-      - IsActiveInSales == 1 (if provided, else assume all eligible globally)
+    Eligibility rule per month *m*:
+      - IsActiveInSales == 1  (or assumed if array is None)
       - CustomerStartMonth <= m
-      - CustomerEndMonth < 0 or missing => no end
-        else m <= CustomerEndMonth
+      - CustomerEndMonth < 0 (no end)  OR  m <= CustomerEndMonth
+
+    Parameters
+    ----------
+    start_month_arr : int64 array — CustomerStartMonth per customer
+    end_month_arr   : optional int64 array — CustomerEndMonth (nullable)
+    is_active_in_sales_arr : optional int64 array — IsActiveInSales flag
+    start_month, end_month : int — inclusive month range
+
+    Returns
+    -------
+    dict[int, np.ndarray[bool]]
     """
     start_month_arr = np.asarray(start_month_arr, dtype=np.int64)
-    n = int(start_month_arr.shape[0])
+    n = start_month_arr.shape[0]
+    start_m, end_m = int(start_month), int(end_month)
 
-    start_m = int(start_month)
-    end_m = int(end_month)
     if end_m < start_m:
         return {}
 
+    # Global active gate
     if is_active_in_sales_arr is None:
         active_gate = np.ones(n, dtype=bool)
     else:
-        active_gate = (np.asarray(is_active_in_sales_arr, dtype=np.int64) == 1)
+        active_gate = np.asarray(is_active_in_sales_arr, dtype=np.int64) == 1
 
-    end_month_norm = _normalize_end_month(end_month_arr, n)
+    end_norm = _normalize_end_month(end_month_arr, n)
 
-    mask = active_gate & (start_month_arr <= start_m) & ((end_month_norm < 0) | (start_m <= end_month_norm))
+    # --- Initial mask for start_m ---
+    mask = (
+        active_gate
+        & (start_month_arr <= start_m)
+        & ((end_norm < 0) | (start_m <= end_norm))
+    )
     out: Dict[int, np.ndarray] = {start_m: mask.copy()}
 
-    start_sorted = np.argsort(start_month_arr, kind="mergesort")
-    start_vals = start_month_arr[start_sorted]
+    # --- Precompute sorted start/end arrays for efficient sweep ---
+    start_order = np.argsort(start_month_arr, kind="mergesort")
+    start_vals = start_month_arr[start_order]
     ptr_start = int(np.searchsorted(start_vals, start_m + 1, side="left"))
 
-    finite_end_idx = np.flatnonzero(end_month_norm >= 0)
-    if finite_end_idx.size:
-        end_vals_f = end_month_norm[finite_end_idx]
-        end_sorted = finite_end_idx[np.argsort(end_vals_f, kind="mergesort")]
-        end_vals_sorted = end_month_norm[end_sorted]
-        ptr_end = int(np.searchsorted(end_vals_sorted, start_m, side="left"))
+    finite_end_mask = end_norm >= 0
+    if finite_end_mask.any():
+        finite_idx = np.flatnonzero(finite_end_mask)
+        end_vals_at_finite = end_norm[finite_idx]
+        end_order = finite_idx[np.argsort(end_vals_at_finite, kind="mergesort")]
+        end_vals = end_norm[end_order]
+        ptr_end = int(np.searchsorted(end_vals, start_m, side="left"))
     else:
-        end_sorted = np.empty(0, dtype=np.int64)
-        end_vals_sorted = np.empty(0, dtype=np.int64)
+        end_order = np.empty(0, dtype=np.int64)
+        end_vals = np.empty(0, dtype=np.int64)
         ptr_end = 0
 
+    # --- Sweep month by month ---
     for m in range(start_m, end_m):
         next_m = m + 1
 
-        while ptr_end < end_sorted.size and int(end_vals_sorted[ptr_end]) == m:
-            i = int(end_sorted[ptr_end])
-            mask[i] = False
+        # Deactivate customers whose end month == m
+        while ptr_end < end_order.size and int(end_vals[ptr_end]) == m:
+            mask[int(end_order[ptr_end])] = False
             ptr_end += 1
 
-        while ptr_start < start_sorted.size and int(start_vals[ptr_start]) == next_m:
-            i = int(start_sorted[ptr_start])
-            if active_gate[i] and (end_month_norm[i] < 0 or end_month_norm[i] >= next_m):
+        # Activate customers whose start month == next_m
+        while ptr_start < start_order.size and int(start_vals[ptr_start]) == next_m:
+            i = int(start_order[ptr_start])
+            if active_gate[i] and (end_norm[i] < 0 or end_norm[i] >= next_m):
                 mask[i] = True
             ptr_start += 1
 
@@ -203,80 +250,100 @@ def build_eligibility_by_month(
     return out
 
 
+# ---------------------------------------------------------------
+# Activity overlay
+# ---------------------------------------------------------------
+
 def apply_activity_overlay_by_month(
     eligibility_by_month: Dict[int, np.ndarray],
     seed: int,
     customer_temperature: Optional[np.ndarray] = None,
 ) -> Dict[int, np.ndarray]:
     """
-    Applies an optional activity overlay on top of eligibility masks.
-    Returns month -> active_mask where active_mask <= eligibility_mask.
+    Apply an optional monthly activity overlay on top of eligibility.
 
-    If overlay is disabled, returns eligibility_by_month unchanged.
+    Returns month → active_mask where active_mask ⊆ eligibility_mask.
+    If the overlay is disabled, returns eligibility_by_month unchanged.
+
+    Parameters
+    ----------
+    eligibility_by_month : dict[int, np.ndarray[bool]]
+    seed : int
+    customer_temperature : optional float64 array (per customer)
+
+    Returns
+    -------
+    dict[int, np.ndarray[bool]]
     """
     cfg = _load_overlay_cfg()
     if not cfg.enabled:
         return eligibility_by_month
 
-    if not (0.0 <= cfg.base_monthly_activity_rate <= 1.0):
+    # Validate
+    if not 0.0 <= cfg.base_monthly_activity_rate <= 1.0:
         raise ValueError("base_monthly_activity_rate must be in [0, 1]")
-    if cfg.monthly_noise < 0.0:
-        raise ValueError("monthly_noise must be >= 0")
+    if cfg.month_inertia < 0.0:
+        raise ValueError("month_inertia must be >= 0")
     if cfg.seasonal_period_months <= 0:
         raise ValueError("seasonal_period_months must be > 0")
-    if not (0.0 <= cfg.monthly_reactivation_rate <= 1.0):
+    if not 0.0 <= cfg.monthly_reactivation_rate <= 1.0:
         raise ValueError("monthly_reactivation_rate must be in [0, 1]")
 
     rng_global = np.random.default_rng(int(seed) + 9100)
 
+    # Prepare temperature array (if provided)
     temp = None
     if customer_temperature is not None:
         temp = np.asarray(customer_temperature, dtype=np.float64)
         temp = np.where(np.isfinite(temp), temp, 1.0)
         temp = np.clip(temp, 0.2, 3.0)
 
-    out: Dict[int, np.ndarray] = {}
-    prev_active: Optional[np.ndarray] = None
-
     months = sorted(eligibility_by_month.keys())
     if not months:
-        return out
+        return {}
+
+    out: Dict[int, np.ndarray] = {}
+    prev_active: np.ndarray | None = None
 
     for m in months:
         elig = np.asarray(eligibility_by_month[m], dtype=bool)
-        n = int(elig.shape[0])
+        n = elig.shape[0]
 
+        # Per-month deterministic RNG for reproducibility
         rng_m = np.random.default_rng(int(seed) + 10000 + int(m) * 7919)
 
-        cycle = np.sin(2.0 * np.pi * (float(m) / float(cfg.seasonal_period_months)))
-        seasonal_mult = 1.0 + cfg.seasonal_amplitude * cycle
-
-        p = cfg.base_monthly_activity_rate * seasonal_mult
-        if cfg.monthly_noise > 0:
-            p *= float(rng_m.uniform(1.0 - cfg.monthly_noise, 1.0 + cfg.monthly_noise))
+        # Seasonal modulation
+        cycle = np.sin(2.0 * np.pi * float(m) / float(cfg.seasonal_period_months))
+        p = cfg.base_monthly_activity_rate * (1.0 + cfg.seasonal_amplitude * cycle)
         p = float(np.clip(p, 0.0, 1.0))
 
-        if temp is not None:
-            noise_scale = cfg.monthly_noise * (1.0 + cfg.temperature_noise_scale * (temp - 1.0))
+        # Per-customer probability (uses temperature if available)
+        if temp is not None and cfg.per_customer_sigma > 0.0:
+            noise_scale = cfg.per_customer_sigma * (
+                1.0 + cfg.temperature_noise_scale * (temp - 1.0))
             noise_scale = np.clip(noise_scale, 0.0, 0.50)
-            per_cust_p = p * rng_m.uniform(1.0 - noise_scale, 1.0 + noise_scale, size=n)
-            per_cust_p = np.clip(per_cust_p, 0.0, 1.0)
+            per_cust_p = np.clip(
+                p * rng_m.uniform(1.0 - noise_scale, 1.0 + noise_scale, size=n),
+                0.0, 1.0,
+            )
         else:
             per_cust_p = p
 
+        # First month: simple Bernoulli draw
         if prev_active is None:
-            u = rng_global.random(n)
-            active = elig & (u < per_cust_p)
+            active = elig & (rng_global.random(n) < per_cust_p)
             out[m] = active
             prev_active = active
             continue
 
-        u1 = rng_global.random(n)
-        active = (prev_active & elig) & (u1 < per_cust_p)
+        # Subsequent months: previously-active stay active with probability p;
+        # previously-inactive can reactivate
+        active = (prev_active & elig) & (rng_global.random(n) < per_cust_p)
 
         if cfg.monthly_reactivation_rate > 0.0:
-            u2 = rng_global.random(n)
-            active |= ((~prev_active) & elig) & (u2 < cfg.monthly_reactivation_rate)
+            reactivate = (~prev_active) & elig & (
+                rng_global.random(n) < cfg.monthly_reactivation_rate)
+            active |= reactivate
 
         out[m] = active
         prev_active = active
@@ -284,18 +351,33 @@ def apply_activity_overlay_by_month(
     return out
 
 
-def build_active_customer_pool(all_customers, start_month: int, end_month: int, seed: int):
+# ---------------------------------------------------------------
+# Backward-compat shim
+# ---------------------------------------------------------------
+
+def build_active_customer_pool(
+    all_customers,
+    start_month: int,
+    end_month: int,
+    seed: int,
+):
     """
-    BACKWARD-COMPAT SHIM.
+    Build month → boolean mask over customers.
 
     New behavior:
-    - If State has lifecycle arrays, compute eligibility from them and
-      optionally apply an activity overlay.
-    - If lifecycle arrays are missing, fall back to "all active" masks
-      across months (closest old behavior for compatibility).
+      If State has lifecycle arrays → eligibility + optional overlay.
+    Fallback:
+      All customers active in all months.
 
-    Returns:
-        dict[int, np.ndarray]: month_idx -> boolean mask over customers (row-aligned)
+    Parameters
+    ----------
+    all_customers : array-like of customer keys
+    start_month, end_month : int — inclusive month range
+    seed : int
+
+    Returns
+    -------
+    dict[int, np.ndarray[bool]]
     """
     cust_keys = getattr(State, "customer_keys", None)
     start_arr = getattr(State, "customer_start_month", None)
@@ -317,7 +399,7 @@ def build_active_customer_pool(all_customers, start_month: int, end_month: int, 
             customer_temperature=temp_arr,
         )
 
-    all_customers = np.asarray(all_customers, dtype=np.int64)
-    n = int(all_customers.shape[0])
+    # Fallback: all customers active every month
+    n = np.asarray(all_customers, dtype=np.int64).shape[0]
     mask = np.ones(n, dtype=bool)
     return {m: mask.copy() for m in range(int(start_month), int(end_month) + 1)}

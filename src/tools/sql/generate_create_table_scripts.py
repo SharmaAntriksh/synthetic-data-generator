@@ -15,6 +15,10 @@ TABLE_SALES_ORDER_HEADER = "SalesOrderHeader"
 TABLE_SALES_ORDER_DETAIL = "SalesOrderDetail"
 TABLE_SALES_RETURN = "SalesReturn"
 
+# Budget fact table names
+TABLE_BUDGET_YEARLY = "BudgetYearly"
+TABLE_BUDGET_MONTHLY = "BudgetMonthly"
+
 # Tables that should be emitted in the Facts script (not Dimensions),
 # even though they live inside STATIC_SCHEMAS.
 _FACT_TABLE_NAMES = {
@@ -22,6 +26,8 @@ _FACT_TABLE_NAMES = {
     TABLE_SALES_ORDER_HEADER,
     TABLE_SALES_ORDER_DETAIL,
     TABLE_SALES_RETURN,
+    TABLE_BUDGET_YEARLY,
+    TABLE_BUDGET_MONTHLY,
 }
 
 
@@ -88,6 +94,14 @@ def _returns_enabled(cfg: Mapping) -> bool:
         return bool(enabled_cfg.get("returns"))
 
     return True
+
+
+def _budget_enabled(cfg: Mapping) -> bool:
+    """Return True if budget generation is enabled in config."""
+    budget_cfg = cfg.get("budget")
+    if budget_cfg is None or not isinstance(budget_cfg, Mapping):
+        return False
+    return bool(budget_cfg.get("enabled", False))
 
 
 def _require_static_schema(table_name: str) -> ColumnSpec:
@@ -170,12 +184,31 @@ def generate_all_create_tables(
         "",
     ]
 
+    skip_tables: set[str] = set()
+    seg_cfg = (cfg.get("customer_segments") or {})
+    if isinstance(seg_cfg, dict):
+        if not bool(seg_cfg.get("enabled", True)):
+            skip_tables.add("CustomerSegment")
+            skip_tables.add("CustomerSegmentMembership")
+        elif not bool(seg_cfg.get("generate_bridge", True)):
+            skip_tables.add("CustomerSegmentMembership")
+
+    sp_cfg = (cfg.get("superpowers") or {})
+    if isinstance(sp_cfg, dict):
+        if not bool(sp_cfg.get("enabled", True)):
+            skip_tables.add("Superpowers")
+            skip_tables.add("CustomerSuperpowers")
+        elif not bool(sp_cfg.get("generate_bridge", True)):
+            skip_tables.add("CustomerSuperpowers")
+
     # Dimensions
     dim_scripts: list[str] = []
     for table_name in sorted(STATIC_SCHEMAS.keys()):
         if table_name in _FACT_TABLE_NAMES:
             continue
-
+        if table_name in skip_tables:
+            continue
+        
         if table_name == "Dates":
             dates_cfg = cfg.get("dates")
             if dates_cfg is None:
@@ -250,6 +283,22 @@ def generate_all_create_tables(
                 include_go=True,
             )
         )
+
+    # Budget tables (conditional on budget.enabled)
+    if _budget_enabled(cfg):
+        for budget_table in (
+            TABLE_BUDGET_YEARLY,
+            TABLE_BUDGET_MONTHLY,
+        ):
+            fact_scripts.append(
+                create_table_from_schema(
+                    budget_table,
+                    _require_static_schema(budget_table),
+                    schema=schema,
+                    drop_existing=drop_existing,
+                    include_go=True,
+                )
+            )
 
     fact_out_path.write_text("\n".join(header) + "\n\n" + "\n\n".join(fact_scripts) + "\n", encoding="utf-8")
 

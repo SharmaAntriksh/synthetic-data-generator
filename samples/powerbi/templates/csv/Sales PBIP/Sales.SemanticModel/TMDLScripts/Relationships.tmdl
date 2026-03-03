@@ -60,7 +60,7 @@ createOrReplace
 		toColumn: ProductSubcategory.SubcategoryKey
 
 	relationship b46ea36d-ed9b-47f4-8e3b-d625a645eb80
-		fromColumn: EmployeesStoreAssignment.StoreKey
+		fromColumn: EmployeeStoreAssignment.StoreKey
 		toColumn: Store.StoreKey
 
 	relationship 41257594-f28c-48ff-9e61-33bdafd2401f
@@ -72,10 +72,14 @@ createOrReplace
 		toColumn: ReturnReason.ReturnReasonKey
 
 	relationship 6100276c-eadd-4d39-b9a0-59d758e08f9d
-		fromColumn: EmployeesStoreAssignment.EmployeeKey
+		fromColumn: EmployeeStoreAssignment.EmployeeKey
 		toColumn: Employee.EmployeeKey
 
 	relationship 44583518-3422-6bca-4538-0b76503fb092
 		fromColumn: Sales.SalesPersonEmployeeKey
 		toColumn: Employee.EmployeeKey
+
+	relationship 7d315217-2368-4da8-b520-73ea3f22a041
+		fromColumn: Sales.TimeKey
+		toColumn: Time.TimeKey
 

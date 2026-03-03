@@ -35,13 +35,17 @@ queryGroup 'SOD Transformations\Helper Queries'
 
 	annotation PBI_QueryGroupOrder = 0
 
-queryGroup 'SalesReturns Transformation'
+queryGroup 'Sales Returns Transformations'
 
 	annotation PBI_QueryGroupOrder = 2
 
+queryGroup 'Sales Returns Transformations\Helper Queries'
+
+	annotation PBI_QueryGroupOrder = 0
+
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBI_QueryOrder = ["ContosoFolder","FxReadCSVFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRates","Sample_File_SOH","Parameter_SOH","Sample_SOH","Transform_SOH_File","SalesOrderDetail","Sample_File_SOD","Parameter_SOD","Sample_SOD","Transform_SOD_File","MeasuresTable","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel","SalesReturns","Transform_SalesReturns_File","Transform_Sales_File","Sample_File_SalesReturns"]
+annotation PBI_QueryOrder = ["ContosoFolder","FxReadCSVFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRates","SalesReturns","Sample_File_SOH","Parameter_SOH","Sample_SOH","Transform_SOH_File","SalesOrderDetail","Sample_File_SOD","Parameter_SOD","Sample_SOD","Transform_SOD_File","MeasuresTable","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel","Sample_File_SalesReturns","Parameter_SalesReturns","Transform_SalesReturns_File","Sample_SalesReturns","Time"]
 
 annotation PBI_ProTooling = ["TMDLView_Desktop","DevMode"]
 
@@ -63,6 +67,7 @@ ref table EmployeeStoreAssignment
 ref table ReturnReason
 ref table SalesChannel
 ref table SalesReturns
+ref table Time
 
 ref cultureInfo en-US
 

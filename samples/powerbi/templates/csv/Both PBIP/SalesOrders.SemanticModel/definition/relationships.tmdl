@@ -15,36 +15,6 @@ relationship 9be8d967-d6b9-e0ff-4901-c81ba25499a7
 	fromColumn: SalesOrderDetail.SalesOrderNumber
 	toColumn: SalesOrderHeader.SalesOrderNumber
 
-relationship 28da5e4c-5712-cf93-3464-27b5443b4425
-	fromColumn: Sales.CustomerKey
-	toColumn: Customers.CustomerKey
-
-relationship 15201b52-ac1f-eeb6-e516-2af86d8855c2
-	fromColumn: Sales.StoreKey
-	toColumn: Store.StoreKey
-
-relationship 7e007976-a441-ca63-3cb5-dd11917d164a
-	fromColumn: Sales.OrderDate
-	toColumn: Dates.Date
-
-relationship e386c2fa-b68b-c8b5-5870-731fd37a0e40
-	isActive: false
-	fromColumn: Sales.DueDate
-	toColumn: Dates.Date
-
-relationship 5cc4919b-bde3-116b-6c67-ecbb833a1a66
-	isActive: false
-	fromColumn: Sales.DeliveryDate
-	toColumn: Dates.Date
-
-relationship 4bf0dddb-c104-72f1-5f06-40df8b888232
-	fromColumn: Sales.PromotionKey
-	toColumn: Promotions.PromotionKey
-
-relationship d4703835-9aff-5266-5857-40468c145baa
-	fromColumn: Sales.ProductKey
-	toColumn: Products.ProductKey
-
 relationship d334731b-09fb-8eb2-3f35-4a7640e7f1ac
 	fromColumn: ExchangeRates.Date
 	toColumn: Dates.Date
@@ -85,29 +55,60 @@ relationship e512eec8-6f8d-4573-b6a7-939c5ea70297
 	fromColumn: SalesOrderHeader.CurrencyKey
 	toColumn: Currency.CurrencyKey
 
-relationship 54098baf-3b65-4d49-9739-df3cd0b36156
-	crossFilteringBehavior: bothDirections
-	fromCardinality: one
-	fromColumn: SalesReturns.SalesOrderNumber
-	toColumn: SalesOrderHeader.SalesOrderNumber
-
 relationship 3687eaf9-aa9c-44a7-a33e-20036259f623
 	fromColumn: SalesOrderHeader.SalesChannelKey
 	toColumn: SalesChannel.SalesChannelKey
-
-relationship 25fb2392-48d8-4f92-8a8d-4d7f2d1ffbaf
-	fromColumn: Sales.SalesChannelKey
-	toColumn: SalesChannel.SalesChannelKey
-
-relationship 6e1ff80e-61ce-402a-9da9-421e0751cfb7
-	fromColumn: SalesReturns.ReturnReasonKey
-	toColumn: ReturnReason.ReturnReasonKey
 
 relationship 692a29e9-90a9-42c9-a45c-fd9fbeae2c48
 	fromColumn: EmployeeStoreAssignment.EmployeeKey
 	toColumn: Employee.EmployeeKey
 
-relationship 326d51ec-a1c5-8745-c008-b9ed4db2ad56
-	fromColumn: Sales.SalesPersonEmployeeKey
+relationship d706c1c5-4652-4fb8-b1e1-2c4f1d166b15
+	fromColumn: SalesReturns.SalesOrderNumber
+	toColumn: SalesOrderHeader.SalesOrderNumber
+
+relationship f8d204e0-0ec2-4a32-a432-867cb7837a21
+	fromColumn: SalesReturns.ReturnReasonKey
+	toColumn: ReturnReason.ReturnReasonKey
+
+relationship dd2c5cd1-ff39-4e48-9e28-3c9bea7db674
+	fromColumn: SalesOrderHeader.TimeKey
+	toColumn: Time.TimeKey
+
+relationship 9697844f-4b1b-fa17-8e4a-7098c21d1623
+	fromColumn: SalesOrderHeader.SalesPersonEmployeeKey
 	toColumn: Employee.EmployeeKey
+
+relationship 132f00b8-b8ca-4c81-be69-31ca8cd26b7c
+	fromColumn: Sales.CustomerKey
+	toColumn: Customers.CustomerKey
+
+relationship 3476e585-973b-4006-9636-ae84cbc6affc
+	fromColumn: Sales.StoreKey
+	toColumn: Store.StoreKey
+
+relationship 56f7d9de-c1bf-444d-ab3b-dd1d7cac75e4
+	fromColumn: Sales.PromotionKey
+	toColumn: Promotions.PromotionKey
+
+relationship 345abd36-d3c7-456a-ba80-760f56f4c3f6
+	fromColumn: Sales.ProductKey
+	toColumn: Products.ProductKey
+
+relationship 38f6b706-c5b9-4d3c-82bd-9febe9a3f91e
+	fromColumn: Sales.CurrencyKey
+	toColumn: Currency.CurrencyKey
+
+relationship 441425cc-4013-4707-bb2a-b795c2886829
+	isActive: false
+	fromColumn: Sales.SalesOrderNumber
+	toColumn: SalesOrderHeader.SalesOrderNumber
+
+relationship 46311b44-a535-4bd1-bc89-baca60ca9fcc
+	fromColumn: Sales.SalesChannelKey
+	toColumn: SalesChannel.SalesChannelKey
+
+relationship ea728b08-4f40-4750-8397-0fc20cc30a81
+	fromColumn: Sales.TimeKey
+	toColumn: Time.TimeKey
 

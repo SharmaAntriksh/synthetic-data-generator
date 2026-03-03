@@ -347,6 +347,550 @@ table Dates
 
 		annotation SummarizationSetBy = Automatic
 
+	column SequentialDayIndex
+		dataType: string
+		lineageTag: 1984f18e-ea30-4944-b91f-8447d3a4b36d
+		summarizeBy: none
+		sourceColumn: SequentialDayIndex
+
+		annotation SummarizationSetBy = Automatic
+
+	column MonthNameShort
+		dataType: string
+		lineageTag: 7c08252c-c3a4-450a-97a3-71fd2b54a55a
+		summarizeBy: none
+		sourceColumn: MonthNameShort
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearMonthKey
+		dataType: string
+		lineageTag: f8107182-0c89-48a3-8240-d37d7c12188b
+		summarizeBy: none
+		sourceColumn: YearMonthKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearMonthLabel
+		dataType: string
+		lineageTag: e8c674e1-0971-44d3-a4fb-dda752a734b5
+		summarizeBy: none
+		sourceColumn: YearMonthLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearQuarterKey
+		dataType: string
+		lineageTag: 229756f1-1e09-4925-ad09-686b3f9a88a9
+		summarizeBy: none
+		sourceColumn: YearQuarterKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearQuarterLabel
+		dataType: string
+		lineageTag: 321a0c81-a6ed-427a-91f2-4506177bdc5d
+		summarizeBy: none
+		sourceColumn: YearQuarterLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column DayNameShort
+		dataType: string
+		lineageTag: c1aad88f-1e09-4c13-aac4-4920dde68805
+		summarizeBy: none
+		sourceColumn: DayNameShort
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearOffset
+		dataType: string
+		lineageTag: e87dd29e-2a18-461f-a87c-7dc332cd38a1
+		summarizeBy: none
+		sourceColumn: YearOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	column CalendarMonthOffset
+		dataType: string
+		lineageTag: 3332278c-b968-4f43-8187-58f8cf7b1da1
+		summarizeBy: none
+		sourceColumn: CalendarMonthOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	column CalendarQuarterOffset
+		dataType: string
+		lineageTag: 922cacf6-a73b-40f5-bd1b-02366ffb5469
+		summarizeBy: none
+		sourceColumn: CalendarQuarterOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalYearStartYear
+		dataType: string
+		lineageTag: cb08f607-3432-4ee5-be23-792c7d2f9f04
+		summarizeBy: none
+		sourceColumn: FiscalYearStartYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalMonthNumber
+		dataType: string
+		lineageTag: 4cdd2ac4-b214-4b0b-9fa2-594de17d1dd9
+		summarizeBy: none
+		sourceColumn: FiscalMonthNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalQuarterNumber
+		dataType: string
+		lineageTag: d70348d8-d68d-43ee-810f-bba692a24984
+		summarizeBy: none
+		sourceColumn: FiscalQuarterNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalMonthIndex
+		dataType: string
+		lineageTag: 6f349c61-fe52-412b-a29a-5eb0ce200ac3
+		summarizeBy: none
+		sourceColumn: FiscalMonthIndex
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalQuarterIndex
+		dataType: string
+		lineageTag: 7608d371-fecc-4c87-bdc9-927d03da3be7
+		summarizeBy: none
+		sourceColumn: FiscalQuarterIndex
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalMonthOffset
+		dataType: string
+		lineageTag: 7060f37b-ec58-4f19-bc46-f9d80cf9a2ad
+		summarizeBy: none
+		sourceColumn: FiscalMonthOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalQuarterOffset
+		dataType: string
+		lineageTag: 6c0089ec-7eb9-4a33-a9cf-310284edcfd6
+		summarizeBy: none
+		sourceColumn: FiscalQuarterOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalQuarterName
+		dataType: string
+		lineageTag: 04599292-ab16-4dcb-9da7-108703576164
+		summarizeBy: none
+		sourceColumn: FiscalQuarterName
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalYearBin
+		dataType: string
+		lineageTag: b51e243d-c9f9-4b09-8c0b-0c40aa67c0b5
+		summarizeBy: none
+		sourceColumn: FiscalYearBin
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalYearMonthNumber
+		dataType: string
+		lineageTag: b5dca94e-043e-449f-9039-fe7a9fd28b89
+		summarizeBy: none
+		sourceColumn: FiscalYearMonthNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalYearQuarterNumber
+		dataType: string
+		lineageTag: b29c75b3-3fd8-4235-9c6a-ac88770224c1
+		summarizeBy: none
+		sourceColumn: FiscalYearQuarterNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalYearStartDate
+		dataType: string
+		lineageTag: 6ca218b8-eb50-4d03-91ce-47662d981d1a
+		summarizeBy: none
+		sourceColumn: FiscalYearStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalYearEndDate
+		dataType: string
+		lineageTag: 09deb1a3-d7a9-4f09-aa2d-bc8e3753973d
+		summarizeBy: none
+		sourceColumn: FiscalYearEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalQuarterStartDate
+		dataType: string
+		lineageTag: af7050f0-01f4-4bf9-a0b1-a633667e016f
+		summarizeBy: none
+		sourceColumn: FiscalQuarterStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalQuarterEndDate
+		dataType: string
+		lineageTag: 368849a8-b454-460d-bc7a-a3d354b5c04a
+		summarizeBy: none
+		sourceColumn: FiscalQuarterEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsFiscalYearStart
+		dataType: string
+		lineageTag: 3a89ef55-e206-44f0-b0fa-839ca48b9935
+		summarizeBy: none
+		sourceColumn: IsFiscalYearStart
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsFiscalYearEnd
+		dataType: string
+		lineageTag: c23cd28f-f60b-4210-ac8b-d15dedafd159
+		summarizeBy: none
+		sourceColumn: IsFiscalYearEnd
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsFiscalQuarterStart
+		dataType: string
+		lineageTag: 9ba9da4a-b532-44a4-b9e3-e6f6e418c33d
+		summarizeBy: none
+		sourceColumn: IsFiscalQuarterStart
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsFiscalQuarterEnd
+		dataType: string
+		lineageTag: 6728d07c-3cb1-4fe5-a2aa-dea04ed694c8
+		summarizeBy: none
+		sourceColumn: IsFiscalQuarterEnd
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalYear
+		dataType: string
+		lineageTag: bab07234-7fe0-4a91-8a06-3704b4f3ea08
+		summarizeBy: none
+		sourceColumn: FiscalYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalYearLabel
+		dataType: string
+		lineageTag: c78a8a44-6a05-40d0-8a11-f38af327bbe6
+		summarizeBy: none
+		sourceColumn: FiscalYearLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column FiscalSystem
+		dataType: string
+		lineageTag: 69f75891-db2b-4f2b-a336-0f3cc361a57b
+		summarizeBy: none
+		sourceColumn: FiscalSystem
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeeklyFiscalSystem
+		dataType: string
+		lineageTag: be77d6d9-4d4c-402e-afe5-be601b57d68c
+		summarizeBy: none
+		sourceColumn: WeeklyFiscalSystem
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearNumber
+		dataType: string
+		lineageTag: b98fc654-0fe5-4059-a30a-36982c8a5644
+		summarizeBy: none
+		sourceColumn: FWYearNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearLabel
+		dataType: string
+		lineageTag: ba7d1cd4-e4fd-4431-a509-50b18c3e76f7
+		summarizeBy: none
+		sourceColumn: FWYearLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWQuarterNumber
+		dataType: string
+		lineageTag: 8d3a0b08-6173-4214-b450-0c3bcfb51012
+		summarizeBy: none
+		sourceColumn: FWQuarterNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWQuarterLabel
+		dataType: string
+		lineageTag: d8a3d3e4-7c63-47e1-83b4-d97b29b625d4
+		summarizeBy: none
+		sourceColumn: FWQuarterLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearQuarterNumber
+		dataType: string
+		lineageTag: 83626894-76ca-4ec9-9807-118194bc2831
+		summarizeBy: none
+		sourceColumn: FWYearQuarterNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearQuarterOffset
+		dataType: string
+		lineageTag: 80511eae-5513-421e-a3b5-2981d0854ad2
+		summarizeBy: none
+		sourceColumn: FWYearQuarterOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWMonthNumber
+		dataType: string
+		lineageTag: 71549ab9-7d0a-4486-8045-7107cf66781a
+		summarizeBy: none
+		sourceColumn: FWMonthNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWMonthLabel
+		dataType: string
+		lineageTag: 0e5c6f4c-bafa-495e-b19a-4a55b7407c34
+		summarizeBy: none
+		sourceColumn: FWMonthLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearMonthNumber
+		dataType: string
+		lineageTag: bc411fb8-4bb1-4f0e-bc8f-8eda44f1b373
+		summarizeBy: none
+		sourceColumn: FWYearMonthNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearMonthOffset
+		dataType: string
+		lineageTag: 1b28adcf-228a-4929-8f5f-c3be3157b47a
+		summarizeBy: none
+		sourceColumn: FWYearMonthOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWWeekNumber
+		dataType: string
+		lineageTag: 9ceaf5e7-f914-4cd0-9d60-b19cfda5911c
+		summarizeBy: none
+		sourceColumn: FWWeekNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWWeekLabel
+		dataType: string
+		lineageTag: 95a1acb2-d3ab-4938-ab61-96469716f63f
+		summarizeBy: none
+		sourceColumn: FWWeekLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearWeekNumber
+		dataType: string
+		lineageTag: b8f9e47f-57ab-46b8-b01f-652ed8cd8f48
+		summarizeBy: none
+		sourceColumn: FWYearWeekNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearWeekOffset
+		dataType: string
+		lineageTag: c6807633-8e42-4889-b7a7-2d2b3deeb3d3
+		summarizeBy: none
+		sourceColumn: FWYearWeekOffset
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearWeekLabel
+		dataType: string
+		lineageTag: 6bc510a4-d4ec-4c71-96d5-207291726d23
+		summarizeBy: none
+		sourceColumn: FWYearWeekLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWPeriodNumber
+		dataType: string
+		lineageTag: f00920ac-616f-4761-966e-189f885ef963
+		summarizeBy: none
+		sourceColumn: FWPeriodNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWPeriodLabel
+		dataType: string
+		lineageTag: d55c7ffe-f61e-4bca-880b-ab7a8da428d2
+		summarizeBy: none
+		sourceColumn: FWPeriodLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWStartOfYear
+		dataType: string
+		lineageTag: c787b945-a01a-436b-8900-4ff6e1007c9c
+		summarizeBy: none
+		sourceColumn: FWStartOfYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWEndOfYear
+		dataType: string
+		lineageTag: 77652d45-3dc0-46fe-ba7e-ee4d7b858680
+		summarizeBy: none
+		sourceColumn: FWEndOfYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWStartOfQuarter
+		dataType: string
+		lineageTag: b6e91150-12b6-4f5e-a175-296a490948ad
+		summarizeBy: none
+		sourceColumn: FWStartOfQuarter
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWEndOfQuarter
+		dataType: string
+		lineageTag: 40649b63-e0b3-42d1-8584-c90eaaa5addc
+		summarizeBy: none
+		sourceColumn: FWEndOfQuarter
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWStartOfMonth
+		dataType: string
+		lineageTag: 9bc6ea17-5ff1-4a9f-a31a-f54cc320efb9
+		summarizeBy: none
+		sourceColumn: FWStartOfMonth
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWEndOfMonth
+		dataType: string
+		lineageTag: 4127e50e-ed1c-40d8-ae4e-40262d0949d7
+		summarizeBy: none
+		sourceColumn: FWEndOfMonth
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWStartOfWeek
+		dataType: string
+		lineageTag: 776f4ba0-e8df-4e0f-bca4-0e7c5e5773fb
+		summarizeBy: none
+		sourceColumn: FWStartOfWeek
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWEndOfWeek
+		dataType: string
+		lineageTag: ad8b936a-ec32-496c-b2da-4c7c65b2d100
+		summarizeBy: none
+		sourceColumn: FWEndOfWeek
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeekDayNumber
+		dataType: string
+		lineageTag: 46351265-9921-46cf-9e42-fed580979e4a
+		summarizeBy: none
+		sourceColumn: WeekDayNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeekDayNameShort
+		dataType: string
+		lineageTag: d7df4581-63ed-4701-aa51-3ad8edf203de
+		summarizeBy: none
+		sourceColumn: WeekDayNameShort
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWDayOfYearNumber
+		dataType: string
+		lineageTag: 8d80e45d-8673-4e7a-91d3-f4a3100c428d
+		summarizeBy: none
+		sourceColumn: FWDayOfYearNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWDayOfQuarterNumber
+		dataType: string
+		lineageTag: 24147730-9f14-46a5-b465-8469f7a7fb2e
+		summarizeBy: none
+		sourceColumn: FWDayOfQuarterNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWDayOfMonthNumber
+		dataType: string
+		lineageTag: cdab56e2-fe84-405f-8d25-092727d5a1bc
+		summarizeBy: none
+		sourceColumn: FWDayOfMonthNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsWorkingDay
+		dataType: string
+		lineageTag: 9d66e7e6-56b9-41ac-8d5f-3b91377c92ff
+		summarizeBy: none
+		sourceColumn: IsWorkingDay
+
+		annotation SummarizationSetBy = Automatic
+
+	column DayType
+		dataType: string
+		lineageTag: 2d3fe48b-867d-4a07-a41a-8acec8805485
+		summarizeBy: none
+		sourceColumn: DayType
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWWeekInQuarterNumber
+		dataType: string
+		lineageTag: 3908fd85-14e6-4182-be7c-3c81257f30fb
+		summarizeBy: none
+		sourceColumn: FWWeekInQuarterNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearMonthLabel
+		dataType: string
+		lineageTag: 6e61ab58-29f4-4d26-957d-64cc7bac56dd
+		summarizeBy: none
+		sourceColumn: FWYearMonthLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column FWYearQuarterLabel
+		dataType: string
+		lineageTag: 33732bc2-f6d2-4966-97c1-58a25e870f52
+		summarizeBy: none
+		sourceColumn: FWYearQuarterLabel
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Dates = m
 		mode: import
 		queryGroup: Dimensions

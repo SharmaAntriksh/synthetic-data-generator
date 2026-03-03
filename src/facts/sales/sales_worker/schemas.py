@@ -5,25 +5,26 @@ from typing import List, Optional, Set
 
 import pyarrow as pa
 
-from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
-
-try:
-    from ..output_paths import TABLE_SALES_RETURN  # type: ignore
-except Exception:
-    TABLE_SALES_RETURN = None  # type: ignore
+from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER, TABLE_SALES_RETURN
+from .returns_builder import RETURNS_SCHEMA as _RETURNS_SCHEMA_BASE
 
 
 def schema_dict_cols(schema: pa.Schema, exclude: Optional[Set[str]] = None) -> List[str]:
     """
     Return columns that are candidates for parquet dictionary encoding.
-    Only string columns are included.
+    Includes string and binary columns (consistent with sales_writer/encoding.py).
     """
     exclude = exclude or set()
     out: List[str] = []
     for f in schema:
         if f.name in exclude:
             continue
-        if pa.types.is_string(f.type) or pa.types.is_large_string(f.type):
+        if (
+            pa.types.is_string(f.type)
+            or pa.types.is_large_string(f.type)
+            or pa.types.is_binary(f.type)
+            or pa.types.is_large_binary(f.type)
+        ):
             out.append(f.name)
     return out
 
@@ -193,22 +194,12 @@ def build_worker_schemas(
     }
 
     # ---------------------------------------------------------------------
-    # Returns schema (thin)
+    # Returns schema — derived from the canonical RETURNS_SCHEMA in
+    # returns_builder.py (single source of truth for column names & types).
     # ---------------------------------------------------------------------
     if returns_enabled:
-        if TABLE_SALES_RETURN is None:
-            raise RuntimeError("returns_enabled=True but TABLE_SALES_RETURN is not defined in output_paths.py")
-
-        return_fields = [
-            pa.field("SalesOrderNumber", pa.int64()),
-            pa.field("SalesOrderLineNumber", pa.int64()),
-            pa.field("ReturnDate", pa.date32()),
-            pa.field("ReturnReasonKey", pa.int64()),
-            pa.field("ReturnQuantity", pa.int64()),
-            pa.field("ReturnNetPrice", pa.float64()),
-            pa.field("ReturnEventKey", pa.int64()),   # <-- ADD (BIGINT)
-        ]
-        return_schema = pa.schema(return_fields + delta_fields) if is_delta else pa.schema(return_fields)
+        base_return_fields = list(_RETURNS_SCHEMA_BASE)
+        return_schema = pa.schema(base_return_fields + delta_fields) if is_delta else _RETURNS_SCHEMA_BASE
         schema_by_table[TABLE_SALES_RETURN] = return_schema
 
     # ---------------------------------------------------------------------
@@ -219,7 +210,7 @@ def build_worker_schemas(
         TABLE_SALES_ORDER_DETAIL: ["DueDate", "DeliveryDate"],  # FIX: no OrderDate in detail schema
         TABLE_SALES_ORDER_HEADER: ["OrderDate"],
     }
-    if returns_enabled and TABLE_SALES_RETURN is not None:
+    if returns_enabled:
         date_cols_by_table[TABLE_SALES_RETURN] = ["ReturnDate"]
 
     # Optional models.yaml override (preserve previous behavior)

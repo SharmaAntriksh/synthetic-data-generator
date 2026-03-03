@@ -1,237 +1,82 @@
 table Sales
-	isHidden
-	lineageTag: cc1ca8dd-c4cc-4266-871c-d66529b444fb
+	lineageTag: 98d27fd9-d067-4f71-8701-62e4cf08a2f5
 
 	column SalesOrderNumber
 		dataType: int64
-		isHidden
 		formatString: 0
-		lineageTag: caf5b260-8af9-4d7b-ad7b-3d97e27b01ed
+		lineageTag: 65df8146-1199-43ff-a8b3-0709583ed02a
 		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column SalesOrderLineNumber
 		dataType: int64
-		isHidden
 		formatString: 0
-		lineageTag: c59390bf-db37-4274-a759-1340176b2c52
+		lineageTag: e69c2d84-eba5-46ff-ac4e-23ee9db30392
 		summarizeBy: sum
 		sourceColumn: SalesOrderLineNumber
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column CustomerKey
 		dataType: int64
-		isHidden
 		formatString: 0
-		lineageTag: b02677c6-e7e8-48ed-8358-e3b2b63a28e4
+		lineageTag: 86e1d5dc-6574-4429-88c1-414f48a548f2
 		summarizeBy: count
 		sourceColumn: CustomerKey
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column ProductKey
 		dataType: int64
-		isHidden
 		formatString: 0
-		lineageTag: 19a0af97-b6e8-40ff-ad7e-12ce5a07bedb
+		lineageTag: 24f9e5f0-13db-40d3-ab6b-4794cfafde68
 		summarizeBy: count
 		sourceColumn: ProductKey
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreKey
 		dataType: int64
-		isHidden
 		formatString: 0
-		lineageTag: b9f551df-8f77-4d9a-93a3-12b1af5a1542
+		lineageTag: 812a2932-1aa8-431a-8894-ec520dc15605
 		summarizeBy: count
 		sourceColumn: StoreKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column PromotionKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: 4aa87136-8053-4246-a959-b63fee176c3f
-		summarizeBy: count
-		sourceColumn: PromotionKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column CurrencyKey
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: e83e1f2f-9df1-4a34-80da-769359b36228
-		summarizeBy: count
-		sourceColumn: CurrencyKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column OrderDate
-		dataType: dateTime
-		isHidden
-		formatString: Short Date
-		lineageTag: 3a6177f9-db2b-403a-b928-b558a94f3e40
-		summarizeBy: none
-		sourceColumn: OrderDate
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-	column DueDate
-		dataType: dateTime
-		isHidden
-		formatString: Short Date
-		lineageTag: 006c062f-1d6d-4fca-a9b0-189ec9e909e7
-		summarizeBy: none
-		sourceColumn: DueDate
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-	column DeliveryDate
-		dataType: dateTime
-		isHidden
-		formatString: Short Date
-		lineageTag: 68e5e918-eb4e-4e6d-9630-084bffae83b3
-		summarizeBy: none
-		sourceColumn: DeliveryDate
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-	column Quantity
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: 5540454d-6a78-44ea-821f-b5f74c2eaa46
-		summarizeBy: sum
-		sourceColumn: Quantity
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column NetPrice
-		dataType: decimal
-		isHidden
-		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
-		lineageTag: ff1890f5-aaba-4434-9989-164996b4af79
-		summarizeBy: sum
-		sourceColumn: NetPrice
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
-
-	column UnitCost
-		dataType: decimal
-		isHidden
-		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
-		lineageTag: fb6dc5b0-396c-4051-8176-aab8f9529729
-		summarizeBy: sum
-		sourceColumn: UnitCost
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
-
-	column UnitPrice
-		dataType: decimal
-		isHidden
-		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
-		lineageTag: 9a9969c0-fb3a-4637-aa37-b901a705f92c
-		summarizeBy: sum
-		sourceColumn: UnitPrice
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
-
-	column DiscountAmount
-		dataType: decimal
-		isHidden
-		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
-		lineageTag: d87c9005-d11c-4576-b5b5-4e43b5ff62fb
-		summarizeBy: sum
-		sourceColumn: DiscountAmount
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
-
-	column DeliveryStatus
-		dataType: string
-		isHidden
-		lineageTag: 74224a94-02fd-4822-91cd-94396bbfebaa
-		summarizeBy: none
-		sourceColumn: DeliveryStatus
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column IsOrderDelayed
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: 49941c06-d4a2-4b6e-97d0-3b54a225d52d
-		summarizeBy: sum
-		sourceColumn: IsOrderDelayed
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column SalesPersonEmployeeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 22db6ab8-2c47-45e9-9eb7-23d24b15b808
+		lineageTag: 4e4ed5a1-638c-4273-9d23-4cd859a559af
 		summarizeBy: count
 		sourceColumn: SalesPersonEmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 6b940f89-6bd9-4b5c-96cb-e4e98739128e
+		summarizeBy: count
+		sourceColumn: PromotionKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 52788aad-0ac0-4935-8ffe-bb7c686716f3
+		summarizeBy: count
+		sourceColumn: CurrencyKey
 
 		annotation SummarizationSetBy = Automatic
 
 	column SalesChannelKey
 		dataType: int64
 		formatString: 0
-		lineageTag: c6b718e2-fccd-4d56-897c-37dd9254ac34
+		lineageTag: 799a98da-8823-4ae7-a0b2-5a65e8c2257f
 		summarizeBy: count
 		sourceColumn: SalesChannelKey
 
@@ -240,9 +85,112 @@ table Sales
 	column TimeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 313b8021-a41b-4976-8443-49141ea65e8e
+		lineageTag: f2fe7646-d9af-4b9a-a535-72892f20c5f0
 		summarizeBy: count
 		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column OrderDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 8d4d058a-589e-4eb0-af7e-3095bc188d20
+		summarizeBy: none
+		sourceColumn: OrderDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column DueDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: a38acfb8-3477-4011-8824-31cb8169d7cf
+		summarizeBy: none
+		sourceColumn: DueDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column DeliveryDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: a9e8ffd5-b406-432b-a8c4-317823f3dd28
+		summarizeBy: none
+		sourceColumn: DeliveryDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column Quantity
+		dataType: int64
+		formatString: 0
+		lineageTag: 1bd55201-9bab-468d-a774-971c9e843e4d
+		summarizeBy: sum
+		sourceColumn: Quantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column NetPrice
+		dataType: decimal
+		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		lineageTag: be0422ab-91b7-418b-8e7f-bbcc79b9d070
+		summarizeBy: sum
+		sourceColumn: NetPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	column UnitCost
+		dataType: decimal
+		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		lineageTag: ae56ded0-cde8-4abd-8785-59e0bd7767b1
+		summarizeBy: sum
+		sourceColumn: UnitCost
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	column UnitPrice
+		dataType: decimal
+		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		lineageTag: cd609fcf-96d2-45ee-8940-cef6d2bcceec
+		summarizeBy: sum
+		sourceColumn: UnitPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	column DiscountAmount
+		dataType: decimal
+		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		lineageTag: 4ab04d2b-cd14-4479-a92b-f9aaa32ea086
+		summarizeBy: sum
+		sourceColumn: DiscountAmount
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	column DeliveryStatus
+		dataType: string
+		lineageTag: 06a2f63f-3a80-4ba3-bbb8-41da5cf7c447
+		summarizeBy: none
+		sourceColumn: DeliveryStatus
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsOrderDelayed
+		dataType: int64
+		formatString: 0
+		lineageTag: 3ef95355-4c27-4e0e-b889-715c3442b2f3
+		summarizeBy: sum
+		sourceColumn: IsOrderDelayed
 
 		annotation SummarizationSetBy = Automatic
 
@@ -252,18 +200,18 @@ table Sales
 		source =
 				let
 				    Source = Folder.Files ( ContosoFolder & "\facts\sales" ),
-				    FilterHidden = Table.SelectRows ( Source, each [Attributes]?[Hidden]? <> true ),
-				    InvokeCustomFunction = Table.AddColumn (
-				        FilterHidden,
+				    RemoveCols = Table.SelectColumns ( Source, { "Content" } ),
+				    RemoveHidden = Table.SelectRows ( RemoveCols, each [Attributes]?[Hidden]? <> true ),
+				    InvokeCustom = Table.AddColumn (
+				        RemoveHidden,
 				        "Transform File",
-				        each Transform_File_Sales ( [Content] )
+				        each Transform_Sales_File ( [Content] )
 				    ),
-				    RenameCols = Table.RenameColumns ( InvokeCustomFunction, { "Name", "Source.Name" } ),
-				    RemoveCols = Table.SelectColumns ( RenameCols, { "Transform File" } ),
+				    RemoveOtherCol = Table.SelectColumns ( InvokeCustom, { "Transform File" } ),
 				    CombineTables = Table.ExpandTableColumn (
-				        RemoveCols,
+				        RemoveOtherCol,
 				        "Transform File",
-				        Table.ColumnNames ( Transform_File_Sales ( Sample_File_Sales ) )
+				        Table.ColumnNames ( Transform_Sales_File ( Sample_File_Sales ) )
 				    ),
 				    DataTypes = {
 				        { "SalesOrderNumber", Int64.Type },
@@ -299,8 +247,6 @@ table Sales
 				    ChangeTypes = Table.TransformColumnTypes ( CombineTables, CheckNamesForTypes )
 				in
 				    ChangeTypes
-
-	changedProperty = IsHidden
 
 	annotation PBI_NavigationStepName = Navigation
 

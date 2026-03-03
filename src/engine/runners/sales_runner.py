@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 
-from src.utils.logging_utils import stage, info, done
+from src.utils.logging_utils import stage, info
 from src.engine.packaging import package_output
 from src.engine.powerbi_packaging import maybe_attach_pbip_project
 from src.facts.sales.sales import generate_sales_fact
@@ -135,10 +134,8 @@ def _normalize_partitioning(sales_cfg: Dict[str, Any]) -> Tuple[bool, Optional[l
 
 
 def _run_step(label: str, fn) -> None:
-    stage(label)
-    t0 = time.time()
-    fn()
-    done(f"{label} completed in {time.time() - t0:.1f}s")
+    with stage(label):
+        fn()
 
 
 # =========================================================
@@ -230,8 +227,11 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     )
 
     # --- Step 1: Generate sales
+    budget_acc = None
+
     def _do_generate():
-        generate_sales_fact(
+        nonlocal budget_acc
+        result = generate_sales_fact(
             ctx.cfg_for_run,
             parquet_folder=str(ctx.parquet_dims),
             out_folder=str(ctx.sales_out_folder),
@@ -250,11 +250,29 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             partition_cols=ctx.partition_cols,
             delta_output_folder=str(ctx.sales_out_folder),
             skip_order_cols=ctx.skip_order_cols,
+            return_manifest=True,
         )
+        if isinstance(result, tuple) and len(result) >= 3:
+            _, _, budget_acc = result
 
     _run_step("Generating Sales", _do_generate)
 
-    # --- Step 2: Package output + PBIP
+    # --- Step 2: Budget generation (optional, must run before packaging)
+    if budget_acc is not None and budget_acc.has_data:
+        from src.facts.budget.runner import run_budget_pipeline
+
+        def _do_budget():
+            run_budget_pipeline(
+                accumulator=budget_acc,
+                parquet_dims=ctx.parquet_dims,
+                fact_out=ctx.fact_out,
+                cfg=ctx.cfg,
+                file_format=ctx.fmt,
+            )
+
+        _run_step("Generating Budget", _do_budget)
+
+    # --- Step 3: Package output + PBIP
     def _do_package():
         final_folder = package_output(ctx.cfg_for_run, ctx.sales_cfg, ctx.parquet_dims, ctx.fact_out)
 

@@ -8,16 +8,19 @@ from typing import Union
 # Logging (soft dependency)
 # ---------------------------------------------------------------------
 try:
-    from src.utils.logging_utils import info, skip, done
+    from src.utils.logging_utils import info, skip, done, warn
 except Exception:  # pragma: no cover
-    def info(msg: str) -> None:  # type: ignore
+    def info(msg: str) -> None:  # type: ignore[misc]
         print(msg)
 
-    def skip(msg: str) -> None:  # type: ignore
+    def skip(msg: str) -> None:  # type: ignore[misc]
         print(msg)
 
-    def done(msg: str) -> None:  # type: ignore
+    def done(msg: str) -> None:  # type: ignore[misc]
         print(msg)
+
+    def warn(msg: str) -> None:  # type: ignore[misc]
+        print(f"WARN: {msg}")
 
 
 PathLike = Union[str, os.PathLike]
@@ -34,7 +37,7 @@ def _arrow():
         import pyarrow.compute as pc  # type: ignore
         import pyarrow.parquet as pq  # type: ignore
         return pa, pc, pq
-    except Exception as e:
+    except ImportError as e:
         raise RuntimeError("pyarrow is required for Parquet merge/Delta writes") from e
 
 

@@ -5,7 +5,7 @@ table Promotions
 		dataType: int64
 		formatString: 0
 		lineageTag: 7e6df572-b676-4cca-a951-71240f847fa4
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: PromotionKey
 
 		annotation SummarizationSetBy = Automatic
@@ -14,7 +14,7 @@ table Promotions
 		dataType: int64
 		formatString: 0
 		lineageTag: 954fe7fd-37b0-4a45-bf0d-5efa7a04e569
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: PromotionLabel
 
 		annotation SummarizationSetBy = Automatic
@@ -38,7 +38,7 @@ table Promotions
 	column DiscountPct
 		dataType: double
 		lineageTag: d32f03db-d535-422f-96c3-f7673b9335c8
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: DiscountPct
 
 		annotation SummarizationSetBy = Automatic

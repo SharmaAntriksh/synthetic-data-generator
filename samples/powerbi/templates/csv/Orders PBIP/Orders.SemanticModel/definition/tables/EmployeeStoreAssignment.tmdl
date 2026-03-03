@@ -5,7 +5,7 @@ table EmployeeStoreAssignment
 		dataType: int64
 		formatString: 0
 		lineageTag: 31612ab7-11e3-4ec6-a035-65774f56f6bf
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: EmployeeKey
 
 		annotation SummarizationSetBy = Automatic
@@ -14,7 +14,7 @@ table EmployeeStoreAssignment
 		dataType: int64
 		formatString: 0
 		lineageTag: 1939d4ae-d34d-4c8c-bdd8-03dbc6195e41
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: StoreKey
 
 		annotation SummarizationSetBy = Automatic

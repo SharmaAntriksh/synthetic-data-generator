@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 from typing import Dict, List, Mapping, Sequence, Tuple
+import re
 
 # Type aliases (lightweight, no runtime overhead)
 SchemaCol = Tuple[str, str]
@@ -160,6 +161,12 @@ _SALES_SCHEMA: Schema = (
     ("IsOrderDelayed", INT_NN),
 )
 
+
+_SALES_SCHEMA_NO_ORDER: Schema = tuple(
+    (name, dtype) for (name, dtype) in _SALES_SCHEMA
+    if name not in ("SalesOrderNumber", "SalesOrderLineNumber")
+)
+
 # Derived fact tables (PascalCase table names for SQL)
 _SALES_ORDER_HEADER_COLS: Tuple[str, ...] = (
     "SalesOrderNumber",
@@ -204,27 +211,95 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("CustomerKey", INT_NN),
         ("CustomerName", VARCHAR(100, not_null=True)),
         ("DOB", DATE_NULL),
-        ("MaritalStatus", VARCHAR(10, not_null=False)),
         ("Gender", VARCHAR(10, not_null=True)),
         ("EmailAddress", VARCHAR(100, not_null=False)),
-        ("YearlyIncome", FLOAT(not_null=False)),
-        ("TotalChildren", INT(not_null=False)),
-        ("Education", VARCHAR(20, not_null=False)),
-        ("Occupation", VARCHAR(20, not_null=False)),
+        ("PhoneNumber", VARCHAR(30, not_null=False)),
+        ("HomeAddress", VARCHAR(200, not_null=False)),
+        ("WorkAddress", VARCHAR(200, not_null=False)),
+        ("Latitude", FLOAT(not_null=False)),
+        ("Longitude", FLOAT(not_null=False)),
+        ("PostalCode", VARCHAR(20, not_null=False)),
         ("CustomerType", VARCHAR(20, not_null=True)),
         ("CompanyName", VARCHAR(200, not_null=False)),
         ("GeographyKey", INT_NN),
         ("LoyaltyTierKey", INT_NN),
         ("CustomerAcquisitionChannelKey", INT_NN),
         ("IsActiveInSales", INT_NN),
-        ("CustomerStartMonth", INT_NN),  # 0..T-1 month index
-        ("CustomerEndMonth", INT_NULL),  # nullable churn month
-        ("CustomerStartDate", DATE_NN),  # month start date
-        ("CustomerEndDate", DATE_NULL),  # nullable churn date
-        ("CustomerWeight", FLOAT(not_null=True)),  # lognormal > 0
-        ("CustomerTemperature", FLOAT(not_null=True)),  # typically 0..1
+        ("CustomerStartMonth", INT_NN),
+        ("CustomerEndMonth", INT_NULL),
+        ("CustomerStartDate", DATE_NN),
+        ("CustomerEndDate", DATE_NULL),
+        ("CustomerWeight", FLOAT(not_null=True)),
+        ("CustomerTemperature", FLOAT(not_null=True)),
         ("CustomerSegment", VARCHAR(30, not_null=True)),
-        ("CustomerChurnBias", FLOAT(not_null=True)),  # lognormal > 0
+        ("CustomerChurnBias", FLOAT(not_null=True)),
+    ),
+    "CustomerProfile": (
+        ("CustomerKey", INT_NN),
+        ("AgeGroup", VARCHAR(10, not_null=False)),
+        ("YearlyIncome", FLOAT(not_null=False)),
+        ("IncomeGroup", VARCHAR(10, not_null=False)),
+        ("MaritalStatus", VARCHAR(10, not_null=False)),
+        ("Education", VARCHAR(20, not_null=False)),
+        ("Occupation", VARCHAR(20, not_null=False)),
+        ("TotalChildren", INT(not_null=False)),
+        ("HomeOwnership", VARCHAR(10, not_null=False)),
+        ("NumberOfCars", INT(not_null=False)),
+        ("CreditScore", INT(not_null=False)),
+        ("UrbanRural", VARCHAR(10, not_null=False)),
+        ("TimeZone", VARCHAR(30, not_null=False)),
+        ("BirthCity", VARCHAR(100, not_null=False)),
+        ("CurrentCity", VARCHAR(100, not_null=False)),
+        ("DistanceToNearestStoreKm", FLOAT(not_null=False)),
+        ("PreferredLanguage", VARCHAR(20, not_null=False)),
+        ("HasOnlineAccount", VARCHAR(5, not_null=True)),
+        ("OptInMarketing", VARCHAR(5, not_null=True)),
+        ("SocialMediaFollower", VARCHAR(5, not_null=True)),
+        ("AppInstalled", VARCHAR(5, not_null=True)),
+        ("NewsletterFrequency", VARCHAR(10, not_null=True)),
+        ("DevicePreference", VARCHAR(10, not_null=True)),
+        ("LastWebVisitDate", DATE_NULL),
+        ("PreferredPaymentMethod", VARCHAR(20, not_null=True)),
+        ("PreferredContactMethod", VARCHAR(10, not_null=True)),
+        ("ReferralSource", VARCHAR(20, not_null=True)),
+        ("MemberSinceDate", DATE_NULL),
+        ("IsEmployee", VARCHAR(5, not_null=True)),
+        ("AnnualSpendBucket", VARCHAR(10, not_null=True)),
+        ("HasGiftCardBalance", VARCHAR(5, not_null=True)),
+        ("RewardPointsBalance", INT(not_null=False)),
+        ("AvgOrderFrequencyDays", INT(not_null=False)),
+        ("CustomerSatisfactionScore", INT(not_null=False)),
+        ("NPS", INT(not_null=False)),
+        ("CustomerLifetimeValue", FLOAT(not_null=False)),
+        ("ChurnRisk", VARCHAR(10, not_null=True)),
+    ),
+    "OrganizationProfile": (
+        ("CustomerKey", INT_NN),
+        ("Industry", VARCHAR(30, not_null=True)),
+        ("CompanySize", VARCHAR(20, not_null=True)),
+        ("AnnualRevenue", FLOAT(not_null=True)),
+        ("FoundedYear", INT(not_null=True)),
+        ("IsPubliclyTraded", VARCHAR(5, not_null=True)),
+        ("HeadquarterCountry", VARCHAR(50, not_null=True)),
+        ("Website", VARCHAR(200, not_null=True)),
+        ("OrgDomain", VARCHAR(100, not_null=True)),
+        ("OrgAddress", VARCHAR(300, not_null=True)),
+        ("PrimaryContactName", VARCHAR(100, not_null=True)),
+        ("PrimaryContactRole", VARCHAR(50, not_null=True)),
+        ("NumberOfEmployees", INT(not_null=True)),
+        ("NumberOfLocations", INT(not_null=True)),
+        ("ProcurementCycle", VARCHAR(20, not_null=True)),
+        ("ContractType", VARCHAR(20, not_null=True)),
+        ("CreditRating", VARCHAR(5, not_null=True)),
+        ("PaymentTerms", VARCHAR(20, not_null=True)),
+        ("PreferredShippingMethod", VARCHAR(20, not_null=True)),
+        ("HasDedicatedAccountTeam", VARCHAR(5, not_null=True)),
+        ("AvgOrderValueUSD", FLOAT(not_null=True)),
+        ("IsStrategicAccount", VARCHAR(5, not_null=True)),
+        ("YearsAsCustomer", FLOAT(not_null=True)),
+        ("SatisfactionTier", VARCHAR(10, not_null=True)),
+        ("HasExclusiveDeal", VARCHAR(5, not_null=True)),
+        ("ESGRating", VARCHAR(10, not_null=True)),
     ),
     "CustomerAcquisitionChannels": (
         ("CustomerAcquisitionChannelKey", INT_NN),
@@ -269,6 +344,10 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("UnitPrice", DECIMAL(10, 2, not_null=True)),
         ("BaseProductKey", INT_NN),
         ("VariantIndex", INT_NN),
+        ("IsActiveInSales", INT_NN),
+    ),
+    "ProductProfile": (
+        ("ProductKey", INT_NN),
         ("LaunchDate", DATE_NN),
         ("LaunchDateKey", INT_NN),
         ("DiscontinuedDate", DATE_NULL),
@@ -300,8 +379,26 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("ReturnRateBase", FLOAT(not_null=True)),
         ("DefectRateBase", FLOAT(not_null=True)),
         ("ReturnWindowDays", INT_NN),
+        ("CountryOfOrigin", VARCHAR(20, not_null=True)),
+        ("SustainabilityScore", INT_NN),
+        ("CertificationType", VARCHAR(10, not_null=True)),
+        ("AssemblyRequired", VARCHAR(5, not_null=True)),
+        ("PopularityScore", INT_NN),
+        ("ABCClassification", VARCHAR(5, not_null=True)),
+        ("ReorderPointUnits", INT_NN),
+        ("SafetyStockUnits", INT_NN),
+        ("PackagingType", VARCHAR(10, not_null=True)),
+        ("AvgCustomerRating", FLOAT(not_null=True)),
+        ("ReviewCount", INT_NN),
+        ("CompetitorPriceIndex", FLOAT(not_null=True)),
+        ("MarginCategory", VARCHAR(10, not_null=True)),
+        ("IsGiftEligible", VARCHAR(5, not_null=True)),
+        ("IsBestseller", VARCHAR(5, not_null=True)),
+        ("IsEcoFriendly", VARCHAR(5, not_null=True)),
+        ("TargetGender", VARCHAR(10, not_null=True)),
         ("SupplierKey", INT_NN),
-        ("IsActiveInSales", INT_NN),
+        ("IsNewArrival", VARCHAR(5, not_null=True)),
+        ("ProductLifecycleStage", VARCHAR(15, not_null=True)),
     ),
     "ProductCategory": (
         ("CategoryKey", INT_NN),
@@ -344,15 +441,19 @@ DIM_SCHEMAS: Dict[str, Schema] = {
     "Dates": (
         ("Date", DATE_NN),
         ("DateKey", INT_NN),
+        ("SequentialDayIndex", INT_NN),
+
         ("Year", INT_NN),
         ("IsYearStart", INT_NN),
         ("IsYearEnd", INT_NN),
+
         ("Quarter", INT_NN),
         ("QuarterStartDate", DATE_NN),
         ("QuarterEndDate", DATE_NN),
         ("IsQuarterStart", INT_NN),
         ("IsQuarterEnd", INT_NN),
         ("QuarterYear", VARCHAR(10, not_null=True)),
+
         ("Month", INT_NN),
         ("MonthName", VARCHAR(10, not_null=True)),
         ("MonthShort", VARCHAR(10, not_null=True)),
@@ -360,15 +461,14 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("MonthEndDate", DATE_NN),
         ("MonthYear", VARCHAR(20, not_null=True)),
         ("MonthYearNumber", INT_NN),
+        ("YearQuarterKey", INT_NN),
         ("CalendarMonthIndex", INT_NN),
         ("CalendarQuarterIndex", INT_NN),
         ("IsMonthStart", INT_NN),
         ("IsMonthEnd", INT_NN),
-        ("WeekOfYearISO", INT_NN),
-        ("ISOYear", INT_NN),
+
         ("WeekOfMonth", INT_NN),
-        ("WeekStartDate", DATE_NN),
-        ("WeekEndDate", DATE_NN),
+
         ("Day", INT_NN),
         ("DayName", VARCHAR(10, not_null=True)),
         ("DayShort", VARCHAR(10, not_null=True)),
@@ -378,15 +478,33 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("IsBusinessDay", INT_NN),
         ("NextBusinessDay", DATE_NN),
         ("PreviousBusinessDay", DATE_NN),
+
+        ("IsToday", BIT(not_null=True)),
+        ("IsCurrentYear", BIT(not_null=True)),
+        ("IsCurrentMonth", BIT(not_null=True)),
+        ("IsCurrentQuarter", BIT(not_null=True)),
+        ("CurrentDayOffset", INT_NN),
+        ("YearOffset", SMALLINT(not_null=True)),
+        ("CalendarMonthOffset", INT_NN),
+        ("CalendarQuarterOffset", INT_NN),
+
+        ("WeekOfYearISO", INT_NN),
+        ("ISOYear", INT_NN),
+        ("ISOYearWeekIndex", INT_NN),
+        ("ISOWeekOffset", INT_NN),
+        ("WeekStartDate", DATE_NN),
+        ("WeekEndDate", DATE_NN),
+
+        # Month-based fiscal calendar (kept as "Fiscal ..." to distinguish from Weekly Fiscal)
         ("FiscalYearStartYear", INT_NN),
         ("FiscalMonthNumber", INT_NN),
         ("FiscalQuarterNumber", INT_NN),
-        ("FiscalQuarterName", VARCHAR(20, not_null=True)),
-        ("FiscalYearBin", VARCHAR(20, not_null=True)),
-        ("FiscalYearMonthNumber", INT_NN),
-        ("FiscalYearQuarterNumber", INT_NN),
         ("FiscalMonthIndex", INT_NN),
         ("FiscalQuarterIndex", INT_NN),
+        ("FiscalMonthOffset", INT_NN),
+        ("FiscalQuarterOffset", INT_NN),
+        ("FiscalQuarterName", VARCHAR(20, not_null=True)),
+        ("FiscalYearBin", VARCHAR(20, not_null=True)),
         ("FiscalYearStartDate", DATE_NN),
         ("FiscalYearEndDate", DATE_NN),
         ("FiscalQuarterStartDate", DATE_NN),
@@ -397,11 +515,43 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("IsFiscalQuarterEnd", BIT(not_null=True)),
         ("FiscalYear", INT_NN),
         ("FiscalYearLabel", VARCHAR(10, not_null=True)),
-        ("IsToday", BIT(not_null=True)),
-        ("IsCurrentYear", BIT(not_null=True)),
-        ("IsCurrentMonth", BIT(not_null=True)),
-        ("IsCurrentQuarter", BIT(not_null=True)),
-        ("CurrentDayOffset", INT_NN),
+        ("FiscalSystem", VARCHAR(20, not_null=True)),
+        ("WeeklyFiscalSystem", VARCHAR(40, not_null=True)),
+
+        # Weekly fiscal calendar (DAX weekly logic), disambiguated with "Weekly Fiscal ..." prefix.
+        ("FWYearNumber", INT_NN),
+        ("FWYearLabel", VARCHAR(10, not_null=True)),
+        ("FWQuarterNumber", INT_NN),
+        ("FWQuarterLabel", VARCHAR(20, not_null=True)),
+        ("FWYearQuarterNumber", INT_NN),
+        ("FWYearQuarterOffset", INT_NN),
+        ("FWMonthNumber", INT_NN),
+        ("FWMonthLabel", VARCHAR(20, not_null=True)),
+        ("FWYearMonthNumber", INT_NN),
+        ("FWYearMonthOffset", INT_NN),
+        ("FWWeekNumber", INT_NN),
+        ("FWWeekLabel", VARCHAR(20, not_null=True)),
+        ("FWYearWeekNumber", INT_NN),
+        ("FWYearWeekOffset", INT_NN),
+        ("FWPeriodNumber", INT_NN),
+        ("FWPeriodLabel", VARCHAR(20, not_null=True)),
+        ("FWStartOfYear", DATE_NN),
+        ("FWEndOfYear", DATE_NN),
+        ("FWStartOfQuarter", DATE_NN),
+        ("FWEndOfQuarter", DATE_NN),
+        ("FWStartOfMonth", DATE_NN),
+        ("FWEndOfMonth", DATE_NN),
+        ("FWStartOfWeek", DATE_NN),
+        ("FWEndOfWeek", DATE_NN),
+        ("WeekDayNumber", INT_NN),
+        ("WeekDayNameShort", VARCHAR(10, not_null=True)),
+        ("FWDayOfYearNumber", INT_NN),
+        ("FWDayOfQuarterNumber", INT_NN),
+        ("FWDayOfMonthNumber", INT_NN),
+        ("IsWorkingDay", BIT(not_null=True)),
+        ("DayType", VARCHAR(20, not_null=True)),
+        ("FWWeekInQuarterNumber", INT_NN),
+        ("FWYearMonthLabel", VARCHAR(20, not_null=True)),
     ),
     "Time": (
         ("TimeKey", INT_NN),  # 0..1439 minute-of-day
@@ -546,6 +696,26 @@ FACT_SCHEMAS: Dict[str, Schema] = {
         ("ToCurrency", VARCHAR(10, not_null=True)),
         ("Rate", DECIMAL(10, 6, not_null=True)),
     ),
+    "BudgetYearly": (
+        ("Country", VARCHAR(100, not_null=True)),
+        ("Category", VARCHAR(100, not_null=True)),
+        ("BudgetYear", INT_NN),
+        ("Scenario", VARCHAR(20, not_null=True)),
+        ("BudgetGrowthPct", DECIMAL(9, 6, not_null=True)),
+        ("BudgetSalesAmount", DECIMAL(19, 2, not_null=True)),
+        ("BudgetSalesQuantity", DECIMAL(19, 2, not_null=True)),
+        ("BudgetMethod", VARCHAR(140, not_null=True)),
+    ),
+    "BudgetMonthly": (
+        ("Country", VARCHAR(100, not_null=True)),
+        ("Category", VARCHAR(100, not_null=True)),
+        ("BudgetYear", INT_NN),
+        ("BudgetMonthStart", DATE_NN),
+        ("Scenario", VARCHAR(20, not_null=True)),
+        ("BudgetAmount", DECIMAL(19, 2, not_null=True)),
+        ("BudgetQuantity", DECIMAL(19, 2, not_null=True)),
+        ("BudgetMethod", VARCHAR(140, not_null=True)),
+    ),
 }
 
 # Validate before freezing (fail fast at import time)
@@ -559,103 +729,203 @@ STATIC_SCHEMAS: Mapping[str, Schema] = MappingProxyType(_ALL_SCHEMAS_MUT)
 # ============================================================================
 # DATE COLUMN GROUPS (logical, superset)
 # ============================================================================
-DATE_COLUMN_GROUPS = {
-    "calendar": frozenset(
-        {
-            "Date",
-            "DateKey",
-            "Year",
-            "IsYearStart",
-            "IsYearEnd",
-            "Quarter",
-            "QuarterStartDate",
-            "QuarterEndDate",
-            "IsQuarterStart",
-            "IsQuarterEnd",
-            "QuarterYear",
-            "Month",
-            "MonthName",
-            "MonthShort",
-            "MonthStartDate",
-            "MonthEndDate",
-            "MonthYear",
-            "MonthYearNumber",
-            "CalendarMonthIndex",
-            "CalendarQuarterIndex",
-            "IsMonthStart",
-            "IsMonthEnd",
-            "WeekOfMonth",
-            "Day",
-            "DayName",
-            "DayShort",
-            "DayOfYear",
-            "DayOfWeek",
-            "IsWeekend",
-            "IsBusinessDay",
-            "NextBusinessDay",
-            "PreviousBusinessDay",
-            "IsToday",
-            "IsCurrentYear",
-            "IsCurrentMonth",
-            "IsCurrentQuarter",
-            "CurrentDayOffset",
-        }
-    ),
-    "iso": frozenset(
-        {
-            "WeekOfYearISO",
-            "ISOYear",
-            "WeekStartDate",
-            "WeekEndDate",
-        }
-    ),
-    "fiscal": frozenset(
-        {
-            "FiscalYearStartYear",
-            "FiscalMonthNumber",
-            "FiscalQuarterNumber",
-            "FiscalMonthIndex",
-            "FiscalQuarterIndex",
-            "FiscalQuarterName",
-            "FiscalYearBin",
-            "FiscalYearMonthNumber",
-            "FiscalYearQuarterNumber",
-            "FiscalYearStartDate",
-            "FiscalYearEndDate",
-            "FiscalQuarterStartDate",
-            "FiscalQuarterEndDate",
-            "IsFiscalYearStart",
-            "IsFiscalYearEnd",
-            "IsFiscalQuarterStart",
-            "IsFiscalQuarterEnd",
-            "FiscalYear",
-            "FiscalYearLabel",
-        }
-    ),
+
+# ---------------------------------------------------------------------
+# Dates schema helpers
+# ---------------------------------------------------------------------
+
+_WF_INTERNAL_COLS: set[str] = {
+    "FWYearNumber",
+    "FWYearLabel",
+    "FWQuarterNumber",
+    "FWQuarterLabel",
+    "FWYearQuarterNumber",
+    "FWMonthNumber",
+    "FWMonthLabel",
+    "FWYearMonthNumber",
+    "FWWeekNumber",
+    "FWWeekLabel",
+    "FWYearWeekNumber",
+    "FWYearQuarterOffset",
+    "FWYearMonthOffset",
+    "FWYearWeekOffset",
+    "FWPeriodNumber",
+    "FWPeriodLabel",
+    "FWStartOfYear",
+    "FWEndOfYear",
+    "FWStartOfQuarter",
+    "FWEndOfQuarter",
+    "FWStartOfMonth",
+    "FWEndOfMonth",
+    "FWStartOfWeek",
+    "FWEndOfWeek",
+    "WeekDayNumber",
+    "WeekDayNameShort",
+    "FWDayOfYearNumber",
+    "FWDayOfQuarterNumber",
+    "FWDayOfMonthNumber",
+    "IsWorkingDay",
+    "DayType",
+    "FWWeekInQuarterNumber",
+    "FWYearMonthLabel",
 }
 
 
-def _validate_date_groups() -> None:
-    date_cols = {c for c, _ in STATIC_SCHEMAS["Dates"]}
-    for grp, cols in DATE_COLUMN_GROUPS.items():
-        missing = sorted(set(cols) - date_cols)
-        if missing:
-            raise KeyError(f"DATE_COLUMN_GROUPS[{grp!r}] references missing Dates columns: {missing}")
+
+# ---------------------------------------------------------------------
+# Dates column naming
+# ---------------------------------------------------------------------
+# The generator emits SQL-friendly internal column names (no spaces).
+# Any "pretty" renaming should be done downstream (e.g., Power BI display folders or SQL views).
 
 
-_validate_date_groups()
+# Internal Dates column groups (must match dates.py resolve_date_columns)
+#
+# _DATES_BASE_INTERNAL: Always emitted regardless of include flags.
+# Contains the primary key columns plus fundamental date-part attributes
+# that every downstream consumer needs (Year, Month, Day, names, etc.).
+#
+# _DATES_CALENDAR_INTERNAL: Emitted only when include.calendar is true.
+# Contains calendar-specific flags (IsYearStart, IsMonthEnd, IsToday, etc.)
+# and relative offsets (CurrentDayOffset, YearOffset, etc.).
+
+_DATES_BASE_INTERNAL = [
+    "Date", "DateKey", "SequentialDayIndex",
+    "Year",
+    "Quarter", "QuarterStartDate", "QuarterEndDate",
+    "QuarterYear",
+    "Month", "MonthName", "MonthShort",
+    "MonthStartDate", "MonthEndDate",
+    "MonthYear", "MonthYearNumber",
+    "YearQuarterKey",
+    "CalendarMonthIndex", "CalendarQuarterIndex",
+    "WeekOfMonth",
+    "Day", "DayName", "DayShort", "DayOfYear", "DayOfWeek",
+    "IsWeekend", "IsBusinessDay",
+    "NextBusinessDay", "PreviousBusinessDay",
+]
+
+_DATES_CALENDAR_INTERNAL = [
+    "IsYearStart", "IsYearEnd",
+    "IsQuarterStart", "IsQuarterEnd",
+    "IsMonthStart", "IsMonthEnd",
+    "IsToday", "IsCurrentYear", "IsCurrentMonth", "IsCurrentQuarter",
+    "CurrentDayOffset", "YearOffset", "CalendarMonthOffset", "CalendarQuarterOffset",
+]
+
+_DATES_ISO_INTERNAL = [
+    "WeekOfYearISO",
+    "ISOYear",
+    "ISOYearWeekIndex",
+    "ISOWeekOffset",
+    "WeekStartDate",
+    "WeekEndDate",
+]
+
+_DATES_FISCAL_INTERNAL = [
+    "FiscalYearStartYear", "FiscalMonthNumber", "FiscalQuarterNumber",
+    "FiscalMonthIndex", "FiscalQuarterIndex", "FiscalMonthOffset", "FiscalQuarterOffset",
+    "FiscalQuarterName", "FiscalYearBin",
+    "FiscalYearStartDate", "FiscalYearEndDate",
+    "FiscalQuarterStartDate", "FiscalQuarterEndDate",
+    "IsFiscalYearStart", "IsFiscalYearEnd",
+    "IsFiscalQuarterStart", "IsFiscalQuarterEnd",
+    "FiscalYear", "FiscalYearLabel", "FiscalSystem", "WeeklyFiscalSystem",
+]
 
 
-# ============================================================================
-# Precomputed schemas / caches
-# ============================================================================
-_SALES_SCHEMA_NO_ORDER: Schema = tuple(
-    (col, dtype) for col, dtype in _SALES_SCHEMA if col not in ("SalesOrderNumber", "SalesOrderLineNumber")
-)
+def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
+    """Resolve internal output column list for SQL CREATE TABLE generation.
 
-# Cache for get_dates_schema keyed by (calendar, iso, fiscal)
-_DATES_SCHEMA_CACHE: Dict[Tuple[bool, bool, bool], List[SchemaCol]] = {}
+    Column inclusion logic:
+      - Base columns are always included (Date, DateKey, SequentialDayIndex,
+        plus fundamental date-part attributes: Year, Month, MonthName, Day,
+        DayName, Quarter, WeekOfMonth, etc.).
+      - include.calendar (default True) adds calendar flags and offsets
+        (IsYearStart, IsMonthEnd, IsToday, CurrentDayOffset, etc.).
+      - include.iso (default True) adds ISO week columns.
+      - include.fiscal (default True) adds monthly fiscal columns.
+      - include.weekly_fiscal (default True) + weekly_calendar.enabled adds
+        weekly fiscal (4-4-5) columns.
 
+    NOTE: dates.py resolve_date_columns must be updated to match this split
+    so that the parquet output and SQL schema stay in sync.
+    """
+    dates_cfg = dates_cfg or {}
+    include = (dates_cfg.get("include", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
+    weekly_cfg = (dates_cfg.get("weekly_calendar", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
+
+    cols: list[str] = list(_DATES_BASE_INTERNAL)
+
+    if include.get("calendar", True):
+        cols += _DATES_CALENDAR_INTERNAL
+    if include.get("iso", True):
+        cols += _DATES_ISO_INTERNAL
+    if include.get("fiscal", True):
+        cols += _DATES_FISCAL_INTERNAL
+
+    if include.get("weekly_fiscal", True) and bool(weekly_cfg.get("enabled", True)):
+        # Keep weekly columns in a stable order matching dates.py resolve_date_columns.
+        cols += [
+            "FWYearNumber",
+            "FWYearLabel",
+            "FWQuarterNumber",
+            "FWQuarterLabel",
+            "FWYearQuarterNumber",
+            "FWYearQuarterOffset",
+            "FWMonthNumber",
+            "FWMonthLabel",
+            "FWYearMonthNumber",
+            "FWYearMonthOffset",
+            "FWWeekNumber",
+            "FWWeekLabel",
+            "FWYearWeekNumber",
+            "FWYearWeekOffset",
+            "FWPeriodNumber",
+            "FWPeriodLabel",
+            "FWStartOfYear",
+            "FWEndOfYear",
+            "FWStartOfQuarter",
+            "FWEndOfQuarter",
+            "FWStartOfMonth",
+            "FWEndOfMonth",
+            "FWStartOfWeek",
+            "FWEndOfWeek",
+            "WeekDayNumber",
+            "WeekDayNameShort",
+            "FWDayOfYearNumber",
+            "FWDayOfQuarterNumber",
+            "FWDayOfMonthNumber",
+            "IsWorkingDay",
+            "DayType",
+            "FWWeekInQuarterNumber",
+            "FWYearMonthLabel",
+        ]
+
+    # Dedupe preserve order
+    seen = set()
+    out = []
+    for c in cols:
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+DATE_COLUMN_GROUPS = {
+    # Base columns are always present in Dates output (includes fundamental date-part attributes).
+    "base": frozenset(_DATES_BASE_INTERNAL),
+
+    # Calendar flags and offsets (IsYearStart, IsToday, CurrentDayOffset, etc.).
+    "calendar": frozenset(_DATES_CALENDAR_INTERNAL),
+
+    # Optional systems
+    "iso": frozenset(_DATES_ISO_INTERNAL),
+    "fiscal": frozenset(_DATES_FISCAL_INTERNAL),
+    "weekly_fiscal": frozenset(_WF_INTERNAL_COLS),
+
+    # Convenience: base + calendar combined
+    "base_calendar": frozenset(_DATES_BASE_INTERNAL + _DATES_CALENDAR_INTERNAL),
+}
 
 def get_sales_schema(skip_order_cols: bool) -> List[SchemaCol]:
     """Return the Sales schema with or without order number columns."""
@@ -672,46 +942,34 @@ def get_sales_order_detail_schema() -> List[SchemaCol]:
     return list(_SALES_ORDER_DETAIL_SCHEMA)
 
 
-def get_dates_schema(dates_cfg: Mapping) -> List[SchemaCol]:
+
+def get_dates_schema(dates_cfg: Mapping) -> list[SchemaCol]:
     """
-    Return Dates schema filtered by config include flags.
-    Defaults to calendar-only (backward compatible).
+    Return the Dates schema for SQL CREATE TABLE / BULK INSERT.
 
-    dates_cfg expected shape:
-      dates:
-        include:
-          calendar: true
-          iso: false
-          fiscal: false
+    The Dates generator emits SQL-friendly internal column names (no spaces).
+
+      - Base columns are always included: primary keys (Date, DateKey,
+        SequentialDayIndex) plus fundamental date-part attributes (Year,
+        Month, MonthName, Day, DayName, Quarter, etc.).
+      - include.calendar (default True) adds calendar flags/offsets.
+      - include.iso (default True) adds ISO week columns.
+      - include.fiscal (default True) adds monthly fiscal columns.
+      - include.weekly_fiscal (default True) + weekly_calendar.enabled adds
+        weekly fiscal (4-4-5) columns.
     """
-    include_cfg = (dates_cfg.get("include", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
+    dates_cfg = dates_cfg or {}
+    internal_cols = _dates_internal_columns(dates_cfg)
 
-    include_calendar = bool(include_cfg.get("calendar", True))
-    include_iso = bool(include_cfg.get("iso", False))
-    include_fiscal = bool(include_cfg.get("fiscal", False))
+    types = dict(STATIC_SCHEMAS["Dates"])  # internal, superset
+    out: list[SchemaCol] = []
+    for col in internal_cols:
+        dtype = types.get(col)
+        if dtype is None:
+            raise KeyError(f"STATIC_SCHEMAS['Dates'] missing expected column: {col}")
+        out.append((col, dtype))
+    return out
 
-    # Defensive fallback: if user disables everything, force calendar on
-    if not (include_calendar or include_iso or include_fiscal):
-        include_calendar = True
-
-    cache_key = (include_calendar, include_iso, include_fiscal)
-    cached = _DATES_SCHEMA_CACHE.get(cache_key)
-    if cached is not None:
-        return list(cached)
-
-    allowed_cols = set()
-    if include_calendar:
-        allowed_cols.update(DATE_COLUMN_GROUPS["calendar"])
-    if include_iso:
-        allowed_cols.update(DATE_COLUMN_GROUPS["iso"])
-    if include_fiscal:
-        allowed_cols.update(DATE_COLUMN_GROUPS["fiscal"])
-
-    # Preserve original order from STATIC_SCHEMAS["Dates"]
-    out = [(col, dtype) for col, dtype in STATIC_SCHEMAS["Dates"] if col in allowed_cols]
-
-    _DATES_SCHEMA_CACHE[cache_key] = out
-    return list(out)
 
 
 __all__ = [

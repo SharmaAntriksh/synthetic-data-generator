@@ -9,20 +9,12 @@ import pyarrow as pa
 
 from ..sales_logic import State
 
-
-def _pa_compute():
-    import pyarrow.compute as pc  # type: ignore
-    return pc
-
-
-def _pa_csv():
-    import pyarrow.csv as pacsv  # type: ignore
-    return pacsv
-
-
-def _pa_parquet():
-    import pyarrow.parquet as pq  # type: ignore
-    return pq
+# NOTE: Hard Arrow imports are intentional here. io.py is only ever used in
+# contexts where Arrow is already required (worker processes), so lazy-loading
+# would add complexity without benefit.
+import pyarrow.compute as pc
+import pyarrow.csv as pacsv
+import pyarrow.parquet as pq
 
 
 @dataclass(frozen=True)
@@ -35,6 +27,19 @@ class ChunkIOConfig:
 EnsureColsFn = Callable[[pa.Table], pa.Table]
 CsvPostprocessFn = Callable[[pa.Table], pa.Table]
 
+# Directories already created are tracked to skip redundant os.makedirs syscalls
+# in hot-path chunk writes. Workers call ensure_dirs() during init, so the first
+# write to each directory would succeed regardless, but repeated stat() calls on
+# network or FUSE filesystems add measurable latency per chunk.
+_DIRS_CREATED: set[str] = set()
+
+
+def _ensure_dir(path: str) -> None:
+    d = os.path.dirname(path) or "."
+    if d not in _DIRS_CREATED:
+        os.makedirs(d, exist_ok=True)
+        _DIRS_CREATED.add(d)
+
 
 def add_year_month_from_date(
     table: pa.Table,
@@ -45,21 +50,18 @@ def add_year_month_from_date(
     year_type: pa.DataType = pa.int16(),
     month_type: pa.DataType = pa.int16(),
 ) -> pa.Table:
-    date_col = None
-    for c in date_cols:
-        if c in table.schema.names:
-            date_col = c
-            break
+    names = table.schema.names
+    date_col = next((c for c in date_cols if c in names), None)
     if not date_col:
         return table
 
-    pc = _pa_compute()
-    year = pc.cast(pc.year(table[date_col]), year_type)
-    month = pc.cast(pc.month(table[date_col]), month_type)
+    col = table[date_col]
+    year = pc.cast(pc.year(col), year_type)
+    month = pc.cast(pc.month(col), month_type)
 
-    if year_col not in table.schema.names:
+    if year_col not in names:
         table = table.append_column(year_col, year)
-    if month_col not in table.schema.names:
+    if month_col not in names:
         table = table.append_column(month_col, month)
     return table
 
@@ -75,34 +77,35 @@ def normalize_to_schema(
     expected = expected.remove_metadata()
 
     if ensure_cols and ensure_cols_fn:
-        wants = all(c in expected.names for c in ensure_cols)
-        missing_any = any(c not in table.schema.names for c in ensure_cols)
-        if wants and missing_any:
+        exp_names = set(expected.names)
+        got_names = set(table.schema.names)
+        if all(c in exp_names for c in ensure_cols) and any(c not in got_names for c in ensure_cols):
             table = ensure_cols_fn(table)
 
     got_names = set(table.schema.names)
     exp_names = set(expected.names)
     if got_names != exp_names:
-        missing = sorted(exp_names - got_names)
-        extra = sorted(got_names - exp_names)
         raise RuntimeError(
             "Schema mismatch in writer.\n"
             f"Table: {table_name or 'unknown'}\n"
-            f"Missing: {missing}\n"
-            f"Extra: {extra}\n\n"
+            f"Missing: {sorted(exp_names - got_names)}\n"
+            f"Extra: {sorted(got_names - exp_names)}\n\n"
             f"Expected:\n{expected}\n\nGot:\n{table.schema}"
         )
 
-    pc = _pa_compute()
+    cast_safe = bool(getattr(State, "cast_safe", True))
     arrays = []
     for field in expected:
         col = table[field.name]
         if col.type != field.type:
             try:
-                col = pc.cast(col, field.type, safe=False)
+                if pa.types.is_decimal(field.type) and pa.types.is_floating(col.type):
+                    col = pc.round(col, ndigits=int(field.type.scale))
+                col = pc.cast(col, field.type, safe=cast_safe)
             except Exception as ex:
                 raise RuntimeError(
-                    f"[{table_name or 'unknown'}] Failed cast '{field.name}': {col.type} -> {field.type}: {ex}"
+                    f"[{table_name or 'unknown'}] Failed cast '{field.name}': {col.type} -> {field.type} "
+                    f"(safe={cast_safe}): {ex}"
                 ) from ex
         arrays.append(col)
 
@@ -120,7 +123,6 @@ def write_parquet_table(
     ensure_cols: Optional[Sequence[str]] = None,
     ensure_cols_fn: Optional[EnsureColsFn] = None,
 ) -> None:
-    pq = _pa_parquet()
 
     table = normalize_to_schema(
         table,
@@ -130,19 +132,16 @@ def write_parquet_table(
         ensure_cols_fn=ensure_cols_fn,
     )
 
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    _ensure_dir(path)
 
-    writer = pq.ParquetWriter(
+    pq.write_table(
+        table,
         path,
-        table.schema,
         compression=cfg.compression,
         use_dictionary=list(use_dictionary) if use_dictionary else False,
         write_statistics=bool(cfg.write_statistics),
+        row_group_size=int(max(1, cfg.row_group_size)),
     )
-    try:
-        writer.write_table(table, row_group_size=int(max(1, cfg.row_group_size)))
-    finally:
-        writer.close()
 
 
 def write_csv_table(
@@ -155,7 +154,6 @@ def write_csv_table(
     ensure_cols_fn: Optional[EnsureColsFn] = None,
     postprocess: Optional[CsvPostprocessFn] = None,
 ) -> None:
-    pacsv = _pa_csv()
 
     table = normalize_to_schema(
         table,
@@ -168,7 +166,7 @@ def write_csv_table(
     if postprocess is not None:
         table = postprocess(table)
 
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    _ensure_dir(path)
 
     pacsv.write_csv(
         table,
@@ -198,22 +196,22 @@ def _schema_needs_year_month(expected: pa.Schema) -> bool:
 
 def _derive_year_month_from_int_order_date(order_date: pa.ChunkedArray) -> Tuple[np.ndarray, np.ndarray]:
     x = order_date.combine_chunks().to_numpy(zero_copy_only=False)
-    x = np.asarray(x)
 
     if x.dtype.kind not in {"i", "u"}:
         raise RuntimeError(f"OrderDate integer derivation expected int dtype, got {x.dtype}")
 
     xi = x.astype(np.int64, copy=False)
     if xi.size == 0:
-        return xi.astype(np.int16), xi.astype(np.int16)
+        empty = np.empty(0, dtype=np.int16)
+        return empty, empty.copy()
 
     if np.any(xi == np.iinfo(np.int64).min):
         raise RuntimeError("OrderDate contains nulls; cannot derive Year/Month")
 
-    mx = int(np.max(xi))
-    mn = int(np.min(xi))
+    mn = int(xi.min())
+    mx = int(xi.max())
 
-    if 19_000_000 <= mx <= 210_012_31 and 19_000_000 <= mn <= 210_012_31:
+    if 19_000_000 <= mn <= 210_012_31 and 19_000_000 <= mx <= 210_012_31:
         year = (xi // 10_000).astype(np.int16, copy=False)
         month = ((xi // 100) % 100).astype(np.int16, copy=False)
         return year, month
@@ -239,7 +237,8 @@ def _ensure_year_month_if_needed_for_table(
     if ("Year" not in expected_schema.names) or ("Month" not in expected_schema.names):
         return table
 
-    if ("Year" in table.column_names) and ("Month" in table.column_names):
+    col_names = table.column_names
+    if ("Year" in col_names) and ("Month" in col_names):
         return table
 
     policy = getattr(State, "date_cols_by_table", {}) or {}
@@ -247,7 +246,7 @@ def _ensure_year_month_if_needed_for_table(
 
     usable: list[str] = []
     for c in candidates:
-        if c not in table.column_names:
+        if c not in col_names:
             continue
         t = table.schema.field(c).type
         if pa.types.is_date32(t) or pa.types.is_date64(t) or pa.types.is_timestamp(t):
@@ -256,7 +255,7 @@ def _ensure_year_month_if_needed_for_table(
     if usable:
         return add_year_month_from_date(table, date_cols=tuple(usable))
 
-    if "OrderDate" in table.column_names and pa.types.is_integer(table.schema.field("OrderDate").type):
+    if "OrderDate" in col_names and pa.types.is_integer(table.schema.field("OrderDate").type):
         year, month = _derive_year_month_from_int_order_date(table["OrderDate"])
         table = table.append_column("Year", pa.array(year, type=pa.int16()))
         table = table.append_column("Month", pa.array(month, type=pa.int16()))
@@ -266,8 +265,6 @@ def _ensure_year_month_if_needed_for_table(
 
 
 def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
-    import pyarrow.compute as pc  # type: ignore
-
     if "IsOrderDelayed" in table.column_names:
         idx = table.schema.get_field_index("IsOrderDelayed")
         table = table.set_column(
@@ -278,22 +275,35 @@ def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
     return table
 
 
-def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str] = None) -> None:
+def _build_ensure_fn(
+    table_name: str,
+    expected_schema: pa.Schema,
+) -> Tuple[Optional[Sequence[str]], Optional[EnsureColsFn]]:
+    """Shared helper to build Year/Month ensure args for parquet and CSV writers."""
+    if not _schema_needs_year_month(expected_schema):
+        return (), None
+
+    return (
+        ("Year", "Month"),
+        lambda t: _ensure_year_month_if_needed_for_table(
+            t, table_name=table_name, expected_schema=expected_schema
+        ),
+    )
+
+
+def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str] = None, is_chunk: bool = False) -> None:
     tn = table_name or "Sales"
     expected = _expected_schema(tn)
 
+    write_stats_chunks = bool(getattr(State, "write_statistics_chunks", False))
+    write_stats_merged = bool(getattr(State, "write_statistics", True))
     cfg = ChunkIOConfig(
         compression=getattr(State, "compression", "snappy"),
         row_group_size=int(getattr(State, "row_group_size", 1_000_000)),
-        write_statistics=bool(getattr(State, "write_statistics", True)),
+        write_statistics=write_stats_chunks if is_chunk else write_stats_merged,
     )
 
-    need_ym = _schema_needs_year_month(expected)
-    ensure_fn = (
-        (lambda t: _ensure_year_month_if_needed_for_table(t, table_name=tn, expected_schema=expected))
-        if need_ym
-        else None
-    )
+    ensure_cols, ensure_fn = _build_ensure_fn(tn, expected)
 
     write_parquet_table(
         table,
@@ -302,7 +312,7 @@ def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str
         cfg=cfg,
         use_dictionary=_dict_cols(tn),
         table_name=tn,
-        ensure_cols=("Year", "Month") if need_ym else (),
+        ensure_cols=ensure_cols,
         ensure_cols_fn=ensure_fn,
     )
 
@@ -310,20 +320,15 @@ def _write_parquet_table(table: pa.Table, path: str, *, table_name: Optional[str
 def _write_csv(table: pa.Table, path: str, *, table_name: Optional[str] = None) -> None:
     tn = table_name or "Sales"
     expected = _expected_schema(tn)
-    need_ym = _schema_needs_year_month(expected)
 
-    ensure_fn = (
-        (lambda t: _ensure_year_month_if_needed_for_table(t, table_name=tn, expected_schema=expected))
-        if need_ym
-        else None
-    )
+    ensure_cols, ensure_fn = _build_ensure_fn(tn, expected)
 
     write_csv_table(
         table,
         path,
         expected_schema=expected,
         table_name=tn,
-        ensure_cols=("Year", "Month") if need_ym else (),
+        ensure_cols=ensure_cols,
         ensure_cols_fn=ensure_fn,
         postprocess=_csv_postprocess_sales,
     )

@@ -77,3 +77,7 @@ relationship 44583518-3422-6bca-4538-0b76503fb092
 	fromColumn: Sales.SalesPersonEmployeeKey
 	toColumn: Employee.EmployeeKey
 
+relationship 7d315217-2368-4da8-b520-73ea3f22a041
+	fromColumn: Sales.TimeKey
+	toColumn: Time.TimeKey
+

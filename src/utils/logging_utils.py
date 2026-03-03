@@ -83,6 +83,35 @@ _LOG_DIR_READY = False
 _LOG_FD: Optional[int] = None
 _LOG_FILE_PATH: Optional[Path] = None
 
+_INDENT = threading.local()
+_INDENT_STR = "  "
+_LAZY_STACK = threading.local()
+
+
+def _indent_level() -> int:
+    """Current nesting depth (0 = top level)."""
+    return getattr(_INDENT, "level", 0)
+
+
+def _indent_prefix() -> str:
+    """Whitespace prefix for the current nesting depth."""
+    return _INDENT_STR * _indent_level()
+
+
+def _activate_pending() -> None:
+    """Flush deferred INFO headers for all pending lazy stages (outermost first)."""
+    stack = getattr(_LAZY_STACK, "stack", [])
+    for s in stack:
+        if s._lazy and not s._activated:
+            saved = _indent_level()
+            _INDENT.level = s._depth
+            _flush(_line("INFO", s.msg))
+            _INDENT.level = saved
+            s._activated = True
+            for buffered_line in s._skip_buffer:
+                _flush(buffered_line)
+            s._skip_buffer.clear()
+
 
 def _is_tty() -> bool:
     try:
@@ -163,7 +192,7 @@ def _format_level(level: str) -> str:
 
 def _line(level: str, msg: Any) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-    return f"{ts} | {_format_level(level)} | {msg}"
+    return f"{ts} | {_format_level(level)} | {_indent_prefix()}{msg}"
 
 
 def _ensure_log_file_open() -> None:
@@ -230,11 +259,13 @@ def _flush(line: str) -> None:
 # BASIC LOG LEVEL FUNCTIONS (same names)
 # ============================================================================
 def info(msg: Any) -> None:
+    _activate_pending()
     msg = _shorten_path_in_msg(msg)
     _flush(_line("INFO", msg))
 
 
 def warn(msg: Any) -> None:
+    _activate_pending()
     _flush(_line("WARN", msg))
 
 
@@ -243,6 +274,12 @@ def fail(msg: Any) -> None:
 
 
 def skip(msg: Any) -> None:
+    stack = getattr(_LAZY_STACK, "stack", [])
+    for s in reversed(stack):
+        if s._lazy and not s._activated:
+            s._skip_buffer.append(_line("SKIP", msg))
+            return
+    _activate_pending()
     _flush(_line("SKIP", msg))
 
 
@@ -253,33 +290,57 @@ def done(msg: Any) -> None:
 # ============================================================================
 # STAGE CONTEXT MANAGER (Auto-timed) – improved exception logging
 # ============================================================================
-@dataclass
 class stage:
     """
     Usage:
         with stage("Generating Dates"):
             ...
+        with stage("Generating Products", lazy=True):
+            ...   # INFO header deferred until first nested log message
 
     Behavior:
-      - Logs INFO at enter
+      - Logs INFO at enter (or defers if lazy=True)
       - Logs DONE on successful exit with timing
+      - lazy mode: if no nested messages fired, emits SKIP instead of DONE
       - Logs FAIL on exception with timing, then re-raises
     """
-    msg: str
-    start: Optional[float] = None
+    def __init__(self, msg: str, *, lazy: bool = False):
+        self.msg = msg
+        self._lazy = lazy
+        self._activated = not lazy
+        self._depth = 0
+        self._skip_buffer: list = []
+        self.start: Optional[float] = None
 
     def __enter__(self) -> "stage":
         self.start = time.time()
-        info(self.msg)
+        self._depth = _indent_level()
+        if not self._lazy:
+            info(self.msg)
+        stack = getattr(_LAZY_STACK, "stack", None)
+        if stack is None:
+            _LAZY_STACK.stack = []
+            stack = _LAZY_STACK.stack
+        stack.append(self)
+        _INDENT.level = self._depth + 1
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
+        _INDENT.level = self._depth
+        stack = getattr(_LAZY_STACK, "stack", [])
+        if stack and stack[-1] is self:
+            stack.pop()
         elapsed = fmt_sec(time.time() - (self.start or time.time()))
         if exc_type is not None:
-            # Include exception type + message, but keep it compact
+            if not self._activated:
+                _flush(_line("INFO", self.msg))
             fail(f"{self.msg} failed in {elapsed}: {exc_type.__name__}: {exc}")
-            return False  # re-raise
-        done(f"{self.msg} completed in {elapsed}")
+            return False
+        if self._activated:
+            done(f"{self.msg} completed in {elapsed}")
+        else:
+            self._skip_buffer.clear()
+            skip(f"{self.msg} up-to-date; skipping")
         return False
 
 
@@ -294,6 +355,7 @@ def work(msg: str = "", *, outfile: Any = None, **_ignore: Any) -> None:
     - If msg is empty and outfile is provided, log outfile name
     - Keeps previous visible format (including arrow) for compatibility
     """
+    _activate_pending()
     if msg:
         final = msg
     elif outfile:

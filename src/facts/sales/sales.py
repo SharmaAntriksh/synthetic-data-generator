@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import glob
 import os
+import zlib
+from dataclasses import dataclass
 from math import ceil
 from multiprocessing import cpu_count
-from src.facts.sales.sales_worker import PoolRunSpec, iter_imap_unordered
-
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -14,19 +14,24 @@ import pandas as pd
 
 from src.utils.logging_utils import done, info, skip, work
 from .sales_logic import State
-from .sales_worker import _worker_task, init_sales_worker
+from .sales_worker import PoolRunSpec, iter_imap_unordered, _worker_task, init_sales_worker
 from .sales_writer import merge_parquet_files
 from .output_paths import (
     OutputPaths,
     TABLE_SALES,
     TABLE_SALES_ORDER_DETAIL,
     TABLE_SALES_ORDER_HEADER,
-    TABLE_SALES_RETURN,   # NEW
+    TABLE_SALES_RETURN,
 )
 
+# Budget streaming aggregation (lazy import to avoid hard dependency)
+try:
+    from src.facts.budget.lookups import build_budget_lookups
+    from src.facts.budget.accumulator import BudgetAccumulator
+    _BUDGET_AVAILABLE = True
+except ImportError:
+    _BUDGET_AVAILABLE = False
 
-from dataclasses import dataclass
-from typing import Any, Optional
 
 @dataclass(frozen=True)
 class TableOutputs:
@@ -93,6 +98,15 @@ def _int_or(value: Any, default: int) -> int:
         return int(default)
 
 
+def _float_or(value: Any, default: float) -> float:
+    try:
+        if value is None or value == "":
+            return float(default)
+        return float(value)
+    except Exception:
+        return float(default)
+
+
 def _bool_or(value: Any, default: bool) -> bool:
     if value is None:
         return bool(default)
@@ -127,9 +141,12 @@ def _apply_cfg_default(current: Any, default: Any, cfg_value: Any) -> Any:
 
 def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional[str]) -> Tuple[str, str]:
     """
+    Resolve the *Sales* fact date window (raw, unbuffered).
+
     Priority:
       explicit args
       cfg.sales.override.dates.{start,end}
+      cfg.dates.override.dates.{start,end}          # global override
       cfg.defaults.dates.{start,end} (or cfg._defaults.dates)
     """
     if start_date is not None and end_date is not None:
@@ -140,13 +157,24 @@ def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional
     if not isinstance(defaults_dates, dict):
         raise KeyError("Missing defaults.dates in config")
 
-    ov_dates = _cfg_get(cfg, ["sales", "override", "dates"], default={})
-    ov_dates = ov_dates if isinstance(ov_dates, dict) else {}
+    ov_sales_dates = _cfg_get(cfg, ["sales", "override", "dates"], default={})
+    ov_sales_dates = ov_sales_dates if isinstance(ov_sales_dates, dict) else {}
+
+    ov_global_dates = _cfg_get(cfg, ["dates", "override", "dates"], default={})
+    ov_global_dates = ov_global_dates if isinstance(ov_global_dates, dict) else {}
 
     if start_date is None:
-        start_date = ov_dates.get("start") or defaults_dates.get("start")
+        start_date = (
+            ov_sales_dates.get("start")
+            or ov_global_dates.get("start")
+            or defaults_dates.get("start")
+        )
     if end_date is None:
-        end_date = ov_dates.get("end") or defaults_dates.get("end")
+        end_date = (
+            ov_sales_dates.get("end")
+            or ov_global_dates.get("end")
+            or defaults_dates.get("end")
+        )
 
     if not start_date or not end_date:
         raise KeyError("Could not resolve start/end dates from config")
@@ -236,7 +264,7 @@ def build_weighted_date_pool(start: str, end: str, seed: int = 42) -> Tuple[np.n
     for a, b, f in (("2021-06-01", "2021-10-31", 0.70), ("2023-02-01", "2023-08-31", 1.40)):
         mask = (dates >= a) & (dates <= b)
         if bool(np.any(mask)):
-            ot[_bool_mask(mask)] *= f  # <-- FIX: no mask.to_numpy()
+            ot[_bool_mask(mask)] *= f
 
     noise = rng.uniform(0.95, 1.05, size=n).astype(np.float64)
 
@@ -408,7 +436,6 @@ def generate_sales_fact(
     if sales_output not in {"sales", "sales_order", "both"}:
         raise ValueError(f"Invalid sales_output: {sales_output}")
 
-    needs_order_cols = sales_output in {"sales_order", "both"}
     # ------------------------------------------------------------
     # Returns (optional)
     # ------------------------------------------------------------
@@ -418,12 +445,31 @@ def generate_sales_fact(
     returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
     returns_enabled = _bool_or(returns_cfg.get("enabled"), False)
 
-    # If facts.enabled is used, treat it as an additional “feature gate”
+    # If facts.enabled is used, treat it as an additional "feature gate"
     if facts_enabled:
         returns_enabled = bool(returns_enabled and ("returns" in {str(x).lower() for x in facts_enabled}))
 
-    returns_rate = float(returns_cfg.get("return_rate", 0.0))
-    returns_max_lag_days = int(returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)))
+    returns_rate = _float_or(returns_cfg.get("return_rate", 0.0), 0.0)
+    if not np.isfinite(returns_rate):
+        returns_rate = 0.0
+    # keep within [0, 1]
+    returns_rate = max(0.0, min(1.0, returns_rate))
+
+    returns_min_lag_days = _int_or(
+        returns_cfg.get("min_days_after_sale", returns_cfg.get("returns_min_lag_days", 0)),
+        0,
+    )
+    returns_min_lag_days = max(0, returns_min_lag_days)
+
+    returns_max_lag_days = _int_or(
+        returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)),
+        60,
+    )
+    returns_max_lag_days = max(0, returns_max_lag_days)
+
+    # Ensure min <= max (swap/clamp defensively)
+    if returns_min_lag_days > returns_max_lag_days:
+        returns_min_lag_days = returns_max_lag_days
 
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
     if sales_output == "both" and not bool(skip_order_cols):
@@ -462,12 +508,34 @@ def generate_sales_fact(
     # Normalize delta_output_folder after OutputPaths decides defaults/abspath (if your class does that)
     delta_output_folder = output_paths.delta_output_folder
 
+    def _empty_manifest() -> SalesRunManifest:
+        """Build an empty manifest for early-exit paths."""
+        per_table: dict[str, TableOutputs] = {}
+        for t in tables:
+            per_table[t] = TableOutputs(
+                table=t,
+                file_format=file_format,
+                chunks=[],
+                merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
+                delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
+                delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
+            )
+
+        return SalesRunManifest(
+            sales_output=sales_output,
+            file_format=file_format,
+            out_folder=str(out_folder_p),
+            tables=per_table,
+        )
+
     # ------------------------------------------------------------
     # Optional auto chunk sizing
     # ------------------------------------------------------------
     total_rows = _int_or(total_rows, 0)
     if total_rows <= 0:
         skip("No sales rows to generate (total_rows <= 0).")
+        if return_manifest:
+            return ([], _empty_manifest())
         return []
 
     if workers is None:
@@ -555,22 +623,53 @@ def generate_sales_fact(
             else:
                 product_brand_key = bk.astype(np.int64, copy=False)
 
-        except Exception:
-            info("Could not load/derive Brand from products.parquet; disabling brand_popularity for this run.")
+        except Exception as exc:
+            info(f"Could not load/derive Brand from products.parquet ({type(exc).__name__}: {exc}); "
+                 "disabling brand_popularity for this run.")
             product_brand_key = None
 
     else:
         # Full product path: keep backward compatibility if Brand is absent
         try:
             prod_df = load_parquet_df(products_path, ["ProductKey", "UnitPrice", "UnitCost", "Brand"])
-            product_np = prod_df[["ProductKey", "UnitPrice", "UnitCost"]].to_numpy()
+
+            # Force numeric dtypes (avoid object arrays)
+            prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
+            prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
+            prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
+            prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
+            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int64", copy=False)
+
+            product_np = np.column_stack(
+                [
+                    prod_df["ProductKey"].to_numpy(dtype=np.int64, copy=False),
+                    prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
+                    prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
+                ]
+            )
 
             codes = _brand_codes_from_series(prod_df["Brand"])
             product_brand_key = codes if not np.any(codes < 0) else None
 
-        except Exception:
+        except Exception as exc:
+            # Brand column missing or unreadable — fall back to no-Brand load
+            info(f"Brand column unavailable ({type(exc).__name__}); loading products without brand_popularity.")
             prod_df = load_parquet_df(products_path, ["ProductKey", "UnitPrice", "UnitCost"])
-            product_np = prod_df[["ProductKey", "UnitPrice", "UnitCost"]].to_numpy()
+
+            # Force numeric dtypes (avoid object arrays)
+            prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
+            prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
+            prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
+            prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
+            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int64", copy=False)
+
+            product_np = np.column_stack(
+                [
+                    prod_df["ProductKey"].to_numpy(dtype=np.int64, copy=False),
+                    prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
+                    prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
+                ]
+            )
             product_brand_key = None
 
 
@@ -585,8 +684,12 @@ def generate_sales_fact(
 
     geo_df = geo_df.merge(currency_df, left_on="ISOCode", right_on="ToCurrency", how="left")
     if geo_df["CurrencyKey"].isna().any():
+        n_missing = int(geo_df["CurrencyKey"].isna().sum())
+        missing_isos = geo_df.loc[geo_df["CurrencyKey"].isna(), "ISOCode"].unique().tolist()
         default_currency = int(currency_df.iloc[0]["CurrencyKey"])
         geo_df["CurrencyKey"] = geo_df["CurrencyKey"].fillna(default_currency)
+        info(f"WARNING: {n_missing} geography row(s) have no currency match (ISOs: {missing_isos}); "
+             f"defaulting to CurrencyKey={default_currency}.")
 
     geo_to_currency = dict(zip(_as_np(geo_df["GeographyKey"], np.int64), _as_np(geo_df["CurrencyKey"], np.int64)))
 
@@ -606,19 +709,19 @@ def generate_sales_fact(
         promo_pct_all = _as_np(promo_df["DiscountPct"], np.float64)
         promo_start_all = _as_np(promo_start, "datetime64[D]")
         promo_end_all = _as_np(promo_end, "datetime64[D]")
-        
+
     # ------------------------------------------------------------
     # Employees / store assignments -> SalesPersonEmployeeKey
     # ------------------------------------------------------------
     emp_assign_path = parquet_folder_p / "employee_store_assignments.parquet"
 
-    employee_assign_store_key = None
-    employee_assign_employee_key = None
-    employee_assign_start_date = None
-    employee_assign_end_date = None
-    employee_assign_fte = None
-    employee_assign_is_primary = None
-    employee_assign_role = None
+    # Fail fast: the bridge is the single source of truth for SalesPersonEmployeeKey.
+    # Without it, every Sales row would get SalesPersonEmployeeKey = -1.
+    if not emp_assign_path.exists():
+        raise FileNotFoundError(
+            f"employee_store_assignments.parquet is required: {emp_assign_path}. "
+            f"Run dimension generation first."
+        )
 
     # config-driven allowlist: which RoleAtStore can appear as SalesPersonEmployeeKey
     salesperson_roles = _cfg_get(cfg, ["sales", "salesperson_roles"], default=None)
@@ -626,41 +729,48 @@ def generate_sales_fact(
         primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")
         salesperson_roles = [str(primary)]
 
-    if emp_assign_path.exists():
-        emp_assign_df = load_parquet_df(
-            emp_assign_path,
-            cols=[
-                "EmployeeKey",
-                "StoreKey",
-                "StartDate",
-                "EndDate",
-                "FTE",
-                "IsPrimary",
-                "RoleAtStore",
-            ],
+    emp_assign_df = load_parquet_df(
+        emp_assign_path,
+        cols=[
+            "EmployeeKey",
+            "StoreKey",
+            "StartDate",
+            "EndDate",
+            "FTE",
+            "IsPrimary",
+            "RoleAtStore",
+        ],
+    )
+
+    # Keep only allowed salespeople roles
+    if "RoleAtStore" in emp_assign_df.columns:
+        emp_assign_df = emp_assign_df[emp_assign_df["RoleAtStore"].isin(salesperson_roles)].copy()
+
+    if emp_assign_df.empty:
+        raise RuntimeError(
+            f"No employee assignments with role in {salesperson_roles} found in "
+            f"{emp_assign_path}. Check employees.store_assignments.primary_sales_role "
+            f"and ensure the bridge has been regenerated."
         )
 
-        # Keep only allowed salespeople roles
-        if "RoleAtStore" in emp_assign_df.columns:
-            emp_assign_df = emp_assign_df[emp_assign_df["RoleAtStore"].isin(salesperson_roles)].copy()
+    end_dt = pd.to_datetime(end_date, errors="coerce").normalize()
 
-        if not emp_assign_df.empty:
-            end_dt = pd.to_datetime(end_date, errors="coerce").normalize()
+    start_dt = pd.to_datetime(emp_assign_df["StartDate"], errors="coerce").dt.normalize()
+    end_dt_col = pd.to_datetime(emp_assign_df["EndDate"], errors="coerce").dt.normalize()
+    end_dt_col = end_dt_col.fillna(end_dt)
 
-            start_dt = pd.to_datetime(emp_assign_df["StartDate"], errors="coerce").dt.normalize()
-            end_dt_col = pd.to_datetime(emp_assign_df["EndDate"], errors="coerce").dt.normalize()
-            end_dt_col = end_dt_col.fillna(end_dt)
+    employee_assign_store_key = _as_np(emp_assign_df["StoreKey"], np.int64)
+    employee_assign_employee_key = _as_np(emp_assign_df["EmployeeKey"], np.int64)
+    employee_assign_start_date = _as_np(start_dt, "datetime64[D]")
+    employee_assign_end_date = _as_np(end_dt_col, "datetime64[D]")
+    employee_assign_role = _as_np(emp_assign_df["RoleAtStore"].astype(str))
 
-            employee_assign_store_key = _as_np(emp_assign_df["StoreKey"], np.int64)
-            employee_assign_employee_key = _as_np(emp_assign_df["EmployeeKey"], np.int64)
-            employee_assign_start_date = _as_np(start_dt, "datetime64[D]")
-            employee_assign_end_date = _as_np(end_dt_col, "datetime64[D]")
-            employee_assign_role = _as_np(emp_assign_df["RoleAtStore"].astype(str))
-
-            if "FTE" in emp_assign_df.columns:
-                employee_assign_fte = _as_np(emp_assign_df["FTE"], np.float64)
-            if "IsPrimary" in emp_assign_df.columns:
-                employee_assign_is_primary = _as_np(emp_assign_df["IsPrimary"], bool)
+    employee_assign_fte = None
+    employee_assign_is_primary = None
+    if "FTE" in emp_assign_df.columns:
+        employee_assign_fte = _as_np(emp_assign_df["FTE"], np.float64)
+    if "IsPrimary" in emp_assign_df.columns:
+        employee_assign_is_primary = _as_np(emp_assign_df["IsPrimary"], bool)
 
     # Weighted date pool (deterministic)
     date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
@@ -683,6 +793,8 @@ def generate_sales_fact(
 
     if not tasks:
         skip("No sales rows to generate.")
+        if return_manifest:
+            return ([], _empty_manifest())
         return []
 
     # ------------------------------------------------------------
@@ -700,7 +812,6 @@ def generate_sales_fact(
     # - Else derive a stable 0..999 id from output folder + seed (unique per run folder)
     order_id_run_id_raw = sales_cfg.get("order_id_run_id", None)
     if order_id_run_id_raw is None:
-        import zlib
         key = f"{out_folder_p.resolve()}|{int(seed)}".encode("utf-8")
         order_id_run_id = int(zlib.crc32(key) % 1000)
     else:
@@ -754,8 +865,8 @@ def generate_sales_fact(
         # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
         order_id_stride_orders=int(chunk_size),
         order_id_run_id=int(order_id_run_id),
-        max_lines_per_order=int(sales_cfg.get("max_lines_per_order", 6) or 6),
-        
+        max_lines_per_order=int(sales_cfg.get("max_lines_per_order", 5) or 5),
+
         sales_output=sales_output,
 
         # legacy knobs (kept)
@@ -777,6 +888,7 @@ def generate_sales_fact(
         # Returns (optional)
         returns_enabled=bool(returns_enabled_effective),
         returns_rate=float(returns_rate),
+        returns_min_lag_days=int(returns_min_lag_days),
         returns_max_lag_days=int(returns_max_lag_days),
 
         # deterministic employee assignment lookup
@@ -795,10 +907,38 @@ def generate_sales_fact(
         salesperson_roles=salesperson_roles,
     )
 
+    # ------------------------------------------------------------
+    # Budget streaming aggregation (optional)
+    # ------------------------------------------------------------
+    budget_cfg = cfg.get("budget") if isinstance(cfg.get("budget"), dict) else {}
+    budget_enabled = _BUDGET_AVAILABLE and bool(budget_cfg.get("enabled", False))
+    budget_acc = None  # type: Optional[BudgetAccumulator]
+
+    if budget_enabled:
+        try:
+            budget_lookups = build_budget_lookups(parquet_folder_p)
+            # Pass dense arrays to workers via worker_cfg (tiny — few KB, pickle fine)
+            worker_cfg["budget_enabled"] = True
+            worker_cfg["budget_store_to_country"] = budget_lookups["budget_store_to_country"]
+            worker_cfg["budget_product_to_cat"] = budget_lookups["budget_product_to_cat"]
+            worker_cfg["parquet_folder"] = str(parquet_folder_p)
+
+            budget_acc = BudgetAccumulator(
+                country_labels=budget_lookups["budget_country_labels"],
+                category_labels=budget_lookups["budget_category_labels"],
+            )
+            info("Budget streaming aggregation: enabled")
+        except Exception as exc:
+            info(f"Budget streaming aggregation: disabled ({type(exc).__name__}: {exc})")
+            budget_enabled = False
+            budget_acc = None
+            worker_cfg["budget_enabled"] = False
+    else:
+        worker_cfg["budget_enabled"] = False
+
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)
     created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
     created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
-
 
     def _record_chunk_result(r: Any, completed_units: int, total_units: int) -> None:
         """
@@ -806,7 +946,13 @@ def generate_sales_fact(
         - str (legacy 'sales' mode): path
         - dict(table_name -> write_result): multi-table modes
             write_result is str for csv/parquet, or {"part":..., "rows":...} for delta
+            May also contain _budget_agg / _returns_agg (popped before recording).
         """
+
+        # ---- Extract budget micro-aggregates (if present) ----
+        if budget_acc is not None and isinstance(r, dict):
+            budget_acc.add_sales(r.pop("_budget_agg", None))
+            budget_acc.add_returns(r.pop("_returns_agg", None))
 
         def _chunk_tag(path_like: str) -> str:
             b = os.path.basename(path_like)
@@ -864,9 +1010,10 @@ def generate_sales_fact(
                 work(f"[{completed_units}/{total_units}] {tag} -> " + ", ".join(produced))
             return
 
-        # Unknown / unexpected return type: ignore quietly
+        # Unknown / unexpected return type: log (helps catch worker bugs)
+        info(f"[{completed_units}/{total_units}] Worker returned unsupported result type: {type(r).__name__}")
         return
-    
+
     # ------------------------------------------------------------
     # Multiprocessing (batched)
     # ------------------------------------------------------------
@@ -936,7 +1083,10 @@ def generate_sales_fact(
             parts_dir = output_paths.delta_parts_dir(t)
             delta_dir = output_paths.delta_table_dir(t)
 
-            if not os.path.exists(parts_dir):
+            # parts_dir may exist (pre-created) even if no parts were written;
+            # validate there is at least one parquet file (supports partitioned subfolders).
+            part_files = glob.glob(os.path.join(parts_dir, "**", "*.parquet"), recursive=True)
+            if not part_files:
                 missing_parts.append((t, parts_dir))
                 continue
 
@@ -953,16 +1103,14 @@ def generate_sales_fact(
             raise RuntimeError(f"No delta parts found for any table. {msg}")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest) if return_manifest else created_files
+        return (created_files, manifest, budget_acc) if return_manifest else created_files
 
     if file_format == "csv":
         manifest = _build_sales_manifest()
-        return (created_files, manifest) if return_manifest else created_files
+        return (created_files, manifest, budget_acc) if return_manifest else created_files
 
     if file_format == "parquet":
         if merge_parquet:
-            from .sales_writer import merge_parquet_files
-
             merge_jobs: list[tuple[str, list[str], str]] = []
             skipped: list[str] = []
 
@@ -998,13 +1146,12 @@ def generate_sales_fact(
                         out,
                         delete_after=bool(delete_chunks),
                         table_name=t,
-                        log=False,   # if you added log support
+                        log=False,
                     )
             else:
                 info("Merge parquet: none")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest) if return_manifest else created_files
+        return (created_files, manifest, budget_acc) if return_manifest else created_files
 
     raise ValueError(f"Unknown file_format: {file_format}")
-

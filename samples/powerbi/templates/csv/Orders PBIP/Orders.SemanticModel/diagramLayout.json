@@ -5,13 +5,13 @@
       "ordinal": 0,
       "scrollPosition": {
         "x": 0,
-        "y": 72.463882885047269
+        "y": 18.617053981352228
       },
       "nodes": [
         {
           "location": {
             "x": 590.39494857002171,
-            "y": 12.5
+            "y": 31.25
           },
           "nodeIndex": "Currency",
           "nodeLineageTag": "6abe0bfa-86b5-4aa4-b99e-18a7cdc2214d",
@@ -25,7 +25,7 @@
         {
           "location": {
             "x": 0,
-            "y": 12.5
+            "y": 31.25
           },
           "nodeIndex": "Customers",
           "nodeLineageTag": "674067c5-4401-41cd-b2ef-353674838648",
@@ -39,7 +39,7 @@
         {
           "location": {
             "x": 1069.7433393211627,
-            "y": 12.5
+            "y": 31.25
           },
           "nodeIndex": "Dates",
           "nodeLineageTag": "1e93e289-4d40-485f-9fbc-7760c3c5e1fd",
@@ -53,7 +53,7 @@
         {
           "location": {
             "x": 831.76030715918876,
-            "y": 165.12200671514358
+            "y": 183.87200671514358
           },
           "nodeIndex": "ExchangeRates",
           "nodeLineageTag": "97443b1d-382e-4d8e-a6e8-526c8068417b",
@@ -67,7 +67,7 @@
         {
           "location": {
             "x": 0,
-            "y": 225.31298501102896
+            "y": 244.06298501102896
           },
           "nodeIndex": "Geography",
           "nodeLineageTag": "e1efdba3-1f8e-4419-a2cc-15ee8ccae934",
@@ -81,7 +81,7 @@
         {
           "location": {
             "x": 1223.4329882680729,
-            "y": 289.00078209903836
+            "y": 307.75078209903836
           },
           "nodeIndex": "ProductCategory",
           "nodeLineageTag": "9e8dfa4d-bbb6-4266-8032-8525a6ffab55",
@@ -95,7 +95,7 @@
         {
           "location": {
             "x": 600.2129240716672,
-            "y": 545.31304977009279
+            "y": 564.06304977009279
           },
           "nodeIndex": "Products",
           "nodeLineageTag": "a736d030-7050-4b89-afb0-103296247af9",
@@ -109,7 +109,7 @@
         {
           "location": {
             "x": 896.85317645689531,
-            "y": 432.70900128871455
+            "y": 451.45900128871455
           },
           "nodeIndex": "ProductSubcategory",
           "nodeLineageTag": "da7e7e12-9e93-46f3-a723-4e61f38c64b2",
@@ -123,7 +123,7 @@
         {
           "location": {
             "x": 294.084015514274,
-            "y": 12.5
+            "y": 31.25
           },
           "nodeIndex": "Promotions",
           "nodeLineageTag": "398acef2-142d-4969-aba2-44201a493192",
@@ -137,7 +137,7 @@
         {
           "location": {
             "x": 0,
-            "y": 432.54964491759239
+            "y": 451.29964491759239
           },
           "nodeIndex": "Store",
           "nodeLineageTag": "b6787471-f359-49c1-8666-e49d80de3bf8",
@@ -151,20 +151,21 @@
         {
           "location": {
             "x": 284.23086926807326,
-            "y": 525.56370088504639
+            "y": 544.31370088504639
           },
           "nodeIndex": "SalesOrderDetail",
           "nodeLineageTag": "72237aef-7edb-4861-ab7a-68fcd65161ea",
           "size": {
-            "height": 300,
+            "height": 128,
             "width": 234
           },
-          "zIndex": 0
+          "zIndex": 0,
+          "expandedHeight": 300
         },
         {
           "location": {
             "x": 292.53843426807384,
-            "y": 236.79462288504638
+            "y": 255.54462288504638
           },
           "nodeIndex": "SalesOrderHeader",
           "nodeLineageTag": "a6858967-9b2f-4631-b1db-1fc3279814ea",
@@ -175,7 +176,10 @@
           "zIndex": 0
         },
         {
-          "location": {},
+          "location": {
+            "x": 1295.0984344108376,
+            "y": 661.90165207979635
+          },
           "nodeIndex": "MeasuresTable",
           "nodeLineageTag": "09884a1f-f5d3-4d32-9913-353326f25b6a",
           "size": {
@@ -185,27 +189,38 @@
           "zIndex": 0
         },
         {
-          "location": {},
+          "location": {
+            "x": 390.33686699629959,
+            "y": 888.817528648311
+          },
           "nodeIndex": "Employee",
           "nodeLineageTag": "6cdf88b0-c683-4874-b84f-0f5c1620597e",
           "size": {
-            "height": 300,
+            "height": 104,
             "width": 234
           },
-          "zIndex": 0
+          "zIndex": 0,
+          "expandedHeight": 300
         },
         {
-          "location": {},
+          "location": {
+            "x": 0,
+            "y": 917.93487166821069
+          },
           "nodeIndex": "EmployeeStoreAssignment",
           "nodeLineageTag": "f267ecf6-0b03-49ba-a159-dacf45da748e",
           "size": {
-            "height": 272,
+            "height": 128,
             "width": 234
           },
-          "zIndex": 0
+          "zIndex": 0,
+          "expandedHeight": 272
         },
         {
-          "location": {},
+          "location": {
+            "x": 996.68656303742955,
+            "y": 745.30750428164788
+          },
           "nodeIndex": "ReturnReason",
           "nodeLineageTag": "98f0a278-5f99-4d46-af71-71f7eb1b3c15",
           "size": {
@@ -215,28 +230,49 @@
           "zIndex": 0
         },
         {
-          "location": {},
+          "location": {
+            "x": 0,
+            "y": 724.691385580546
+          },
           "nodeIndex": "SalesChannel",
           "nodeLineageTag": "de0800c1-321b-4f83-9b7d-f9879932d065",
           "size": {
-            "height": 300,
+            "height": 104,
+            "width": 234
+          },
+          "zIndex": 0,
+          "expandedHeight": 300
+        },
+        {
+          "location": {
+            "x": 760.46545221367285,
+            "y": 947.545719816776
+          },
+          "nodeIndex": "SalesReturns",
+          "nodeLineageTag": "9898b162-1a5a-4975-b5c3-f5d0b4a062f9",
+          "size": {
+            "height": 145,
             "width": 234
           },
           "zIndex": 0
         },
         {
-          "location": {},
-          "nodeIndex": "SalesReturns",
-          "nodeLineageTag": "5b6613aa-7a5b-4f47-b5df-0a29fcadedc8",
+          "location": {
+            "x": 697.71046566262976,
+            "y": 773.54756205028366
+          },
+          "nodeIndex": "Time",
+          "nodeLineageTag": "cedb91b8-a86e-4d62-a6bc-41cd86c9b7cd",
           "size": {
-            "height": 248,
+            "height": 104,
             "width": 234
           },
-          "zIndex": 0
+          "zIndex": 0,
+          "expandedHeight": 300
         }
       ],
       "name": "All tables",
-      "zoomValue": 56.447393005377791,
+      "zoomValue": 50.346892102823205,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,
@@ -505,6 +541,6 @@
       "tablesLocked": false
     }
   ],
-  "selectedDiagram": "Layout 1",
+  "selectedDiagram": "All tables",
   "defaultDiagram": "All tables"
 }

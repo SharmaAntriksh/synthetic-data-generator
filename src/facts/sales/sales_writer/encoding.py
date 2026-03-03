@@ -8,16 +8,19 @@ from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL
 # Sales policy/constants
 # ===============================================================
 
-# Columns we never dictionary-encode
-DICT_EXCLUDE = {"SalesOrderNumber", "CustomerKey"}
+DICT_EXCLUDE: frozenset[str] = frozenset({"SalesOrderNumber", "CustomerKey"})
 
-# Columns that must always exist in Sales (line-grain)
-REQUIRED_PRICING_COLS = {
+REQUIRED_PRICING_COLS: frozenset[str] = frozenset({
     "UnitPrice",
     "NetPrice",
     "UnitCost",
     "DiscountAmount",
-}
+})
+
+_REQUIRED_PRICING_TABLES: frozenset[str] = frozenset({
+    TABLE_SALES,
+    TABLE_SALES_ORDER_DETAIL,
+})
 
 
 def validate_required_columns(
@@ -26,28 +29,37 @@ def validate_required_columns(
     *,
     what: str = "required columns",
 ) -> None:
-    req = set(required or [])
+    req = set(required) if not isinstance(required, (set, frozenset)) else required
     if not req:
         return
 
-    names = set(getattr(schema, "names", []) or [])
+    names = set(getattr(schema, "names", ()) or ())
     missing = req - names
     if missing:
         raise RuntimeError(f"Missing {what}: {sorted(missing)}")
 
 
-def schema_dict_cols(schema, exclude: Optional[Iterable[str]] = None) -> List[str]:
-    """
-    Mechanics only:
-      - dictionary-encode string/binary-like columns
-      - skip excluded columns
-    """
-    try:
-        import pyarrow as pa  # type: ignore
-    except Exception as e:
-        raise RuntimeError("pyarrow is required for dictionary-encoding decisions") from e
+def schema_dict_cols(
+    schema,
+    exclude: Optional[Iterable[str]] = None,
+    *,
+    pa=None,
+) -> List[str]:
+    """Return string/binary column names eligible for dictionary encoding.
 
-    exclude_set = set(exclude or [])
+    Parameters
+    ----------
+    pa : optional
+        Pre-imported ``pyarrow`` module.  When provided the function
+        skips its own lazy import, avoiding repeated module lookups on
+        the hot path (called once per chunk during merge/write).
+    """
+    if pa is None:
+        from .utils import _arrow
+        pa, _, _ = _arrow()
+
+    exclude_set = set(exclude) if exclude else set()
+    types = pa.types
     out: List[str] = []
 
     for f in schema:
@@ -56,10 +68,10 @@ def schema_dict_cols(schema, exclude: Optional[Iterable[str]] = None) -> List[st
 
         t = f.type
         if (
-            pa.types.is_string(t)
-            or pa.types.is_large_string(t)
-            or pa.types.is_binary(t)
-            or pa.types.is_large_binary(t)
+            types.is_string(t)
+            or types.is_large_string(t)
+            or types.is_binary(t)
+            or types.is_large_binary(t)
         ):
             out.append(f.name)
 
@@ -70,24 +82,23 @@ def schema_dict_cols(schema, exclude: Optional[Iterable[str]] = None) -> List[st
 # Sales-specific encoding policy
 # ===============================================================
 
-def required_pricing_cols_for_table(table_name: str | None) -> Set[str]:
-    """
-    Pricing cols are required only for line-grain tables.
+def required_pricing_cols_for_table(table_name: str | None) -> frozenset[str]:
+    """Pricing cols are required only for line-grain tables.
 
-    Back-compat:
-      - If table_name is None, keep old strict behavior (require pricing cols).
+    Returns a *frozenset* — callers that need a mutable copy should
+    wrap with ``set(...)``.  Back-compat: if *table_name* is ``None``,
+    keep old strict behaviour (require pricing cols).
     """
-    if table_name is None:
-        return set(REQUIRED_PRICING_COLS)
-    if table_name in {TABLE_SALES, TABLE_SALES_ORDER_DETAIL}:
-        return set(REQUIRED_PRICING_COLS)
-    return set()
+    if table_name is None or table_name in _REQUIRED_PRICING_TABLES:
+        return REQUIRED_PRICING_COLS
+    return frozenset()
 
 
 def _validate_required(schema, *, table_name: str | None = None) -> None:
     """Legacy name kept for compatibility with existing imports."""
     required = required_pricing_cols_for_table(table_name)
-    validate_required_columns(schema, required, what="required pricing columns")
+    if required:
+        validate_required_columns(schema, required, what="required pricing columns")
 
 
 def _schema_dict_cols(
@@ -96,11 +107,13 @@ def _schema_dict_cols(
     *,
     table_name: str | None = None,
 ) -> List[str]:
-    """Legacy name kept for compatibility with existing imports."""
-    _validate_required(schema, table_name=table_name)
+    """Legacy name kept for compatibility with existing imports.
 
-    exclude_set = set(DICT_EXCLUDE)
-    if exclude:
-        exclude_set |= set(exclude)
+    NOTE: This no longer calls _validate_required internally.
+    Callers that need validation should call _validate_required separately
+    before calling this function.  This avoids the double-validation issue
+    where merge_parquet_files would validate twice per merge.
+    """
+    exclude_set = DICT_EXCLUDE | set(exclude) if exclude else DICT_EXCLUDE
 
     return schema_dict_cols(schema, exclude=exclude_set)

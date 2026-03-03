@@ -5,7 +5,7 @@ table Employee
 		dataType: int64
 		formatString: 0
 		lineageTag: 32ce8d57-c5dc-4b54-b28d-b60ce56e8f69
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: EmployeeKey
 
 		annotation SummarizationSetBy = Automatic

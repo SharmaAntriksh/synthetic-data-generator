@@ -22,6 +22,7 @@ def load_static_dimension(
     compression: str = "snappy",
     compression_level: Optional[int] = None,
     force_date32: bool = True,
+    log_skip: bool = True,
 ) -> Tuple[pd.DataFrame, bool]:
     """
     Load a static reference dimension from parquet and write it to output_path.
@@ -56,7 +57,8 @@ def load_static_dimension(
     }
 
     if not should_regenerate(name, version_key, output_path):
-        skip(f"{name} up-to-date; skipping")
+        if log_skip:
+            skip(f"{name} up-to-date; skipping")
         return pd.read_parquet(output_path), False
 
     info(f"Loading {name}")

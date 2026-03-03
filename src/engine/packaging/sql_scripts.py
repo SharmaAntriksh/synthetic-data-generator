@@ -45,6 +45,16 @@ def _sales_mode(sales_cfg: dict) -> str:
     return mode or "sales"
 
 
+def _budget_enabled(cfg: dict | None) -> bool:
+    """Return True if budget generation is enabled in the top-level config."""
+    if cfg is None:
+        return False
+    budget = cfg.get("budget")
+    if not isinstance(budget, dict):
+        return False
+    return bool(budget.get("enabled", False))
+
+
 # ------------------------------------------------------------
 # Static SQL assets
 # ------------------------------------------------------------
@@ -122,7 +132,7 @@ def copy_views_sql(*, sql_root: Path) -> None:
 # Constraints (mode-dependent)
 # ------------------------------------------------------------
 
-def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
+def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict, cfg: dict | None = None) -> None:
     """
     Compose <final>/sql/schema/03_create_constraints.sql from the modular constraint files.
     Falls back to legacy create_constraints.sql if modular parts are missing.
@@ -146,6 +156,11 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict) -> None:
                     modular_dir / "22_sales_order_relations.sql",
                 ]
             )
+
+        # Budget constraints (conditional on budget.enabled)
+        budget_constraints = modular_dir / "30_budget.sql"
+        if budget_constraints.exists() and _budget_enabled(cfg):
+            parts.append(budget_constraints)
 
         existing = [p for p in parts if p.exists()]
         if not existing:

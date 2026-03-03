@@ -54,10 +54,6 @@ def _resolve_run_dir(run_path: str) -> Path:
     return run_dir
 
 
-def _upper(s: str) -> str:
-    return (s or "").strip().upper()
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Create SQL Server database and import generated SQL scripts"
@@ -98,20 +94,6 @@ def main() -> int:
     )
 
     parser.add_argument(
-        "--refresh-budget-cache",
-        action="store_true",
-        help="After import, execute dbo.sp_RefreshBudgetCache to materialize Budget cache tables.",
-    )
-
-    parser.add_argument(
-        "--budget-cache-target",
-        type=_upper,
-        choices=["FX", "LOCAL", "BOTH", "NONE"],
-        default="FX",
-        help="Budget cache target (used only with --refresh-budget-cache): FX | LOCAL | BOTH | NONE. Default: FX.",
-    )
-
-    parser.add_argument(
         "--odbc-driver",
         default=None,
         help="Override ODBC driver name (default: ODBC Driver 17 for SQL Server).",
@@ -119,26 +101,17 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # If target is NONE, treat it as "do not refresh", even if --refresh-budget-cache was set.
-    do_refresh = bool(args.refresh_budget_cache and args.budget_cache_target != "NONE")
-
     try:
         run_dir = _resolve_run_dir(args.run_path)
         connection_string = build_connection_string(args)
 
-        kwargs = dict(
+        import_sql_server(
             server=args.server,
             database=args.database,
             run_dir=run_dir,
             connection_string=connection_string,
             apply_cci=bool(args.apply_cci),
         )
-
-        if do_refresh:
-            kwargs["refresh_budget_cache"] = True
-            kwargs["budget_cache_target"] = args.budget_cache_target
-
-        import_sql_server(**kwargs)
 
     except (SqlServerImportError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
