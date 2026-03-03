@@ -44,6 +44,33 @@ BEGIN
     ADD CONSTRAINT PK_Customers PRIMARY KEY NONCLUSTERED ([CustomerKey]);
 END;
 
+
+-- CustomerProfile (1:1 with Customers)
+IF OBJECT_ID(N'dbo.CustomerProfile', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_CustomerProfile'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerProfile')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerProfile
+    ADD CONSTRAINT PK_CustomerProfile PRIMARY KEY NONCLUSTERED ([CustomerKey]);
+END;
+
+-- OrganizationProfile (1:1 with org-type Customers)
+IF OBJECT_ID(N'dbo.OrganizationProfile', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_OrganizationProfile'
+      AND parent_object_id = OBJECT_ID(N'dbo.OrganizationProfile')
+)
+BEGIN
+    ALTER TABLE dbo.OrganizationProfile
+    ADD CONSTRAINT PK_OrganizationProfile PRIMARY KEY NONCLUSTERED ([CustomerKey]);
+END;
+
 -- Products
 IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
 AND NOT EXISTS (
@@ -55,6 +82,19 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.Products
     ADD CONSTRAINT PK_Products PRIMARY KEY NONCLUSTERED ([ProductKey]);
+END;
+
+-- ProductProfile (1:1 with Products)
+IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_ProductProfile'
+      AND parent_object_id = OBJECT_ID(N'dbo.ProductProfile')
+)
+BEGIN
+    ALTER TABLE dbo.ProductProfile
+    ADD CONSTRAINT PK_ProductProfile PRIMARY KEY NONCLUSTERED ([ProductKey]);
 END;
 
 -- ProductSubcategory
@@ -400,23 +440,41 @@ BEGIN
     ALTER TABLE dbo.ProductSubcategory CHECK CONSTRAINT FK_ProductSubcategory_ProductCategory;
 END;
 
--- Products -> Suppliers
-IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
-AND OBJECT_ID(N'dbo.Suppliers', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Products', N'SupplierKey') IS NOT NULL
+-- ProductProfile -> Products (1:1)
+IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
-    WHERE name = N'FK_Products_Suppliers'
-      AND parent_object_id = OBJECT_ID(N'dbo.Products')
+    WHERE name = N'FK_ProductProfile_Products'
+      AND parent_object_id = OBJECT_ID(N'dbo.ProductProfile')
 )
 BEGIN
-    ALTER TABLE dbo.Products WITH CHECK
-    ADD CONSTRAINT FK_Products_Suppliers
+    ALTER TABLE dbo.ProductProfile WITH CHECK
+    ADD CONSTRAINT FK_ProductProfile_Products
+        FOREIGN KEY ([ProductKey])
+        REFERENCES dbo.Products ([ProductKey]);
+
+    ALTER TABLE dbo.ProductProfile CHECK CONSTRAINT FK_ProductProfile_Products;
+END;
+
+-- ProductProfile -> Suppliers (SupplierKey lives on ProductProfile)
+IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Suppliers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.ProductProfile', N'SupplierKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ProductProfile_Suppliers'
+      AND parent_object_id = OBJECT_ID(N'dbo.ProductProfile')
+)
+BEGIN
+    ALTER TABLE dbo.ProductProfile WITH CHECK
+    ADD CONSTRAINT FK_ProductProfile_Suppliers
         FOREIGN KEY ([SupplierKey])
         REFERENCES dbo.Suppliers ([SupplierKey]);
 
-    ALTER TABLE dbo.Products CHECK CONSTRAINT FK_Products_Suppliers;
+    ALTER TABLE dbo.ProductProfile CHECK CONSTRAINT FK_ProductProfile_Suppliers;
 END;
 
 -- Customers -> Geography
@@ -435,6 +493,42 @@ BEGIN
         REFERENCES dbo.Geography ([GeographyKey]);
 
     ALTER TABLE dbo.Customers CHECK CONSTRAINT FK_Customers_Geography;
+END;
+
+-- CustomerProfile -> Customers (1:1)
+IF OBJECT_ID(N'dbo.CustomerProfile', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_CustomerProfile_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerProfile')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerProfile WITH CHECK
+    ADD CONSTRAINT FK_CustomerProfile_Customers
+        FOREIGN KEY ([CustomerKey])
+        REFERENCES dbo.Customers ([CustomerKey]);
+
+    ALTER TABLE dbo.CustomerProfile CHECK CONSTRAINT FK_CustomerProfile_Customers;
+END;
+
+-- OrganizationProfile -> Customers (1:1, org-type rows only)
+IF OBJECT_ID(N'dbo.OrganizationProfile', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_OrganizationProfile_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.OrganizationProfile')
+)
+BEGIN
+    ALTER TABLE dbo.OrganizationProfile WITH CHECK
+    ADD CONSTRAINT FK_OrganizationProfile_Customers
+        FOREIGN KEY ([CustomerKey])
+        REFERENCES dbo.Customers ([CustomerKey]);
+
+    ALTER TABLE dbo.OrganizationProfile CHECK CONSTRAINT FK_OrganizationProfile_Customers;
 END;
 
 -- Stores -> Geography

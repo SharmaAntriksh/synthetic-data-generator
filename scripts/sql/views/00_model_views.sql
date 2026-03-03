@@ -23,6 +23,16 @@ IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_Customers] AS SELECT * FROM [dbo].[Customers];');
 GO
 
+-- CustomerProfile
+IF OBJECT_ID(N'dbo.CustomerProfile', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerProfile] AS SELECT * FROM [dbo].[CustomerProfile];');
+GO
+
+-- OrganizationProfile
+IF OBJECT_ID(N'dbo.OrganizationProfile', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_OrganizationProfile] AS SELECT * FROM [dbo].[OrganizationProfile];');
+GO
+
 -- CustomerAcquisitionChannels
 IF OBJECT_ID(N'dbo.CustomerAcquisitionChannels', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerAcquisitionChannels] AS SELECT * FROM [dbo].[CustomerAcquisitionChannels];');
@@ -91,6 +101,11 @@ GO
 -- Products
 IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_Products] AS SELECT * FROM [dbo].[Products];');
+GO
+
+-- ProductProfile
+IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_ProductProfile] AS SELECT * FROM [dbo].[ProductProfile];');
 GO
 
 -- ProductSubcategory
