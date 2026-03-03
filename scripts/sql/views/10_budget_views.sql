@@ -9,6 +9,7 @@ GO
 -- inserted as first-class fact tables:
 --
 --   BudgetYearly          - annual grain
+--   BudgetMonthly         - monthly grain (country x category x month x scenario)
 --
 -- These views exist solely so downstream consumers (Power BI, ad-hoc
 -- queries) can reference dbo.vw_Budget_* consistently with the rest
@@ -18,4 +19,9 @@ GO
 -- BudgetYearly
 IF OBJECT_ID(N'dbo.BudgetYearly', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_Budget] AS SELECT * FROM [dbo].[BudgetYearly];');
+GO
+
+-- BudgetMonthly
+IF OBJECT_ID(N'dbo.BudgetMonthly', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Budget_Monthly] AS SELECT * FROM [dbo].[BudgetMonthly];');
 GO

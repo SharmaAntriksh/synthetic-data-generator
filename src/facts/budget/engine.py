@@ -2,9 +2,10 @@
 
 Stages:
   1. Yearly budget (vw_Budget)          -> _compute_yearly_budget()
+  2. Monthly budget (category × month)  -> _compute_monthly_budget()
 
 Input:  actuals DataFrame from BudgetAccumulator.finalize_sales()
-Output: yearly budget DataFrame written as parquet
+Output: (yearly, monthly) budget DataFrames
 """
 from __future__ import annotations
 
@@ -267,21 +268,116 @@ def _blend_growth(
 
 
 # ================================================================
+# Stage 2: Monthly budget (category × month × scenario)
+# ================================================================
+
+def _compute_monthly_budget(
+    yearly: pd.DataFrame,
+    actuals_monthly: pd.DataFrame,
+    bcfg: BudgetConfig,
+) -> pd.DataFrame:
+    """
+    Spread yearly budget to monthly grain using seasonal weights from actuals.
+
+    Input:
+      - yearly: BudgetYearly at (Country, Category, BudgetYear, Scenario) grain
+      - actuals_monthly: raw monthly actuals with (Category, Year, Month, SalesAmount, SalesQuantity)
+
+    Output:
+      Country, Category, BudgetYear, BudgetMonthStart, Scenario,
+      BudgetAmount, BudgetQuantity, BudgetMethod
+    """
+    # ---- 1. Budget at Country × Category level (keep countries separate) ----
+    cat_yearly = yearly.groupby(
+        ["Country", "Category", "BudgetYear", "Scenario"], as_index=False
+    ).agg(
+        BudgetSalesAmount=("BudgetSalesAmount", "sum"),
+        BudgetSalesQuantity=("BudgetSalesQuantity", "sum"),
+    )
+
+    # ---- 2. Compute seasonal weights from actuals ----
+    # Category × Month share, averaged across all available years
+    cat_month = actuals_monthly.groupby(
+        ["Category", "Year", "Month"], as_index=False
+    ).agg(SalesAmount=("SalesAmount", "sum"))
+
+    cat_year_total = cat_month.groupby(
+        ["Category", "Year"], as_index=False
+    ).agg(YearTotal=("SalesAmount", "sum"))
+
+    cat_month = cat_month.merge(cat_year_total, on=["Category", "Year"], how="left")
+    cat_month["MonthShare"] = np.where(
+        cat_month["YearTotal"] > 0,
+        cat_month["SalesAmount"] / cat_month["YearTotal"],
+        1.0 / 12.0,
+    )
+
+    # Average month share across years → stable seasonal profile per category
+    seasonal = cat_month.groupby(
+        ["Category", "Month"], as_index=False
+    ).agg(MonthShare=("MonthShare", "mean"))
+
+    # Normalize so shares sum to 1.0 per category (safety)
+    share_totals = seasonal.groupby("Category", as_index=False).agg(
+        ShareSum=("MonthShare", "sum")
+    )
+    seasonal = seasonal.merge(share_totals, on="Category", how="left")
+    seasonal["MonthShare"] = seasonal["MonthShare"] / seasonal["ShareSum"]
+    seasonal.drop(columns=["ShareSum"], inplace=True)
+
+    # ---- 3. Cross join budget × 12 months, then apply weights ----
+    months = pd.DataFrame({"Month": range(1, 13)})
+    budget_months = cat_yearly.merge(months, how="cross")
+
+    budget_months = budget_months.merge(
+        seasonal, on=["Category", "Month"], how="left"
+    )
+    # Fallback for categories with no seasonal data
+    budget_months["MonthShare"] = budget_months["MonthShare"].fillna(1.0 / 12.0)
+
+    budget_months["BudgetAmount"] = (
+        budget_months["BudgetSalesAmount"] * budget_months["MonthShare"]
+    )
+    budget_months["BudgetQuantity"] = (
+        budget_months["BudgetSalesQuantity"] * budget_months["MonthShare"]
+    )
+
+    # ---- 4. Build BudgetMonthStart date ----
+    budget_months["BudgetMonthStart"] = pd.to_datetime(
+        budget_months["BudgetYear"].astype(str) + "-"
+        + budget_months["Month"].astype(str).str.zfill(2) + "-01"
+    )
+
+    budget_months["BudgetMethod"] = "Monthly: yearly total x seasonal share"
+
+    out = budget_months[[
+        "Country", "Category", "BudgetYear", "BudgetMonthStart", "Scenario",
+        "BudgetAmount", "BudgetQuantity", "BudgetMethod",
+    ]].copy()
+
+    out["BudgetYear"] = out["BudgetYear"].astype(int)
+    return out
+
+
+# ================================================================
 # Public API
 # ================================================================
 
 def compute_budget(
     actuals_monthly: pd.DataFrame,
     bcfg: BudgetConfig,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Compute yearly budget.
+    Compute all budget tables.
 
     Returns:
-        yearly_budget DataFrame
+        (yearly_budget, monthly_budget)
     """
     actuals_annual = actuals_monthly.groupby(
         ["Country", "Category", "Year"], as_index=False
     ).agg(SalesAmount=("SalesAmount", "sum"), SalesQuantity=("SalesQuantity", "sum"))
 
-    return _compute_yearly_budget(actuals_annual, bcfg)
+    yearly = _compute_yearly_budget(actuals_annual, bcfg)
+    monthly = _compute_monthly_budget(yearly, actuals_monthly, bcfg)
+
+    return yearly, monthly

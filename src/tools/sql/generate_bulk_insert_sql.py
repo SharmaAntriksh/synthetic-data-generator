@@ -62,6 +62,7 @@ _FOLDER_TABLE_ALIASES: dict[str, str] = {
 
     # budget (files live under facts/budget/ with individual filenames)
     "budget_yearly": "BudgetYearly",
+    "budget_monthly": "BudgetMonthly",
 }
 
 def _infer_table_from_filename(csv_file: str) -> str:
@@ -163,7 +164,7 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     Allowed fact tables for facts bulk insert.
     - sales.sales_output drives Sales vs SalesOrderHeader/Detail
     - returns flags (above) controls SalesReturn
-    - budget.enabled controls BudgetYearly
+    - budget.enabled controls BudgetYearly/BudgetMonthly
     """
     if cfg is None:
         return None
@@ -185,6 +186,7 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
 
     if _budget_enabled_from_cfg(cfg):
         allowed.add("BudgetYearly")
+        allowed.add("BudgetMonthly")
 
     return allowed
 
@@ -346,6 +348,7 @@ def generate_dims_and_facts_bulk_insert_scripts(
     csv_tables: set[str] = set()
     if _budget_enabled_from_cfg(cfg):
         csv_tables.add("BudgetYearly")
+        csv_tables.add("BudgetMonthly")
 
     generate_bulk_insert_script(
         facts_folder,

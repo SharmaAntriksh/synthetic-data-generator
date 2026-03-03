@@ -60,8 +60,8 @@ def run_budget_pipeline(
          f"{actuals_monthly['Country'].nunique()} countries × "
          f"{actuals_monthly['Category'].nunique()} categories)")
 
-    # ---- Compute yearly budget ----
-    yearly = compute_budget(
+    # ---- Compute budget tables ----
+    yearly, monthly = compute_budget(
         actuals_monthly=actuals_monthly,
         bcfg=bcfg,
     )
@@ -71,14 +71,18 @@ def run_budget_pipeline(
     budget_out.mkdir(parents=True, exist_ok=True)
 
     _write_budget(yearly, budget_out, "budget_yearly", file_format)
+    _write_budget(monthly, budget_out, "budget_monthly", file_format)
 
     elapsed = time.time() - t0
     yearly_rows = len(yearly)
+    monthly_rows = len(monthly)
 
-    done(f"Budget completed in {elapsed:.1f}s ({yearly_rows:,} yearly rows)")
+    done(f"Budget completed in {elapsed:.1f}s "
+         f"({yearly_rows:,} yearly, {monthly_rows:,} monthly rows)")
 
     return {
         "yearly_rows": yearly_rows,
+        "monthly_rows": monthly_rows,
         "elapsed_sec": elapsed,
     }
 
@@ -126,12 +130,18 @@ _BUDGET_CSV_COLUMNS: dict[str, list[str]] = {
         "BudgetGrowthPct", "BudgetSalesAmount", "BudgetSalesQuantity",
         "BudgetMethod",
     ],
+    "budget_monthly": [
+        "Country", "Category", "BudgetYear", "BudgetMonthStart", "Scenario",
+        "BudgetAmount", "BudgetQuantity", "BudgetMethod",
+    ],
 }
 
 _BUDGET_CSV_ROUND: dict[str, int] = {
     "BudgetGrowthPct": 6,
     "BudgetSalesAmount": 2,
     "BudgetSalesQuantity": 2,
+    "BudgetAmount": 2,
+    "BudgetQuantity": 2,
 }
 
 _BUDGET_CSV_INT_COLS: tuple[str, ...] = ("BudgetYear",)

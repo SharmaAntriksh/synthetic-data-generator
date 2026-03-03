@@ -17,6 +17,7 @@ TABLE_SALES_RETURN = "SalesReturn"
 
 # Budget fact table names
 TABLE_BUDGET_YEARLY = "BudgetYearly"
+TABLE_BUDGET_MONTHLY = "BudgetMonthly"
 
 # Tables that should be emitted in the Facts script (not Dimensions),
 # even though they live inside STATIC_SCHEMAS.
@@ -26,6 +27,7 @@ _FACT_TABLE_NAMES = {
     TABLE_SALES_ORDER_DETAIL,
     TABLE_SALES_RETURN,
     TABLE_BUDGET_YEARLY,
+    TABLE_BUDGET_MONTHLY,
 }
 
 
@@ -286,6 +288,7 @@ def generate_all_create_tables(
     if _budget_enabled(cfg):
         for budget_table in (
             TABLE_BUDGET_YEARLY,
+            TABLE_BUDGET_MONTHLY,
         ):
             fact_scripts.append(
                 create_table_from_schema(
