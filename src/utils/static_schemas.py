@@ -606,6 +606,16 @@ FACT_SCHEMAS: Dict[str, Schema] = {
         ("ToCurrency", VARCHAR(10, not_null=True)),
         ("Rate", DECIMAL(10, 6, not_null=True)),
     ),
+    "BudgetYearly": (
+        ("Country", VARCHAR(100, not_null=True)),
+        ("Category", VARCHAR(100, not_null=True)),
+        ("BudgetYear", INT_NN),
+        ("Scenario", VARCHAR(20, not_null=True)),
+        ("BudgetGrowthPct", DECIMAL(9, 6, not_null=True)),
+        ("BudgetSalesAmount", DECIMAL(19, 2, not_null=True)),
+        ("BudgetSalesQuantity", DECIMAL(19, 2, not_null=True)),
+        ("BudgetMethod", VARCHAR(140, not_null=True)),
+    ),
 }
 
 # Validate before freezing (fail fast at import time)

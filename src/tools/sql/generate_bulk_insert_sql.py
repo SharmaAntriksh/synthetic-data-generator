@@ -59,6 +59,9 @@ _FOLDER_TABLE_ALIASES: dict[str, str] = {
     "sales_return": "SalesReturn",
     "salesreturn": "SalesReturn",
     "returns": "SalesReturn",
+
+    # budget (files live under facts/budget/ with individual filenames)
+    "budget_yearly": "BudgetYearly",
 }
 
 def _infer_table_from_filename(csv_file: str) -> str:
@@ -145,11 +148,22 @@ def _returns_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
     return True
 
 
+def _budget_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
+    """Return True if budget generation is enabled in config."""
+    if cfg is None:
+        return False
+    budget_cfg = cfg.get("budget")
+    if budget_cfg is None or not isinstance(budget_cfg, Mapping):
+        return False
+    return bool(budget_cfg.get("enabled", False))
+
+
 def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     """
     Allowed fact tables for facts bulk insert.
     - sales.sales_output drives Sales vs SalesOrderHeader/Detail
     - returns flags (above) controls SalesReturn
+    - budget.enabled controls BudgetYearly
     """
     if cfg is None:
         return None
@@ -168,6 +182,9 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
 
     if _returns_enabled_from_cfg(cfg):
         allowed.add("SalesReturn")
+
+    if _budget_enabled_from_cfg(cfg):
+        allowed.add("BudgetYearly")
 
     return allowed
 
@@ -189,6 +206,7 @@ def generate_bulk_insert_script(
     output_sql_file: str = "bulk_insert.sql",
     table_name: Optional[str] = None,
     mode: str = "legacy",            # "legacy" | "csv"
+    csv_format_tables: Optional[Set[str]] = None,  # tables that need FORMAT='CSV'
     first_row: int = 2,
     field_terminator: str = ",",
     row_terminator: str = "0x0a",
@@ -201,6 +219,8 @@ def generate_bulk_insert_script(
     - If table_name is None, table is inferred per file.
     - recursive=True is required for facts/<table>/*.csv layout.
     - allowed_tables filters inferred tables (case-insensitive).
+    - csv_format_tables: set of table names that require FORMAT='CSV'
+      (e.g. budget tables with embedded commas). Other tables use `mode`.
     """
     csv_folder = Path(csv_folder)
     if not csv_folder.exists() or not csv_folder.is_dir():
@@ -247,7 +267,11 @@ def generate_bulk_insert_script(
 
         with_opts: list[str] = [f"FIRSTROW = {int(first_row)}"]
 
-        if mode == "csv":
+        # Determine mode for this specific table
+        _csv_lower = {t.lower() for t in (csv_format_tables or set())}
+        effective_mode = "csv" if tgt.lower() in _csv_lower else mode
+
+        if effective_mode == "csv":
             # SQL Server 2017+
             with_opts.insert(0, "FORMAT = 'CSV'")
             with_opts.append(f"CODEPAGE = '{codepage}'")
@@ -297,6 +321,10 @@ def generate_dims_and_facts_bulk_insert_scripts(
 
     - dims: flat folder
     - facts: recursive scan (facts/<table>/*.csv)
+
+    Budget tables use FORMAT='CSV' because their string columns
+    (Country, Category) may contain embedded commas.  Sales/SalesReturn
+    stay on legacy FIELDTERMINATOR mode.
     """
     load_output_folder = Path(load_output_folder)
     load_output_folder.mkdir(parents=True, exist_ok=True)
@@ -314,10 +342,16 @@ def generate_dims_and_facts_bulk_insert_scripts(
 
     allowed = _allowed_fact_tables_from_cfg(cfg)
 
+    # Budget tables need FORMAT='CSV' for embedded commas in string columns
+    csv_tables: set[str] = set()
+    if _budget_enabled_from_cfg(cfg):
+        csv_tables.add("BudgetYearly")
+
     generate_bulk_insert_script(
         facts_folder,
         output_sql_file=str(facts_sql),
         mode=facts_mode,
+        csv_format_tables=csv_tables or None,
         table_name=None,
         row_terminator=row_terminator,
         recursive=True,

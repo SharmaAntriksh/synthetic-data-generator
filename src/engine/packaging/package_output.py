@@ -107,14 +107,15 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         raise ValueError(f"Unsupported file_format in packaging: {file_format!r}")
 
     copy_csv_facts(fact_out=fact_out, facts_out=facts_out, tables=tables)
-        
+    _copy_budget_if_exists()
+
     # SQL SCRIPT GENERATION — CSV ONLY
     if is_csv:
         sql_root = final_folder / "sql"
 
         # Schema scripts (numbered)
         write_create_table_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
-        compose_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg)
+        compose_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
         copy_views_sql(sql_root=sql_root)
 
         # Load scripts
@@ -125,5 +126,4 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     else:
         info("Skipping SQL script generation for non-CSV format.")
 
-    _copy_budget_if_exists()
     return final_folder

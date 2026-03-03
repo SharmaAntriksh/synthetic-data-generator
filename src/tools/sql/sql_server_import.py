@@ -346,55 +346,6 @@ def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[
 
 
 # -------------------------
-# Budget cache refresh (optional)
-# -------------------------
-def _maybe_refresh_budget_cache(db_conn_str: str, *, target: str) -> None:
-    t = (target or "FX").strip().upper()
-    if t in {"", "NONE"}:
-        _log("INFO", "Budget cache target is NONE; skipping refresh.")
-        return
-    if t not in {"FX", "LOCAL", "BOTH"}:
-        raise SqlServerImportError(f"Invalid budget_cache_target={target!r}. Use FX, LOCAL, BOTH, or NONE.")
-
-    try:
-        with pyodbc.connect(db_conn_str, autocommit=True) as conn:
-            _try_disable_query_timeout(conn)
-            cursor = conn.cursor()
-
-            cursor.execute("SELECT 1 WHERE OBJECT_ID(N'dbo.sp_RefreshBudgetCache', N'P') IS NOT NULL;")
-            if cursor.fetchone() is None:
-                _log("WARN", "dbo.sp_RefreshBudgetCache not found; skipping budget cache refresh.")
-                return
-
-            _log("INFO", f"Executing dbo.sp_RefreshBudgetCache (@Target='{t}') ...")
-            try:
-                cursor.execute(
-                    "EXEC dbo.sp_RefreshBudgetCache @Target = ?;",
-                    (t,),
-                )
-            except pyodbc.Error as exc:
-                # Backward-compatible fallback for older proc signatures:
-                #  - Old proc had @RebuildIfSchemaChanged + @Target
-                #  - Very old proc had only @RebuildIfSchemaChanged
-                msg = " ".join(str(x) for x in (exc.args or ()))
-                if "not a parameter" in msg.lower() or "too many arguments" in msg.lower():
-                    try:
-                        cursor.execute(
-                            "EXEC dbo.sp_RefreshBudgetCache @RebuildIfSchemaChanged = 1, @Target = ?;",
-                            (t,),
-                        )
-                    except pyodbc.Error:
-                        cursor.execute("EXEC dbo.sp_RefreshBudgetCache @RebuildIfSchemaChanged = 1;")
-                else:
-                    raise
-
-            _log("INFO", "Budget cache refresh completed.")
-
-    except pyodbc.Error as exc:
-        raise SqlServerImportError(f"Failed refreshing budget cache. Details: {exc.args}") from exc
-
-
-# -------------------------
 # Main import
 # -------------------------
 def import_sql_server(
@@ -404,8 +355,6 @@ def import_sql_server(
     run_dir: Path,
     connection_string: str,
     apply_cci: bool = False,
-    refresh_budget_cache: bool = False,
-    budget_cache_target: str = "FX",
 ) -> None:
     run_dir = Path(run_dir)
     sql_dir = run_dir / "sql"
@@ -528,10 +477,6 @@ def import_sql_server(
         raise SqlServerImportError(
             f"Failed importing SQL into database '{database}'. Details: {exc.args}"
         ) from exc
-
-    # Step 2.6: optional budget cache refresh (materialize cache tables)
-    if refresh_budget_cache:
-        _maybe_refresh_budget_cache(db_conn_str, target=budget_cache_target)
 
     # Step 3: optional CCI (types/procs + apply)
     if not apply_cci:
