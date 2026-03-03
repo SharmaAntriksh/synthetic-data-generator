@@ -702,7 +702,7 @@ def _load_supplier_keys(output_folder: Path) -> np.ndarray:
 # ---------------------------------------------------------------------
 # Public loader
 # ---------------------------------------------------------------------
-def load_product_dimension(config, output_folder: Path):
+def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True):
     """
     Product dimension loader (single method):
 
@@ -750,7 +750,8 @@ def load_product_dimension(config, output_folder: Path):
 
     force = bool(p.get("_force_regenerate", False))
     if not force and not should_regenerate("products", version_key, parquet_path):
-        skip("Products up-to-date; skipping regeneration")
+        if log_skip:
+            skip("Products up-to-date; skipping regeneration")
         profile_path = output_folder / "product_profile.parquet"
         profile_df = pd.read_parquet(profile_path) if profile_path.exists() else pd.DataFrame()
         return pd.read_parquet(parquet_path), profile_df, False

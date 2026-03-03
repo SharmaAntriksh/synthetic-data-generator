@@ -14,8 +14,7 @@ def generate_product_dimension(config, output_folder: Path):
     3. Product (scalable) + ProductProfile
     """
 
-    with stage("Generating Products"):
-        # ---------------- Product Category ----------------
+    with stage("Generating Products", lazy=True):
         df_cat, regen_cat = load_static_dimension(
             name="product_category",
             src_path=Path("data/contoso_products/product_category.parquet"),
@@ -24,7 +23,6 @@ def generate_product_dimension(config, output_folder: Path):
         if regen_cat:
             info(f"product_category: {len(df_cat):,} rows")
 
-        # ---------------- Product Subcategory ----------------
         df_sub, regen_sub = load_static_dimension(
             name="product_subcategory",
             src_path=Path("data/contoso_products/product_subcategory.parquet"),
@@ -33,8 +31,9 @@ def generate_product_dimension(config, output_folder: Path):
         if regen_sub:
             info(f"product_subcategory: {len(df_sub):,} rows")
 
-        # ---------------- Products + Profile ----------------
-        df_prod, df_prod_profile, regen_prod = load_product_dimension(config, output_folder)
+        df_prod, df_prod_profile, regen_prod = load_product_dimension(
+            config, output_folder, log_skip=False,
+        )
         if regen_prod:
             info(f"Products: {len(df_prod):,} rows")
             info(f"ProductProfile: {len(df_prod_profile):,} rows")
@@ -48,4 +47,3 @@ def generate_product_dimension(config, output_folder: Path):
         "product_profile": df_prod_profile,
         "_regenerated": regenerated,
     }
-
