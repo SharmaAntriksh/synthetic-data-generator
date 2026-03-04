@@ -110,7 +110,7 @@ def _write_budget(df: pd.DataFrame, out_dir: Path, name: str, file_format: str) 
     if file_format == "csv":
         csv_path = out_dir / f"{name}.csv"
         csv_df = _prepare_budget_csv(df, name)
-        csv_df.to_csv(str(csv_path), index=False)
+        csv_df.to_csv(str(csv_path), index=False, float_format="%.6f")
         info(f"Wrote {name}: {len(df):,} rows -> {short_path(csv_path)}")
     else:
         info(f"Wrote {name}: {len(df):,} rows -> {short_path(parquet_path)}")
