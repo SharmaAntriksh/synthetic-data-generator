@@ -1,285 +1,108 @@
 # ui/presets.py
 import re
-from collections import defaultdict
 import hashlib
 import random
+from collections import defaultdict
 from typing import Dict, Any
 
 
 _SALES_RE = re.compile(r"Sales\s+([\d\.]+[KMB]?)", re.IGNORECASE)
 
-# Use ISO strings (YAML- and downstream-friendly)
 START = "2021-01-01"
 END = "2025-12-31"
 
 
 def _stable_rng(key: str) -> random.Random:
-    """
-    Create a deterministic RNG based on preset name.
-    """
     h = hashlib.sha256(key.encode("utf-8")).hexdigest()
     seed = int(h[:16], 16)
     return random.Random(seed)
 
 
 def _jitter(value: int, pct: float, rng: random.Random) -> int:
-    """
-    Apply ±pct jitter to a value.
-    Example: pct=0.03 → ±3%
-    """
     delta = value * pct
     return max(1, int(value + rng.uniform(-delta, delta)))
 
 
 # ------------------------------------------------------------------
-# Presets are explicit and authoritative.
-# If a preset name mentions Customers X, Products Y, or Sales Z,
-# the preset MUST actually apply those values.
-# NOTE: We keep jitter enabled for realism; values are approximate.
+# Compact preset definitions.
+#
+# Each tuple is (customers, products, sales_rows).
+# The label is derived automatically.  All presets share the same
+# date window (START / END) and the same jitter behaviour.
 # ------------------------------------------------------------------
 
-PRESETS: Dict[str, Dict[str, Any]] = {
-    # --------------------------------------------------------------
+def _K(n: int) -> str:
+    if n >= 1_000_000:
+        v = n / 1_000_000
+        return f"{v:g}M"
+    if n >= 1_000:
+        v = n / 1_000
+        return f"{v:g}K"
+    return str(n)
+
+
+def _build_label(cust: int, prod: int, sales: int) -> str:
+    return f"Customers {_K(cust)} | Products {_K(prod)} | Sales {_K(sales)}"
+
+
+# (customers, products, sales_rows)
+_PRESET_TABLE: list[tuple[int, int, int]] = [
     # 100K Sales
-    # --------------------------------------------------------------
-    "Customers 5K | Products 2.2K | Sales 100K": {
-        "start": START, "end": END,
-        "sales_rows": 100_000,
-        "customers": 5_000,
-        "products": 2_157,
-    },
-    "Customers 10K | Products 2.2K | Sales 100K": {
-        "start": START, "end": END,
-        "sales_rows": 100_000,
-        "customers": 10_000,
-        "products": 2_157,
-    },
-    "Customers 10K | Products 5K | Sales 100K": {
-        "start": START, "end": END,
-        "sales_rows": 100_000,
-        "customers": 10_000,
-        "products": 5_000,
-    },
-
-    # --------------------------------------------------------------
+    (5_000,       2_157,    100_000),
+    (10_000,      2_157,    100_000),
+    (10_000,      5_000,    100_000),
     # 1M Sales
-    # --------------------------------------------------------------
-    "Customers 20K | Products 3K | Sales 1M": {
-        "start": START, "end": END,
-        "sales_rows": 1_000_000,
-        "customers": 20_000,
-        "products": 3_000,
-    },
-    "Customers 50K | Products 5K | Sales 1M": {
-        "start": START, "end": END,
-        "sales_rows": 1_000_000,
-        "customers": 50_000,
-        "products": 5_000,
-    },
-    "Customers 50K | Products 7K | Sales 1M": {
-        "start": START, "end": END,
-        "sales_rows": 1_000_000,
-        "customers": 50_000,
-        "products": 7_000,
-    },
-
-    # --------------------------------------------------------------
+    (20_000,      3_000,  1_000_000),
+    (50_000,      5_000,  1_000_000),
+    (50_000,      7_000,  1_000_000),
     # 2M Sales
-    # --------------------------------------------------------------
-    "Customers 50K | Products 5K | Sales 2M": {
-        "start": START, "end": END,
-        "sales_rows": 2_000_000,
-        "customers": 50_000,
-        "products": 5_000,
-    },
-    "Customers 100K | Products 7K | Sales 2M": {
-        "start": START, "end": END,
-        "sales_rows": 2_000_000,
-        "customers": 100_000,
-        "products": 7_000,
-    },
-    "Customers 100K | Products 10K | Sales 2M": {
-        "start": START, "end": END,
-        "sales_rows": 2_000_000,
-        "customers": 100_000,
-        "products": 10_000,
-    },
-
-    # --------------------------------------------------------------
+    (50_000,      5_000,  2_000_000),
+    (100_000,     7_000,  2_000_000),
+    (100_000,    10_000,  2_000_000),
     # 5M Sales
-    # --------------------------------------------------------------
-    "Customers 100K | Products 8K | Sales 5M": {
-        "start": START, "end": END,
-        "sales_rows": 5_000_000,
-        "customers": 100_000,
-        "products": 8_000,
-    },
-    "Customers 250K | Products 12K | Sales 5M": {
-        "start": START, "end": END,
-        "sales_rows": 5_000_000,
-        "customers": 250_000,
-        "products": 12_000,
-    },
-    "Customers 250K | Products 15K | Sales 5M": {
-        "start": START, "end": END,
-        "sales_rows": 5_000_000,
-        "customers": 250_000,
-        "products": 15_000,
-    },
-
-    # --------------------------------------------------------------
+    (100_000,     8_000,  5_000_000),
+    (250_000,    12_000,  5_000_000),
+    (250_000,    15_000,  5_000_000),
     # 10M Sales
-    # --------------------------------------------------------------
-    "Customers 250K | Products 10K | Sales 10M": {
-        "start": START, "end": END,
-        "sales_rows": 10_000_000,
-        "customers": 250_000,
-        "products": 10_000,
-    },
-    "Customers 500K | Products 15K | Sales 10M": {
-        "start": START, "end": END,
-        "sales_rows": 10_000_000,
-        "customers": 500_000,
-        "products": 15_000,
-    },
-    "Customers 500K | Products 25K | Sales 10M": {
-        "start": START, "end": END,
-        "sales_rows": 10_000_000,
-        "customers": 500_000,
-        "products": 25_000,
-    },
-
-    # --------------------------------------------------------------
+    (250_000,    10_000, 10_000_000),
+    (500_000,    15_000, 10_000_000),
+    (500_000,    25_000, 10_000_000),
     # 20M Sales
-    # --------------------------------------------------------------
-    "Customers 500K | Products 15K | Sales 20M": {
-        "start": START, "end": END,
-        "sales_rows": 20_000_000,
-        "customers": 500_000,
-        "products": 15_000,
-    },
-    "Customers 1M | Products 25K | Sales 20M": {
-        "start": START, "end": END,
-        "sales_rows": 20_000_000,
-        "customers": 1_000_000,
-        "products": 25_000,
-    },
-    "Customers 1M | Products 40K | Sales 20M": {
-        "start": START, "end": END,
-        "sales_rows": 20_000_000,
-        "customers": 1_000_000,
-        "products": 40_000,
-    },
-
-    # --------------------------------------------------------------
+    (500_000,    15_000, 20_000_000),
+    (1_000_000,  25_000, 20_000_000),
+    (1_000_000,  40_000, 20_000_000),
     # 50M Sales
-    # --------------------------------------------------------------
-    "Customers 1M | Products 25K | Sales 50M": {
-        "start": START, "end": END,
-        "sales_rows": 50_000_000,
-        "customers": 1_000_000,
-        "products": 25_000,
-    },
-    "Customers 2M | Products 50K | Sales 50M": {
-        "start": START, "end": END,
-        "sales_rows": 50_000_000,
-        "customers": 2_000_000,
-        "products": 50_000,
-    },
-    "Customers 2M | Products 75K | Sales 50M": {
-        "start": START, "end": END,
-        "sales_rows": 50_000_000,
-        "customers": 2_000_000,
-        "products": 75_000,
-    },
-
-    # --------------------------------------------------------------
+    (1_000_000,  25_000, 50_000_000),
+    (2_000_000,  50_000, 50_000_000),
+    (2_000_000,  75_000, 50_000_000),
     # 100M Sales
-    # --------------------------------------------------------------
-    "Customers 2M | Products 40K | Sales 100M": {
-        "start": START, "end": END,
-        "sales_rows": 100_000_000,
-        "customers": 2_000_000,
-        "products": 40_000,
-    },
-    "Customers 5M | Products 75K | Sales 100M": {
-        "start": START, "end": END,
-        "sales_rows": 100_000_000,
-        "customers": 5_000_000,
-        "products": 75_000,
-    },
-    "Customers 5M | Products 100K | Sales 100M": {
-        "start": START, "end": END,
-        "sales_rows": 100_000_000,
-        "customers": 5_000_000,
-        "products": 100_000,
-    },
-
-    # --------------------------------------------------------------
+    (2_000_000,  40_000, 100_000_000),
+    (5_000_000,  75_000, 100_000_000),
+    (5_000_000, 100_000, 100_000_000),
     # 150M Sales
-    # --------------------------------------------------------------
-    "Customers 5M | Products 75K | Sales 150M": {
-        "start": START, "end": END,
-        "sales_rows": 150_000_000,
-        "customers": 5_000_000,
-        "products": 75_000,
-    },
-    "Customers 8M | Products 100K | Sales 150M": {
-        "start": START, "end": END,
-        "sales_rows": 150_000_000,
-        "customers": 8_000_000,
-        "products": 100_000,
-    },
-    "Customers 8M | Products 125K | Sales 150M": {
-        "start": START, "end": END,
-        "sales_rows": 150_000_000,
-        "customers": 8_000_000,
-        "products": 125_000,
-    },
-
-    # --------------------------------------------------------------
+    (5_000_000,  75_000, 150_000_000),
+    (8_000_000, 100_000, 150_000_000),
+    (8_000_000, 125_000, 150_000_000),
     # 200M Sales
-    # --------------------------------------------------------------
-    "Customers 8M | Products 100K | Sales 200M": {
-        "start": START, "end": END,
-        "sales_rows": 200_000_000,
-        "customers": 8_000_000,
-        "products": 100_000,
-    },
-    "Customers 10M | Products 125K | Sales 200M": {
-        "start": START, "end": END,
-        "sales_rows": 200_000_000,
-        "customers": 10_000_000,
-        "products": 125_000,
-    },
-    "Customers 10M | Products 150K | Sales 200M": {
-        "start": START, "end": END,
-        "sales_rows": 200_000_000,
-        "customers": 10_000_000,
-        "products": 150_000,
-    },
-
-    # --------------------------------------------------------------
+    (8_000_000,  100_000, 200_000_000),
+    (10_000_000, 125_000, 200_000_000),
+    (10_000_000, 150_000, 200_000_000),
     # 500M Sales
-    # --------------------------------------------------------------
-    "Customers 15M | Products 150K | Sales 500M": {
-        "start": START, "end": END,
-        "sales_rows": 500_000_000,
-        "customers": 15_000_000,
-        "products": 150_000,
-    },
-    "Customers 20M | Products 200K | Sales 500M": {
-        "start": START, "end": END,
-        "sales_rows": 500_000_000,
-        "customers": 20_000_000,
-        "products": 200_000,
-    },
-    "Customers 25M | Products 250K | Sales 500M": {
-        "start": START, "end": END,
-        "sales_rows": 500_000_000,
-        "customers": 25_000_000,
-        "products": 250_000,
-    },
+    (15_000_000, 150_000, 500_000_000),
+    (20_000_000, 200_000, 500_000_000),
+    (25_000_000, 250_000, 500_000_000),
+]
+
+
+PRESETS: Dict[str, Dict[str, Any]] = {
+    _build_label(c, p, s): {
+        "start": START,
+        "end": END,
+        "sales_rows": s,
+        "customers": c,
+        "products": p,
+    }
+    for c, p, s in _PRESET_TABLE
 }
 
 
@@ -289,7 +112,6 @@ def apply_preset(cfg, base_loader, preset_name: str) -> None:
     cfg.clear()
     cfg.update(base_loader())
 
-    # Ensure nested keys exist (future-proof against base config changes)
     cfg.setdefault("defaults", {}).setdefault("dates", {})
     cfg.setdefault("sales", {})
     cfg.setdefault("customers", {})
@@ -297,31 +119,14 @@ def apply_preset(cfg, base_loader, preset_name: str) -> None:
 
     rng = _stable_rng(preset_name)
 
-    # Dates stay exact (as ISO strings)
     cfg["defaults"]["dates"]["start"] = preset["start"]
     cfg["defaults"]["dates"]["end"] = preset["end"]
 
-    # Apply jittered sales rows (±2%)
-    cfg["sales"]["total_rows"] = _jitter(
-        preset["sales_rows"],
-        pct=0.02,
-        rng=rng,
-    )
+    cfg["sales"]["total_rows"] = _jitter(preset["sales_rows"], pct=0.02, rng=rng)
+    cfg["customers"]["total_customers"] = _jitter(preset["customers"], pct=0.03, rng=rng)
 
-    # Apply jittered customers (±3%)
-    cfg["customers"]["total_customers"] = _jitter(
-        preset["customers"],
-        pct=0.03,
-        rng=rng,
-    )
-
-    # Apply jittered products (±4%), if present
     if "products" in preset:
-        cfg["products"]["num_products"] = _jitter(
-            preset["products"],
-            pct=0.04,
-            rng=rng,
-        )
+        cfg["products"]["num_products"] = _jitter(preset["products"], pct=0.04, rng=rng)
 
 
 def _extract_sales_bucket(name: str) -> str:
@@ -332,13 +137,10 @@ def _extract_sales_bucket(name: str) -> str:
 
 
 def _sales_key(label: str) -> float:
-    """
-    Sort buckets like: 100K Sales < 1M Sales < 2M Sales < ... < Other
-    """
     if label == "Other":
         return float("inf")
 
-    token = label.split()[0]  # e.g. "100K"
+    token = label.split()[0]
     if not token:
         return float("inf")
 

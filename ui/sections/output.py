@@ -15,7 +15,7 @@ def _normalize_format(v) -> str:
 
 
 def render_output(cfg: dict) -> None:
-    st.subheader("1️⃣ Output")
+    st.subheader("1\ufe0f\u20e3 Output")
 
     sales = cfg.setdefault("sales", {})
     sales["file_format"] = _normalize_format(sales.get("file_format", "csv"))
@@ -24,7 +24,6 @@ def render_output(cfg: dict) -> None:
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        # Safe index selection
         current_fmt = sales["file_format"]
         idx = _FORMATS.index(current_fmt) if current_fmt in _FORMATS else 0
 
@@ -39,9 +38,8 @@ def render_output(cfg: dict) -> None:
         sales["skip_order_cols"] = st.checkbox(
             "Skip order columns (smaller file size)",
             value=bool(sales.get("skip_order_cols", False)),
-            help="Removes SalesOrderHeader/Detail-style columns from the fact output. Use this if you only need aggregated analysis.",
+            help="Removes SalesOrderHeader/Detail-style columns from the fact output.",
         )
 
-    # Optional contextual hint
     if sales["file_format"] == "csv":
         st.caption("Tip: For large runs, prefer parquet/deltaparquet to reduce disk usage and improve load speed.")

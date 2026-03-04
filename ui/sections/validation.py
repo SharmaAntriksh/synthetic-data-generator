@@ -1,15 +1,22 @@
 # ui/sections/validation.py
 import streamlit as st
-from ui.validators import validate
+from ui.validators import validate, validate_models_config
 
 
 def render_validation(cfg):
-    st.subheader("5️⃣ Validation")
+    st.subheader("5\ufe0f\u20e3 Validation")
 
     errors, warnings = validate(cfg)
+
+    # Models config validation (if path is available in session state)
+    models_path = st.session_state.get("models_config_path")
+    if models_path:
+        m_errors, m_warnings = validate_models_config(models_path)
+        errors.extend(m_errors)
+        warnings.extend(m_warnings)
+
     n_err, n_warn = len(errors), len(warnings)
 
-    # Summary
     if n_err:
         st.error(f"Configuration has {n_err} error(s) and {n_warn} warning(s). Fix errors before generating.")
     elif n_warn:
@@ -17,7 +24,6 @@ def render_validation(cfg):
     else:
         st.success("Configuration is valid.")
 
-    # Details (collapsed when long)
     if errors:
         with st.expander("Show errors", expanded=True):
             for e in errors:

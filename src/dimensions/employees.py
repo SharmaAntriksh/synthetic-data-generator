@@ -6,190 +6,31 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pandas as pd
 
-# EmployeeKey encoding scheme (shared with employee_store_assignments)
-STORE_MGR_KEY_BASE: int = 30_000_000
-STAFF_KEY_BASE: int = 40_000_000
-STAFF_KEY_STORE_MULT: int = 1_000
-
-
-from src.utils.logging_utils import info, skip, stage
-
-
-def warn(msg: str) -> None:
-    info(f"WARN  | {msg}")
+from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
-
 from src.utils.name_pools import (
     assign_person_names,
     load_people_pools,
     resolve_people_folder,
     hash_u64,
 )
-# ---------------------------------------------------------
-# Internals
-# ---------------------------------------------------------
-
-def _as_dict(x: Any) -> Dict[str, Any]:
-    return x if isinstance(x, dict) else {}
-
-
-def _int_or(value: Any, default: int) -> int:
-    try:
-        if value is None or value == "":
-            return int(default)
-        return int(value)
-    except (TypeError, ValueError):
-        return int(default)
-
-
-def _float_or(value: Any, default: float) -> float:
-    try:
-        if value is None or value == "":
-            return float(default)
-        return float(value)
-    except (TypeError, ValueError):
-        return float(default)
-
-
-def _bool_or(value: Any, default: bool) -> bool:
-    if value is None:
-        return bool(default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    s = str(value).strip().lower()
-    if s in {"true", "1", "yes", "y", "on"}:
-        return True
-    if s in {"false", "0", "no", "n", "off"}:
-        return False
-    return bool(default)
-
-
-def _pick_seed(cfg: Dict[str, Any], emp_cfg: Dict[str, Any], fallback: int = 42) -> int:
-    override = _as_dict(emp_cfg.get("override"))
-    seed = override.get("seed")
-    if seed is None:
-        seed = emp_cfg.get("seed")
-    if seed is None:
-        seed = _as_dict(cfg.get("defaults")).get("seed")
-    return _int_or(seed, fallback)
-
-
-def _stores_signature(stores: pd.DataFrame) -> Dict[str, Any]:
-    if stores.empty:
-        return {"rows": 0, "min_store": None, "max_store": None, "emp_sum": 0}
-    sk = stores["StoreKey"].to_numpy()
-    emp_sum = int(stores["EmployeeCount"].fillna(0).astype(np.int64).sum()) if "EmployeeCount" in stores.columns else 0
-    return {
-        "rows": int(len(stores)),
-        "min_store": int(np.min(sk)),
-        "max_store": int(np.max(sk)),
-        "emp_sum": emp_sum,
-    }
-
-
-def _region_from_iso_code(code: str) -> str:
-    """
-    Map geography ISOCode (often currency code in this project) to name pool region.
-    """
-    c = (code or "").strip().upper()
-
-    if c in {"INR"}:
-        return "IN"
-
-    # Americas -> US pool
-    if c in {"USD", "CAD", "MXN", "BRL", "ARS", "CLP", "COP", "PEN"}:
-        return "US"
-
-    # Europe -> EU pool
-    if c in {"EUR", "GBP", "CHF", "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "RON"}:
-        return "EU"
-
-    # Asia-Pacific -> AS pool
-    if c in {"AUD", "NZD", "JPY", "CNY", "HKD", "SGD", "KRW", "TWD", "THB", "IDR", "PHP", "VND", "MYR"}:
-        return "AS"
-
-    return "US"
-
-
-_FIRST = np.array(
-    [
-        # --------------------------
-        # UK / US (majority)
-        # --------------------------
-        "James","John","Robert","Michael","William","David","Richard","Joseph","Thomas","Charles",
-        "Christopher","Daniel","Matthew","Anthony","Mark","Steven","Paul","Andrew","Joshua","Kevin",
-        "George","Harry","Jack","Oliver","Jacob","Noah","Charlie","Oscar","Alfie","Leo",
-        "Henry","Arthur","Freddie","Theo","Archie","Liam","Ethan","Isaac","Samuel","Benjamin",
-        "Alexander","Edward","Lewis","Ryan","Nathan","Adam","Luke","Connor","Callum","Jake",
-        "Jamie","Tom","Scott","Sean","Bradley","Kieran","Rhys","Owen","Dylan","Cameron",
-        "Finley","Hugo","Mason","Logan","Max","Reece","Toby","Harrison","Ellis","Miles",
-
-        "Emma","Olivia","Amelia","Isla","Ava","Sophia","Mia","Isabella","Grace","Lily",
-        "Freya","Emily","Ella","Poppy","Charlotte","Daisy","Sienna","Phoebe","Alice","Jessica",
-        "Chloe","Millie","Evie","Ruby","Rosie","Hannah","Zoe","Lucy","Megan","Katie",
-        "Sophie","Laura","Sarah","Rachel","Rebecca","Abigail","Molly","Erin","Bethany","Lauren",
-        "Eleanor","Victoria","Harriet","Florence","Nancy","Georgia","Matilda","Leah","Amber","Naomi",
-        "Clara","Imogen","Ivy","Elsie","Lola",
-
-        # US-leaning common
-        "Aiden","Jackson","Carter","Grayson","Wyatt","Caleb","Hunter","Jordan","Austin","Evan",
-        "Hailey","Madison","Addison","Avery","Brooklyn","Savannah","Samantha","Natalie","Kaitlyn","Sydney",
-
-        # --------------------------
-        # Spanish / South American
-        # --------------------------
-        "Juan","Carlos","Diego","Luis","Javier","Miguel","Pedro","Sergio","Andres","Fernando",
-        "Ricardo","Manuel","Francisco","Rafael","Alejandro","Mateo","Nicolas","Santiago","Emilio","Adrian",
-        "Camila","Daniela","Valentina","Sofia","Gabriela","Lucia","Paula","Maria","Ana","Isabella",
-        "Carolina","Juliana","Renata","Mariana","Florencia","Victoria","Natalia","Catalina","Alejandra","Claudia",
-
-        # --------------------------
-        # French
-        # --------------------------
-        "Pierre","Jean","Louis","Hugo","Lucas","Arthur","Paul","Julien","Antoine","Thomas",
-        "Nicolas","Alexandre","Maxime","Sebastien","Romain","Theo","Gabriel","Nathan","Mathieu","Baptiste",
-        "Marie","Julie","Camille","Charlotte","Sophie","Chloe","Manon","Sarah","Alice","Lucie",
-        "Lea","Clara","Eva","Emilie","Margot","Helene","Aurelie","Pauline","Elise","Nina",
-    ],
-    dtype=object,
+from src.utils.config_helpers import (
+    as_dict,
+    int_or,
+    float_or,
+    bool_or,
+    pick_seed_nested,
+    parse_global_dates,
+    rand_dates_between,
+    region_from_iso_code,
 )
 
-_LAST = np.array(
-    [
-        # --------------------------
-        # UK / US (majority)
-        # --------------------------
-        "Smith","Jones","Taylor","Brown","Williams","Wilson","Johnson","Davies","Robinson","Wright",
-        "Thompson","Evans","Walker","White","Roberts","Green","Hall","Wood","Jackson","Clarke",
-        "Harris","Lewis","Young","King","Lee","Martin","Moore","Hill","Scott","Cooper",
-        "Ward","Turner","Parker","Edwards","Collins","Stewart","Morris","Murphy","Cook","Rogers",
-        "Morgan","Bell","Bailey","Cox","Richardson","Howard","Hughes","Watson","Gray","James",
-        "Bennett","Carter","Mitchell","Phillips","Campbell","Anderson","Henderson","Graham","Foster","Powell",
-        "Russell","Reid","Murray","Shaw","Holmes","Mason","Hunt","Palmer","Reynolds","Fisher",
-        "Ellis","Harrison","Gibson","Spencer","Webb","Simpson","Marshall","Barrett","Pearce","Gardner",
-        "Stone","Wells","Fletcher","Chapman","Harvey","Lawrence","Knight","Armstrong","Barker","Fox",
-        "Hawkins","Jenkins","Matthews","Payne","Porter","Saunders",
+# EmployeeKey encoding scheme (shared with employee_store_assignments)
+STORE_MGR_KEY_BASE: int = 30_000_000
+STAFF_KEY_BASE: int = 40_000_000
+STAFF_KEY_STORE_MULT: int = 1_000
 
-        # --------------------------
-        # Spanish / South American
-        # --------------------------
-        "Garcia","Martinez","Lopez","Gonzalez","Rodriguez","Sanchez","Ramirez","Torres","Flores","Rivera",
-        "Gomez","Diaz","Vargas","Castro","Romero","Herrera","Alvarez","Mendoza","Silva","Morales",
-        "Ortega","Delgado","Rojas","Navarro","Cruz","Reyes","Pena","Soto","Guerrero","Medina",
-        "Suarez","Ibarra","Campos","Vega","Fuentes","Carrasco","Paredes","Salazar","Benitez","Arias",
-
-        # --------------------------
-        # French
-        # --------------------------
-        "Dubois","Moreau","Lefevre","Laurent","Simon","Michel","Bernard","Robert","Petit","Durand",
-        "Leroy","Roux","Fournier","Girard","Lambert","Bonnet","Francois","Martins","Fontaine","Gauthier",
-        "Chevalier","Perrin","Boucher","Caron","Lemoine","Marchand","Guerin","Bouvier","Duval","Loiseau",
-    ],
-    dtype=object,
-)
 
 _STAFF_TITLES = np.array(
     ["Sales Associate", "Cashier", "Stock Associate", "Customer Support", "Fulfillment Associate"],
@@ -198,75 +39,68 @@ _STAFF_TITLES = np.array(
 _STAFF_TITLES_P = np.array([0.35, 0.25, 0.20, 0.10, 0.10], dtype=float)
 
 
-def _parse_global_dates(cfg: Dict[str, Any], emp_cfg: Dict[str, Any]) -> Tuple[pd.Timestamp, pd.Timestamp]:
+# ---------------------------------------------------------
+# Internals
+# ---------------------------------------------------------
+
+def _stores_signature(stores: pd.DataFrame) -> Dict[str, Any]:
+    if stores.empty:
+        return {"rows": 0, "min_store": None, "max_store": None, "emp_sum": 0}
+    sk = stores["StoreKey"].to_numpy()
+    emp_sum = (
+        int(stores["EmployeeCount"].fillna(0).astype(np.int64).sum())
+        if "EmployeeCount" in stores.columns
+        else 0
+    )
+    return {
+        "rows": int(len(stores)),
+        "min_store": int(np.min(sk)),
+        "max_store": int(np.max(sk)),
+        "emp_sum": emp_sum,
+    }
+
+
+def _parse_employee_dates(
+    cfg: Dict[str, Any], emp_cfg: Dict[str, Any]
+) -> Tuple[pd.Timestamp, pd.Timestamp]:
     """
     Resolve the dataset-wide employee window.
 
-    Policy (v2 — global dates ONLY):
-      - Uses defaults.dates.{start,end} exclusively.
-      - employees.start_date / end_date are IGNORED with a deprecation warning.
-      - This prevents date-window mismatches between Employees, Bridge, and Sales.
+    Uses ``defaults.dates.{start,end}`` exclusively.
+    Legacy ``employees.start_date / end_date`` keys are ignored with a warning.
     """
-    # Warn if legacy keys are still present
     if emp_cfg.get("start_date") is not None or emp_cfg.get("end_date") is not None:
         warn(
             "employees.start_date / employees.end_date are IGNORED. "
             "Employee dates now follow defaults.dates exclusively. "
             "Remove these keys from config.yaml to silence this warning."
         )
-
-    defaults = _as_dict(cfg.get("defaults"))
-    dd = _as_dict(defaults.get("dates"))
-
-    start = dd.get("start")
-    end = dd.get("end")
-
-    if not start or not end:
-        raise KeyError(
-            "defaults.dates.start and defaults.dates.end are required for employee generation. "
-            "employees.start_date / employees.end_date are no longer supported."
-        )
-
-    global_start = pd.to_datetime(start).normalize()
-    global_end = pd.to_datetime(end).normalize()
-    if global_end < global_start:
-        global_start, global_end = global_end, global_start
-    return global_start, global_end
-
-
-def _rand_dates_between(
-    rng: np.random.Generator, start: pd.Timestamp, end: pd.Timestamp, n: int
-) -> pd.Series:
-    start = pd.to_datetime(start).normalize()
-    end = pd.to_datetime(end).normalize()
-    if end < start:
-        start, end = end, start
-
-    start_i = int(start.value // 86_400_000_000_000)  # days since epoch
-    end_i = int(end.value // 86_400_000_000_000)
-
-    days = rng.integers(start_i, end_i + 1, size=int(n), dtype=np.int64)
-
-    # pd.to_datetime(...) here returns a DatetimeIndex -> use .normalize(), then wrap as Series
-    dt = pd.to_datetime(days.astype("datetime64[D]")).normalize()
-    return pd.Series(dt, dtype="datetime64[ns]")
+    return parse_global_dates(
+        cfg, emp_cfg,
+        allow_override=False,
+        dimension_name="employees",
+    )
 
 
 def _apply_deterministic_names(
     df: pd.DataFrame,
     seed: int,
     *,
-    people_pools=None,
+    people_pools,
     iso_by_geo: dict[int, str] | None = None,
     default_region: str = "US",
 ) -> None:
     """
-    Stable names per EmployeeKey (no dependence on row order), using shared name pools.
+    Stable names per EmployeeKey using shared name pools.
 
-    - Assigns deterministic Gender (M/F/O) *once* here so names can match.
-    - Uses GeographyKey -> ISOCode -> region pool when available; defaults to default_region.
-    - MiddleName is always a deterministic middle initial (non-null).
+    Assigns deterministic Gender (M/F/O) and region-aware first/last/middle names.
     """
+    if people_pools is None:
+        raise ValueError(
+            "people_pools is required for employee name generation. "
+            "Ensure name pool CSV files exist under the configured people folder."
+        )
+
     ek = df["EmployeeKey"].astype(np.int64).to_numpy()
     ek_u64 = ek.astype(np.uint64)
 
@@ -274,35 +108,26 @@ def _apply_deterministic_names(
     h = hash_u64(ek_u64, int(seed), 9101)
     u = (h % np.uint64(10_000)).astype(np.float64) / 10_000.0
     gender_code = np.where(u < 0.02, "O", np.where(u < 0.51, "F", "M")).astype(object)
-
-    # Set Gender here; downstream enrichment must NOT overwrite if present
     df["Gender"] = gender_code
 
-    # If pools not provided, fall back to old behavior (safety)
-    if people_pools is None:
-        first = _FIRST[(ek + int(seed)) % len(_FIRST)]
-        last = _LAST[((ek // 97) + int(seed) * 3) % len(_LAST)]
-
-        letters = np.array(list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), dtype=object)
-        mid = letters[(h % np.uint64(26)).astype(np.int64)]
-        middle = pd.Series(mid, dtype="object").astype(str) + "."
-
-        df["FirstName"] = pd.Series(first, dtype="object").astype(str)
-        df["LastName"] = pd.Series(last, dtype="object").astype(str)
-        df["MiddleName"] = middle.astype(object)
-        df["EmployeeName"] = df["FirstName"] + " " + df["LastName"]
-        return
-
-    # Region per row from GeographyKey -> ISOCode -> region code
+    # Region per row from GeographyKey → ISOCode → region code
     if "GeographyKey" in df.columns and iso_by_geo:
         gk = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(-1).astype(np.int64).to_numpy()
-        iso = np.array([iso_by_geo.get(int(k), "") if k >= 0 else "" for k in gk], dtype=object)
-        region = np.array([_region_from_iso_code(x) if x else default_region for x in iso], dtype=object)
+        iso = np.array(
+            [iso_by_geo.get(int(k), "") if k >= 0 else "" for k in gk],
+            dtype=object,
+        )
+        region = np.array(
+            [region_from_iso_code(x, default_region) if x else default_region for x in iso],
+            dtype=object,
+        )
     else:
         region = np.full(len(df), default_region, dtype=object)
 
-    # Map employee gender codes to name_pools gender labels
-    gender_label = np.where(gender_code == "M", "Male", np.where(gender_code == "F", "Female", "Other")).astype(object)
+    gender_label = np.where(
+        gender_code == "M", "Male",
+        np.where(gender_code == "F", "Female", "Other"),
+    ).astype(object)
 
     first, last, mid = assign_person_names(
         keys=ek,
@@ -317,7 +142,7 @@ def _apply_deterministic_names(
 
     df["FirstName"] = pd.Series(first, dtype="object").astype(str)
     df["LastName"] = pd.Series(last, dtype="object").astype(str)
-    df["MiddleName"] = pd.Series(mid, dtype="object").astype(str)  # always present (e.g. 'K.')
+    df["MiddleName"] = pd.Series(mid, dtype="object").astype(str)
     df["EmployeeName"] = df["FirstName"] + " " + df["LastName"]
 
 
@@ -329,8 +154,9 @@ def _enrich_employee_hr_columns(
 ) -> pd.DataFrame:
     """
     Adds Contoso-like HR columns.
-    Assumes df already has: EmployeeKey, Title, OrgLevel, HireDate, TerminationDate, IsActive,
-    and also has deterministic names: FirstName/LastName/MiddleName/EmployeeName.
+
+    Assumes *df* already has: EmployeeKey, Title, OrgLevel, HireDate,
+    TerminationDate, IsActive, and deterministic name columns.
     """
     n = len(df)
     if n == 0:
@@ -340,19 +166,24 @@ def _enrich_employee_hr_columns(
     org_level = df["OrgLevel"].astype(int).to_numpy()
     title = df["Title"].astype(str)
 
-    # Gender / MaritalStatus
     if "Gender" not in df.columns or df["Gender"].isna().all():
-        df["Gender"] = rng.choice(["M", "F", "O"], size=n, p=[0.49, 0.49, 0.02]).astype(object)
+        df["Gender"] = rng.choice(
+            ["M", "F", "O"], size=n, p=[0.49, 0.49, 0.02],
+        ).astype(object)
 
-    # BirthDate: infer age-at-hire by level (staff younger, management older)
+    # BirthDate: age-at-hire varies by level (staff younger, management older)
     age_mean = np.where(org_level >= 6, 27, np.where(org_level >= 5, 34, 42))
     ages = np.clip(rng.normal(loc=age_mean, scale=6.0, size=n), 18, 62).astype(int)
     birth_year = hire.dt.year.to_numpy() - ages
     birth_month = rng.integers(1, 13, size=n)
-    # Sample a valid day for each (year, month) to avoid bias (29–31 can appear).
-    dim = pd.to_datetime({"year": birth_year, "month": birth_month, "day": np.ones(n, dtype=int)}).dt.days_in_month.to_numpy()
+    dim = (
+        pd.to_datetime({"year": birth_year, "month": birth_month, "day": np.ones(n, dtype=int)})
+        .dt.days_in_month.to_numpy()
+    )
     birth_day = (rng.random(n) * dim).astype(int) + 1
-    df["BirthDate"] = pd.to_datetime({"year": birth_year, "month": birth_month, "day": birth_day}).dt.normalize()
+    df["BirthDate"] = pd.to_datetime(
+        {"year": birth_year, "month": birth_month, "day": birth_day}
+    ).dt.normalize()
 
     is_married = rng.random(n) < np.clip((ages - 22) / 25.0, 0.05, 0.75)
     df["MaritalStatus"] = np.where(is_married, "M", "S").astype(object)
@@ -368,10 +199,11 @@ def _enrich_employee_hr_columns(
     df["EmailAddress"] = (email_local + "@" + str(email_domain)).astype(str)
 
     phone_digits = rng.integers(0, 10, size=(n, 10))
-    df["Phone"] = pd.Series(["".join(map(str, row)) for row in phone_digits], dtype="object")
+    df["Phone"] = pd.Series(
+        ["".join(map(str, row)) for row in phone_digits], dtype="object",
+    )
 
-    # Emergency contacts
-    # Emergency contacts: sample a plausible name from the employee population (looks less synthetic than "EC ...").
+    # Emergency contacts: pick a plausible name from the employee population
     if n > 1:
         pick = rng.integers(0, n, size=n)
         self_idx = np.arange(n)
@@ -382,14 +214,18 @@ def _enrich_employee_hr_columns(
             + df["LastName"].iloc[pick].to_numpy(dtype=object)
         )
     else:
-        df["EmergencyContactName"] = (df["FirstName"].astype(str) + " " + df["LastName"].astype(str)).astype(object)
+        df["EmergencyContactName"] = (
+            df["FirstName"].astype(str) + " " + df["LastName"].astype(str)
+        ).astype(object)
     ec_digits = rng.integers(0, 10, size=(n, 10))
-    df["EmergencyContactPhone"] = pd.Series(["".join(map(str, row)) for row in ec_digits], dtype="object")
+    df["EmergencyContactPhone"] = pd.Series(
+        ["".join(map(str, row)) for row in ec_digits], dtype="object",
+    )
 
-    # Compensation-ish fields
-    salaried = (df["OrgLevel"].astype(int) <= 5).to_numpy()  # store mgr and above salaried
+    # Compensation
+    salaried = (df["OrgLevel"].astype(int) <= 5).to_numpy()
     df["SalariedFlag"] = salaried.astype(np.int8)
-    df["PayFrequency"] = np.where(salaried, 1, 2).astype(np.int16)  # 1=monthly, 2=biweekly/hourly style
+    df["PayFrequency"] = np.where(salaried, 1, 2).astype(np.int16)
 
     hourly_staff = np.clip(rng.normal(loc=18.0, scale=4.0, size=n), 10.0, 40.0)
     annual_salary = np.clip(rng.normal(loc=70000.0, scale=18000.0, size=n), 38000.0, 160000.0)
@@ -399,25 +235,35 @@ def _enrich_employee_hr_columns(
     # VacationHours: tenure-based
     tenure_days = (global_end.normalize() - hire).dt.days.clip(lower=0)
     base_vac = np.where(salaried, 80, 40) + (tenure_days / 365.0 * np.where(salaried, 6.0, 3.0))
-    df["VacationHours"] = np.clip(base_vac + rng.normal(0, 10, size=n), 0, 240).round(0).astype(np.int16)
+    df["VacationHours"] = np.clip(
+        base_vac + rng.normal(0, 10, size=n), 0, 240,
+    ).round(0).astype(np.int16)
 
     # CurrentFlag / Status / StartDate / EndDate
     df["CurrentFlag"] = df["IsActive"].astype(np.int8)
     df["StartDate"] = hire
     df["EndDate"] = pd.to_datetime(df["TerminationDate"]).dt.normalize()
-    df["Status"] = np.where(df["IsActive"].astype(int) == 1, "Active", "Terminated").astype(object)
+    df["Status"] = np.where(
+        df["IsActive"].astype(int) == 1, "Active", "Terminated",
+    ).astype(object)
 
     # SalesPersonFlag
     df["SalesPersonFlag"] = title.isin(["Sales Associate"]).astype(np.int8)
-    df["IsSalesPerson"] = df["SalesPersonFlag"].astype(np.int8)  # compat alias used by some fact loaders  # compat alias used by some fact loaders
+    df["IsSalesPerson"] = df["SalesPersonFlag"].astype(np.int8)
 
     # DepartmentName
     dept = np.where(
         title.isin(["Sales Associate", "Store Manager"]),
         "Sales",
-        np.where(title.isin(["Cashier"]), "Store Operations",
-                 np.where(title.isin(["Stock Associate"]), "Inventory",
-                          np.where(title.isin(["Fulfillment Associate"]), "Fulfillment", "Corporate"))),
+        np.where(
+            title.isin(["Cashier"]),
+            "Store Operations",
+            np.where(
+                title.isin(["Stock Associate"]),
+                "Inventory",
+                np.where(title.isin(["Fulfillment Associate"]), "Fulfillment", "Corporate"),
+            ),
+        ),
     )
     df["DepartmentName"] = pd.Series(dept, dtype="object")
 
@@ -426,14 +272,11 @@ def _enrich_employee_hr_columns(
 
 def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Force specific columns to be written as *integer* types in parquet.
+    Force specific columns to integer types in parquet output.
 
-    Power BI / Power Query will sometimes infer decimal types when a column contains nulls.
-    To keep these columns as true integers, we fill missing with 0 and cast to fixed-width ints.
-
-    Notes:
-      - ParentEmployeeKey stays NULL for the root (CEO) to support DAX PATH() semantics.
-      - StoreKey/GeographyKey/RegionId/DistrictId use 0 for corporate-level rows.
+    Power BI / Power Query sometimes infers decimal types when a column
+    contains nulls.  ParentEmployeeKey stays nullable for DAX ``PATH()``
+    semantics; other columns use 0 for corporate-level rows.
     """
     if df.empty:
         return df
@@ -448,22 +291,20 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
         df[col] = s.fillna(0).astype(dtype)
 
     _to_int("EmployeeKey", np.int64)
-    # ParentEmployeeKey must stay NULL-able for DAX PATH()
     if "ParentEmployeeKey" in df.columns:
-        df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").astype("Int64")
+        df["ParentEmployeeKey"] = pd.to_numeric(
+            df["ParentEmployeeKey"], errors="coerce",
+        ).astype("Int64")
     _to_int("OrgLevel", np.int16)
-
     _to_int("SalesPersonFlag", np.int8)
     _to_int("IsSalesPerson", np.int8)
     _to_int("SalariedFlag", np.int8)
     _to_int("CurrentFlag", np.int8)
     _to_int("IsActive", np.int8)
-
     _to_int("RegionId", np.int16)
     _to_int("DistrictId", np.int16)
     _to_int("StoreKey", np.int64)
     _to_int("GeographyKey", np.int64)
-
     _to_int("PayFrequency", np.int16)
 
     return df
@@ -494,19 +335,14 @@ def generate_employee_dimension(
     min_primary_sales_per_store: int = 1,
     ensure_store_sales_coverage: bool = False,
 ) -> pd.DataFrame:
-
     """
     Build a parent-child employee hierarchy with stable keys.
 
-    Defaults are intentionally small for demo-friendly datasets:
-      - by default, ignores Store.EmployeeCount and samples staff_count ~ U[min_staff, max_staff]
-
-    Sales Associate lifecycle guarantee (v2):
-      - ALL Sales Associates are hired at or before global_start.
-      - ALL Sales Associates have no termination (NaT) — they outlive the dataset.
-      - This ensures the bridge table can assign every Sales Associate for the
-        full [global_start, global_end] window without date conflicts.
-      - Non-sales-associate staff still get random hire/termination dates.
+    Sales Associate lifecycle guarantee:
+      - ALL Sales Associates are hired at or before *global_start*.
+      - ALL Sales Associates have no termination (NaT).
+      - This ensures the bridge table can assign every Sales Associate for
+        the full ``[global_start, global_end]`` window without date conflicts.
     """
     if stores.empty:
         raise ValueError("stores dataframe is empty; cannot generate employees")
@@ -520,18 +356,21 @@ def generate_employee_dimension(
     stores["StoreKey"] = stores["StoreKey"].astype(np.int64)
     stores = stores.sort_values("StoreKey").reset_index(drop=True)
 
-    district_size = max(1, _int_or(district_size, 15))
-    districts_per_region = max(1, _int_or(districts_per_region, 8))
-    max_staff_per_store = max(0, _int_or(max_staff_per_store, 10))
-    min_staff_per_store = max(0, _int_or(min_staff_per_store, 3))
-    min_staff_per_store = min(min_staff_per_store, max_staff_per_store) if max_staff_per_store > 0 else 0
-    staff_scale = float(max(0.0, min(1.0, _float_or(staff_scale, 0.25))))
-    termination_rate = float(max(0.0, min(1.0, _float_or(termination_rate, 0.08))))
+    district_size = max(1, int_or(district_size, 15))
+    districts_per_region = max(1, int_or(districts_per_region, 8))
+    max_staff_per_store = max(0, int_or(max_staff_per_store, 10))
+    min_staff_per_store = max(0, int_or(min_staff_per_store, 3))
+    if max_staff_per_store > 0:
+        min_staff_per_store = min(min_staff_per_store, max_staff_per_store)
+    else:
+        min_staff_per_store = 0
+    staff_scale = float(np.clip(float_or(staff_scale, 0.25), 0.0, 1.0))
+    termination_rate = float(np.clip(float_or(termination_rate, 0.08), 0.0, 1.0))
     include_store_cols = bool(include_store_cols)
 
     rng = np.random.default_rng(int(seed))
 
-    # --- Partition stores into districts and regions (deterministic by StoreKey order)
+    # Partition stores into districts and regions (deterministic by StoreKey order)
     n_stores = len(stores)
     district_id = (np.arange(n_stores) // district_size + 1).astype(np.int16)
     region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int16)
@@ -539,7 +378,7 @@ def generate_employee_dimension(
     stores["DistrictId"] = district_id
     stores["RegionId"] = region_id
 
-    # --- Key scheme (stable, non-overlapping)
+    # --- Key-encoding helpers using module constants ---
     CEO_KEY = np.int64(1)
     VP_OPS_KEY = np.int64(2)
 
@@ -549,191 +388,194 @@ def generate_employee_dimension(
     def _district_mgr_key(did: int) -> np.int64:
         return np.int64(20_000 + int(did))
 
-    def _store_mgr_key(store_key: int) -> np.int64:
-        return np.int64(30_000_000 + int(store_key))
+    # ---------------------------------------------------------------
+    # Build corporate / region / district tiers (small — loop is fine)
+    # ---------------------------------------------------------------
+    rows: list[dict] = []
 
-    def _staff_key(store_key: int, idx: int) -> np.int64:
-        # idx starts at 1
-        return np.int64(40_000_000 + int(store_key) * 1_000 + int(idx))
+    rows.append(dict(
+        EmployeeKey=CEO_KEY,
+        ParentEmployeeKey=pd.NA,
+        EmployeeName="",
+        Title="Chief Executive Officer",
+        OrgLevel=np.int16(1),
+        OrgUnitType="Corporate",
+        RegionId=pd.NA, DistrictId=pd.NA,
+        StoreKey=pd.NA, GeographyKey=pd.NA,
+    ))
+    rows.append(dict(
+        EmployeeKey=VP_OPS_KEY,
+        ParentEmployeeKey=CEO_KEY,
+        EmployeeName="",
+        Title="VP Operations",
+        OrgLevel=np.int16(2),
+        OrgUnitType="Corporate",
+        RegionId=pd.NA, DistrictId=pd.NA,
+        StoreKey=pd.NA, GeographyKey=pd.NA,
+    ))
 
-    rows = []
-
-    # --- Corporate root
-    rows.append(
-        dict(
-            EmployeeKey=CEO_KEY,
-            ParentEmployeeKey=pd.NA,
-            EmployeeName="",  # will be replaced with person name
-            Title="Chief Executive Officer",
-            OrgLevel=np.int16(1),
-            OrgUnitType="Corporate",
-            RegionId=pd.NA,
-            DistrictId=pd.NA,
-            StoreKey=pd.NA,
-            GeographyKey=pd.NA,
-        )
-    )
-    rows.append(
-        dict(
-            EmployeeKey=VP_OPS_KEY,
-            ParentEmployeeKey=CEO_KEY,
-            EmployeeName="",
-            Title="VP Operations",
-            OrgLevel=np.int16(2),
-            OrgUnitType="Corporate",
-            RegionId=pd.NA,
-            DistrictId=pd.NA,
-            StoreKey=pd.NA,
-            GeographyKey=pd.NA,
-        )
-    )
-
-    # --- Region managers
     unique_regions = np.unique(region_id)
     for rid in unique_regions:
-        rows.append(
-            dict(
-                EmployeeKey=_region_mgr_key(int(rid)),
-                ParentEmployeeKey=VP_OPS_KEY,
-                EmployeeName="",
-                Title="Regional Manager",
-                OrgLevel=np.int16(3),
-                OrgUnitType="Region",
-                RegionId=np.int16(rid),
-                DistrictId=pd.NA,
-                StoreKey=pd.NA,
-                GeographyKey=pd.NA,
-            )
-        )
+        rows.append(dict(
+            EmployeeKey=_region_mgr_key(int(rid)),
+            ParentEmployeeKey=VP_OPS_KEY,
+            EmployeeName="",
+            Title="Regional Manager",
+            OrgLevel=np.int16(3),
+            OrgUnitType="Region",
+            RegionId=np.int16(rid),
+            DistrictId=pd.NA,
+            StoreKey=pd.NA, GeographyKey=pd.NA,
+        ))
 
-    # --- District managers
     unique_districts = np.unique(district_id)
     for did in unique_districts:
         rid = int(((did - 1) // districts_per_region) + 1)
-        rows.append(
-            dict(
-                EmployeeKey=_district_mgr_key(int(did)),
-                ParentEmployeeKey=_region_mgr_key(rid),
-                EmployeeName="",
-                Title="District Manager",
-                OrgLevel=np.int16(4),
-                OrgUnitType="District",
-                RegionId=np.int16(rid),
-                DistrictId=np.int16(did),
-                StoreKey=pd.NA,
-                GeographyKey=pd.NA,
-            )
-        )
+        rows.append(dict(
+            EmployeeKey=_district_mgr_key(int(did)),
+            ParentEmployeeKey=_region_mgr_key(rid),
+            EmployeeName="",
+            Title="District Manager",
+            OrgLevel=np.int16(4),
+            OrgUnitType="District",
+            RegionId=np.int16(rid),
+            DistrictId=np.int16(did),
+            StoreKey=pd.NA, GeographyKey=pd.NA,
+        ))
 
-    # --- Store managers
-    for i in range(n_stores):
-        sk = int(stores.at[i, "StoreKey"])
-        did = int(stores.at[i, "DistrictId"])
-        rid = int(stores.at[i, "RegionId"])
-        gk = int(stores.at[i, "GeographyKey"])
+    corporate_df = pd.DataFrame(rows)
 
-        rows.append(
-            dict(
-                EmployeeKey=_store_mgr_key(sk),
-                ParentEmployeeKey=_district_mgr_key(did),
-                EmployeeName="",
-                Title="Store Manager",
-                OrgLevel=np.int16(5),
-                OrgUnitType="Store",
-                RegionId=np.int16(rid),
-                DistrictId=np.int16(did),
-                StoreKey=np.int64(sk),
-                GeographyKey=np.int64(gk),
-            )
-        )
+    # ---------------------------------------------------------------
+    # Store managers — vectorized
+    # ---------------------------------------------------------------
+    sk_arr = stores["StoreKey"].to_numpy(dtype=np.int64)
+    did_arr = stores["DistrictId"].to_numpy(dtype=np.int16)
+    rid_arr = stores["RegionId"].to_numpy(dtype=np.int16)
+    gk_arr = stores["GeographyKey"].to_numpy(dtype=np.int64)
 
-    # --- Staff counts (reduced by default)
+    mgr_parent_keys = np.array(
+        [_district_mgr_key(int(d)) for d in did_arr], dtype=np.int64,
+    )
+
+    mgr_df = pd.DataFrame({
+        "EmployeeKey": (STORE_MGR_KEY_BASE + sk_arr).astype(np.int64),
+        "ParentEmployeeKey": mgr_parent_keys,
+        "EmployeeName": "",
+        "Title": "Store Manager",
+        "OrgLevel": np.int16(5),
+        "OrgUnitType": "Store",
+        "RegionId": rid_arr,
+        "DistrictId": did_arr,
+        "StoreKey": sk_arr,
+        "GeographyKey": gk_arr,
+    })
+
+    # ---------------------------------------------------------------
+    # Staff counts
+    # ---------------------------------------------------------------
     if max_staff_per_store <= 0:
         staff_counts = np.zeros(n_stores, dtype=np.int64)
     elif use_store_employee_count:
-        # Scale down Store.EmployeeCount (often large) into a smaller staff count
         emp_counts = stores["EmployeeCount"].fillna(0).astype(np.int64).to_numpy()
-        base = np.maximum(0, emp_counts - 1)  # after manager
+        base = np.maximum(0, emp_counts - 1)
         scaled = np.rint(base.astype(np.float64) * staff_scale).astype(np.int64)
         staff_counts = np.clip(scaled, 0, max_staff_per_store).astype(np.int64)
-        # optional floor (if store has employees, ensure at least min_staff)
         has_any = base > 0
-        staff_counts = np.where(has_any, np.maximum(staff_counts, min_staff_per_store), 0).astype(np.int64)
+        staff_counts = np.where(
+            has_any, np.maximum(staff_counts, min_staff_per_store), 0,
+        ).astype(np.int64)
     else:
-        # demo-friendly: sample small staff per store regardless of Store.EmployeeCount
-        staff_counts = rng.integers(min_staff_per_store, max_staff_per_store + 1, size=n_stores, dtype=np.int64)
+        staff_counts = rng.integers(
+            min_staff_per_store, max_staff_per_store + 1,
+            size=n_stores, dtype=np.int64,
+        )
 
-    # --- Staff rows (titles sampled; names set later deterministically)
-    for i in range(n_stores):
-        sk = int(stores.at[i, "StoreKey"])
-        did = int(stores.at[i, "DistrictId"])
-        rid = int(stores.at[i, "RegionId"])
-        gk = int(stores.at[i, "GeographyKey"])
-        n_staff = int(staff_counts[i])
+    # ---------------------------------------------------------------
+    # Staff rows — vectorized via np.repeat
+    # ---------------------------------------------------------------
+    total_staff = int(staff_counts.sum())
 
-        if n_staff <= 0:
-            continue
+    if total_staff > 0:
+        store_indices = np.repeat(np.arange(n_stores), staff_counts)
+        staff_sk = sk_arr[store_indices]
+        staff_did = did_arr[store_indices]
+        staff_rid = rid_arr[store_indices]
+        staff_gk = gk_arr[store_indices]
 
-        mgr_key = _store_mgr_key(sk)
-        titles = rng.choice(_STAFF_TITLES, size=n_staff, p=_STAFF_TITLES_P)
+        # Per-employee index within each store (1-based)
+        within_store_idx = np.ones(total_staff, dtype=np.int64)
+        offsets = np.cumsum(staff_counts)[:-1]
+        if offsets.size > 0:
+            np.subtract.at(within_store_idx, offsets, staff_counts[:-1] - 1)
+        within_store_idx = np.cumsum(within_store_idx)
 
-        # Ensure at least N primary sales roles per staffed store.
+        staff_ek = (STAFF_KEY_BASE + staff_sk * STAFF_KEY_STORE_MULT + within_store_idx).astype(np.int64)
+        staff_parent = (STORE_MGR_KEY_BASE + staff_sk).astype(np.int64)
+
+        # Sample titles in bulk, then overwrite first k per store with primary sales role
+        all_titles = rng.choice(_STAFF_TITLES, size=total_staff, p=_STAFF_TITLES_P).astype(object)
         ps_role = str(primary_sales_role or "Sales Associate")
-        k_ps = max(1, _int_or(min_primary_sales_per_store, 1))
-        k_ps = min(int(n_staff), int(k_ps))
-        if n_staff > 0:
-            titles[:k_ps] = ps_role
+        k_ps = max(1, int_or(min_primary_sales_per_store, 1))
 
-        for j in range(1, n_staff + 1):
-            rows.append(
-                dict(
-                    EmployeeKey=_staff_key(sk, j),
-                    ParentEmployeeKey=mgr_key,
-                    EmployeeName="",
-                    Title=str(titles[j - 1]),
-                    OrgLevel=np.int16(6),
-                    OrgUnitType="Store",
-                    RegionId=np.int16(rid),
-                    DistrictId=np.int16(did),
-                    StoreKey=np.int64(sk),
-                    GeographyKey=np.int64(gk),
-                )
-            )
+        # Mark the first k_ps employees of each store as the primary sales role
+        k_per_store = np.minimum(staff_counts, k_ps)
+        k_total = int(k_per_store.sum())
+        if k_total > 0:
+            # Build mask of positions that should be primary sales role
+            ps_mask = np.zeros(total_staff, dtype=bool)
+            pos = 0
+            for i in range(n_stores):
+                sc = int(staff_counts[i])
+                kk = int(k_per_store[i])
+                if kk > 0:
+                    ps_mask[pos:pos + kk] = True
+                pos += sc
+            all_titles[ps_mask] = ps_role
 
-    df = pd.DataFrame(rows)
+        staff_df = pd.DataFrame({
+            "EmployeeKey": staff_ek,
+            "ParentEmployeeKey": staff_parent,
+            "EmployeeName": "",
+            "Title": pd.Series(all_titles, dtype="object"),
+            "OrgLevel": np.int16(6),
+            "OrgUnitType": "Store",
+            "RegionId": staff_rid,
+            "DistrictId": staff_did,
+            "StoreKey": staff_sk,
+            "GeographyKey": staff_gk,
+        })
+    else:
+        staff_df = pd.DataFrame(
+            columns=corporate_df.columns,
+        ).iloc[:0]
+
+    df = pd.concat([corporate_df, mgr_df, staff_df], ignore_index=True)
 
     # ------------------------------------------------------------------
     # Dates — with Sales Associate full-window guarantee
     # ------------------------------------------------------------------
     n = len(df)
-    ps_role = str(primary_sales_role or "Sales Associate")
+    ps_role_str = str(primary_sales_role or "Sales Associate")
 
-    # Identify Sales Associates (store-level staff with the primary sales role)
     ek_all = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
-    is_sales_associate = (ek_all >= STAFF_KEY_BASE) & (df["Title"].astype(str) == ps_role)
+    is_sales_associate = (ek_all >= STAFF_KEY_BASE) & (df["Title"].astype(str) == ps_role_str)
     sa_mask_np = is_sales_associate.to_numpy()
 
-    # --- Hire dates ---
-    # Non-SA: random hire within [global_start - 5y, global_end].
-    # Sales Associates: hired uniformly in [global_start - 5y, global_start]
-    #   so they appear as tenured employees who were already hired when data begins.
+    # Hire dates: SAs hired before dataset start; everyone else random
     hire_start_general = global_start - pd.Timedelta(days=365 * 5)
-    hire_dates = _rand_dates_between(rng, hire_start_general, global_end, n)
+    hire_dates = rand_dates_between(rng, hire_start_general, global_end, n)
 
     n_sa = int(sa_mask_np.sum())
     if n_sa > 0:
-        sa_hire = _rand_dates_between(rng, hire_start_general, global_start, n_sa)
+        sa_hire = rand_dates_between(rng, hire_start_general, global_start, n_sa)
         hire_dates.iloc[sa_mask_np] = sa_hire.to_numpy()
 
     df["HireDate"] = hire_dates
 
-    # --- Terminations ---
-    # Sales Associates: NEVER terminated (NaT) — they outlive the dataset window.
-    # Everyone else: probabilistic termination (reduced for senior levels).
+    # Terminations: SAs never terminated; others probabilistic (reduced for senior levels)
     base_p = termination_rate
     level = df["OrgLevel"].astype(np.int16).to_numpy()
     p = np.where(level <= 4, base_p * 0.25, base_p)
-    # Force SA termination probability to 0
     p[sa_mask_np] = 0.0
     term_mask = rng.random(n) < p
 
@@ -743,14 +585,15 @@ def generate_employee_dimension(
         hire_i = pd.to_datetime(df.loc[idx, "HireDate"]).dt.normalize()
         max_days = (pd.to_datetime(global_end).normalize() - hire_i).dt.days.to_numpy()
         max_days = np.clip(max_days, 0, None)
-        # Sample per-employee termination lag in [0..max_days], guaranteeing TerminationDate >= HireDate.
         offs = (rng.random(idx.size) * (max_days + 1)).astype(np.int64)
-        term_dates.iloc[idx] = (hire_i + pd.to_timedelta(offs, unit='D')).to_numpy(dtype='datetime64[ns]')
+        term_dates.iloc[idx] = (hire_i + pd.to_timedelta(offs, unit="D")).to_numpy(dtype="datetime64[ns]")
 
     df["TerminationDate"] = term_dates
-    df["IsActive"] = (df["TerminationDate"].isna() | (df["TerminationDate"] > global_end)).astype(np.int8)
+    df["IsActive"] = (
+        df["TerminationDate"].isna() | (df["TerminationDate"] > global_end)
+    ).astype(np.int8)
 
-    # --- Names (always person names)
+    # Names
     _apply_deterministic_names(
         df,
         seed=int(seed),
@@ -759,17 +602,15 @@ def generate_employee_dimension(
         default_region=default_region,
     )
 
-    # --- Types (ensure integer columns stay integer even with corporate-level blanks)
+    # Final integer casts (single consolidated pass)
     df["EmployeeKey"] = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
     df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").astype("Int64")
     df["OrgLevel"] = pd.to_numeric(df["OrgLevel"], errors="coerce").fillna(0).astype(np.int16)
-
     df["RegionId"] = pd.to_numeric(df["RegionId"], errors="coerce").fillna(0).astype(np.int16)
     df["DistrictId"] = pd.to_numeric(df["DistrictId"], errors="coerce").fillna(0).astype(np.int16)
     df["StoreKey"] = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int64)
     df["GeographyKey"] = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(0).astype(np.int64)
 
-    # Optional: drop StoreKey/GeographyKey from DimEmployee output
     if not include_store_cols:
         df = df.drop(columns=["StoreKey", "GeographyKey"], errors="ignore")
 
@@ -782,7 +623,7 @@ def generate_employee_dimension(
 
 def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     cfg = cfg or {}
-    emp_cfg = _as_dict(cfg.get("employees"))
+    emp_cfg = as_dict(cfg.get("employees"))
 
     parquet_folder = Path(parquet_folder)
     parquet_folder.mkdir(parents=True, exist_ok=True)
@@ -794,8 +635,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
 
     force = bool(emp_cfg.get("_force_regenerate", False))
-    seed = _pick_seed(cfg, emp_cfg, fallback=42)
-    global_start, global_end = _parse_global_dates(cfg, emp_cfg)
+    seed = pick_seed_nested(cfg, emp_cfg, fallback=42)
+    global_start, global_end = _parse_employee_dates(cfg, emp_cfg)
 
     stores = pd.read_parquet(
         stores_path,
@@ -804,20 +645,28 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     version_cfg = dict(emp_cfg)
     version_cfg.pop("_force_regenerate", None)
-    # schema v6: Sales Associates forced full-window, global-dates-only policy
     version_cfg["schema_version"] = 6
     version_cfg["_stores_sig"] = _stores_signature(stores)
-    version_cfg["_global_dates"] = {"start": str(global_start.date()), "end": str(global_end.date())}
+    version_cfg["_global_dates"] = {
+        "start": str(global_start.date()),
+        "end": str(global_end.date()),
+    }
 
     if not force and not should_regenerate("employees", version_cfg, out_path):
         skip("Employees up-to-date; skipping.")
         return
-    
+
     people_folder = resolve_people_folder(cfg)
     pf = Path(people_folder)
 
-    enable_asia = (pf / "asia_male_first.csv").exists() and (pf / "asia_female_first.csv").exists() and (pf / "asia_last.csv").exists()
-    people_pools = load_people_pools(people_folder, enable_asia=enable_asia, legacy_support=False)
+    enable_asia = (
+        (pf / "asia_male_first.csv").exists()
+        and (pf / "asia_female_first.csv").exists()
+        and (pf / "asia_last.csv").exists()
+    )
+    people_pools = load_people_pools(
+        people_folder, enable_asia=enable_asia, legacy_support=False,
+    )
 
     iso_by_geo: dict[int, str] = {}
     geo_path = parquet_folder / "geography.parquet"
@@ -829,26 +678,28 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     with stage("Generating Employees"):
         if "include_store_cols" in emp_cfg:
-            include_store_cols = _bool_or(emp_cfg.get("include_store_cols"), False)
+            include_store_cols = bool_or(emp_cfg.get("include_store_cols"), False)
         else:
             include_store_cols = False
             warn("employees.include_store_cols missing; defaulting to false")
-        sa_cfg = _as_dict(emp_cfg.get("store_assignments"))
+
+        sa_cfg = as_dict(emp_cfg.get("store_assignments"))
         primary_sales_role = str(sa_cfg.get("primary_sales_role") or "Sales Associate")
-        min_primary_sales_per_store = _int_or(sa_cfg.get("min_primary_sales_per_store"), 1)
-        ensure_store_sales_coverage = _bool_or(sa_cfg.get("ensure_store_sales_coverage"), False)
+        min_primary_sales_per_store = int_or(sa_cfg.get("min_primary_sales_per_store"), 1)
+        ensure_store_sales_coverage = bool_or(sa_cfg.get("ensure_store_sales_coverage"), False)
+
         df = generate_employee_dimension(
             stores=stores,
             seed=seed,
             global_start=global_start,
             global_end=global_end,
-            district_size=_int_or(emp_cfg.get("district_size"), 15),
-            districts_per_region=_int_or(emp_cfg.get("districts_per_region"), 8),
-            max_staff_per_store=_int_or(emp_cfg.get("max_staff_per_store"), 10),
-            termination_rate=_float_or(emp_cfg.get("termination_rate"), 0.08),
-            use_store_employee_count=_bool_or(emp_cfg.get("use_store_employee_count"), False),
-            min_staff_per_store=_int_or(emp_cfg.get("min_staff_per_store"), 3),
-            staff_scale=_float_or(emp_cfg.get("staff_scale"), 0.25),
+            district_size=int_or(emp_cfg.get("district_size"), 15),
+            districts_per_region=int_or(emp_cfg.get("districts_per_region"), 8),
+            max_staff_per_store=int_or(emp_cfg.get("max_staff_per_store"), 10),
+            termination_rate=float_or(emp_cfg.get("termination_rate"), 0.08),
+            use_store_employee_count=bool_or(emp_cfg.get("use_store_employee_count"), False),
+            min_staff_per_store=int_or(emp_cfg.get("min_staff_per_store"), 3),
+            staff_scale=float_or(emp_cfg.get("staff_scale"), 0.25),
             include_store_cols=include_store_cols,
             people_pools=people_pools,
             iso_by_geo=iso_by_geo,
@@ -858,10 +709,9 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             ensure_store_sales_coverage=ensure_store_sales_coverage,
         )
 
-        hr_cfg = _as_dict(emp_cfg.get("hr"))
+        hr_cfg = as_dict(emp_cfg.get("hr"))
         email_domain = hr_cfg.get("email_domain", "contoso.com")
 
-        # deterministic enrichment (derived seed to reduce unintended correlations with org-structure RNG)
         df = _enrich_employee_hr_columns(
             df,
             rng=np.random.default_rng(int(seed) ^ 0x9E3779B1),

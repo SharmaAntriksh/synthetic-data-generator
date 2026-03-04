@@ -6,6 +6,7 @@ from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 from src.dimensions.geography import normalize_geography_config
+
 # ---------------------------------------------------------------------------
 # Lazy YAML import (resolved once, avoids per-call try/except overhead)
 # ---------------------------------------------------------------------------
