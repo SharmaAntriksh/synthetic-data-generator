@@ -5,7 +5,7 @@ from datetime import date as _date
 from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
-
+from src.dimensions.geography import normalize_geography_config
 # ---------------------------------------------------------------------------
 # Lazy YAML import (resolved once, avoids per-call try/except overhead)
 # ---------------------------------------------------------------------------
@@ -649,5 +649,6 @@ _SECTION_NORMALIZERS.update(
     {
         "sales": normalize_sales_config,
         "customer_segments": normalize_customer_segments_config,
+        "geography": normalize_geography_config,
     }
 )
