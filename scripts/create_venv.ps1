@@ -1,7 +1,12 @@
 # ------------------------------------------------------------
 # Create virtual environment (one-time setup)
-# Always creates .venv at project root by default
-# DOES NOT activate the environment
+# Always creates .venv at project root by default.
+# DOES NOT activate the environment.
+#
+# Usage:
+#   .\scripts\create_venv.ps1
+#   .\scripts\create_venv.ps1 -Force
+#   .\scripts\create_venv.ps1 -Requirements requirements-dev.txt
 # ------------------------------------------------------------
 
 [CmdletBinding()]
@@ -9,108 +14,77 @@ param(
     [string]$VenvDir = ".venv",
     [string]$Requirements = "requirements.txt",
     [switch]$Force,
-    [version]$MinPythonVersion = "3.9"
+    [version]$MinPythonVersion = "3.10"
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-function Resolve-ProjectRoot {
-    param([string]$StartDir)
+. (Join-Path $PSScriptRoot "_common.ps1")
 
-    # Default behavior: parent of /scripts (your current logic)
-    $candidate = Resolve-Path (Join-Path $StartDir "..")
+try {
+    $ProjectRoot = Resolve-ProjectRoot -StartDir $PSScriptRoot
+    $VenvPath    = Join-Path $ProjectRoot $VenvDir
+    $ReqFile     = Join-Path $ProjectRoot $Requirements
 
-    # Optional robustness: walk upwards for a marker
-    $markers = @(".git", "pyproject.toml", "requirements.txt")
-    $dir = $candidate.Path
-    while ($true) {
-        foreach ($m in $markers) {
-            if (Test-Path (Join-Path $dir $m)) { return (Resolve-Path $dir) }
+    Write-Step "Project root : $ProjectRoot"
+    Write-Step "Venv target  : $VenvPath"
+
+    # Guard: already exists (unless -Force)
+    if (Test-Path $VenvPath) {
+        if (-not $Force) {
+            Write-Step "Virtual environment already exists at $VenvPath" -Level warn
+            Write-Step "Use -Force to recreate it." -Level info
+            return
         }
-        $parent = Split-Path $dir -Parent
-        if ($parent -eq $dir -or [string]::IsNullOrWhiteSpace($parent)) { break }
-        $dir = $parent
+        Write-Step "Removing existing venv (-Force)..." -Level warn
+        Remove-Item -LiteralPath $VenvPath -Recurse -Force
     }
 
-    return $candidate
-}
-
-function Get-PythonCommand {
-    # Prefer Python Launcher if present (common on Windows)
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @{ Cmd = "py"; Args = @("-3") }
+    # Locate python and verify version
+    $py = Get-PythonRunner -MinVersion $MinPythonVersion
+    if (-not $py) {
+        throw "Python not found. Install Python $MinPythonVersion+ and ensure 'py' or 'python' is available."
     }
-    if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @{ Cmd = "python"; Args = @() }
+
+    $pyVer = Get-PythonVersion -Runner $py
+
+    if ($pyVer -lt $MinPythonVersion) {
+        throw "Python $MinPythonVersion+ is required. Found: $pyVer"
     }
-    throw "Python not found. Install Python $MinPythonVersion+ and ensure 'py' or 'python' is available."
-}
 
-function Get-PythonVersion {
-    param($py)
+    $label = Format-RunnerLabel -Runner $py
+    Write-Step "Using Python $pyVer  [$label]"
 
-    $code = 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")'
-    $v = & $py.Cmd @($py.Args) -c $code
-    return [version]$v.Trim()
-}
+    # Create venv
+    Write-Step "Creating virtual environment..." -Level cmd
+    $venvArgs = @() + $py.Args + @("-m", "venv", $VenvPath)
+    Invoke-Checked -Exe $py.Cmd -Arguments $venvArgs -ErrorMessage "Failed to create virtual environment."
 
-# ------------------------------------------------------------
-# Resolve paths
-# ------------------------------------------------------------
-$ProjectRoot = Resolve-ProjectRoot -StartDir $PSScriptRoot
-$VenvPath    = Join-Path $ProjectRoot $VenvDir
-$ReqFile     = Join-Path $ProjectRoot $Requirements
-
-Write-Host "Project root: $ProjectRoot" -ForegroundColor DarkGray
-
-# ------------------------------------------------------------
-# Guard: already exists (unless -Force)
-# ------------------------------------------------------------
-if (Test-Path $VenvPath) {
-    if (-not $Force) {
-        Write-Host "Virtual environment already exists at $VenvPath" -ForegroundColor Yellow
-        return
+    $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
+    if (-not (Test-Path $VenvPython)) {
+        throw "Venv python not found at expected path: $VenvPython"
     }
-    Write-Host "Removing existing venv at $VenvPath (Force)..." -ForegroundColor Yellow
-    Remove-Item -LiteralPath $VenvPath -Recurse -Force
+
+    # Upgrade packaging tooling
+    Write-Step "Upgrading pip / setuptools / wheel..." -Level cmd
+    $upgradeArgs = @("-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel", "--disable-pip-version-check")
+    Invoke-Checked -Exe $VenvPython -Arguments $upgradeArgs -ErrorMessage "Failed to upgrade pip tooling inside the new venv."
+
+    # Install dependencies
+    if (Test-Path $ReqFile) {
+        Write-Step "Installing dependencies from $Requirements..." -Level cmd
+        $installArgs = @("-m", "pip", "install", "-r", $ReqFile, "--disable-pip-version-check")
+        Invoke-Checked -Exe $VenvPython -Arguments $installArgs -ErrorMessage "Dependency installation from $Requirements failed."
+    } else {
+        Write-Step "$Requirements not found; skipping dependency install." -Level warn
+    }
+
+    Write-Step "Virtual environment created successfully." -Level ok
+    $activatePath = Join-Path $VenvPath "Scripts\Activate.ps1"
+    Write-Step "  Activate: . $activatePath"
 }
-
-# ------------------------------------------------------------
-# Python availability + version check
-# ------------------------------------------------------------
-$py = Get-PythonCommand
-$pyVer = Get-PythonVersion -py $py
-
-if ($pyVer -lt $MinPythonVersion) {
-    throw "Python $MinPythonVersion+ is required. Found: $pyVer"
+catch {
+    Write-Step "create_venv failed: $($_.Exception.Message)" -Level err
+    exit 1
 }
-
-Write-Host "Using Python $pyVer ($($py.Cmd) $($py.Args -join ' '))" -ForegroundColor DarkGray
-
-# ------------------------------------------------------------
-# Create venv
-# ------------------------------------------------------------
-Write-Host "Creating virtual environment at $VenvPath" -ForegroundColor Cyan
-& $py.Cmd @($py.Args) -m venv $VenvPath
-
-$VenvPython = Join-Path $VenvPath "Scripts\python.exe"
-if (-not (Test-Path $VenvPython)) {
-    throw "Venv python not found at expected path: $VenvPython"
-}
-
-# ------------------------------------------------------------
-# Upgrade packaging tooling + install deps
-# ------------------------------------------------------------
-Write-Host "Upgrading pip/setuptools/wheel..." -ForegroundColor Yellow
-& $VenvPython -m pip install --upgrade pip setuptools wheel
-
-if (Test-Path $ReqFile) {
-    Write-Host "Installing dependencies from $Requirements..." -ForegroundColor Yellow
-    & $VenvPython -m pip install -r $ReqFile
-} else {
-    Write-Host "$Requirements not found. Skipping dependency install." -ForegroundColor Yellow
-}
-
-Write-Host "Virtual environment created successfully." -ForegroundColor Green
-Write-Host "To activate: `"$VenvPath\Scripts\Activate.ps1`"" -ForegroundColor DarkGray

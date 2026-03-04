@@ -6,7 +6,7 @@
 #   - Activates the venv (default: .venv)
 #
 # IMPORTANT:
-#   This script MUST be dot-sourced, otherwise activation won't persist.
+#   This script MUST be dot-sourced, otherwise activation will not persist.
 #   Example:
 #     . .\scripts\activate_venv.ps1
 # ------------------------------------------------------------
@@ -28,40 +28,28 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-function Resolve-ProjectRoot {
-    param([string]$StartDir)
-
-    # Walk up looking for common repo/project markers.
-    $markers = @(".git", "pyproject.toml", "requirements.txt")
-
-    $dir = (Resolve-Path $StartDir).Path
-    while ($true) {
-        foreach ($m in $markers) {
-            if (Test-Path -LiteralPath (Join-Path $dir $m)) {
-                return (Resolve-Path $dir)
-            }
-        }
-
-        $parent = Split-Path $dir -Parent
-        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $dir) { break }
-        $dir = $parent
-    }
-
-    # Fallback: parent of the directory containing this script (works for /scripts layout).
-    return (Resolve-Path (Join-Path $StartDir ".."))
-}
+. (Join-Path $PSScriptRoot "_common.ps1")
 
 # ------------------------------------------------------------
 # Enforce dot-sourcing
+#
+# $MyInvocation.InvocationName is '.' when dot-sourced in a standard
+# console, but some hosts (ISE, VS Code) report differently.  Fall back
+# to checking CommandOrigin when the simple test is inconclusive.
 # ------------------------------------------------------------
-if ($MyInvocation.InvocationName -ne '.') {
-    Write-Host "ERROR: This script must be dot-sourced to activate the virtual environment." -ForegroundColor Red
-    Write-Host "Run it like this:" -ForegroundColor Yellow
+$isDotSourced = ($MyInvocation.InvocationName -eq '.')
+if (-not $isDotSourced -and $MyInvocation.CommandOrigin) {
+    $isDotSourced = ($MyInvocation.CommandOrigin -eq 'Internal')
+}
+
+if (-not $isDotSourced) {
+    Write-Step "This script must be dot-sourced to activate the virtual environment." -Level err
+    Write-Step "Run it like this:" -Level warn
 
     if ($PSCommandPath) {
-        Write-Host ("  . `"{0}`"" -f $PSCommandPath) -ForegroundColor Cyan
+        Write-Step ("  . ""{0}""" -f $PSCommandPath) -Level cmd
     } else {
-        Write-Host "  . .\scripts\activate_venv.ps1" -ForegroundColor Cyan
+        Write-Step "  . .\scripts\activate_venv.ps1" -Level cmd
     }
     return
 }
@@ -72,25 +60,25 @@ if ($MyInvocation.InvocationName -ne '.') {
 $RootPath = if ($ProjectRoot) {
     (Resolve-Path $ProjectRoot).Path
 } else {
-    (Resolve-ProjectRoot -StartDir $PSScriptRoot).Path
+    Resolve-ProjectRoot -StartDir $PSScriptRoot
 }
 
 $VenvPath   = Join-Path $RootPath $VenvDir
 $ActivatePs = Join-Path $VenvPath "Scripts\Activate.ps1"
 
-Write-Host ("Project root: {0}" -f $RootPath) -ForegroundColor DarkGray
-Write-Host ("Venv path:     {0}" -f $VenvPath) -ForegroundColor DarkGray
+Write-Step "Project root : $RootPath"
+Write-Step "Venv path    : $VenvPath"
 
 # ------------------------------------------------------------
 # Guard / optional creation
 # ------------------------------------------------------------
 if (-not (Test-Path -LiteralPath $ActivatePs)) {
     if (-not $CreateIfMissing) {
-        Write-Host ("Virtual environment not found (expected: {0})" -f $VenvPath) -ForegroundColor Red
-        Write-Host "Create it first:" -ForegroundColor Yellow
-        Write-Host "  .\scripts\create_venv.ps1" -ForegroundColor Cyan
-        Write-Host "Or auto-create then activate:" -ForegroundColor Yellow
-        Write-Host "  . .\scripts\activate_venv.ps1 -CreateIfMissing" -ForegroundColor Cyan
+        Write-Step "Virtual environment not found at: $VenvPath" -Level err
+        Write-Step "Create it first:" -Level warn
+        Write-Step "  .\scripts\create_venv.ps1" -Level cmd
+        Write-Step "Or auto-create then activate:" -Level warn
+        Write-Step "  . .\scripts\activate_venv.ps1 -CreateIfMissing" -Level cmd
         return
     }
 
@@ -99,17 +87,14 @@ if (-not (Test-Path -LiteralPath $ActivatePs)) {
         throw "Create script not found at: $CreateScriptPath"
     }
 
-    Write-Host "Venv missing; creating it now..." -ForegroundColor Yellow
-
-    # Call without parameters so it works with the simplest create_venv.ps1 implementation.
+    Write-Step "Venv missing; creating via $CreateScript ..." -Level warn
     & $CreateScriptPath
 
     # Re-check expected activation script.
     if (-not (Test-Path -LiteralPath $ActivatePs)) {
-        # Common case: create_venv.ps1 always creates '.venv', but caller set -VenvDir to something else.
         $DefaultActivate = Join-Path (Join-Path $RootPath ".venv") "Scripts\Activate.ps1"
         if ($VenvDir -ne ".venv" -and (Test-Path -LiteralPath $DefaultActivate)) {
-            throw "Venv was created at '.venv' but you requested '$VenvDir'. Re-run with -VenvDir .venv or update $CreateScript to support custom venv paths."
+            throw "Venv was created at '.venv' but you requested '$VenvDir'. Re-run with -VenvDir .venv or update create_venv.ps1."
         }
 
         throw "Venv creation did not produce expected activation script: $ActivatePs"
@@ -121,11 +106,10 @@ if (-not (Test-Path -LiteralPath $ActivatePs)) {
 # ------------------------------------------------------------
 . $ActivatePs
 
-# Optional: show interpreter for quick sanity check
 try {
     $py = Get-Command python -ErrorAction Stop
     $pyVer = & python -c "import sys; print('%d.%d.%d' % sys.version_info[:3])"
-    Write-Host ("Activated: python {0} ({1})" -f $pyVer.Trim(), $py.Source) -ForegroundColor Green
+    Write-Step "Activated: Python $($pyVer.Trim())  [$($py.Source)]" -Level ok
 } catch {
-    Write-Host "Activated venv. (python not resolved on PATH in this session.)" -ForegroundColor Green
+    Write-Step "Activated venv (python not resolved on PATH in this session)." -Level ok
 }

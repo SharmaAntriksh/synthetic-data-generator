@@ -1,36 +1,20 @@
-# ---------------------------------------------
 # Run Streamlit UI (Windows / PowerShell)
-# ---------------------------------------------
 # Examples:
 #   .\scripts\run_ui.ps1
 #   .\scripts\run_ui.ps1 -Port 8502 -Headless
 #   .\scripts\run_ui.ps1 -Sync
-#   .\scripts\run_ui.ps1 -Config ".\config.yaml" -ModelsConfig ".\models.yaml"
-#   .\scripts\run_ui.ps1 -- --some-app-arg foo
-#
-# Notes:
-# - Remaining args are forwarded to the Streamlit script (ui/app.py) after `--`.
-# - Uses python -m streamlit (more reliable than streamlit.exe on PATH).
 
 [CmdletBinding(PositionalBinding=$false)]
 param(
     [string] $AppPath = "ui/app.py",
-
-    # Passed to the Streamlit app as script args
     [string] $Config = "config.yaml",
     [string] $ModelsConfig = "models.yaml",
-
-    # Streamlit server flags
     [int]    $Port = 8501,
     [string] $ServerHost = "localhost",
     [switch] $Headless,
-
-    # Environment / dependency control
     [string] $VenvPath = ".venv",
-    [switch] $Sync,          # install/sync requirements.txt before launching
-    [switch] $NoVenv,         # skip venv activation (assume current env is correct)
-
-    # Any remaining args are forwarded to the Streamlit app
+    [switch] $Sync,
+    [switch] $NoVenv,
     [Parameter(ValueFromRemainingArguments=$true)]
     [string[]] $AppArgs
 )
@@ -38,122 +22,92 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Resolve-ProjectRoot {
-    return (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-}
-
-function Ensure-Python {
-    $py = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $py) {
-        throw "Python was not found in PATH. Install Python 3.10+ and reopen the terminal."
-    }
-}
+. (Join-Path $PSScriptRoot "_common.ps1")
 
 function Ensure-Venv {
-    param(
-        [string] $ProjectRoot,
-        [string] $VenvDir
-    )
-
+    param([string] $ProjectRoot, [string] $VenvDir)
     $venvFull = Join-Path $ProjectRoot $VenvDir
-    if (Test-Path $venvFull) {
-        return $venvFull
-    }
-
-    Write-Host "Virtual environment not found. Creating: $venvFull" -ForegroundColor Yellow
-    python -m venv $venvFull
-
-    if (-not (Test-Path $venvFull)) {
-        throw "Failed to create venv at: $venvFull"
-    }
+    if (Test-Path $venvFull) { return $venvFull }
+    Write-Step "Virtual environment not found. Creating: $venvFull" -Level warn
+    Invoke-Checked -Exe python -Arguments @("-m", "venv", $venvFull) -ErrorMessage "Failed to create venv at: $venvFull"
+    if (-not (Test-Path $venvFull)) { throw "Venv directory was not created: $venvFull" }
     return $venvFull
 }
 
 function Activate-Venv {
     param([string] $VenvFullPath)
-
     $activate = Join-Path $VenvFullPath "Scripts\Activate.ps1"
-    if (-not (Test-Path $activate)) {
-        throw "Activate script not found: $activate"
-    }
-
+    if (-not (Test-Path $activate)) { throw "Activate script not found: $activate" }
     . $activate
-
-    if (-not $env:VIRTUAL_ENV) {
-        throw "Venv activation failed (VIRTUAL_ENV not set)."
-    }
+    if (-not $env:VIRTUAL_ENV) { throw "Venv activation failed (VIRTUAL_ENV not set)." }
 }
 
 function Sync-Requirements {
     param([string] $ProjectRoot)
-
     $req = Join-Path $ProjectRoot "requirements.txt"
     if (-not (Test-Path $req)) {
-        Write-Host "requirements.txt not found; skipping dependency install." -ForegroundColor DarkYellow
+        Write-Step "requirements.txt not found; skipping dependency install." -Level warn
         return
     }
-
-    Write-Host "Syncing Python dependencies from requirements.txt..." -ForegroundColor Yellow
-    python -m pip install --upgrade pip
-    python -m pip install -r $req
+    Write-Step "Syncing Python dependencies from requirements.txt..." -Level cmd
+    Invoke-Checked -Exe python -Arguments @("-m", "pip", "install", "--upgrade", "pip", "--disable-pip-version-check") -ErrorMessage "pip upgrade failed."
+    Invoke-Checked -Exe python -Arguments @("-m", "pip", "install", "-r", $req, "--disable-pip-version-check") -ErrorMessage "Dependency install from requirements.txt failed."
 }
 
-# ----------------- Main -----------------
+# ---- Main ----
 
-$PROJECT_ROOT = Resolve-ProjectRoot
+$PROJECT_ROOT = Resolve-ProjectRoot -StartDir $PSScriptRoot
 
-Write-Host "Starting Streamlit UI" -ForegroundColor Cyan
-Write-Host "  Project root : $PROJECT_ROOT"
-Write-Host "  App          : $AppPath"
-Write-Host "  Config       : $Config"
-Write-Host "  Models       : $ModelsConfig"
-Write-Host "  Host:Port    : $ServerHost`:$Port"
-Write-Host "  Headless     : $Headless"
-Write-Host "  Use venv     : $(-not $NoVenv)"
-Write-Host "  Sync deps    : $Sync"
-
-Push-Location $PROJECT_ROOT
 try {
-    Ensure-Python
+    $hostPort = "{0}:{1}" -f $ServerHost, $Port
+
+    Write-Step "Starting Streamlit UI" -Level cmd
+    Write-Step "  Project root : $PROJECT_ROOT"
+    Write-Step "  App          : $AppPath"
+    Write-Step "  Config       : $Config"
+    Write-Step "  Models       : $ModelsConfig"
+    Write-Step "  Host:Port    : $hostPort"
+    Write-Step "  Headless     : $Headless"
+    Write-Step "  Use venv     : $(-not $NoVenv)"
+    Write-Step "  Sync deps    : $Sync"
+
+    Push-Location $PROJECT_ROOT
+
+    $pyCheck = Get-PythonRunner -MinVersion "3.10"
+    if (-not $pyCheck) { throw "Python not found. Install Python 3.10+ and reopen the terminal." }
+    $pyVer = Get-PythonVersion -Runner $pyCheck
+    $pyLabel = Format-RunnerLabel -Runner $pyCheck
+    Write-Step "  Python       : $pyVer  [$pyLabel]"
 
     if (-not $NoVenv) {
         $venv = Ensure-Venv -ProjectRoot $PROJECT_ROOT -VenvDir $VenvPath
         Activate-Venv -VenvFullPath $venv
     }
 
-    if ($Sync) {
-        Sync-Requirements -ProjectRoot $PROJECT_ROOT
-    }
+    if ($Sync) { Sync-Requirements -ProjectRoot $PROJECT_ROOT }
 
     $appFull = Join-Path $PROJECT_ROOT $AppPath
-    if (-not (Test-Path $appFull)) {
-        throw "Streamlit app not found: $appFull"
-    }
+    if (-not (Test-Path $appFull)) { throw "Streamlit app not found: $appFull" }
 
-    # Streamlit CLI flags
-    $stFlags = @(
-        "run", $appFull,
-        "--server.port=$Port",
-        "--server.address=$ServerHost"
-    )
-    if ($Headless) {
-        $stFlags += "--server.headless=true"
-    }
+    $stFlags = @("run", $appFull, "--server.port=$Port", "--server.address=$ServerHost")
+    if ($Headless) { $stFlags += "--server.headless=true" }
 
-    # Pass config paths + any extra app args to the Streamlit script via `--`
     $scriptArgs = @("--config", $Config, "--models-config", $ModelsConfig)
 
-    # If the caller used `--` separator, drop it.
     if ($AppArgs -and $AppArgs.Count -gt 0 -and $AppArgs[0] -eq "--") {
         if ($AppArgs.Count -gt 1) { $AppArgs = $AppArgs[1..($AppArgs.Count-1)] } else { $AppArgs = @() }
     }
+    if ($AppArgs -and $AppArgs.Count -gt 0) { $scriptArgs += $AppArgs }
 
-    if ($AppArgs -and $AppArgs.Count -gt 0) {
-        $scriptArgs += $AppArgs
-    }
-
-    Write-Host "Launching Streamlit..." -ForegroundColor Green
+    Write-Step "Launching Streamlit..." -Level ok
     python -m streamlit @stFlags -- @scriptArgs
+    $ec = $LASTEXITCODE
+    if ($ec -ne 0) { Write-Step "Streamlit exited with code $ec." -Level err }
+    exit $ec
+}
+catch {
+    Write-Step "run_ui failed: $($_.Exception.Message)" -Level err
+    exit 1
 }
 finally {
     Pop-Location
