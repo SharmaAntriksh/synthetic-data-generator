@@ -16,10 +16,6 @@
 
 Set-StrictMode -Version Latest
 
-# Prevent double-loading in the same session.
-if ((Get-Variable -Name '__ProjectCommonLoaded' -Scope Global -ValueOnly -ErrorAction SilentlyContinue)) { return }
-$Global:__ProjectCommonLoaded = $true
-
 function Resolve-ProjectRoot {
     <#
     .SYNOPSIS
