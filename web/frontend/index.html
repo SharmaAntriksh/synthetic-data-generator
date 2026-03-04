@@ -14,7 +14,9 @@
 :root{--bg:#f8f8fa;--surface:#fff;--alt:#f2f3f7;--border:#e2e4ec;--focus:#5b6abf;--accent:#4f5bd5;--glow:rgba(79,91,213,.08);--text:#1a1a2e;--dim:#5f6278;--muted:#9496a8;--ok:#16a34a;--okBg:rgba(22,163,74,.07);--warn:#ca8a04;--warnBg:rgba(202,138,4,.07);--err:#dc2626;--errBg:rgba(220,38,38,.06);--mono:'JetBrains Mono','Fira Code',monospace;--sans:'DM Sans',system-ui,sans-serif}
 body{font-family:var(--sans);background:var(--bg);color:var(--text)}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-textarea::-webkit-scrollbar-thumb{background:#3a3a52;border-radius:3px}textarea::-webkit-scrollbar-track{background:transparent}
+textarea::-webkit-scrollbar-thumb{background:var(--muted);border-radius:3px}
+textarea::-webkit-scrollbar-thumb:hover{background:var(--dim)}
+textarea::-webkit-scrollbar-track{background:transparent}
 input[type=number]::-webkit-inner-spin-button{opacity:1}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @keyframes slideIn{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
@@ -70,17 +72,17 @@ function YamlEditor({value,onChange,filename,dirty,applied,error,onApply,onReset
   const statusColor=dirty?"var(--warn)":applied?"var(--accent)":"var(--ok)";
   const statusBg=dirty?"var(--warnBg)":applied?"var(--glow)":"var(--okBg)";
   const statusText=dirty?"Modified":applied?"Applied":"In sync";
-  const edBg="#1e1e2e";const edLine="#2a2a3c";const edNum="#4a4a6a";const edText="#cdd6f4";const edCaret="#89b4fa";const edBorder="#313147";
+  const edBg="var(--surface)";const edLine="var(--alt)";const edNum="var(--muted)";const edText="var(--text)";const edCaret="var(--accent)";const edBorder="var(--border)";
   const tBtn={padding:"6px 16px",borderRadius:6,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .12s",border:"1px solid "+edBorder};
 
   return(
-    <div style={{borderRadius:12,overflow:"hidden",border:"1px solid "+edBorder,boxShadow:"0 4px 24px rgba(0,0,0,.12)"}}>
+    <div style={{borderRadius:12,overflow:"hidden",border:"1px solid "+edBorder,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
       {/* Toolbar */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 4px 0 0",background:"#181825",borderBottom:"1px solid "+edBorder,flexWrap:"wrap",gap:6}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 4px 0 0",background:edLine,borderBottom:"1px solid "+edBorder,flexWrap:"wrap",gap:6}}>
         <div style={{display:"flex",alignItems:"center",gap:0}}>
           {/* File tab */}
           <div style={{display:"flex",alignItems:"center",gap:7,padding:"10px 16px",background:edBg,borderRight:"1px solid "+edBorder,fontSize:12.5,fontWeight:600,color:edText,fontFamily:"var(--mono)"}}>
-            <span style={{width:14,height:14,borderRadius:3,background:"linear-gradient(135deg,#89b4fa,#cba6f7)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#181825",fontWeight:700}}>Y</span>
+            <span style={{width:14,height:14,borderRadius:3,background:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:700}}>Y</span>
             {filename}
           </div>
           {/* Status */}
@@ -90,15 +92,15 @@ function YamlEditor({value,onChange,filename,dirty,applied,error,onApply,onReset
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 8px"}}>
-          {onRefresh&&<button onClick={onRefresh} style={{...tBtn,background:"transparent",color:"#7f849c"}} onMouseOver={e=>{e.currentTarget.style.background=edLine;e.currentTarget.style.color=edText;}} onMouseOut={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="#7f849c";}}>Refresh from UI</button>}
-          <button onClick={onReset} style={{...tBtn,background:"transparent",color:"#7f849c"}} onMouseOver={e=>{e.currentTarget.style.background=edLine;e.currentTarget.style.color=edText;}} onMouseOut={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="#7f849c";}}>Reset to disk</button>
-          <button onClick={onApply} disabled={!dirty} style={{...tBtn,background:dirty?"#89b4fa":"transparent",color:dirty?"#181825":"#585b70",border:dirty?"1px solid #89b4fa":"1px solid "+edBorder,fontWeight:dirty?600:500,cursor:dirty?"pointer":"default"}}>{dirty?"Apply":"No changes"}</button>
+          {onRefresh&&<button onClick={onRefresh} style={{...tBtn,background:"transparent",color:"var(--dim)"}} onMouseOver={e=>{e.currentTarget.style.background=edLine;e.currentTarget.style.color=edText;}} onMouseOut={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="var(--dim)";}}>Refresh from UI</button>}
+          <button onClick={onReset} style={{...tBtn,background:"transparent",color:"var(--dim)"}} onMouseOver={e=>{e.currentTarget.style.background=edLine;e.currentTarget.style.color=edText;}} onMouseOut={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="var(--dim)";}}>Reset to disk</button>
+          <button onClick={onApply} disabled={!dirty} style={{...tBtn,background:dirty?"var(--accent)":"transparent",color:dirty?"#fff":"var(--muted)",border:dirty?"1px solid var(--accent)":"1px solid "+edBorder,fontWeight:dirty?600:500,cursor:dirty?"pointer":"default"}}>{dirty?"Apply":"No changes"}</button>
         </div>
       </div>
       {/* Editor body */}
       <div style={{display:"flex",background:edBg,position:"relative"}}>
         {/* Line numbers */}
-        <div ref={numsRef} style={{width:52,flexShrink:0,padding:"14px 0",overflowY:"hidden",background:"#181825",borderRight:"1px solid "+edBorder,userSelect:"none"}}>
+        <div ref={numsRef} style={{width:52,flexShrink:0,padding:"14px 0",overflowY:"hidden",background:edLine,borderRight:"1px solid "+edBorder,userSelect:"none"}}>
           {Array.from({length:lineCount},(_,i)=>(
             <div key={i} style={{height:21.45,fontSize:11.5,fontFamily:"var(--mono)",color:edNum,textAlign:"right",paddingRight:12,lineHeight:"21.45px"}}>{i+1}</div>
           ))}
@@ -107,7 +109,7 @@ function YamlEditor({value,onChange,filename,dirty,applied,error,onApply,onReset
         <textarea ref={textRef} value={value} onChange={e=>onChange(e.target.value)} onScroll={handleScroll} onKeyDown={handleTab} spellCheck={false} style={{flex:1,minHeight:Math.min(Math.max(lineCount*21.45+28,300),700),fontFamily:"var(--mono)",fontSize:12.5,lineHeight:"21.45px",padding:"14px 16px",background:"transparent",color:edText,caretColor:edCaret,border:"none",outline:"none",resize:"vertical",tabSize:2,whiteSpace:"pre",overflowWrap:"normal",overflowX:"auto"}} />
       </div>
       {/* Footer */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 16px",background:"#181825",borderTop:"1px solid "+edBorder,fontSize:11,color:"#585b70",fontFamily:"var(--mono)"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 16px",background:edLine,borderTop:"1px solid "+edBorder,fontSize:11,color:"var(--muted)",fontFamily:"var(--mono)"}}>
         <span>YAML{dirty?" \u2022 modified":""}</span>
         <span>{lineCount} lines</span>
       </div>
@@ -181,15 +183,16 @@ function App(){
   const[cfgYaml,setCfgYaml]=useState("");
   const[cfgYamlOrig,setCfgYamlOrig]=useState("");
   const[cfgYamlDisk,setCfgYamlDisk]=useState("");
+  const[cfgYamlCurrent,setCfgYamlCurrent]=useState("");
   const[cfgYamlErr,setCfgYamlErr]=useState(null);
   const cfgYamlDirty=cfgYaml!==cfgYamlOrig;
-  const cfgYamlApplied=cfgYamlOrig!==cfgYamlDisk;
+  const cfgYamlApplied=cfgYamlCurrent!==cfgYamlDisk;
   const[page,setPage_]=useState("main");
   const setPage=useCallback((p)=>{
     setPage_(p);
     if(p==="config")loadCfgYaml();
     if(p==="models")fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);}).catch(()=>{});
-  },[loadCfgYaml]);
+  },[]);
 
   /* Load initial config + presets */
   useEffect(()=>{
@@ -226,7 +229,10 @@ function App(){
       fetch(API+"/config/yaml").then(r=>r.text()),
       fetch(API+"/config/yaml/disk").then(r=>r.text()),
     ]).then(([current,disk])=>{
-      setCfgYaml(current);setCfgYamlOrig(current);setCfgYamlDisk(disk);setCfgYamlErr(null);
+      setCfgYamlCurrent(current);
+      setCfgYamlDisk(disk);
+      const initial=(disk&&disk.trim().length>0)?disk:current;
+      setCfgYaml(initial);setCfgYamlOrig(initial);setCfgYamlErr(null);
     }).catch(()=>{});
   },[]);
 
@@ -283,7 +289,7 @@ function App(){
     setCfgYamlErr(null);
     fetch(API+"/config/yaml",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml_text:cfgYaml})})
       .then(r=>{if(!r.ok)return r.json().then(d=>{throw new Error(d.detail||"Save failed")});return r.json();})
-      .then(()=>{setCfgYamlOrig(cfgYaml);setCfgYamlErr(null);flash("Config applied (in memory)");reloadFormFromServer();})
+      .then(()=>{setCfgYamlOrig(cfgYaml);setCfgYamlCurrent(cfgYaml);setCfgYamlErr(null);flash("Config applied (in memory)");reloadFormFromServer();})
       .catch(e=>setCfgYamlErr(e.message));
   };
   const resetCfgYaml=()=>{
@@ -293,7 +299,7 @@ function App(){
       .catch(()=>{});
   };
   const refreshCfgYamlFromUI=()=>{
-    fetch(API+"/config/yaml").then(r=>r.text()).then(t=>{setCfgYaml(t);setCfgYamlOrig(t);setCfgYamlErr(null);flash("Loaded current UI settings");}).catch(()=>{});
+    fetch(API+"/config/yaml").then(r=>r.text()).then(t=>{setCfgYamlCurrent(t);setCfgYaml(t);setCfgYamlOrig(t);setCfgYamlErr(null);flash("Loaded current UI settings");}).catch(()=>{});
   };
 
   if(!cfg)return <div style={{padding:40,textAlign:"center",color:"var(--muted)"}}>Loading configuration...</div>;
@@ -341,7 +347,7 @@ function App(){
         <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
         <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Config</div>
         <button onClick={()=>setPage(page==="config"?"main":"config")} style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${page==="config"?"var(--accent)":"var(--border)"}`,background:page==="config"?"var(--glow)":"var(--surface)",color:page==="config"?"var(--accent)":"var(--dim)",fontSize:12.5,fontWeight:page==="config"?600:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .15s",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-          <span>Config Configuration</span>
+          <span>Config YAML</span>
           {(cfgYamlDirty||cfgYamlApplied)&&<span style={{width:7,height:7,borderRadius:"50%",background:cfgYamlDirty?"var(--warn)":"var(--accent)",flexShrink:0}} />}
         </button>
         <button onClick={()=>fetch(API+"/config/download").then(r=>r.json()).then(d=>{const b=new Blob([JSON.stringify(d,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="config.json";a.click();})} style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12,cursor:"pointer",fontFamily:"var(--sans)"}}>Download config</button>
