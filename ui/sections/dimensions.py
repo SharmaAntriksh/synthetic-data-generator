@@ -2,80 +2,39 @@
 from __future__ import annotations
 
 import streamlit as st
+from ui.helpers import as_int
+from ui.constants import DIMENSION_SIZE_FIELDS
 
 
-# =========================================================
-# Dimension size controls (config-driven)
-# =========================================================
-
-DIMENSION_SIZE_FIELDS = {
-    "customers": "total_customers",
-    "products": "num_products",
-    "stores": "num_stores",
-}
-
-# Dimensions that support force regeneration from UI (used by render_regeneration)
-FORCE_REGENERATABLE_DIMENSIONS = [
-    "customers",
-    "products",
-    "stores",
-    "promotions",
-    "dates",
-    "currency",
-    "exchange_rates",
-]
-
-
-def _ensure(cfg: dict, section: str, field: str, default: int) -> None:
+def _ensure(cfg, section, field, default):
     cfg.setdefault(section, {})
     cfg[section].setdefault(field, default)
 
 
-def _as_int(v, default: int) -> int:
-    try:
-        return int(v)
-    except Exception:
-        return default
-
-
-def _get_promotions_total(promotions_cfg: dict) -> int:
-    """
-    Promotions are commonly modeled as multiple buckets.
-    Prefer summing buckets if they exist; else fall back to total_promotions; else 0.
-    """
+def _get_promotions_total(promotions_cfg):
     keys = ["num_seasonal", "num_clearance", "num_limited"]
     if all(k in promotions_cfg for k in keys):
-        return sum(_as_int(promotions_cfg.get(k), 0) for k in keys)
-    return _as_int(promotions_cfg.get("total_promotions", 0), 0)
+        return sum(as_int(promotions_cfg.get(k), 0) for k in keys)
+    return as_int(promotions_cfg.get("total_promotions", 0), 0)
 
 
-def _set_promotions_total(promotions_cfg: dict, total: int) -> None:
-    """
-    Write total promotions back into buckets (proportional if existing; else 1/3 split).
-    Also writes total_promotions as a back-compat/summary key.
-    """
+def _set_promotions_total(promotions_cfg, total):
     total = max(0, int(total))
     keys = ["num_seasonal", "num_clearance", "num_limited"]
 
     if all(k in promotions_cfg for k in keys):
-        cur = [_as_int(promotions_cfg.get(k), 0) for k in keys]
+        cur = [as_int(promotions_cfg.get(k), 0) for k in keys]
         s = sum(cur)
-        if s <= 0:
-            # default equal split
-            base = [1, 1, 1]
-            s = 3
-        else:
-            base = cur
+        base = [1, 1, 1] if s <= 0 else cur
+        s = s if s > 0 else 3
 
         scaled = [b * total / s for b in base]
         floors = [int(x) for x in scaled]
         remainder = total - sum(floors)
 
-        # distribute remainder to largest fractional parts
         fracs = sorted(
             [(i, scaled[i] - floors[i]) for i in range(3)],
-            key=lambda t: t[1],
-            reverse=True,
+            key=lambda t: t[1], reverse=True,
         )
         for i in range(remainder):
             floors[fracs[i % 3][0]] += 1
@@ -84,16 +43,14 @@ def _set_promotions_total(promotions_cfg: dict, total: int) -> None:
         promotions_cfg["num_clearance"] = floors[1]
         promotions_cfg["num_limited"] = floors[2]
     else:
-        # minimal schema: just keep a total
         promotions_cfg["total_promotions"] = total
 
     promotions_cfg["total_promotions"] = total
 
 
-def render_dimensions(cfg: dict) -> None:
-    st.subheader("4️⃣ Dimensions")
+def render_dimensions(cfg):
+    st.subheader("4\ufe0f\u20e3 Dimensions")
 
-    # Ensure baseline keys (safe defaults)
     _ensure(cfg, "customers", "total_customers", 10_000)
     _ensure(cfg, "stores", "num_stores", 100)
     _ensure(cfg, "products", "num_products", 5_000)
@@ -103,45 +60,29 @@ def render_dimensions(cfg: dict) -> None:
 
     with col1:
         cfg["customers"]["total_customers"] = st.number_input(
-            "Customers (entities)",
-            min_value=1,
-            step=1_000,
-            value=_as_int(cfg["customers"]["total_customers"], 10_000),
-            help="Controls the size of the Customers dimension. Higher values increase dimension generation time.",
+            "Customers (entities)", min_value=1, step=1_000,
+            value=as_int(cfg["customers"]["total_customers"], 10_000),
+            help="Controls the size of the Customers dimension.",
         )
         cfg["stores"]["num_stores"] = st.number_input(
-            "Physical stores",
-            min_value=1,
-            step=10,
-            value=_as_int(cfg["stores"]["num_stores"], 100),
+            "Physical stores", min_value=1, step=10,
+            value=as_int(cfg["stores"]["num_stores"], 100),
             help="Controls the size of the Stores dimension.",
         )
 
     with col2:
         cfg["products"]["num_products"] = st.number_input(
-            "Products (SKUs)",
-            min_value=1,
-            step=500,
-            value=_as_int(cfg["products"]["num_products"], 5_000),
-            help="Controls the size of the Products dimension. Higher values can increase sales generation variance.",
+            "Products (SKUs)", min_value=1, step=500,
+            value=as_int(cfg["products"]["num_products"], 5_000),
+            help="Controls the size of the Products dimension.",
         )
 
-        # Promotions as total (distributed into buckets if bucketed schema exists)
         promo_total = _get_promotions_total(cfg["promotions"])
         promo_total_new = st.number_input(
-            "Active promotions",
-            min_value=0,
-            step=5,
+            "Active promotions", min_value=0, step=5,
             value=int(promo_total),
-            help="Total active promotions. If promotions are bucketed (seasonal/clearance/limited), this will distribute the total across buckets.",
+            help="Total active promotions. Distributed across buckets if bucketed schema exists.",
         )
         _set_promotions_total(cfg["promotions"], int(promo_total_new))
 
     st.caption("Tip: Dimension sizes affect generation time and file sizes; tune them before increasing sales rows.")
-
-    # -----------------------------------------------------
-    # NOTE:
-    # Pricing (product behavior) is rendered AFTER this
-    # function by the caller. Regeneration controls must
-    # therefore stay LAST in this section.
-    # -----------------------------------------------------

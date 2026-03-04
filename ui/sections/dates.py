@@ -10,7 +10,6 @@ _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 
 def _to_date(v) -> date:
-    """Accept ISO string, date, or datetime; return date with safe fallback."""
     if isinstance(v, datetime):
         return v.date()
     if isinstance(v, date):
@@ -20,7 +19,6 @@ def _to_date(v) -> date:
             return date.fromisoformat(v)
         except ValueError:
             pass
-    # fallback
     return date.today()
 
 
@@ -29,7 +27,7 @@ def _set_iso(dct: dict, key: str, d: date) -> None:
 
 
 def render_dates(cfg, require_key):
-    st.subheader("2️⃣ Date range")
+    st.subheader("2\ufe0f\u20e3 Date range")
 
     defaults_dates = require_key(cfg, ["defaults", "dates"])
     defaults_dates.setdefault("start", date.today().isoformat())
@@ -48,16 +46,13 @@ def render_dates(cfg, require_key):
         picked = st.date_input("End date", value=end_d)
         _set_iso(defaults_dates, "end", picked)
 
-    # Optional: inline warning (nice UX)
     if _to_date(defaults_dates["end"]) < _to_date(defaults_dates["start"]):
         st.warning("End date is before start date.")
 
-    with st.expander("📅 Calendar options"):
-        # Make optional instead of hard-require
+    with st.expander("Calendar options"):
         dates_cfg = cfg.setdefault("dates", {})
         include = dates_cfg.setdefault("include", {})
 
-        # Prefer month names, store offset 0..11
         current = int(dates_cfg.get("fiscal_month_offset", 0) or 0)
         current = max(0, min(11, current))
 
@@ -69,7 +64,6 @@ def render_dates(cfg, require_key):
         )
         dates_cfg["fiscal_month_offset"] = _MONTHS.index(month)
 
-        # If always on, communicate clearly instead of disabled checkbox
         include["calendar"] = True
         st.caption("Calendar columns are always included.")
 

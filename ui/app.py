@@ -1,3 +1,4 @@
+# ui/app.py
 import argparse
 import sys
 from pathlib import Path
@@ -5,32 +6,18 @@ from pathlib import Path
 import streamlit as st
 import yaml
 
+from ui.helpers import find_repo_root, ensure_root_on_path
+
 
 # ------------------------------------------------------------------
 # Bootstrap (no Streamlit calls before set_page_config)
 # ------------------------------------------------------------------
 
-def _find_repo_root() -> Path:
-    """
-    Try to locate repo root even if this file moves.
-    Heuristic: look upward for a 'src' folder.
-    """
-    here = Path(__file__).resolve()
-    candidates = [here.parent, *here.parents]
-    for r in candidates[:6]:
-        if (r / "src").exists():
-            return r
-    # Fallback: previous behavior
-    return here.parents[1]
-
-
-ROOT = _find_repo_root()
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ROOT = find_repo_root()
+ensure_root_on_path(ROOT)
 
 
 def parse_app_args():
-    # Streamlit passes script args after `--` into sys.argv for the script.
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--config", default="config.yaml")
     p.add_argument("--models-config", default="models.yaml")
@@ -57,6 +44,14 @@ def load_base_config():
         return yaml.safe_load(f)
 
 
+def _load_models_config():
+    p = _resolve_under_root(MODELS_CONFIG_PATH)
+    if not p.exists():
+        return None
+    with open(p, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
 def require_key(cfg, path):
     cur = cfg
     for key in path:
@@ -68,25 +63,14 @@ def require_key(cfg, path):
 
 
 # ------------------------------------------------------------------
-# Page setup (FIRST Streamlit call must be set_page_config)
+# Page setup
 # ------------------------------------------------------------------
 
-st.set_page_config(
-    page_title="Synthetic Retail Data Generator",
-    layout="wide",
-)
+st.set_page_config(page_title="Synthetic Retail Data Generator", layout="wide")
 
 st.markdown(
-    """
-    <style>
-    .block-container {
-        padding-top: 1.5rem;
-        padding-bottom: 1.5rem;
-        padding-left: 2rem;
-        padding-right: 2rem;
-    }
-    </style>
-    """,
+    "<style>.block-container{padding-top:1.5rem;padding-bottom:1.5rem;"
+    "padding-left:2rem;padding-right:2rem;}</style>",
     unsafe_allow_html=True,
 )
 
@@ -125,7 +109,7 @@ if "models_config_path" not in st.session_state:
 cfg = st.session_state.config
 
 # ------------------------------------------------------------------
-# Sidebar – Presets
+# Sidebar
 # ------------------------------------------------------------------
 
 with st.sidebar:
@@ -151,9 +135,59 @@ with st.sidebar:
 
     if st.button("Apply preset", type="primary", use_container_width=True):
         apply_preset(cfg, load_base_config, preset_name)
+        st.toast(f"Applied: {preset_name}")
 
+    st.divider()
+
+    # --- Models tuning knobs ---
+    st.header("Models Tuning")
+    st.caption("Quick sliders for customer acquisition behaviour.")
+
+    models_raw = _load_models_config()
+    tuning = {}
+    if models_raw and isinstance(models_raw, dict):
+        tuning = models_raw.get("tuning", {}) or {}
+
+    tuning_intensity = st.slider(
+        "Acquisition intensity",
+        min_value=0.0, max_value=1.0, step=0.05,
+        value=float(tuning.get("acquisition_intensity", 0.55)),
+        help="0 = few new customers, 1 = many new customers.",
+    )
+    tuning_smoothness = st.slider(
+        "Acquisition smoothness",
+        min_value=0.0, max_value=1.0, step=0.05,
+        value=float(tuning.get("acquisition_smoothness", 0.90)),
+        help="0 = spiky month-to-month, 1 = very flat spread.",
+    )
+    tuning_cycles = st.slider(
+        "Acquisition cycles",
+        min_value=0.0, max_value=1.0, step=0.05,
+        value=float(tuning.get("acquisition_cycles", 0.35)),
+        help="0 = no multi-year waves, 1 = dramatic waves.",
+    )
+
+    st.session_state["_tuning_overrides"] = {
+        "acquisition_intensity": tuning_intensity,
+        "acquisition_smoothness": tuning_smoothness,
+        "acquisition_cycles": tuning_cycles,
+    }
+
+    st.divider()
+
+    # --- Config download ---
+    st.header("Config")
     st.caption(f"Config: {st.session_state.config_path}")
     st.caption(f"Models: {st.session_state.models_config_path}")
+
+    config_yaml = yaml.safe_dump(cfg, sort_keys=False)
+    st.download_button(
+        "Download current config",
+        data=config_yaml,
+        file_name="config.yaml",
+        mime="text/yaml",
+        use_container_width=True,
+    )
 
 # ------------------------------------------------------------------
 # Main UI
@@ -182,8 +216,5 @@ render_generate(cfg, errors)
 # Advanced
 # ------------------------------------------------------------------
 
-with st.expander("Advanced ▸ Resolved config"):
-    st.code(
-        yaml.safe_dump(cfg, sort_keys=False),
-        language="yaml",
-    )
+with st.expander("Advanced: Resolved config"):
+    st.code(yaml.safe_dump(cfg, sort_keys=False), language="yaml")
