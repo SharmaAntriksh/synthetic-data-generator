@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Retail Data Generator</title>
+<link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#f8f8fa;--surface:#fff;--alt:#f2f3f7;--border:#e2e4ec;--focus:#5b6abf;--accent:#4f5bd5;--glow:rgba(79,91,213,.08);--text:#1a1a2e;--dim:#5f6278;--muted:#9496a8;--ok:#16a34a;--okBg:rgba(22,163,74,.07);--warn:#ca8a04;--warnBg:rgba(202,138,4,.07);--err:#dc2626;--errBg:rgba(220,38,38,.06);--mono:'JetBrains Mono','Fira Code',monospace;--sans:'DM Sans',system-ui,sans-serif}
+body{font-family:var(--sans);background:var(--bg);color:var(--text)}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+textarea::-webkit-scrollbar-thumb{background:var(--muted);border-radius:3px}
+textarea::-webkit-scrollbar-thumb:hover{background:var(--dim)}
+textarea::-webkit-scrollbar-track{background:transparent}
+input[type=number]::-webkit-inner-spin-button{opacity:1}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes slideIn{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useCallback}=React;
+
+const API="/api";
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const DIMS=["customers","products","stores","geography","promotions","dates","currency","exchange_rates"];
+
+/* ═══ Shared styles ═══ */
+const iS={width:"100%",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:8,padding:"8px 11px",fontSize:13.5,color:"var(--text)",outline:"none",fontFamily:"var(--mono)"};
+
+/* ═══ Reusable components ═══ */
+function Section({num,title,children,defaultOpen=true,badge}){
+  const[open,setOpen]=useState(defaultOpen);
+  return(
+    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,marginBottom:14,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflow:"hidden"}}>
+      <button onClick={()=>setOpen(!open)} style={{display:"flex",alignItems:"center",gap:10,padding:"14px 18px",cursor:"pointer",background:"none",border:"none",width:"100%",color:"var(--text)",fontFamily:"var(--sans)"}}>
+        <span style={{width:26,height:26,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,fontFamily:"var(--mono)",background:open?"var(--accent)":"var(--alt)",color:open?"#fff":"var(--muted)",transition:"all .15s"}}>{num}</span>
+        <span style={{fontSize:14.5,fontWeight:600,flex:1,textAlign:"left"}}>{title}</span>
+        {badge&&<Badge variant={badge.v}>{badge.t}</Badge>}
+        <span style={{fontSize:16,color:"var(--muted)",transform:open?"rotate(0)":"rotate(-90deg)",transition:"transform .2s"}}>▾</span>
+      </button>
+      {open&&<div style={{padding:"0 18px 18px",borderTop:"1px solid var(--border)"}}>{children}</div>}
+    </div>
+  );
+}
+function F({label,help,children}){return(<div style={{marginTop:14}}>{label&&<label style={{display:"block",fontSize:12.5,fontWeight:500,color:"var(--dim)",marginBottom:5}}>{label}</label>}{children}{help&&<div style={{fontSize:11,color:"var(--muted)",marginTop:3}}>{help}</div>}</div>);}
+function N({value,onChange,min,max,step,style:sx}){const v=value!=null?value:"";return <input type="number" style={{...iS,...sx}} value={v} min={min} max={max} step={step||1} onChange={e=>{const n=parseFloat(e.target.value);onChange(isNaN(n)?(min||0):n);}} onFocus={e=>{e.target.style.borderColor="var(--focus)";e.target.style.boxShadow="0 0 0 3px var(--glow)";}} onBlur={e=>{e.target.style.borderColor="var(--border)";e.target.style.boxShadow="none";}} />;}
+function Sel({value,onChange,options,labels}){return <select style={{...iS,fontFamily:"var(--sans)",cursor:"pointer"}} value={value} onChange={e=>onChange(e.target.value)}>{options.map((o,i)=><option key={o} value={o}>{labels?labels[i]:o}</option>)}</select>;}
+function Check({checked,onChange,label,disabled}){return(<label onClick={e=>{e.preventDefault();if(!disabled)onChange(!checked);}} style={{display:"flex",alignItems:"center",gap:7,cursor:disabled?"default":"pointer",fontSize:13,color:disabled?"var(--muted)":"var(--text)",fontFamily:"var(--sans)",opacity:disabled?.6:1}}><span style={{width:17,height:17,borderRadius:5,flexShrink:0,border:`2px solid ${checked?"var(--accent)":"var(--border)"}`,background:checked?"var(--accent)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .12s"}}>{checked&&<span style={{color:"#fff",fontSize:10,fontWeight:700}}>✓</span>}</span>{label}</label>);}
+function Sld({label,value,onChange,min,max,step,fmt}){const v=Number(value)||0;return(<div style={{marginTop:10}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}><span style={{fontSize:12,color:"var(--dim)"}}>{label}</span><span style={{fontSize:12,color:"var(--accent)",fontFamily:"var(--mono)",fontWeight:600}}>{fmt?fmt(v):v.toFixed(2)}</span></div><input type="range" min={min} max={max} step={step} value={v} onChange={e=>onChange(parseFloat(e.target.value))} style={{width:"100%",accentColor:"var(--accent)"}} /></div>);}
+function Badge({variant="default",children}){const c={default:{bg:"var(--glow)",color:"var(--accent)"},success:{bg:"var(--okBg)",color:"var(--ok)"},warning:{bg:"var(--warnBg)",color:"var(--warn)"},error:{bg:"var(--errBg)",color:"var(--err)"}}[variant];return <span style={{display:"inline-flex",padding:"2px 9px",borderRadius:6,fontSize:11.5,fontWeight:600,fontFamily:"var(--mono)",background:c.bg,color:c.color}}>{children}</span>;}
+function R2({children}){return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>{children}</div>;}
+function R3({children}){return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>{children}</div>;}
+function R4({children}){return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>{children}</div>;}
+function Box({title,children}){return(<div style={{marginTop:16,padding:"14px 16px",background:"var(--alt)",borderRadius:10,border:"1px solid var(--border)"}}>{title&&<div style={{fontSize:12,fontWeight:600,color:"var(--dim)",marginBottom:10}}>{title}</div>}{children}</div>);}
+
+/* ═══ YAML Editor ═══ */
+function YamlEditor({value,onChange,filename,dirty,applied,error,onApply,onReset,onRefresh,description}){
+  const lines=(value||"").split("\n");
+  const lineCount=lines.length;
+  const textRef=useRef(null);
+  const numsRef=useRef(null);
+  const handleScroll=()=>{if(numsRef.current&&textRef.current)numsRef.current.scrollTop=textRef.current.scrollTop;};
+  const handleTab=(e)=>{if(e.key==="Tab"){e.preventDefault();const t=e.target;const s=t.selectionStart;const end=t.selectionEnd;const v=value;onChange(v.substring(0,s)+"  "+v.substring(end));setTimeout(()=>{t.selectionStart=t.selectionEnd=s+2;},0);}};
+  const statusColor=dirty?"var(--warn)":applied?"var(--accent)":"var(--ok)";
+  const statusBg=dirty?"var(--warnBg)":applied?"var(--glow)":"var(--okBg)";
+  const statusText=dirty?"Modified":applied?"Applied":"In sync";
+  const edBg="var(--surface)";const edLine="var(--alt)";const edNum="var(--muted)";const edText="var(--text)";const edCaret="var(--accent)";const edBorder="var(--border)";
+  const tBtn={padding:"6px 16px",borderRadius:6,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .12s",border:"1px solid "+edBorder};
+
+  return(
+    <div style={{borderRadius:12,overflow:"hidden",border:"1px solid "+edBorder,boxShadow:"0 1px 3px rgba(0,0,0,.04)"}}>
+      {/* Toolbar */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 4px 0 0",background:edLine,borderBottom:"1px solid "+edBorder,flexWrap:"wrap",gap:6}}>
+        <div style={{display:"flex",alignItems:"center",gap:0}}>
+          {/* File tab */}
+          <div style={{display:"flex",alignItems:"center",gap:7,padding:"10px 16px",background:edBg,borderRight:"1px solid "+edBorder,fontSize:12.5,fontWeight:600,color:edText,fontFamily:"var(--mono)"}}>
+            <span style={{width:14,height:14,borderRadius:3,background:"var(--accent)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#fff",fontWeight:700}}>Y</span>
+            {filename}
+          </div>
+          {/* Status */}
+          <div style={{display:"flex",alignItems:"center",gap:5,padding:"0 14px",fontSize:11,fontWeight:600,color:statusColor}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:statusColor}} />
+            {statusText}
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 8px"}}>
+          {onRefresh&&<button onClick={onRefresh} style={{...tBtn,background:"transparent",color:"var(--dim)"}} onMouseOver={e=>{e.currentTarget.style.background=edLine;e.currentTarget.style.color=edText;}} onMouseOut={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="var(--dim)";}}>Refresh from UI</button>}
+          <button onClick={onReset} style={{...tBtn,background:"transparent",color:"var(--dim)"}} onMouseOver={e=>{e.currentTarget.style.background=edLine;e.currentTarget.style.color=edText;}} onMouseOut={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="var(--dim)";}}>Reset to disk</button>
+          <button onClick={onApply} disabled={!dirty} style={{...tBtn,background:dirty?"var(--accent)":"transparent",color:dirty?"#fff":"var(--muted)",border:dirty?"1px solid var(--accent)":"1px solid "+edBorder,fontWeight:dirty?600:500,cursor:dirty?"pointer":"default"}}>{dirty?"Apply":"No changes"}</button>
+        </div>
+      </div>
+      {/* Editor body */}
+      <div style={{display:"flex",background:edBg,position:"relative"}}>
+        {/* Line numbers */}
+        <div ref={numsRef} style={{width:52,flexShrink:0,padding:"14px 0",overflowY:"hidden",background:edLine,borderRight:"1px solid "+edBorder,userSelect:"none"}}>
+          {Array.from({length:lineCount},(_,i)=>(
+            <div key={i} style={{height:21.45,fontSize:11.5,fontFamily:"var(--mono)",color:edNum,textAlign:"right",paddingRight:12,lineHeight:"21.45px"}}>{i+1}</div>
+          ))}
+        </div>
+        {/* Textarea */}
+        <textarea ref={textRef} value={value} onChange={e=>onChange(e.target.value)} onScroll={handleScroll} onKeyDown={handleTab} spellCheck={false} style={{flex:1,minHeight:Math.min(Math.max(lineCount*21.45+28,300),700),fontFamily:"var(--mono)",fontSize:12.5,lineHeight:"21.45px",padding:"14px 16px",background:"transparent",color:edText,caretColor:edCaret,border:"none",outline:"none",resize:"vertical",tabSize:2,whiteSpace:"pre",overflowWrap:"normal",overflowX:"auto"}} />
+      </div>
+      {/* Footer */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 16px",background:edLine,borderTop:"1px solid "+edBorder,fontSize:11,color:"var(--muted)",fontFamily:"var(--mono)"}}>
+        <span>YAML{dirty?" \u2022 modified":""}</span>
+        <span>{lineCount} lines</span>
+      </div>
+      {error&&<div style={{padding:"9px 14px",fontSize:12.5,background:"var(--errBg)",color:"var(--err)",borderTop:"1px solid rgba(220,38,38,.15)"}}><strong>Parse error:</strong> {error}</div>}
+    </div>
+  );
+}
+
+/* ═══ Log viewer ═══ */
+function LogViewer({logs,isRunning,elapsed}){
+  const ref=useRef(null);
+  useEffect(()=>{if(ref.current)ref.current.scrollTop=ref.current.scrollHeight;},[logs]);
+  const cls=l=>{if(l.includes("completed")||l.includes("written")||l.includes("success"))return"var(--ok)";if(l.includes("Error")||l.includes("FAIL")||l.includes("failed"))return"var(--err)";if(l.startsWith("  "))return"#4f5bd5";return"var(--text)";};
+  const fmt=s=>s<60?`${s.toFixed(1)}s`:`${Math.floor(s/60)}m ${Math.floor(s%60)}s`;
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:7}}>
+          <span style={{width:8,height:8,borderRadius:"50%",background:isRunning?"var(--ok)":"var(--muted)",animation:isRunning?"pulse 1.5s infinite":"none"}} />
+          <span style={{fontSize:12,color:"var(--dim)"}}>{isRunning?"Running...":logs.length>0?"Completed":"Waiting"}</span>
+        </div>
+        {elapsed>0&&<span style={{fontSize:12,color:"var(--accent)",fontFamily:"var(--mono)"}}>{fmt(elapsed)}</span>}
+      </div>
+      <div ref={ref} style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,padding:"14px 16px",fontFamily:"var(--mono)",fontSize:12,lineHeight:1.7,height:360,overflowY:"auto",marginTop:10,whiteSpace:"pre-wrap"}}>
+        {logs.length===0?<span style={{color:"var(--muted)"}}>Pipeline output will appear here...</span>:logs.map((l,i)=><div key={i} style={{color:cls(l)}}>{l}</div>)}
+      </div>
+    </div>
+  );
+}
+
+/* ═══ Validation ═══ */
+function validate(c){
+  const e=[],w=[];
+  if(c.endDate<c.startDate) e.push("End date must be after start date.");
+  if(c.salesRows<=0) e.push("Total rows must be > 0.");
+  if(c.maxPrice<=c.minPrice) e.push("Max unit price must exceed min unit price.");
+  if(c.returnsEnabled&&(c.returnRate<0||c.returnRate>1)) e.push("Return rate must be 0–1.");
+  const rS=c.pctIndia+c.pctUs+c.pctEu+c.pctAsia;
+  if(rS<=0) e.push("Customer regional % must sum to > 0.");
+  if(c.chunkSize>c.salesRows) w.push("Chunk size exceeds total rows.");
+  if(c.format==="csv"&&c.salesRows>5000000) w.push("Large CSV outputs can be slow. Consider parquet.");
+  if(c.customers>c.salesRows&&c.salesRows>0) w.push(`Customers (${c.customers.toLocaleString()}) exceed sales rows.`);
+  if(c.products>c.salesRows&&c.salesRows>0) w.push(`Products (${c.products.toLocaleString()}) exceed sales rows.`);
+  if(c.customers>0&&c.salesRows/c.customers<1.5) w.push(`Low rows-per-customer ratio (${(c.salesRows/c.customers).toFixed(1)}).`);
+  const gS=Object.values(c.geoWeights).reduce((a,b)=>a+b,0);
+  if(Math.abs(gS-1)>.05&&gS>0) w.push(`Geography weights sum to ${(gS*100).toFixed(0)}% (expected ~100%).`);
+  if(c.returnsEnabled&&c.returnMaxDays<=c.returnMinDays) w.push("Return max days should exceed min days.");
+  return{errors:e,warnings:w};
+}
+
+/* ═══ Debounced sync ═══ */
+function useDebounce(fn,ms){const t=useRef(null);return useCallback((...a)=>{clearTimeout(t.current);t.current=setTimeout(()=>fn(...a),ms);},[fn,ms]);}
+
+/* ═══ App ═══ */
+function App(){
+  const[cfg,setCfg]=useState(null);
+  const[presets,setPresets]=useState({});
+  const[presetBucket,setPresetBucket]=useState("");
+  const[selectedPreset,setSelectedPreset]=useState(null);
+  const[toast,setToast]=useState(null);
+  const[logs,setLogs]=useState([]);
+  const[isRunning,setIsRunning]=useState(false);
+  const[elapsed,setElapsed]=useState(0);
+  const timerRef=useRef(null);
+  const[modelsYaml,setModelsYaml]=useState("");
+  const[modelsOrig,setModelsOrig]=useState("");
+  const[modelsDisk,setModelsDisk]=useState("");
+  const[modelsErr,setModelsErr]=useState(null);
+  const modelsDirty=modelsYaml!==modelsOrig;
+  const modelsApplied=modelsOrig!==modelsDisk;
+  const[cfgYaml,setCfgYaml]=useState("");
+  const[cfgYamlOrig,setCfgYamlOrig]=useState("");
+  const[cfgYamlDisk,setCfgYamlDisk]=useState("");
+  const[cfgYamlCurrent,setCfgYamlCurrent]=useState("");
+  const[cfgYamlErr,setCfgYamlErr]=useState(null);
+  const cfgYamlDirty=cfgYaml!==cfgYamlOrig;
+  const cfgYamlApplied=cfgYamlCurrent!==cfgYamlDisk;
+  const[page,setPage_]=useState("main");
+  const setPage=useCallback((p)=>{
+    setPage_(p);
+    if(p==="config")loadCfgYaml();
+    if(p==="models")fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);}).catch(()=>{});
+  },[]);
+
+  /* Load initial config + presets */
+  useEffect(()=>{
+    fetch(API+"/config").then(r=>r.json()).then(d=>{
+      d.geoWeights=d.geoWeights||{};
+      d.regenAll=false;d.regenDims={};d.autoWorkers=!d.workers;
+      setCfg(d);
+    }).catch(()=>{
+      /* Offline fallback */
+      setCfg({format:"csv",salesOutput:"sales",skipOrderCols:false,compression:"snappy",rowGroupSize:2000000,mergeParquet:true,partitionEnabled:true,startDate:"2023-01-01",endDate:"2026-12-31",fiscalMonthOffset:0,includeCalendar:true,includeIso:false,includeFiscal:true,includeWeeklyFiscal:false,wfFirstDay:0,wfWeeklyType:"Last",wfQuarterType:"445",salesRows:50015,chunkSize:1000000,autoWorkers:false,workers:8,customers:48832,stores:20,products:4338,promotions:20,pctIndia:10,pctUs:51,pctEu:39,pctAsia:0,pctOrg:10,customerActiveRatio:.9,churnEnabled:true,baseMonthlyChurn:.52,minTenureMonths:22,initialActiveCust:2000,initialSpreadMonths:36,valueScale:1,minPrice:100,maxPrice:5000,productActiveRatio:.94,lookbackYears:10,lookaheadYears:2,preexistingShare:.7,discontinueRatio:.2,geoWeights:{"United States":.35,India:.2,"United Kingdom":.1,Germany:.1,France:.1,Australia:.07,Canada:.08},returnsEnabled:true,returnRate:.03,returnMinDays:1,returnMaxDays:60,tuningIntensity:.55,tuningSmoothness:.9,tuningCycles:.35,regenAll:false,regenDims:{}});
+    });
+    fetch(API+"/presets").then(r=>r.json()).then(d=>{setPresets(d);setPresetBucket(Object.keys(d)[0]||"");}).catch(()=>{});
+    fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);setModelsDisk(t);}).catch(()=>{});
+  },[]);
+
+  /* Sync config changes to backend (debounced) */
+  const syncToBackend=useDebounce((vals)=>{
+    fetch(API+"/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({values:vals})}).catch(()=>{});
+  },400);
+
+  const s=useCallback((k,v)=>{
+    setCfg(p=>{const n={...p,[k]:v};syncToBackend(n);return n;});
+  },[syncToBackend]);
+
+  const reloadFormFromServer=useCallback(()=>{
+    fetch(API+"/config").then(r=>r.json()).then(d=>{
+      d.geoWeights=d.geoWeights||{};d.regenAll=cfg?.regenAll||false;d.regenDims=cfg?.regenDims||{};d.autoWorkers=!d.workers;
+      setCfg(d);
+    }).catch(()=>{});
+  },[]);
+
+  const loadCfgYaml=useCallback(()=>{
+    Promise.all([
+      fetch(API+"/config/yaml").then(r=>r.text()),
+      fetch(API+"/config/yaml/disk").then(r=>r.text()),
+    ]).then(([current,disk])=>{
+      setCfgYamlCurrent(current);
+      setCfgYamlDisk(disk);
+      const initial=(disk&&disk.trim().length>0)?disk:current;
+      setCfgYaml(initial);setCfgYamlOrig(initial);setCfgYamlErr(null);
+    }).catch(()=>{});
+  },[]);
+
+  const flash=m=>{setToast(m);setTimeout(()=>setToast(null),2400);};
+  const setGeo=(c,v)=>setCfg(p=>{const n={...p,geoWeights:{...p.geoWeights,[c]:Math.max(0,Math.min(1,v))}};syncToBackend(n);return n;});
+
+  const applyPreset=(name)=>{
+    fetch(API+"/presets/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})})
+      .then(()=>fetch(API+"/config").then(r=>r.json()).then(d=>{d.geoWeights=d.geoWeights||{};d.regenAll=cfg.regenAll;d.regenDims=cfg.regenDims;d.autoWorkers=!d.workers;setCfg(d);}))
+      .catch(()=>{});
+    setSelectedPreset(name);
+    flash(`Applied: ${name}`);
+  };
+
+  /* Generate */
+  const runGenerate=()=>{
+    if(errors.length>0||isRunning)return;
+    const regenDims=cfg.regenAll?DIMS:Object.keys(cfg.regenDims).filter(k=>cfg.regenDims[k]);
+    fetch(API+"/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({regen_dimensions:regenDims.length?regenDims:null})})
+      .then(r=>r.json()).then(()=>{
+        setLogs([]);setIsRunning(true);setElapsed(0);
+        const start=Date.now();
+        timerRef.current=setInterval(()=>setElapsed((Date.now()-start)/1000),100);
+        const es=new EventSource(API+"/generate/stream");
+        es.onmessage=(ev)=>{
+          const d=JSON.parse(ev.data);
+          if(d.type==="log")setLogs(p=>[...p,d.line]);
+          if(d.type==="status")setElapsed(d.elapsed);
+          if(d.type==="end"){clearInterval(timerRef.current);setIsRunning(false);setElapsed(d.elapsed);es.close();}
+          if(d.type==="idle"){es.close();}
+        };
+        es.onerror=()=>{clearInterval(timerRef.current);setIsRunning(false);es.close();};
+      }).catch(e=>{setLogs(["Failed to start pipeline: "+e.message]);});
+  };
+  const cancelGenerate=()=>{
+    fetch(API+"/generate/cancel",{method:"POST"}).then(()=>{clearInterval(timerRef.current);setIsRunning(false);}).catch(()=>{});
+  };
+  const saveModels=()=>{
+    setModelsErr(null);
+    fetch(API+"/models",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml_text:modelsYaml})})
+      .then(r=>{if(!r.ok)return r.json().then(d=>{throw new Error(d.detail||"Save failed")});return r.json();})
+      .then(d=>{setModelsOrig(modelsYaml);setModelsErr(null);flash("Models saved (in memory)");if(d.tuningIntensity!=null){setCfg(p=>({...p,tuningIntensity:d.tuningIntensity,tuningSmoothness:d.tuningSmoothness,tuningCycles:d.tuningCycles}));}})
+      .catch(e=>setModelsErr(e.message));
+  };
+  const resetModels=()=>{
+    fetch(API+"/models/reset",{method:"POST"})
+      .then(r=>r.json())
+      .then(d=>{
+        fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);setModelsDisk(t);setModelsErr(null);flash("Models reset to disk version");});
+        if(d.tuningIntensity!=null){setCfg(p=>({...p,tuningIntensity:d.tuningIntensity,tuningSmoothness:d.tuningSmoothness,tuningCycles:d.tuningCycles}));}
+      }).catch(()=>{});
+  };
+  const saveCfgYaml=()=>{
+    setCfgYamlErr(null);
+    fetch(API+"/config/yaml",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml_text:cfgYaml})})
+      .then(r=>{if(!r.ok)return r.json().then(d=>{throw new Error(d.detail||"Save failed")});return r.json();})
+      .then(()=>{setCfgYamlOrig(cfgYaml);setCfgYamlCurrent(cfgYaml);setCfgYamlErr(null);flash("Config applied (in memory)");reloadFormFromServer();})
+      .catch(e=>setCfgYamlErr(e.message));
+  };
+  const resetCfgYaml=()=>{
+    fetch(API+"/config/yaml/reset",{method:"POST"})
+      .then(r=>r.json())
+      .then(()=>{loadCfgYaml();reloadFormFromServer();flash("Config reset to disk version");})
+      .catch(()=>{});
+  };
+  const refreshCfgYamlFromUI=()=>{
+    fetch(API+"/config/yaml").then(r=>r.text()).then(t=>{setCfgYamlCurrent(t);setCfgYaml(t);setCfgYamlOrig(t);setCfgYamlErr(null);flash("Loaded current UI settings");}).catch(()=>{});
+  };
+
+  if(!cfg)return <div style={{padding:40,textAlign:"center",color:"var(--muted)"}}>Loading configuration...</div>;
+  const{errors,warnings}=validate(cfg);
+  const showPq=cfg.format==="parquet"||cfg.format==="deltaparquet";
+
+  return(
+    <div style={{display:"flex",minHeight:"100vh"}}>
+      {toast&&<div style={{position:"fixed",top:16,right:16,zIndex:999,background:"var(--accent)",color:"#fff",padding:"9px 20px",borderRadius:8,fontSize:13,fontWeight:600,boxShadow:"0 6px 24px rgba(79,91,213,.25)",animation:"slideIn .28s ease"}}>{toast}</div>}
+
+      {/* ═══ SIDEBAR ═══ */}
+      <div style={{width:320,flexShrink:0,background:"var(--surface)",borderRight:"1px solid var(--border)",padding:20,overflowY:"auto"}}>
+        <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Presets</div>
+        {Object.keys(presets).length>0?(<>
+          <Sel value={presetBucket} onChange={setPresetBucket} options={Object.keys(presets)} />
+          <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>{Object.entries(presets[presetBucket]||{}).map(([name,p])=>{
+            const sel=selectedPreset===name;
+            const c=p||{};const cust=c.customers||c.total_customers;const prod=c.products||c.num_products;const rows=c.sales_rows||c.total_rows;
+            return(
+              <button key={name} onClick={()=>applyPreset(name)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"9px 12px",borderRadius:8,cursor:"pointer",border:`1px solid ${sel?"var(--accent)":"var(--border)"}`,background:sel?"var(--glow)":"var(--surface)",fontFamily:"var(--sans)",transition:"all .12s",gap:8}}>
+                <span style={{fontSize:12.5,fontWeight:sel?600:400,color:sel?"var(--accent)":"var(--text)",textAlign:"left",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{name}</span>
+                {(cust||prod||rows)&&<span style={{display:"flex",gap:6,flexShrink:0}}>
+                  {cust&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:sel?"rgba(79,91,213,.12)":"var(--alt)",color:sel?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",fontWeight:500}}>{(cust/1000).toFixed(cust%1000?1:0)}K</span>}
+                  {prod&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:sel?"rgba(79,91,213,.12)":"var(--alt)",color:sel?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",fontWeight:500}}>{(prod/1000).toFixed(prod%1000?1:0)}K</span>}
+                </span>}
+              </button>
+            );
+          })}</div>
+        </>):(<div style={{fontSize:12,color:"var(--muted)"}}>No presets loaded</div>)}
+
+        <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
+        <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Models Tuning</div>
+        <Sld label="Acquisition intensity" value={cfg.tuningIntensity} min={0} max={1} step={.05} onChange={v=>s("tuningIntensity",v)} />
+        <Sld label="Acquisition smoothness" value={cfg.tuningSmoothness} min={0} max={1} step={.05} onChange={v=>s("tuningSmoothness",v)} />
+        <Sld label="Acquisition cycles" value={cfg.tuningCycles} min={0} max={1} step={.05} onChange={v=>s("tuningCycles",v)} />
+
+        <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
+        <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Models</div>
+        <button onClick={()=>setPage(page==="models"?"main":"models")} style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${page==="models"?"var(--accent)":"var(--border)"}`,background:page==="models"?"var(--glow)":"var(--surface)",color:page==="models"?"var(--accent)":"var(--dim)",fontSize:12.5,fontWeight:page==="models"?600:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .15s",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span>Models Configuration</span>
+          {(modelsDirty||modelsApplied)&&<span style={{width:7,height:7,borderRadius:"50%",background:modelsDirty?"var(--warn)":"var(--accent)",flexShrink:0}} />}
+        </button>
+        {page==="models"&&<div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>Editing models.yaml in memory</div>}
+
+        <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
+        <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Config</div>
+        <button onClick={()=>setPage(page==="config"?"main":"config")} style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${page==="config"?"var(--accent)":"var(--border)"}`,background:page==="config"?"var(--glow)":"var(--surface)",color:page==="config"?"var(--accent)":"var(--dim)",fontSize:12.5,fontWeight:page==="config"?600:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .15s",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+          <span>Config YAML</span>
+          {(cfgYamlDirty||cfgYamlApplied)&&<span style={{width:7,height:7,borderRadius:"50%",background:cfgYamlDirty?"var(--warn)":"var(--accent)",flexShrink:0}} />}
+        </button>
+        <button onClick={()=>fetch(API+"/config/download").then(r=>r.json()).then(d=>{const b=new Blob([JSON.stringify(d,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="config.json";a.click();})} style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12,cursor:"pointer",fontFamily:"var(--sans)"}}>Download config</button>
+      </div>
+
+      {/* ═══ MAIN ═══ */}
+      <div style={{flex:1,padding:"28px 40px",maxWidth:1120,overflowY:"auto"}}>
+
+        {page==="models"?(
+        /* ═══ MODELS EDITOR PAGE ═══ */
+        <div>
+          <button onClick={()=>setPage("main")} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:7,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12.5,cursor:"pointer",fontFamily:"var(--sans)",marginBottom:18,transition:"all .12s"}} onMouseOver={e=>e.currentTarget.style.borderColor="var(--accent)"} onMouseOut={e=>e.currentTarget.style.borderColor="var(--border)"}>
+            {"\u2190"} Back to configuration
+          </button>
+          <h1 style={{fontSize:22,fontWeight:700,letterSpacing:"-.02em",marginBottom:4}}>Models Configuration</h1>
+          <p style={{fontSize:13,color:"var(--dim)",marginBottom:18}}>
+            Edit the full models configuration. Changes are held in memory only {"\u2014"} the file on disk is never modified.
+          </p>
+          <YamlEditor value={modelsYaml} onChange={setModelsYaml} filename="models.yaml" dirty={modelsDirty} applied={modelsApplied} error={modelsErr} onApply={saveModels} onReset={resetModels} />
+        </div>
+
+        ):page==="config"?(
+        /* ═══ CONFIG YAML EDITOR PAGE ═══ */
+        <div>
+          <button onClick={()=>setPage("main")} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:7,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12.5,cursor:"pointer",fontFamily:"var(--sans)",marginBottom:18,transition:"all .12s"}} onMouseOver={e=>e.currentTarget.style.borderColor="var(--accent)"} onMouseOut={e=>e.currentTarget.style.borderColor="var(--border)"}>
+            {"\u2190"} Back to configuration
+          </button>
+          <h1 style={{fontSize:22,fontWeight:700,letterSpacing:"-.02em",marginBottom:4}}>Config YAML</h1>
+          <p style={{fontSize:13,color:"var(--dim)",marginBottom:18}}>
+            Edit the full config below. Applying here will override any preset or form settings. The file on disk is never modified.
+          </p>
+          <YamlEditor value={cfgYaml} onChange={setCfgYaml} filename="config.yaml" dirty={cfgYamlDirty} applied={cfgYamlApplied} error={cfgYamlErr} onApply={saveCfgYaml} onReset={resetCfgYaml} onRefresh={refreshCfgYamlFromUI} />
+        </div>
+
+        ):(
+        /* ═══ MAIN CONFIG PAGE ═══ */
+        <div>
+        <h1 style={{fontSize:22,fontWeight:700,letterSpacing:"-.02em"}}>Retail Data Generator</h1>
+        <p style={{fontSize:13,color:"var(--dim)",marginTop:3,marginBottom:22}}>Configure and generate large, realistic retail datasets</p>
+
+        {/* 1 OUTPUT */}
+        <Section num="1" title="Output">
+          <R2>
+            <F label="Output format"><Sel value={cfg.format} onChange={v=>s("format",v)} options={["csv","parquet","deltaparquet"]} /></F>
+            <F label="Sales output"><Sel value={cfg.salesOutput} onChange={v=>s("salesOutput",v)} options={["sales","sales_order","both"]} labels={["Sales (flat)","Order Header + Detail","Both"]} /></F>
+          </R2>
+          <div style={{marginTop:12}}><Check checked={cfg.skipOrderCols} onChange={v=>s("skipOrderCols",v)} label="Skip order columns" /></div>
+          {showPq&&<Box title="Parquet / Delta options"><R3>
+            <F label="Compression"><Sel value={cfg.compression} onChange={v=>s("compression",v)} options={["snappy","zstd","gzip","none"]} /></F>
+            <F label="Row group size"><N value={cfg.rowGroupSize} onChange={v=>s("rowGroupSize",v)} min={100000} step={500000} /></F>
+            <F label=" "><div style={{display:"flex",flexDirection:"column",gap:8,paddingTop:3}}><Check checked={cfg.mergeParquet} onChange={v=>s("mergeParquet",v)} label="Merge parquet chunks" /><Check checked={cfg.partitionEnabled} onChange={v=>s("partitionEnabled",v)} label="Partition by Year/Month" /></div></F>
+          </R3></Box>}
+        </Section>
+
+        {/* 2 DATES */}
+        <Section num="2" title="Dates">
+          <R2>
+            <F label="Start date"><input type="date" style={iS} value={cfg.startDate} onChange={e=>s("startDate",e.target.value)} /></F>
+            <F label="End date"><input type="date" style={iS} value={cfg.endDate} onChange={e=>s("endDate",e.target.value)} /></F>
+          </R2>
+          <Box title="Calendar modes">
+            <R4>
+              <div style={{paddingTop:2}}><Check checked={true} onChange={()=>{}} label="Calendar" disabled /><div style={{fontSize:10,color:"var(--muted)",marginTop:2,marginLeft:24}}>Always on</div></div>
+              <Check checked={cfg.includeIso} onChange={v=>s("includeIso",v)} label="ISO weeks" />
+              <Check checked={cfg.includeFiscal} onChange={v=>s("includeFiscal",v)} label="Fiscal" />
+              <Check checked={cfg.includeWeeklyFiscal} onChange={v=>s("includeWeeklyFiscal",v)} label="Weekly fiscal (4-4-5)" />
+            </R4>
+            {(cfg.includeFiscal||cfg.includeWeeklyFiscal)&&<div style={{marginTop:14}}><R3>
+              <F label="Fiscal year starts"><Sel value={String(cfg.fiscalMonthOffset)} onChange={v=>s("fiscalMonthOffset",parseInt(v))} options={MONTHS.map((_,i)=>String(i))} labels={MONTHS} /></F>
+              {cfg.includeWeeklyFiscal&&<><F label="First day of week"><Sel value={String(cfg.wfFirstDay)} onChange={v=>s("wfFirstDay",parseInt(v))} options={DAYS.map((_,i)=>String(i))} labels={DAYS} /></F><F label="Quarter pattern"><Sel value={cfg.wfQuarterType} onChange={v=>s("wfQuarterType",v)} options={["445","454","544"]} /></F></>}
+            </R3></div>}
+          </Box>
+        </Section>
+
+        {/* 3 VOLUME */}
+        <Section num="3" title="Volume">
+          <F label="Sales rows" help="Total rows to generate in the Sales fact table."><N value={cfg.salesRows} onChange={v=>s("salesRows",v)} min={1} step={10000} /></F>
+          <R2>
+            <F label="Chunk size"><N value={cfg.chunkSize} onChange={v=>s("chunkSize",v)} min={10000} step={100000} /></F>
+            <F label="Workers"><div style={{display:"flex",alignItems:"center",gap:10}}><Check checked={cfg.autoWorkers} onChange={v=>{s("autoWorkers",v);if(v)s("workers",0);}} label="Auto" />{!cfg.autoWorkers&&<N value={cfg.workers} onChange={v=>s("workers",v)} min={1} max={32} style={{width:100}} />}</div></F>
+          </R2>
+        </Section>
+
+        {/* 4 DIMENSIONS */}
+        <Section num="4" title="Dimension Sizes">
+          <R4>
+            <F label="Customers"><N value={cfg.customers} onChange={v=>s("customers",v)} min={1} step={1000} /></F>
+            <F label="Products"><N value={cfg.products} onChange={v=>s("products",v)} min={1} step={500} /></F>
+            <F label="Stores"><N value={cfg.stores} onChange={v=>s("stores",v)} min={1} step={10} /></F>
+            <F label="Promotions"><N value={cfg.promotions} onChange={v=>s("promotions",v)} min={0} step={5} /></F>
+          </R4>
+        </Section>
+
+        {/* 5 CUSTOMERS */}
+        <Section num="5" title="Customers" defaultOpen={false}>
+          <Box title="Regional mix (% of customers)">
+            <R4>
+              <F label="India %"><N value={cfg.pctIndia} onChange={v=>s("pctIndia",v)} min={0} max={100} /></F>
+              <F label="US %"><N value={cfg.pctUs} onChange={v=>s("pctUs",v)} min={0} max={100} /></F>
+              <F label="EU %"><N value={cfg.pctEu} onChange={v=>s("pctEu",v)} min={0} max={100} /></F>
+              <F label="Asia %"><N value={cfg.pctAsia} onChange={v=>s("pctAsia",v)} min={0} max={100} /></F>
+            </R4>
+            <div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>Sum: {cfg.pctIndia+cfg.pctUs+cfg.pctEu+cfg.pctAsia} (auto-normalized)</div>
+            <Sld label="Organization %" value={cfg.pctOrg} min={0} max={100} step={1} onChange={v=>s("pctOrg",v)} fmt={v=>`${v}%`} />
+          </Box>
+          <Sld label="Active ratio" value={cfg.customerActiveRatio} min={.1} max={1} step={.01} onChange={v=>s("customerActiveRatio",v)} />
+          <Box title="Lifecycle / Churn">
+            <Check checked={cfg.churnEnabled} onChange={v=>s("churnEnabled",v)} label="Enable customer churn" />
+            {cfg.churnEnabled&&<div style={{marginTop:12}}>
+              <R3>
+                <F label="Monthly churn rate"><N value={cfg.baseMonthlyChurn} onChange={v=>s("baseMonthlyChurn",v)} min={0} max={1} step={.01} /></F>
+                <F label="Min tenure (months)"><N value={cfg.minTenureMonths} onChange={v=>s("minTenureMonths",v)} min={0} step={1} /></F>
+                <F label="Initial active customers"><N value={cfg.initialActiveCust} onChange={v=>s("initialActiveCust",v)} min={1} step={100} /></F>
+              </R3>
+              <F label="Initial spread (months)" help="Months before start_date that existing customers are spread over."><N value={cfg.initialSpreadMonths} onChange={v=>s("initialSpreadMonths",v)} min={1} step={6} /></F>
+            </div>}
+          </Box>
+        </Section>
+
+        {/* 6 PRODUCTS */}
+        <Section num="6" title="Products" defaultOpen={false}>
+          <Box title="Pricing">
+            <R3>
+              <F label="Value scale" help="Multiplier on base product prices."><N value={cfg.valueScale} onChange={v=>s("valueScale",v)} min={.01} max={10} step={.05} /></F>
+              <F label="Min unit price"><N value={cfg.minPrice} onChange={v=>s("minPrice",v)} min={0} step={10} /></F>
+              <F label="Max unit price"><N value={cfg.maxPrice} onChange={v=>s("maxPrice",v)} min={1} step={50} /></F>
+            </R3>
+            {cfg.maxPrice>cfg.minPrice&&<div style={{fontSize:11,color:"var(--muted)",marginTop:8}}>Scaled range: ~{((cfg.minPrice||0)*(cfg.valueScale||1)).toLocaleString()} {"\u2192"} {((cfg.maxPrice||0)*(cfg.valueScale||1)).toLocaleString()}</div>}
+          </Box>
+          <Sld label="Active ratio" value={cfg.productActiveRatio} min={.1} max={1} step={.01} onChange={v=>s("productActiveRatio",v)} />
+          <Box title="Lifecycle">
+            <R4>
+              <F label="Lookback years" help="Products existing before start."><N value={cfg.lookbackYears} onChange={v=>s("lookbackYears",v)} min={0} max={30} /></F>
+              <F label="Lookahead years" help="Future launches."><N value={cfg.lookaheadYears} onChange={v=>s("lookaheadYears",v)} min={0} max={10} /></F>
+              <F label="Preexisting share"><N value={cfg.preexistingShare} onChange={v=>s("preexistingShare",v)} min={0} max={1} step={.05} /></F>
+              <F label="Discontinue ratio"><N value={cfg.discontinueRatio} onChange={v=>s("discontinueRatio",v)} min={0} max={1} step={.05} /></F>
+            </R4>
+          </Box>
+        </Section>
+
+        {/* 7 GEOGRAPHY */}
+        <Section num="7" title="Geography" defaultOpen={false}>
+          <F label="Country weights" help="Relative distribution of geography rows. Auto-normalized.">
+            <div style={{marginTop:8}}>{Object.entries(cfg.geoWeights).map(([country,w])=>(
+              <div key={country} style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
+                <span style={{fontSize:13,width:140,color:"var(--text)"}}>{country}</span>
+                <input type="range" min={0} max={.5} step={.01} value={w} onChange={e=>setGeo(country,parseFloat(e.target.value))} style={{flex:1,accentColor:"var(--accent)"}} />
+                <span style={{fontSize:12,fontFamily:"var(--mono)",color:"var(--accent)",width:42,textAlign:"right"}}>{(w*100).toFixed(0)}%</span>
+              </div>
+            ))}</div>
+          </F>
+        </Section>
+
+        {/* 8 RETURNS */}
+        <Section num="8" title="Returns" defaultOpen={false} badge={cfg.returnsEnabled?{v:"success",t:"ON"}:{v:"default",t:"OFF"}}>
+          <div style={{marginTop:10}}><Check checked={cfg.returnsEnabled} onChange={v=>s("returnsEnabled",v)} label="Enable returns generation" /></div>
+          {cfg.returnsEnabled&&<R3>
+            <F label="Return rate" help="Fraction of sales rows returned."><N value={cfg.returnRate} onChange={v=>s("returnRate",v)} min={0} max={1} step={.005} /></F>
+            <F label="Min days after sale"><N value={cfg.returnMinDays} onChange={v=>s("returnMinDays",v)} min={1} step={1} /></F>
+            <F label="Max days after sale"><N value={cfg.returnMaxDays} onChange={v=>s("returnMaxDays",v)} min={1} step={5} /></F>
+          </R3>}
+        </Section>
+
+        {/* 9 REGENERATE */}
+        <Section num="9" title="Regenerate Dimensions" defaultOpen={false}>
+          <div style={{marginTop:10}}><Check checked={cfg.regenAll} onChange={v=>s("regenAll",v)} label="Regenerate all dimensions" /></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:12}}>{DIMS.map(d=><Check key={d} checked={cfg.regenAll||!!cfg.regenDims[d]} onChange={v=>s("regenDims",{...cfg.regenDims,[d]:v})} label={d.replace("_"," ")} />)}</div>
+        </Section>
+
+        {/* 10 VALIDATION */}
+        <Section num="10" title="Validation" badge={errors.length>0?{v:"error",t:`${errors.length} error${errors.length>1?"s":""}`}:warnings.length>0?{v:"warning",t:`${warnings.length} warning${warnings.length>1?"s":""}`}:{v:"success",t:"Valid"}}>
+          <div style={{marginTop:8}}>
+            {errors.length===0&&warnings.length===0&&<div style={{display:"flex",alignItems:"center",gap:8}}><Badge variant="success">Valid</Badge><span style={{fontSize:13,color:"var(--dim)"}}>Configuration looks good.</span></div>}
+            {errors.map((e,i)=><div key={`e${i}`} style={{padding:"9px 13px",borderRadius:8,marginTop:6,fontSize:12.5,display:"flex",alignItems:"center",gap:7,background:"var(--errBg)",color:"var(--err)",border:"1px solid rgba(220,38,38,.12)"}}><span style={{fontWeight:700}}>✕</span> {e}</div>)}
+            {warnings.map((w,i)=><div key={`w${i}`} style={{padding:"9px 13px",borderRadius:8,marginTop:6,fontSize:12.5,display:"flex",alignItems:"center",gap:7,background:"var(--warnBg)",color:"var(--warn)",border:"1px solid rgba(202,138,4,.1)"}}><span style={{fontWeight:700}}>⚠</span> {w}</div>)}
+          </div>
+        </Section>
+
+        {/* 11 GENERATE */}
+        <Section num="11" title="Generate">
+          <div style={{marginTop:10,padding:"12px 16px",background:"var(--alt)",borderRadius:10,border:"1px solid var(--border)",fontSize:13,color:"var(--dim)",lineHeight:1.7}}>
+            <strong style={{color:"var(--text)"}}>{cfg.salesRows.toLocaleString()}</strong> rows · <strong style={{color:"var(--text)"}}>{cfg.customers.toLocaleString()}</strong> cust · <strong style={{color:"var(--text)"}}>{cfg.products.toLocaleString()}</strong> prod · {cfg.startDate} {"\u2192"} {cfg.endDate} · <Badge>{cfg.format.toUpperCase()}</Badge>
+            {cfg.salesOutput!=="sales"&&<>{" · "}<Badge>{cfg.salesOutput==="both"?"Sales + Orders":"Orders"}</Badge></>}
+            {cfg.returnsEnabled&&<>{" · "}<Badge variant="success">Returns {(cfg.returnRate*100).toFixed(1)}%</Badge></>}
+          </div>
+          <div style={{marginTop:14}}>
+            <button onClick={runGenerate} disabled={errors.length>0||isRunning} style={{width:"100%",padding:"12px 24px",borderRadius:10,border:"none",fontSize:14,fontWeight:700,cursor:errors.length>0?"not-allowed":"pointer",fontFamily:"var(--sans)",transition:"all .15s",background:errors.length>0?"var(--alt)":"var(--accent)",color:errors.length>0?"var(--muted)":"#fff",opacity:isRunning?.7:1,boxShadow:errors.length===0&&!isRunning?"0 4px 16px rgba(79,91,213,.2)":"none"}}>{isRunning?"Generating...":"Generate Data"}</button>
+            {isRunning&&<button onClick={cancelGenerate} style={{width:"100%",padding:10,marginTop:8,borderRadius:10,border:"1px solid var(--err)",background:"var(--errBg)",color:"var(--err)",fontWeight:600,fontSize:13,cursor:"pointer",fontFamily:"var(--sans)"}}>Cancel</button>}
+          </div>
+          <LogViewer logs={logs} isRunning={isRunning} elapsed={elapsed} />
+        </Section>
+        </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
