@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -69,7 +69,9 @@ def _base_config() -> dict:
 
 
 _cfg: Dict[str, Any] = _base_config()
+_cfg_disk_yaml: str = _config_path.read_text(encoding="utf-8") if _config_path.exists() else ""
 _models_cfg: Dict[str, Any] = _load_yaml(_models_path)
+_models_yaml_text: str = _models_path.read_text(encoding="utf-8") if _models_path.exists() else ""
 
 # ---------------------------------------------------------------------------
 # Preset logic
@@ -336,6 +338,106 @@ def download_config():
 
 
 # ---------------------------------------------------------------------------
+# Config YAML editor (in-memory only, never writes to disk)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/config/yaml")
+def get_config_yaml():
+    """Return the current in-memory config serialized as YAML text."""
+    text = yaml.safe_dump(_cfg, sort_keys=False, default_flow_style=False)
+    return Response(content=text, media_type="text/plain")
+
+
+@app.get("/api/config/yaml/disk")
+def get_config_yaml_disk():
+    """Return the original config.yaml from disk (for three-state tracking)."""
+    return Response(content=_cfg_disk_yaml, media_type="text/plain")
+
+
+class ConfigYamlUpdate(BaseModel):
+    yaml_text: str
+
+
+@app.post("/api/config/yaml")
+def update_config_yaml(body: ConfigYamlUpdate):
+    """Parse YAML, replace in-memory config. Original file untouched.
+
+    Returns the flat config shape so the form UI can sync.
+    """
+    global _cfg
+    text = body.yaml_text
+    try:
+        parsed = yaml.safe_load(text)
+        if not isinstance(parsed, dict):
+            raise HTTPException(400, "Config YAML must be a mapping at the top level.")
+    except yaml.YAMLError as e:
+        raise HTTPException(400, f"Invalid YAML: {e}")
+    _cfg = parsed
+    return {"ok": True}
+
+
+@app.post("/api/config/yaml/reset")
+def reset_config_yaml():
+    """Reload config from disk, discarding in-memory edits."""
+    global _cfg, _cfg_disk_yaml
+    _cfg = _base_config()
+    _cfg_disk_yaml = _config_path.read_text(encoding="utf-8") if _config_path.exists() else ""
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Models YAML editor (in-memory only, never writes to disk)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/models")
+def get_models():
+    """Return the current models YAML as raw text for the editor."""
+    return Response(content=_models_yaml_text, media_type="text/plain")
+
+
+class ModelsUpdate(BaseModel):
+    yaml_text: str
+
+
+@app.post("/api/models")
+def update_models(body: ModelsUpdate):
+    """Parse and store updated models YAML in memory. Original file is untouched."""
+    global _models_cfg, _models_yaml_text
+    text = body.yaml_text
+    try:
+        parsed = yaml.safe_load(text)
+        if not isinstance(parsed, dict):
+            raise HTTPException(400, "Models YAML must be a mapping at the top level.")
+    except yaml.YAMLError as e:
+        raise HTTPException(400, f"Invalid YAML: {e}")
+    _models_cfg = parsed
+    _models_yaml_text = text
+    # Sync tuning sliders from parsed content
+    tuning = parsed.get("tuning", {}) or {}
+    return {
+        "ok": True,
+        "tuningIntensity": float(tuning.get("acquisition_intensity", 0.55)),
+        "tuningSmoothness": float(tuning.get("acquisition_smoothness", 0.90)),
+        "tuningCycles": float(tuning.get("acquisition_cycles", 0.35)),
+    }
+
+
+@app.post("/api/models/reset")
+def reset_models():
+    """Reload models from disk, discarding in-memory edits."""
+    global _models_cfg, _models_yaml_text
+    _models_cfg = _load_yaml(_models_path)
+    _models_yaml_text = _models_path.read_text(encoding="utf-8") if _models_path.exists() else ""
+    tuning = _models_cfg.get("tuning", {}) or {}
+    return {
+        "ok": True,
+        "tuningIntensity": float(tuning.get("acquisition_intensity", 0.55)),
+        "tuningSmoothness": float(tuning.get("acquisition_smoothness", 0.90)),
+        "tuningCycles": float(tuning.get("acquisition_cycles", 0.35)),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Presets
 # ---------------------------------------------------------------------------
 
@@ -538,6 +640,23 @@ def job_status():
         "elapsed": round(elapsed, 1), "exit_code": _current_job.get("exit_code"),
         "log_count": len(_current_job["logs"]),
     }
+
+
+# ---------------------------------------------------------------------------
+# Favicon (suppress browser 404)
+# ---------------------------------------------------------------------------
+
+_FAVICON_SVG = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    b'<rect width="32" height="32" rx="6" fill="#4f5bd5"/>'
+    b'<text x="16" y="23" font-size="20" text-anchor="middle" fill="#fff" '
+    b'font-family="system-ui">D</text></svg>'
+)
+
+
+@app.get("/favicon.ico")
+def favicon():
+    return Response(content=_FAVICON_SVG, media_type="image/svg+xml")
 
 
 # ---------------------------------------------------------------------------

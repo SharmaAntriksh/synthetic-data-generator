@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Retail Data Generator</title>
+<link rel="icon" href="/favicon.ico" type="image/svg+xml" />
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -13,6 +14,7 @@
 :root{--bg:#f8f8fa;--surface:#fff;--alt:#f2f3f7;--border:#e2e4ec;--focus:#5b6abf;--accent:#4f5bd5;--glow:rgba(79,91,213,.08);--text:#1a1a2e;--dim:#5f6278;--muted:#9496a8;--ok:#16a34a;--okBg:rgba(22,163,74,.07);--warn:#ca8a04;--warnBg:rgba(202,138,4,.07);--err:#dc2626;--errBg:rgba(220,38,38,.06);--mono:'JetBrains Mono','Fira Code',monospace;--sans:'DM Sans',system-ui,sans-serif}
 body{font-family:var(--sans);background:var(--bg);color:var(--text)}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+textarea::-webkit-scrollbar-thumb{background:#3a3a52;border-radius:3px}textarea::-webkit-scrollbar-track{background:transparent}
 input[type=number]::-webkit-inner-spin-button{opacity:1}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @keyframes slideIn{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
@@ -56,6 +58,63 @@ function R2({children}){return <div style={{display:"grid",gridTemplateColumns:"
 function R3({children}){return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>{children}</div>;}
 function R4({children}){return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>{children}</div>;}
 function Box({title,children}){return(<div style={{marginTop:16,padding:"14px 16px",background:"var(--alt)",borderRadius:10,border:"1px solid var(--border)"}}>{title&&<div style={{fontSize:12,fontWeight:600,color:"var(--dim)",marginBottom:10}}>{title}</div>}{children}</div>);}
+
+/* ═══ YAML Editor ═══ */
+function YamlEditor({value,onChange,filename,dirty,applied,error,onApply,onReset,onRefresh,description}){
+  const lines=(value||"").split("\n");
+  const lineCount=lines.length;
+  const textRef=useRef(null);
+  const numsRef=useRef(null);
+  const handleScroll=()=>{if(numsRef.current&&textRef.current)numsRef.current.scrollTop=textRef.current.scrollTop;};
+  const handleTab=(e)=>{if(e.key==="Tab"){e.preventDefault();const t=e.target;const s=t.selectionStart;const end=t.selectionEnd;const v=value;onChange(v.substring(0,s)+"  "+v.substring(end));setTimeout(()=>{t.selectionStart=t.selectionEnd=s+2;},0);}};
+  const statusColor=dirty?"var(--warn)":applied?"var(--accent)":"var(--ok)";
+  const statusBg=dirty?"var(--warnBg)":applied?"var(--glow)":"var(--okBg)";
+  const statusText=dirty?"Modified":applied?"Applied":"In sync";
+  const edBg="#1e1e2e";const edLine="#2a2a3c";const edNum="#4a4a6a";const edText="#cdd6f4";const edCaret="#89b4fa";const edBorder="#313147";
+  const tBtn={padding:"6px 16px",borderRadius:6,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .12s",border:"1px solid "+edBorder};
+
+  return(
+    <div style={{borderRadius:12,overflow:"hidden",border:"1px solid "+edBorder,boxShadow:"0 4px 24px rgba(0,0,0,.12)"}}>
+      {/* Toolbar */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 4px 0 0",background:"#181825",borderBottom:"1px solid "+edBorder,flexWrap:"wrap",gap:6}}>
+        <div style={{display:"flex",alignItems:"center",gap:0}}>
+          {/* File tab */}
+          <div style={{display:"flex",alignItems:"center",gap:7,padding:"10px 16px",background:edBg,borderRight:"1px solid "+edBorder,fontSize:12.5,fontWeight:600,color:edText,fontFamily:"var(--mono)"}}>
+            <span style={{width:14,height:14,borderRadius:3,background:"linear-gradient(135deg,#89b4fa,#cba6f7)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,color:"#181825",fontWeight:700}}>Y</span>
+            {filename}
+          </div>
+          {/* Status */}
+          <div style={{display:"flex",alignItems:"center",gap:5,padding:"0 14px",fontSize:11,fontWeight:600,color:statusColor}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:statusColor}} />
+            {statusText}
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 8px"}}>
+          {onRefresh&&<button onClick={onRefresh} style={{...tBtn,background:"transparent",color:"#7f849c"}} onMouseOver={e=>{e.currentTarget.style.background=edLine;e.currentTarget.style.color=edText;}} onMouseOut={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="#7f849c";}}>Refresh from UI</button>}
+          <button onClick={onReset} style={{...tBtn,background:"transparent",color:"#7f849c"}} onMouseOver={e=>{e.currentTarget.style.background=edLine;e.currentTarget.style.color=edText;}} onMouseOut={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color="#7f849c";}}>Reset to disk</button>
+          <button onClick={onApply} disabled={!dirty} style={{...tBtn,background:dirty?"#89b4fa":"transparent",color:dirty?"#181825":"#585b70",border:dirty?"1px solid #89b4fa":"1px solid "+edBorder,fontWeight:dirty?600:500,cursor:dirty?"pointer":"default"}}>{dirty?"Apply":"No changes"}</button>
+        </div>
+      </div>
+      {/* Editor body */}
+      <div style={{display:"flex",background:edBg,position:"relative"}}>
+        {/* Line numbers */}
+        <div ref={numsRef} style={{width:52,flexShrink:0,padding:"14px 0",overflowY:"hidden",background:"#181825",borderRight:"1px solid "+edBorder,userSelect:"none"}}>
+          {Array.from({length:lineCount},(_,i)=>(
+            <div key={i} style={{height:21.45,fontSize:11.5,fontFamily:"var(--mono)",color:edNum,textAlign:"right",paddingRight:12,lineHeight:"21.45px"}}>{i+1}</div>
+          ))}
+        </div>
+        {/* Textarea */}
+        <textarea ref={textRef} value={value} onChange={e=>onChange(e.target.value)} onScroll={handleScroll} onKeyDown={handleTab} spellCheck={false} style={{flex:1,minHeight:Math.min(Math.max(lineCount*21.45+28,300),700),fontFamily:"var(--mono)",fontSize:12.5,lineHeight:"21.45px",padding:"14px 16px",background:"transparent",color:edText,caretColor:edCaret,border:"none",outline:"none",resize:"vertical",tabSize:2,whiteSpace:"pre",overflowWrap:"normal",overflowX:"auto"}} />
+      </div>
+      {/* Footer */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 16px",background:"#181825",borderTop:"1px solid "+edBorder,fontSize:11,color:"#585b70",fontFamily:"var(--mono)"}}>
+        <span>YAML{dirty?" \u2022 modified":""}</span>
+        <span>{lineCount} lines</span>
+      </div>
+      {error&&<div style={{padding:"9px 14px",fontSize:12.5,background:"var(--errBg)",color:"var(--err)",borderTop:"1px solid rgba(220,38,38,.15)"}}><strong>Parse error:</strong> {error}</div>}
+    </div>
+  );
+}
 
 /* ═══ Log viewer ═══ */
 function LogViewer({logs,isRunning,elapsed}){
@@ -113,6 +172,24 @@ function App(){
   const[isRunning,setIsRunning]=useState(false);
   const[elapsed,setElapsed]=useState(0);
   const timerRef=useRef(null);
+  const[modelsYaml,setModelsYaml]=useState("");
+  const[modelsOrig,setModelsOrig]=useState("");
+  const[modelsDisk,setModelsDisk]=useState("");
+  const[modelsErr,setModelsErr]=useState(null);
+  const modelsDirty=modelsYaml!==modelsOrig;
+  const modelsApplied=modelsOrig!==modelsDisk;
+  const[cfgYaml,setCfgYaml]=useState("");
+  const[cfgYamlOrig,setCfgYamlOrig]=useState("");
+  const[cfgYamlDisk,setCfgYamlDisk]=useState("");
+  const[cfgYamlErr,setCfgYamlErr]=useState(null);
+  const cfgYamlDirty=cfgYaml!==cfgYamlOrig;
+  const cfgYamlApplied=cfgYamlOrig!==cfgYamlDisk;
+  const[page,setPage_]=useState("main");
+  const setPage=useCallback((p)=>{
+    setPage_(p);
+    if(p==="config")loadCfgYaml();
+    if(p==="models")fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);}).catch(()=>{});
+  },[loadCfgYaml]);
 
   /* Load initial config + presets */
   useEffect(()=>{
@@ -125,6 +202,7 @@ function App(){
       setCfg({format:"csv",salesOutput:"sales",skipOrderCols:false,compression:"snappy",rowGroupSize:2000000,mergeParquet:true,partitionEnabled:true,startDate:"2023-01-01",endDate:"2026-12-31",fiscalMonthOffset:0,includeCalendar:true,includeIso:false,includeFiscal:true,includeWeeklyFiscal:false,wfFirstDay:0,wfWeeklyType:"Last",wfQuarterType:"445",salesRows:50015,chunkSize:1000000,autoWorkers:false,workers:8,customers:48832,stores:20,products:4338,promotions:20,pctIndia:10,pctUs:51,pctEu:39,pctAsia:0,pctOrg:10,customerActiveRatio:.9,churnEnabled:true,baseMonthlyChurn:.52,minTenureMonths:22,initialActiveCust:2000,initialSpreadMonths:36,valueScale:1,minPrice:100,maxPrice:5000,productActiveRatio:.94,lookbackYears:10,lookaheadYears:2,preexistingShare:.7,discontinueRatio:.2,geoWeights:{"United States":.35,India:.2,"United Kingdom":.1,Germany:.1,France:.1,Australia:.07,Canada:.08},returnsEnabled:true,returnRate:.03,returnMinDays:1,returnMaxDays:60,tuningIntensity:.55,tuningSmoothness:.9,tuningCycles:.35,regenAll:false,regenDims:{}});
     });
     fetch(API+"/presets").then(r=>r.json()).then(d=>{setPresets(d);setPresetBucket(Object.keys(d)[0]||"");}).catch(()=>{});
+    fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);setModelsDisk(t);}).catch(()=>{});
   },[]);
 
   /* Sync config changes to backend (debounced) */
@@ -135,6 +213,22 @@ function App(){
   const s=useCallback((k,v)=>{
     setCfg(p=>{const n={...p,[k]:v};syncToBackend(n);return n;});
   },[syncToBackend]);
+
+  const reloadFormFromServer=useCallback(()=>{
+    fetch(API+"/config").then(r=>r.json()).then(d=>{
+      d.geoWeights=d.geoWeights||{};d.regenAll=cfg?.regenAll||false;d.regenDims=cfg?.regenDims||{};d.autoWorkers=!d.workers;
+      setCfg(d);
+    }).catch(()=>{});
+  },[]);
+
+  const loadCfgYaml=useCallback(()=>{
+    Promise.all([
+      fetch(API+"/config/yaml").then(r=>r.text()),
+      fetch(API+"/config/yaml/disk").then(r=>r.text()),
+    ]).then(([current,disk])=>{
+      setCfgYaml(current);setCfgYamlOrig(current);setCfgYamlDisk(disk);setCfgYamlErr(null);
+    }).catch(()=>{});
+  },[]);
 
   const flash=m=>{setToast(m);setTimeout(()=>setToast(null),2400);};
   const setGeo=(c,v)=>setCfg(p=>{const n={...p,geoWeights:{...p.geoWeights,[c]:Math.max(0,Math.min(1,v))}};syncToBackend(n);return n;});
@@ -170,6 +264,37 @@ function App(){
   const cancelGenerate=()=>{
     fetch(API+"/generate/cancel",{method:"POST"}).then(()=>{clearInterval(timerRef.current);setIsRunning(false);}).catch(()=>{});
   };
+  const saveModels=()=>{
+    setModelsErr(null);
+    fetch(API+"/models",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml_text:modelsYaml})})
+      .then(r=>{if(!r.ok)return r.json().then(d=>{throw new Error(d.detail||"Save failed")});return r.json();})
+      .then(d=>{setModelsOrig(modelsYaml);setModelsErr(null);flash("Models saved (in memory)");if(d.tuningIntensity!=null){setCfg(p=>({...p,tuningIntensity:d.tuningIntensity,tuningSmoothness:d.tuningSmoothness,tuningCycles:d.tuningCycles}));}})
+      .catch(e=>setModelsErr(e.message));
+  };
+  const resetModels=()=>{
+    fetch(API+"/models/reset",{method:"POST"})
+      .then(r=>r.json())
+      .then(d=>{
+        fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);setModelsDisk(t);setModelsErr(null);flash("Models reset to disk version");});
+        if(d.tuningIntensity!=null){setCfg(p=>({...p,tuningIntensity:d.tuningIntensity,tuningSmoothness:d.tuningSmoothness,tuningCycles:d.tuningCycles}));}
+      }).catch(()=>{});
+  };
+  const saveCfgYaml=()=>{
+    setCfgYamlErr(null);
+    fetch(API+"/config/yaml",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml_text:cfgYaml})})
+      .then(r=>{if(!r.ok)return r.json().then(d=>{throw new Error(d.detail||"Save failed")});return r.json();})
+      .then(()=>{setCfgYamlOrig(cfgYaml);setCfgYamlErr(null);flash("Config applied (in memory)");reloadFormFromServer();})
+      .catch(e=>setCfgYamlErr(e.message));
+  };
+  const resetCfgYaml=()=>{
+    fetch(API+"/config/yaml/reset",{method:"POST"})
+      .then(r=>r.json())
+      .then(()=>{loadCfgYaml();reloadFormFromServer();flash("Config reset to disk version");})
+      .catch(()=>{});
+  };
+  const refreshCfgYamlFromUI=()=>{
+    fetch(API+"/config/yaml").then(r=>r.text()).then(t=>{setCfgYaml(t);setCfgYamlOrig(t);setCfgYamlErr(null);flash("Loaded current UI settings");}).catch(()=>{});
+  };
 
   if(!cfg)return <div style={{padding:40,textAlign:"center",color:"var(--muted)"}}>Loading configuration...</div>;
   const{errors,warnings}=validate(cfg);
@@ -184,9 +309,19 @@ function App(){
         <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Presets</div>
         {Object.keys(presets).length>0?(<>
           <Sel value={presetBucket} onChange={setPresetBucket} options={Object.keys(presets)} />
-          <div style={{marginTop:8}}>{Object.keys(presets[presetBucket]||{}).map(name=>(
-            <button key={name} onClick={()=>applyPreset(name)} style={{display:"block",width:"100%",textAlign:"left",padding:"7px 11px",marginTop:3,borderRadius:7,fontSize:12.5,cursor:"pointer",border:`1px solid ${selectedPreset===name?"var(--accent)":"transparent"}`,background:selectedPreset===name?"var(--glow)":"transparent",color:selectedPreset===name?"var(--accent)":"var(--text)",fontWeight:selectedPreset===name?600:400,fontFamily:"var(--sans)",transition:"all .12s"}}>{name}</button>
-          ))}</div>
+          <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>{Object.entries(presets[presetBucket]||{}).map(([name,p])=>{
+            const sel=selectedPreset===name;
+            const c=p||{};const cust=c.customers||c.total_customers;const prod=c.products||c.num_products;const rows=c.sales_rows||c.total_rows;
+            return(
+              <button key={name} onClick={()=>applyPreset(name)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:"100%",padding:"9px 12px",borderRadius:8,cursor:"pointer",border:`1px solid ${sel?"var(--accent)":"var(--border)"}`,background:sel?"var(--glow)":"var(--surface)",fontFamily:"var(--sans)",transition:"all .12s",gap:8}}>
+                <span style={{fontSize:12.5,fontWeight:sel?600:400,color:sel?"var(--accent)":"var(--text)",textAlign:"left",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{name}</span>
+                {(cust||prod||rows)&&<span style={{display:"flex",gap:6,flexShrink:0}}>
+                  {cust&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:sel?"rgba(79,91,213,.12)":"var(--alt)",color:sel?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",fontWeight:500}}>{(cust/1000).toFixed(cust%1000?1:0)}K</span>}
+                  {prod&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:sel?"rgba(79,91,213,.12)":"var(--alt)",color:sel?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",fontWeight:500}}>{(prod/1000).toFixed(prod%1000?1:0)}K</span>}
+                </span>}
+              </button>
+            );
+          })}</div>
         </>):(<div style={{fontSize:12,color:"var(--muted)"}}>No presets loaded</div>)}
 
         <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
@@ -196,22 +331,64 @@ function App(){
         <Sld label="Acquisition cycles" value={cfg.tuningCycles} min={0} max={1} step={.05} onChange={v=>s("tuningCycles",v)} />
 
         <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
+        <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Models</div>
+        <button onClick={()=>setPage(page==="models"?"main":"models")} style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${page==="models"?"var(--accent)":"var(--border)"}`,background:page==="models"?"var(--glow)":"var(--surface)",color:page==="models"?"var(--accent)":"var(--dim)",fontSize:12.5,fontWeight:page==="models"?600:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .15s",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <span>Models Configuration</span>
+          {(modelsDirty||modelsApplied)&&<span style={{width:7,height:7,borderRadius:"50%",background:modelsDirty?"var(--warn)":"var(--accent)",flexShrink:0}} />}
+        </button>
+        {page==="models"&&<div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>Editing models.yaml in memory</div>}
+
+        <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
         <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Config</div>
+        <button onClick={()=>setPage(page==="config"?"main":"config")} style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${page==="config"?"var(--accent)":"var(--border)"}`,background:page==="config"?"var(--glow)":"var(--surface)",color:page==="config"?"var(--accent)":"var(--dim)",fontSize:12.5,fontWeight:page==="config"?600:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .15s",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+          <span>Config Configuration</span>
+          {(cfgYamlDirty||cfgYamlApplied)&&<span style={{width:7,height:7,borderRadius:"50%",background:cfgYamlDirty?"var(--warn)":"var(--accent)",flexShrink:0}} />}
+        </button>
         <button onClick={()=>fetch(API+"/config/download").then(r=>r.json()).then(d=>{const b=new Blob([JSON.stringify(d,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="config.json";a.click();})} style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12,cursor:"pointer",fontFamily:"var(--sans)"}}>Download config</button>
       </div>
 
       {/* ═══ MAIN ═══ */}
       <div style={{flex:1,padding:"28px 40px",maxWidth:1120,overflowY:"auto"}}>
+
+        {page==="models"?(
+        /* ═══ MODELS EDITOR PAGE ═══ */
+        <div>
+          <button onClick={()=>setPage("main")} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:7,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12.5,cursor:"pointer",fontFamily:"var(--sans)",marginBottom:18,transition:"all .12s"}} onMouseOver={e=>e.currentTarget.style.borderColor="var(--accent)"} onMouseOut={e=>e.currentTarget.style.borderColor="var(--border)"}>
+            {"\u2190"} Back to configuration
+          </button>
+          <h1 style={{fontSize:22,fontWeight:700,letterSpacing:"-.02em",marginBottom:4}}>Models Configuration</h1>
+          <p style={{fontSize:13,color:"var(--dim)",marginBottom:18}}>
+            Edit the full models configuration. Changes are held in memory only {"\u2014"} the file on disk is never modified.
+          </p>
+          <YamlEditor value={modelsYaml} onChange={setModelsYaml} filename="models.yaml" dirty={modelsDirty} applied={modelsApplied} error={modelsErr} onApply={saveModels} onReset={resetModels} />
+        </div>
+
+        ):page==="config"?(
+        /* ═══ CONFIG YAML EDITOR PAGE ═══ */
+        <div>
+          <button onClick={()=>setPage("main")} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:7,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12.5,cursor:"pointer",fontFamily:"var(--sans)",marginBottom:18,transition:"all .12s"}} onMouseOver={e=>e.currentTarget.style.borderColor="var(--accent)"} onMouseOut={e=>e.currentTarget.style.borderColor="var(--border)"}>
+            {"\u2190"} Back to configuration
+          </button>
+          <h1 style={{fontSize:22,fontWeight:700,letterSpacing:"-.02em",marginBottom:4}}>Config YAML</h1>
+          <p style={{fontSize:13,color:"var(--dim)",marginBottom:18}}>
+            Edit the full config below. Applying here will override any preset or form settings. The file on disk is never modified.
+          </p>
+          <YamlEditor value={cfgYaml} onChange={setCfgYaml} filename="config.yaml" dirty={cfgYamlDirty} applied={cfgYamlApplied} error={cfgYamlErr} onApply={saveCfgYaml} onReset={resetCfgYaml} onRefresh={refreshCfgYamlFromUI} />
+        </div>
+
+        ):(
+        /* ═══ MAIN CONFIG PAGE ═══ */
+        <div>
         <h1 style={{fontSize:22,fontWeight:700,letterSpacing:"-.02em"}}>Retail Data Generator</h1>
         <p style={{fontSize:13,color:"var(--dim)",marginTop:3,marginBottom:22}}>Configure and generate large, realistic retail datasets</p>
 
         {/* 1 OUTPUT */}
         <Section num="1" title="Output">
-          <R3>
+          <R2>
             <F label="Output format"><Sel value={cfg.format} onChange={v=>s("format",v)} options={["csv","parquet","deltaparquet"]} /></F>
             <F label="Sales output"><Sel value={cfg.salesOutput} onChange={v=>s("salesOutput",v)} options={["sales","sales_order","both"]} labels={["Sales (flat)","Order Header + Detail","Both"]} /></F>
-            <F label=" "><div style={{paddingTop:3}}><Check checked={cfg.skipOrderCols} onChange={v=>s("skipOrderCols",v)} label="Skip order columns" /></div></F>
-          </R3>
+          </R2>
+          <div style={{marginTop:12}}><Check checked={cfg.skipOrderCols} onChange={v=>s("skipOrderCols",v)} label="Skip order columns" /></div>
           {showPq&&<Box title="Parquet / Delta options"><R3>
             <F label="Compression"><Sel value={cfg.compression} onChange={v=>s("compression",v)} options={["snappy","zstd","gzip","none"]} /></F>
             <F label="Row group size"><N value={cfg.rowGroupSize} onChange={v=>s("rowGroupSize",v)} min={100000} step={500000} /></F>
@@ -356,6 +533,8 @@ function App(){
           </div>
           <LogViewer logs={logs} isRunning={isRunning} elapsed={elapsed} />
         </Section>
+        </div>
+        )}
       </div>
     </div>
   );

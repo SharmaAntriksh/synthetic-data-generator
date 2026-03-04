@@ -48,13 +48,21 @@ try {
     # Launch
     $Port = 8502
     $Host_ = "127.0.0.1"
+    $Url = "http://${Host_}:${Port}"
     $Args_ = @("--host", $Host_, "--port", $Port)
     if ($Reload) { $Args_ += "--reload" }
 
     Write-Host ""
-    Write-Host "Starting web UI at http://${Host_}:${Port}" -ForegroundColor Cyan
+    Write-Host "Starting web UI at $Url" -ForegroundColor Cyan
     Write-Host "Press Ctrl+C to stop." -ForegroundColor DarkGray
     Write-Host ""
+
+    # Open browser after a short delay (non-blocking)
+    Start-Job -ScriptBlock {
+        param($u)
+        Start-Sleep -Milliseconds 1500
+        Start-Process $u
+    } -ArgumentList $Url | Out-Null
 
     python -m uvicorn web.api:app @Args_
 }
