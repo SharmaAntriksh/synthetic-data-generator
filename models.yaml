@@ -116,15 +116,15 @@ models:
     yearly_growth: 0.08
     seasonality_amplitude: 0.08
     seasonality_phase: 0.0
-    noise_std: 0.06
+    noise_std: 0.20
     eligible_blend: 0.20
 
     yoy_growth_schedule:
       mode: "repeat"
       values: [0.02, 0.03, -0.18, 0.19, -0.09]
 
-    shock_probability: 0.10
-    shock_impact: [-0.25, 0.20]
+    shock_probability: 0.20
+    shock_impact: [-0.35, 0.30]
 
     early_month_cap:
       enabled: true
@@ -156,11 +156,11 @@ models:
 
     # Approximate share of each month's orders from first-time buyers.
     # 0.05 = 5% new customers, 0.20 = aggressive acquisition.
-    new_customer_share: 0.10
+    new_customer_share: 0.05
 
     # Multi-year oscillation in the distinct buyer count.
     # 0.0 = flat, 0.35 = ±35% swings over a 24-month cycle.
-    cycle_amplitude: 0.35
+    cycle_amplitude: 0.45
 
     # When new customers appear relative to the dataset timeline.
     # -1.0 = heavily front-loaded (most acquisition early)

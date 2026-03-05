@@ -587,9 +587,18 @@ def build_chunk_table(
         shape_mult = np.ones(T, dtype=np.float64)
 
     _BOOTSTRAP_MONTHS = 6
-    _MAX_FRAC_PER_MONTH = 0.015
     _MAX_DISTINCT_RATIO = 0.70
     _MIN_DISTINCT_CUSTOMERS = 250
+
+    # Per-month cap on new-customer fraction of the eligible pool.
+    # Derived from the actual new_customer_share and the shaped peak so the
+    # cap accommodates the user's intent rather than flattening it.
+    _active_months = max(1, int((eligible_counts > 0).sum()))
+    _avg_rows = int(n) / _active_months
+    _avg_eligible = float(eligible_counts[eligible_counts > 0].mean()) if _active_months > 0 else 1.0
+    _base_frac = new_customer_share * _avg_rows / _avg_eligible
+    _shape_peak = float(shape_mult.max())
+    _MAX_FRAC_PER_MONTH = max(0.015, _base_frac * _shape_peak)
 
     # Brand popularity is OFF if block absent. If present without enabled, default-on.
     brand_cfg = State.models_cfg.get("brand_popularity", None)
