@@ -1,181 +1,104 @@
 # ==========================================================================
-# Final output location for packaged datasets
-final_output_folder: "./generated_datasets"
+# DATA GENERATION CONFIG
 # ==========================================================================
 
-# ==========================================================================
-# DEFAULTS (used unless overridden in each section)
-# ==========================================================================
+# ------------------------------------------------------------------
+# SCALE — row/entity counts for each table (start here)
+# ------------------------------------------------------------------
+scale:
+  sales_rows: 1_003_150
+  products: 2832
+  customers: 26883
+  stores: 20
+  geographies: 200
+  promotions: { seasonal: 11, clearance: 4, limited: 5 }
+
+# ------------------------------------------------------------------
+# GLOBAL DEFAULTS
+# ------------------------------------------------------------------
 defaults:
   seed: 42
-
   dates:
-    start: "2021-01-01"
-    end: "2026-12-31"
+    start: "2021-01-15"
+    end: "2025-12-31"
 
-  paths:
-    geography: "./data/parquet_dims/geography.parquet"
-
-packaging:
-  reset_scratch_fact_out: true   # default current behavior
-  clean_scratch_fact_out: true  # default current behavior
+paths:
+  data_root: "./data"
+  geography: "./data/parquet_dims/geography.parquet"
+  names_folder: "./data/name_pools/people"
+  final_output: "./generated_datasets"
 
 facts:
   enabled: ["sales", "returns"]
 
-names:
-  people_folder: "./data/name_pools/people"
-  
-# ---------------------------------------------------------------------
-# SALES FACT GENERATION
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
+# SALES
+# ------------------------------------------------------------------
 sales:
-  parquet_folder: "./data/parquet_dims"
-  out_folder: "./data/fact_out"
-
-  total_rows: 1001500
-  chunk_size: 1000000
   max_lines_per_order: 5
-  
-  file_format: "parquet"          # csv | parquet | deltaparquet
-  sales_output: "sales"           # sales | sales_order | both
+
+  file_format: "parquet"              # csv | parquet | deltaparquet
+  sales_output: "sales"               # sales | sales_order | both
   write_delta: true
-  delta_output_folder: "./data/fact_out/delta"
+  skip_order_cols: false
 
   merge_parquet: true
   merged_file: "sales.parquet"
   delete_chunks: true
 
-  row_group_size: 2000000
-  compression: "snappy"
-
-  heavy_pct: 5
-  heavy_mult: 5
-
-  workers: 8               # auto-detect if null
-  write_pyarrow: true
-  tune_chunk: false
-
-  skip_order_cols: false
-
-  override:
-    dates:
-      end: null
-    seed: null
-
   partitioning:
     enabled: true
     columns: ["Year", "Month"]
 
+  advanced:
+    chunk_size: 1_000_000
+    workers: 8                        # null = auto-detect
+    row_group_size: 2_000_000
+    compression: "snappy"
+    write_pyarrow: true
+    heavy_pct: 5
+    heavy_mult: 5
+
+# ------------------------------------------------------------------
+# RETURNS
+# ------------------------------------------------------------------
 returns:
   enabled: true
-  return_rate: 0.03          # fraction of Sales (line) rows that get a return
-  min_days_after_sale: 1     # hard cap (pipeline-level)
-  max_days_after_sale: 60    # hard cap (pipeline-level)
-  override:
-    seed: null               # null -> use defaults.seed
+  return_rate: 0.03
+  min_days_after_sale: 1
+  max_days_after_sale: 60
 
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 # PRODUCTS
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 products:
-
-  num_products: 4332
   active_ratio: 0.94
-  seed: 42
+  value_scale: 1                      # multiplier on all base prices
+  price_range: [10, 3000]             # [min, max] UnitPrice
+  margin_range: [0.20, 0.35]          # [min, max] cost margin pct
+  brand_normalize: true               # pull brand prices toward global median
 
-  lifecycle:
-    lookback_years: 10
-    lookahead_years: 2
-    preexisting_share: 0.70
-    discontinue_ratio: 0.20
-
-  pricing:
-    base:
-      value_scale: 1
-      min_unit_price: 100
-      max_unit_price: 5000
-
-      # Keep ON so min/max behave like design targets after trimming/scaling
-      stretch_to_range: true
-      stretch_low_quantile: 0.01
-      stretch_high_quantile: 0.99
-
-    # New default: ignore any upstream UnitCost and derive it from final snapped UnitPrice.
-    cost:
-      mode: margin # keep or margin
-      # Narrower band than 0.20..0.50 -> more stable margins, fewer pathological near-zero costs.
-      min_margin_pct: 0.20
-      max_margin_pct: 0.35
-
-    # Keep jitter low; uniqueness should mostly come from products/brands, not random walk.
-    jitter:
-      price_pct: 0.00
-      cost_pct: 0.00
-
-    # Keep brand normalization but ensure low-count brands do NOT turn into NaNs (code now guards this).
-    brand_normalization:
-      enabled: true
-      brand_col: Brand
-      alpha: 0.70
-      min_factor: 0.60
-      max_factor: 1.60
-      min_count: 10
-      noise_sd: 0.00
-
-    appearance:
-      # Snap prices to realistic retail points (with .99 ending).
-      snap_unit_price: true
-      price_ending: 0.99
-
-      # Coarser bands reduce the number of unique UnitPrice values while preserving realism.
-      # (Your earlier 5/10/25/50/100 bands can create too many near-by price points.)
-      price_bands:
-        - { max: 100,   step: 10 }     #  99.99 (or 89.99/99.99 depending on rounding)
-        - { max: 500,   step: 25 }     #  124.99, 149.99, ...
-        - { max: 2000,  step: 50 }     #  1049.99, 1099.99, ...
-        - { max: 5000,  step: 100 }    #  2499.99, 2599.99, ...
-        - { max: 1e18,  step: 250 }
-
-      # Round costs to clean increments (no pennies).
-      round_unit_cost: true
-      # Costs should generally be “cleaner” than prices; keep steps modest.
-      cost_bands:
-        - { max: 100,   step: 5 }
-        - { max: 500,   step: 10 }
-        - { max: 2000,  step: 25 }
-        - { max: 10000, step: 50 }
-        - { max: 1e18,  step: 100 }
-
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 # CUSTOMERS
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 customers:
-  total_customers: 14883
-  active_ratio: 0.90
+  active_ratio: 0.95
 
   pct_india: 10
   pct_us: 51
   pct_eu: 39
   pct_org: 1
 
-  names_folder: "./data/customer_names"
-
   lifecycle:
     enable_churn: true
     base_monthly_churn: 0.52
     min_tenure_months: 22
-    initial_active_customers: 2000        # or 1000
-    initial_spread_months: 36            # customers started in the 24 months before start_date
+    initial_active_customers: 2000
+    initial_spread_months: 36
 
-  override:
-    seed: null
-    paths: {}
-    dates: {}
-    
-# ---------------------------------------------------------------------
-# CUSTOMER SEGMENTS
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
+# CUSTOMER SEGMENTS (disabled by default)
+# ------------------------------------------------------------------
 customer_segments:
   enabled: false
   generate_bridge: false
@@ -189,20 +112,20 @@ customer_segments:
   include_validity: true
 
   validity:
-    grain: month          # recommend month for size/perf
-    churn_rate_qtr: 0.08  # % customers whose membership changes per quarter
+    grain: month
+    churn_rate_qtr: 0.08
     new_customer_months: 2
 
   seed: 123
 
-# ---------------------------------------------------------------------
-# SUPERPOWERS (Customers <-> Superpowers)
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
+# SUPERPOWERS (disabled by default)
+# ------------------------------------------------------------------
 superpowers:
   enabled: false
   generate_bridge: false
-  
-  powers_count: 10              # <= catalog size in the script
+
+  powers_count: 10
   powers_per_customer_min: 1
   powers_per_customer_max: 2
 
@@ -213,12 +136,10 @@ superpowers:
 
   seed: 123
 
-# ---------------------------------------------------------------------
-# GEOGRAPHY / LOCATIONS
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
+# GEOGRAPHY
+# ------------------------------------------------------------------
 geography:
-  target_rows: 200
-
   country_weights:
     United States: 0.35
     India: 0.20
@@ -227,100 +148,43 @@ geography:
     France: 0.10
     Australia: 0.07
     Canada: 0.08
-    China: 0.00
-    Japan: 0.00
-    South Africa: 0.00
-    Rest: 0.00
 
-  override:
-    dates: {}
-    paths: {}
-    seed: null
-
-
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 # PROMOTIONS
-# ---------------------------------------------------------------------
-promotions:
-  num_seasonal: 11
-  num_clearance: 4
-  num_limited: 5
+# ------------------------------------------------------------------
+promotions: {}
 
-  override:
-    dates:
-      start: null      # null means: use defaults
-      end: null
-    seed: null
-
-
-# ---------------------------------------------------------------------
-# STORES / RETAIL OUTLETS
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
+# STORES
+# ------------------------------------------------------------------
 stores:
-  num_stores: 20
   ensure_currency_coverage: true
 
   opening:
     start: "1995-01-01"
     end:   "2023-12-31"
-
   closing_end: "2028-12-31"
 
-  # Only used if employees.use_store_employee_count: true
-  employee_count:
-    mode: by_type          # by_type | scaled_sqft
-    open_by_type:
-      Convenience: [4, 10]
-      Supermarket: [8, 16]
-      Hypermarket: [12, 24]
-      Online: [3, 8]
-    renovating_range: [0, 2]
-    closed_range: [0, 0]
-    clamp_min: 0
-    clamp_max: 40
-
-  override:
-    seed: null
-    paths: {}
-
-# ---------------------------------------------------------------------
-# EMPLOYEES (Dimension)
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
+# EMPLOYEES
+# ------------------------------------------------------------------
 employees:
-
-  # Use simple per-store sizing for predictable demos
   use_store_employee_count: false
   min_staff_per_store: 3
   max_staff_per_store: 8
-  staff_scale: 0.50          # ignored when use_store_employee_count: false
-
-  include_store_cols: false
 
   hr:
     email_domain: "contoso.com"
 
   store_assignments:
     enabled: true
-
-    # Hard guarantee: Sales employee+store+date always matches the bridge
     ensure_store_sales_coverage: true
-
-    # Ensure you have "1 pinned + 1 movable" Sales Associate per store
     min_primary_sales_per_store: 2
     primary_sales_role: "Sales Associate"
 
-    # Movement tuning
     mover_share: 0.25
     pool_scope: district
     allow_store_revisit: false
-    part_time_multiplier: 1.0
-
-    # Keep non-sales roles from dominating movements/episodes
-    max_non_sales_multiplier_frac: 0.35
-    max_non_sales_episodes_frac: 0.50
-
-    secondary_fte_min: 0.10
-    secondary_fte_max: 0.40
 
     role_profiles:
       default:
@@ -350,56 +214,41 @@ employees:
         episodes_max: 2
         duration_days_min: 45
         duration_days_max: 180
-# ---------------------------------------------------------------------
+
+# ------------------------------------------------------------------
 # DATES (Dimension)
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 dates:
   fiscal_start_month: 5
-  as_of_date: null  # anchor for IsToday/IsCurrent* and CurrentDayOffset
-                            # Treat end of dataset as “today” (default): omit it (it uses raw_end). 
-                            # Anchor to last year end: as_of_date: "2025-12-31"
-  
+  as_of_date: null
+
   include:
-    calendar: false        # always true (safe default)
-    iso: false            # ISO week columns
-    fiscal: true         # fiscal year / quarter / month columns
+    calendar: false
+    iso: false
+    fiscal: true
     weekly_fiscal: false
-    
+
   weekly_calendar:
     enabled: true
-    first_day_of_week: 0          # 0=Sunday, 1=Monday, ... 6=Saturday
-    weekly_type: "Last"           # "Last" or "Nearest"
-    quarter_week_type: "445"      # "445", "454", "544"
-    type_start_fiscal_year: 1     # 1=end-year labeling
+    first_day_of_week: 0
+    weekly_type: "Last"
+    quarter_week_type: "445"
+    type_start_fiscal_year: 1
 
-  override:
-    dates:
-      start: null     # optional, null = use defaults
-      end:   null     # optional, null = use defaults
-
-
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 # EXCHANGE RATES
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 exchange_rates:
   use_global_dates: true
-
-  # Master FX history storage
   master_file: "./data/exchange_rates_master/fx_master.parquet"
 
   currencies: ["USD", "EUR", "INR", "GBP", "AUD", "CAD"]
   base_currency: "USD"
   volatility: 0.02
 
-# Used only when use_global_dates = false
-  override:
-    dates:
-      start: "2009-01-01"
-      end: "2025-11-18"        # optional (ignored if use_global_dates=true)
-    seed: null
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 # BUDGET
-# ---------------------------------------------------------------------
+# ------------------------------------------------------------------
 budget:
   enabled: true
   report_currency: "USD"

@@ -38,6 +38,49 @@ class PipelineOverrides:
     promotions: Optional[int] = None            # “total” promotions, distributed across buckets when possible
 
 
+
+def _inject_models_appearance(cfg: Dict[str, Any], models_cfg: Dict[str, Any]) -> None:
+    """Translate ``models.pricing.appearance`` into the product pricing format.
+
+    This ensures product dimension generation and sales-time pricing_pipeline
+    both use the same price/cost bands from a single source in models.yaml.
+    Mutates ``cfg["products"]["pricing"]["appearance"]`` in place.
+    """
+    pricing = models_cfg.get("pricing")
+    if not isinstance(pricing, dict):
+        return
+    appearance = pricing.get("appearance")
+    if not isinstance(appearance, dict):
+        return
+
+    products = cfg.get("products")
+    if not isinstance(products, dict):
+        return
+    prod_pricing = products.get("pricing")
+    if not isinstance(prod_pricing, dict):
+        return
+
+    up_cfg = appearance.get("unit_price", {}) or {}
+    uc_cfg = appearance.get("unit_cost", {}) or {}
+
+    # Extract the first ending value (product pricing uses a single float)
+    endings = up_cfg.get("endings")
+    ending = 0.99
+    if isinstance(endings, list) and endings:
+        first = endings[0]
+        if isinstance(first, dict):
+            ending = float(first.get("value", 0.99))
+
+    prod_appearance = {
+        "snap_unit_price": bool(appearance.get("enabled", True)),
+        "price_ending": ending,
+        "price_bands": up_cfg.get("bands") or [],
+        "round_unit_cost": bool(uc_cfg.get("bands")),
+        "cost_bands": uc_cfg.get("bands") or [],
+    }
+    prod_pricing["appearance"] = prod_appearance
+
+
 def run_pipeline(
     *,
     config_path: str = "config.yaml",
@@ -153,6 +196,12 @@ def run_pipeline(
         if only != "dimensions":
             from src.facts.sales.sales_logic import State
             State.models_cfg = models_cfg
+
+        # ----------------------------
+        # Inject models.pricing.appearance into products config so both
+        # dimension generation and sales use the same price grid.
+        # ----------------------------
+        _inject_models_appearance(cfg, models_cfg)
 
         # ----------------------------
         # Run pipelines

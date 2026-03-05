@@ -44,7 +44,7 @@ SectionNormalizer = Callable[[Dict[str, Any]], Dict[str, Any]]
 
 # Sections that must be mappings if present but do not have a normalizer.
 # Keep this small; normalizer keys are automatically treated as mapping sections.
-_SECTION_MAPPING_ONLY_KEYS: frozenset[str] = frozenset({"customers"})
+_SECTION_MAPPING_ONLY_KEYS: frozenset[str] = frozenset({"customers", "scale", "paths"})
 
 # For config files that intentionally don't have defaults (e.g. models.yaml),
 # we keep normalization deliberately narrow to avoid surprising validation failures.
@@ -171,12 +171,195 @@ def _load_and_normalize(
     # Safe, defaults-independent mapping of high-level tuning knobs (if present)
     cfg = apply_acquisition_tuning(cfg)
 
+    # Distribute scale block into per-section keys (new config format)
+    cfg = _distribute_scale(cfg)
+
+    # Flatten sales.advanced into sales (new nesting → old flat keys)
+    cfg = _flatten_sales_advanced(cfg)
+
+    # Normalize consolidated paths into per-section path keys
+    cfg = _distribute_paths(cfg)
+
+    # Expand simplified product pricing knobs into full pricing dict
+    cfg = _expand_products_pricing(cfg)
+
+    # Ensure packaging exists (defaults for pipeline runner)
+    cfg.setdefault("packaging", {
+        "reset_scratch_fact_out": True,
+        "clean_scratch_fact_out": True,
+    })
+
     # Pipeline config requires defaults for global date window
     if require_defaults:
         cfg = normalize_defaults(cfg)
 
     # Normalize/validate known sections
     cfg = _normalize_sections(cfg, normalize_keys=normalize_keys)
+
+    return cfg
+
+
+def _distribute_scale(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy ``scale`` counts into per-section keys (section-level values win)."""
+    scale = cfg.get("scale")
+    if not isinstance(scale, dict):
+        return cfg
+
+    _map = [
+        ("sales_rows",  "sales",      "total_rows"),
+        ("products",    "products",   "num_products"),
+        ("customers",   "customers",  "total_customers"),
+        ("stores",      "stores",     "num_stores"),
+        ("geographies", "geography",  "target_rows"),
+    ]
+    for scale_key, section, target_key in _map:
+        v = scale.get(scale_key)
+        if v is not None:
+            sec = cfg.setdefault(section, {})
+            if isinstance(sec, dict):
+                sec.setdefault(target_key, v)
+
+    # Promotions: { seasonal: N, clearance: N, limited: N }
+    promos = scale.get("promotions")
+    if isinstance(promos, dict):
+        sec = cfg.setdefault("promotions", {})
+        if isinstance(sec, dict):
+            sec.setdefault("num_seasonal", promos.get("seasonal"))
+            sec.setdefault("num_clearance", promos.get("clearance"))
+            sec.setdefault("num_limited", promos.get("limited"))
+
+    return cfg
+
+
+def _flatten_sales_advanced(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Promote ``sales.advanced.*`` to ``sales.*`` for backward compatibility."""
+    sales = cfg.get("sales")
+    if not isinstance(sales, dict):
+        return cfg
+    adv = sales.pop("advanced", None)
+    if isinstance(adv, dict):
+        for k, v in adv.items():
+            sales.setdefault(k, v)
+
+    # Ensure derived paths exist
+    data_root = cfg.get("paths", {}).get("data_root", "./data") if isinstance(cfg.get("paths"), dict) else "./data"
+    sales.setdefault("parquet_folder", f"{data_root}/parquet_dims")
+    sales.setdefault("out_folder", f"{data_root}/fact_out")
+    sales.setdefault("delta_output_folder", f"{data_root}/fact_out/delta")
+    return cfg
+
+
+def _distribute_paths(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Populate per-section path keys from the consolidated ``paths`` block."""
+    paths = cfg.get("paths")
+    if not isinstance(paths, dict):
+        return cfg
+
+    data_root = paths.get("data_root", "./data")
+
+    # final_output_folder (top-level)
+    final_out = paths.get("final_output")
+    if final_out:
+        cfg.setdefault("final_output_folder", final_out)
+
+    # names.people_folder
+    names_folder = paths.get("names_folder")
+    if names_folder:
+        cfg.setdefault("names", {}).setdefault("people_folder", names_folder)
+
+    # defaults.paths.geography
+    geo_path = paths.get("geography")
+    if geo_path:
+        cfg.setdefault("defaults", {}).setdefault("paths", {}).setdefault("geography", geo_path)
+
+    # exchange_rates.master_file (keep section-level if set)
+    er = cfg.get("exchange_rates")
+    if isinstance(er, dict) and "master_file" not in er:
+        er.setdefault("master_file", f"{data_root}/exchange_rates_master/fx_master.parquet")
+
+    return cfg
+
+
+def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand simplified ``products`` knobs into the full ``products.pricing`` dict.
+
+    Simplified config::
+
+        products:
+          value_scale: 1
+          price_range: [10, 3000]
+          margin_range: [0.20, 0.35]
+          brand_normalize: true
+
+    Expands to the structure that ``apply_product_pricing()`` expects,
+    with hardcoded appearance bands and sensible defaults.
+    Section-level ``products.pricing`` wins if already present (backward compat).
+    """
+    products = cfg.get("products")
+    if not isinstance(products, dict):
+        return cfg
+
+    # If full pricing block already exists, leave it alone
+    if isinstance(products.get("pricing"), dict) and products["pricing"]:
+        return cfg
+
+    pr = products.get("price_range", [10, 3000])
+    if not isinstance(pr, (list, tuple)) or len(pr) < 2:
+        pr = [10, 3000]
+    min_price, max_price = float(pr[0]), float(pr[1])
+
+    mr = products.get("margin_range", [0.20, 0.35])
+    if not isinstance(mr, (list, tuple)) or len(mr) < 2:
+        mr = [0.20, 0.35]
+    min_margin, max_margin = float(mr[0]), float(mr[1])
+
+    brand_norm = bool(products.get("brand_normalize", True))
+    value_scale = float(products.get("value_scale", 1))
+
+    products["pricing"] = {
+        "base": {
+            "value_scale": value_scale,
+            "min_unit_price": min_price,
+            "max_unit_price": max_price,
+            "stretch_to_range": True,
+            "stretch_low_quantile": 0.01,
+            "stretch_high_quantile": 0.99,
+        },
+        "cost": {
+            "mode": "margin",
+            "min_margin_pct": min_margin,
+            "max_margin_pct": max_margin,
+        },
+        "jitter": {"price_pct": 0.0, "cost_pct": 0.0},
+        "brand_normalization": {
+            "enabled": brand_norm,
+            "brand_col": "Brand",
+            "alpha": 0.70,
+            "min_factor": 0.60,
+            "max_factor": 1.60,
+            "min_count": 10,
+            "noise_sd": 0.0,
+        },
+        "appearance": {
+            "snap_unit_price": True,
+            "price_ending": 0.99,
+            "price_bands": [
+                {"max": 100,  "step": 10},
+                {"max": 500,  "step": 25},
+                {"max": 2000, "step": 50},
+                {"max": 5000, "step": 100},
+                {"max": 1e18, "step": 250},
+            ],
+            "round_unit_cost": True,
+            "cost_bands": [
+                {"max": 100,   "step": 5},
+                {"max": 500,   "step": 10},
+                {"max": 2000,  "step": 25},
+                {"max": 10000, "step": 50},
+                {"max": 1e18,  "step": 100},
+            ],
+        },
+    }
 
     return cfg
 

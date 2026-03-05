@@ -348,11 +348,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
     ),
     "ProductProfile": (
         ("ProductKey", INT_NN),
-        ("LaunchDate", DATE_NN),
-        ("LaunchDateKey", INT_NN),
-        ("DiscontinuedDate", DATE_NULL),
-        ("DiscontinuedDateKey", INT_NULL),
-        ("IsDiscontinued", INT_NN),
         ("ColorFamily", VARCHAR(20, not_null=True)),
         ("Material", VARCHAR(30, not_null=True)),
         ("Style", VARCHAR(20, not_null=True)),
@@ -397,8 +392,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("IsEcoFriendly", VARCHAR(5, not_null=True)),
         ("TargetGender", VARCHAR(10, not_null=True)),
         ("SupplierKey", INT_NN),
-        ("IsNewArrival", VARCHAR(5, not_null=True)),
-        ("ProductLifecycleStage", VARCHAR(15, not_null=True)),
     ),
     "ProductCategory": (
         ("CategoryKey", INT_NN),

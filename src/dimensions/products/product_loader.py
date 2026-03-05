@@ -14,16 +14,7 @@ from .contoso_expander import expand_contoso_products
 from .pricing import apply_product_pricing
 
 
-# Prefer the config shim (stable API surface)
-try:
-    # typical in this repo layout (engine/config)
-    from src.engine.config.config_loader import get_global_dates  # type: ignore
-except Exception:  # pragma: no cover
-    try:
-        # fallback if you later move it
-        from src.config_loader import get_global_dates  # type: ignore
-    except Exception:  # pragma: no cover
-        get_global_dates = None  # last-resort fallback to raw parsing
+
 
 
 # ---------------------------------------------------------------------
@@ -51,121 +42,8 @@ def _base_uniform(uniq_base_u64: np.ndarray, seed: int, salt: int) -> np.ndarray
     return _u01(_splitmix64(uniq_base_u64 ^ s))
 
 
-def _resolve_global_date_range(cfg: dict) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """
-    Returns (start_ts, end_ts) normalized.
-    Prefers get_global_dates() if available; else falls back to cfg['defaults'].
-    """
-    if get_global_dates is not None:
-        d = get_global_dates(cfg)  # {"start": "...", "end": "..."}
-        start = pd.to_datetime(d["start"]).normalize()
-        end = pd.to_datetime(d["end"]).normalize()
-        return start, end
-
-    defaults = cfg.get("defaults") or cfg.get("_defaults") or {}
-    dates = defaults.get("dates") or {}
-    start = pd.to_datetime(dates.get("start")).normalize()
-    end = pd.to_datetime(dates.get("end")).normalize()
-    return start, end
-
 
 # ---------------------------------------------------------------------
-# Lifecycle enrichment (Launch/Discontinued)  -> stored as DATE (not text)
-# ---------------------------------------------------------------------
-def _apply_product_lifecycle(df: pd.DataFrame, cfg: dict, *, seed: int) -> pd.DataFrame:
-    """
-    Adds/overwrites:
-      - LaunchDate           (python datetime.date; parquet date32)
-      - LaunchDateKey        (int64 YYYYMMDD)
-      - DiscontinuedDate     (python datetime.date or None; parquet date32)
-      - DiscontinuedDateKey  (nullable Int64 YYYYMMDD)
-      - IsDiscontinued       (int64 0/1)
-
-    Deterministic per BaseProductKey; variants inherit the same lifecycle.
-    """
-    p = cfg.get("products") or {}
-    lc = p.get("lifecycle") or {}
-    if not isinstance(lc, dict) or not lc:
-        return df
-
-    lookback_years = int(lc.get("lookback_years", 0))
-    lookahead_years = int(lc.get("lookahead_years", 0))
-    preexisting_share = float(lc.get("preexisting_share", 0.70))
-    discontinue_ratio = float(lc.get("discontinue_ratio", 0.20))
-
-    if not (0.0 <= preexisting_share <= 1.0):
-        raise ValueError("products.lifecycle.preexisting_share must be in [0,1]")
-    if not (0.0 <= discontinue_ratio <= 1.0):
-        raise ValueError("products.lifecycle.discontinue_ratio must be in [0,1]")
-    if lookback_years < 0 or lookahead_years < 0:
-        raise ValueError("products.lifecycle.lookback_years/lookahead_years must be >= 0")
-
-    global_start, global_end = _resolve_global_date_range(cfg)
-
-    early_start = (global_start - pd.DateOffset(years=lookback_years)).normalize()
-    early_end = (global_start - pd.Timedelta(days=1)).normalize()
-    disc_end = (global_end + pd.DateOffset(years=lookahead_years)).normalize()
-
-    early_start_np = np.datetime64(early_start.date())
-    global_start_np = np.datetime64(global_start.date())
-    global_end_np = np.datetime64(global_end.date())
-    disc_end_np = np.datetime64(disc_end.date())
-
-    early_days = int((early_end - early_start).days) + 1 if early_end >= early_start else 0
-    in_days = int((global_end - global_start).days) + 1
-    if in_days <= 0:
-        raise ValueError("Invalid global dates: defaults.dates.start must be < end")
-
-    base = pd.to_numeric(df.get("BaseProductKey", df["ProductKey"]), errors="coerce").fillna(0).astype("int64").to_numpy()
-    uniq_base, inv = np.unique(base, return_inverse=True)
-    b_u64 = uniq_base.astype("uint64", copy=False)
-
-    u_pre = _base_uniform(b_u64, seed, 0xA5A5A5A5)
-    u_day = _base_uniform(b_u64, seed, 0x5A5A5A5A)
-
-    use_early = (u_pre < preexisting_share) & (early_days > 0)
-
-    launch_off = np.empty(uniq_base.size, dtype=np.int64)
-    if early_days > 0:
-        launch_off[use_early] = np.floor(u_day[use_early] * early_days).astype(np.int64)
-    launch_off[~use_early] = np.floor(u_day[~use_early] * in_days).astype(np.int64)
-
-    launch_np = np.empty(uniq_base.size, dtype="datetime64[D]")
-    if early_days > 0:
-        launch_np[use_early] = early_start_np + launch_off[use_early].astype("timedelta64[D]")
-    launch_np[~use_early] = global_start_np + launch_off[~use_early].astype("timedelta64[D]")
-
-    # Discontinued
-    u_disc = _base_uniform(b_u64, seed, 0xC3C3C3C3)
-    do_disc = u_disc < discontinue_ratio
-
-    disc_np = np.full(uniq_base.size, np.datetime64("NaT"), dtype="datetime64[D]")
-    if np.any(do_disc):
-        disc_start_np = launch_np.copy()
-        max_days = (disc_end_np - disc_start_np).astype("timedelta64[D]").astype(np.int64)
-        valid = do_disc & (max_days >= 0)
-        if np.any(valid):
-            u_disc_day = _base_uniform(b_u64, seed, 0x3C3C3C3C)
-            disc_off = np.floor(u_disc_day[valid] * (max_days[valid] + 1)).astype(np.int64)
-            disc_np[valid] = disc_start_np[valid] + disc_off.astype("timedelta64[D]")
-
-    # Broadcast to rows
-    launch_ts = pd.Series(pd.to_datetime(launch_np[inv]), index=df.index).dt.normalize()
-    disc_ts = pd.Series(pd.to_datetime(disc_np[inv]), index=df.index).dt.normalize()
-
-    # Store as *date* for Parquet (Power Query-friendly)
-    launch_date = launch_ts.dt.date
-    disc_date = disc_ts.dt.date.where(disc_ts.notna(), None)
-
-    out = df.copy()
-    out["LaunchDate"] = launch_date
-    out["LaunchDateKey"] = launch_ts.dt.strftime("%Y%m%d").astype("int64")
-
-    out["DiscontinuedDate"] = disc_date
-    out["DiscontinuedDateKey"] = pd.to_numeric(disc_ts.dt.strftime("%Y%m%d"), errors="coerce").astype("Int64")
-    out["IsDiscontinued"] = disc_ts.notna().astype("int64")
-
-    return out
 
 
 # ---------------------------------------------------------------------
@@ -789,8 +667,6 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     if "ProductCode" not in df.columns:
         df["ProductCode"] = df["ProductKey"].astype(str).str.zfill(7)
 
-    # Lifecycle (date-typed)
-    df = _apply_product_lifecycle(df, config, seed=seed)
 
     # Pricing (authoritative)
     df = apply_product_pricing(
@@ -833,31 +709,6 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         active_product_set = set(product_keys.tolist())
 
     df["IsActiveInSales"] = df["ProductKey"].isin(active_product_set).astype("int64")
-
-    # --- Date-dependent enrichment (needs LaunchDate + global dates) ---
-    global_start, global_end = _resolve_global_date_range(config)
-    launch_ts = pd.to_datetime(df["LaunchDate"])
-    days_since_launch = (global_end - launch_ts).dt.days.to_numpy(dtype=np.float64, copy=False)
-    months_since_launch = days_since_launch / 30.44
-
-    df["IsNewArrival"] = pd.Series(
-        np.where(months_since_launch <= 6, "Yes", "No"),
-        index=df.index, dtype="string",
-    )
-
-    pop_arr = df["PopularityScore"].to_numpy(dtype=np.float64, copy=False)
-    pop_norm = pop_arr / 100.0
-    stage = np.where(
-        months_since_launch <= 6, "New",
-        np.where(
-            (months_since_launch <= 18) & (pop_norm > 0.4), "Growing",
-            np.where(
-                (months_since_launch <= 36) | (pop_norm > 0.3), "Mature",
-                "Declining",
-            ),
-        ),
-    )
-    df["ProductLifecycleStage"] = pd.Series(stage, index=df.index, dtype="string")
 
     # Minimal required fields for Sales
     required = [
@@ -909,7 +760,6 @@ def _version_key(p: dict) -> dict:
         "seed": p.get("seed"),
         "pricing": p.get("pricing"),
         "active_ratio": p.get("active_ratio", 1.0),
-        "lifecycle": p.get("lifecycle"),
         # bump whenever you add/remove enrichment columns (forces one regen)
-        "enrichment_v": 2,
+        "enrichment_v": 3,
     }
