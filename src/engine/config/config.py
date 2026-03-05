@@ -177,6 +177,13 @@ def _load_and_normalize(
     # Flatten sales.advanced into sales (new nesting → old flat keys)
     cfg = _flatten_sales_advanced(cfg)
 
+    # Expand new compact config formats into old internal keys
+    cfg = _expand_merge_block(cfg)
+    cfg = _expand_partition_by(cfg)
+    cfg = _expand_region_mix(cfg)
+    cfg = _expand_role_profiles(cfg)
+    cfg = _fold_facts_enabled(cfg)
+
     # Normalize consolidated paths into per-section path keys
     cfg = _distribute_paths(cfg)
 
@@ -242,10 +249,196 @@ def _flatten_sales_advanced(cfg: Dict[str, Any]) -> Dict[str, Any]:
             sales.setdefault(k, v)
 
     # Ensure derived paths exist
-    data_root = cfg.get("paths", {}).get("data_root", "./data") if isinstance(cfg.get("paths"), dict) else "./data"
-    sales.setdefault("parquet_folder", f"{data_root}/parquet_dims")
-    sales.setdefault("out_folder", f"{data_root}/fact_out")
-    sales.setdefault("delta_output_folder", f"{data_root}/fact_out/delta")
+    sales.setdefault("parquet_folder", "./data/parquet_dims")
+    sales.setdefault("out_folder", "./data/fact_out")
+    sales.setdefault("delta_output_folder", "./data/fact_out/delta")
+    return cfg
+
+
+def _expand_merge_block(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand ``sales.merge`` block into flat keys the rest of the code expects.
+
+    New format::
+
+        sales:
+          merge:
+            enabled: true
+            file: "sales.parquet"
+            delete_chunks: true
+
+    Produces ``sales.merge_parquet``, ``sales.merged_file``,
+    ``sales.delete_chunks``.  Old flat keys win if already present.
+    """
+    sales = cfg.get("sales")
+    if not isinstance(sales, dict):
+        return cfg
+    merge = sales.pop("merge", None)
+    if not isinstance(merge, dict):
+        return cfg
+
+    sales.setdefault("merge_parquet", bool(merge.get("enabled", True)))
+    sales.setdefault("merged_file", merge.get("file", "sales.parquet"))
+    sales.setdefault("delete_chunks", bool(merge.get("delete_chunks", False)))
+    return cfg
+
+
+def _expand_partition_by(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand ``sales.partition_by`` shorthand into the nested block.
+
+    New format::
+
+        sales:
+          partition_by: ["Year", "Month"]   # null or [] to disable
+
+    Produces ``sales.partitioning.enabled`` + ``sales.partitioning.columns``.
+    The existing ``partitioning`` block wins if already present.
+    """
+    sales = cfg.get("sales")
+    if not isinstance(sales, dict):
+        return cfg
+    if "partitioning" in sales:
+        return cfg
+    part_by = sales.pop("partition_by", None)
+    if part_by is None:
+        return cfg
+
+    if isinstance(part_by, list) and part_by:
+        sales["partitioning"] = {"enabled": True, "columns": [str(c) for c in part_by]}
+    else:
+        sales["partitioning"] = {"enabled": False, "columns": []}
+    return cfg
+
+
+def _expand_region_mix(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand ``customers.region_mix`` map into flat ``pct_*`` keys.
+
+    New format::
+
+        customers:
+          region_mix: { US: 51, EU: 39, India: 10 }
+          org_pct: 1
+
+    Produces ``pct_us``, ``pct_eu``, ``pct_india``, ``pct_asia``,
+    ``pct_org``.  Old flat keys win if already present.
+    """
+    cust = cfg.get("customers")
+    if not isinstance(cust, dict):
+        return cfg
+    region_mix = cust.pop("region_mix", None)
+    if not isinstance(region_mix, dict):
+        return cfg
+
+    _REGION_MAP = {
+        "us": "pct_us", "usa": "pct_us", "united states": "pct_us",
+        "eu": "pct_eu", "europe": "pct_eu",
+        "india": "pct_india",
+        "asia": "pct_asia",
+    }
+    for name, pct in region_mix.items():
+        flat_key = _REGION_MAP.get(str(name).lower())
+        if flat_key:
+            cust.setdefault(flat_key, float(pct))
+
+    cust.setdefault("pct_us", 0.0)
+    cust.setdefault("pct_eu", 0.0)
+    cust.setdefault("pct_india", 0.0)
+    cust.setdefault("pct_asia", 0.0)
+
+    org_pct = cust.pop("org_pct", None)
+    if org_pct is not None:
+        cust.setdefault("pct_org", float(org_pct))
+
+    return cfg
+
+
+def _expand_role_profiles(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Expand compact ``role_profiles`` entries into the verbose format.
+
+    Compact format::
+
+        role_profiles:
+          default: { mult: 0.25, episodes: [0, 1], duration: [60, 180] }
+
+    Expands each entry to::
+
+        default:
+          role_multiplier: 0.25
+          episodes_min: 0
+          episodes_max: 1
+          duration_days_min: 60
+          duration_days_max: 180
+
+    Already-verbose entries (containing ``role_multiplier``) are left untouched.
+    """
+    emp = cfg.get("employees")
+    if not isinstance(emp, dict):
+        return cfg
+    assigns = emp.get("store_assignments")
+    if not isinstance(assigns, dict):
+        return cfg
+    profiles = assigns.get("role_profiles")
+    if not isinstance(profiles, dict):
+        return cfg
+
+    for role, prof in profiles.items():
+        if not isinstance(prof, dict):
+            continue
+        if "role_multiplier" in prof:
+            continue
+
+        expanded: Dict[str, Any] = {}
+
+        if "mult" in prof:
+            expanded["role_multiplier"] = float(prof["mult"])
+
+        ep = prof.get("episodes")
+        if isinstance(ep, (list, tuple)) and len(ep) >= 2:
+            expanded["episodes_min"] = int(ep[0])
+            expanded["episodes_max"] = int(ep[1])
+
+        dur = prof.get("duration")
+        if isinstance(dur, (list, tuple)) and len(dur) >= 2:
+            expanded["duration_days_min"] = int(dur[0])
+            expanded["duration_days_max"] = int(dur[1])
+
+        profiles[role] = expanded
+
+    return cfg
+
+
+def _fold_facts_enabled(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Fold legacy ``facts.enabled`` list into per-section ``enabled`` flags.
+
+    If ``facts.enabled`` is ``["sales", "returns"]`` and ``returns.enabled``
+    is not explicitly set, this sets ``returns.enabled = True``.  If
+    ``facts.enabled`` exists but "returns" is absent from the list, this
+    forces ``returns.enabled = False``.
+
+    After folding, the ``facts`` section is removed so downstream code only
+    needs to check per-section ``enabled`` flags.
+    """
+    facts = cfg.get("facts")
+    if not isinstance(facts, dict):
+        if isinstance(facts, list):
+            facts = {"enabled": facts}
+        else:
+            cfg.pop("facts", None)
+            return cfg
+
+    enabled_list = facts.get("enabled")
+    if isinstance(enabled_list, list) and enabled_list:
+        names = {str(x).strip().lower() for x in enabled_list}
+
+        returns_cfg = cfg.get("returns")
+        if isinstance(returns_cfg, dict):
+            if "enabled" not in returns_cfg:
+                returns_cfg["enabled"] = "returns" in names
+            elif returns_cfg.get("enabled"):
+                returns_cfg["enabled"] = "returns" in names
+        elif "returns" in names:
+            cfg.setdefault("returns", {})["enabled"] = True
+
+    cfg.pop("facts", None)
     return cfg
 
 
@@ -254,8 +447,6 @@ def _distribute_paths(cfg: Dict[str, Any]) -> Dict[str, Any]:
     paths = cfg.get("paths")
     if not isinstance(paths, dict):
         return cfg
-
-    data_root = paths.get("data_root", "./data")
 
     # final_output_folder (top-level)
     final_out = paths.get("final_output")
@@ -272,10 +463,12 @@ def _distribute_paths(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if geo_path:
         cfg.setdefault("defaults", {}).setdefault("paths", {}).setdefault("geography", geo_path)
 
-    # exchange_rates.master_file (keep section-level if set)
+    # exchange_rates.master_file (paths.fx_master → section-level)
     er = cfg.get("exchange_rates")
     if isinstance(er, dict) and "master_file" not in er:
-        er.setdefault("master_file", f"{data_root}/exchange_rates_master/fx_master.parquet")
+        er["master_file"] = paths.get(
+            "fx_master", "./data/exchange_rates_master/fx_master.parquet"
+        )
 
     return cfg
 

@@ -50,7 +50,6 @@ models:
       annual_rate: 0.03
       month_volatility_sigma: 0.0     # 0 = deterministic drift
       factor_clip: [1.00, 1.25]       # hard bounds on cumulative factor
-      scale_discount: false            # true = discount grows with inflation
       volatility_seed: 123
 
     # --- Markdown / DiscountAmount ---

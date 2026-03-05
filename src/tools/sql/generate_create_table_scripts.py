@@ -52,47 +52,10 @@ def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
 
 
 def _returns_enabled(cfg: Mapping) -> bool:
-    """
-    Determine whether SalesReturn should be emitted.
-
-    Supported config shapes (any one):
-      - facts: ['sales','returns', ...]
-      - facts.enabled: ['sales','returns', ...]
-      - facts.returns: true|false
-      - facts.enabled.returns: true|false
-
-    Semantics:
-      - If an explicit enabled LIST is provided, returns must be present to enable SalesReturn.
-      - If no explicit selection is provided, defaults to True.
-    """
-    facts_cfg = cfg.get("facts")
-
-    def _list_has_returns(v) -> bool:
-        norm = {str(x).strip().lower() for x in (v or [])}
-        return (
-            "returns" in norm
-            or "salesreturn" in norm
-            or "sales_return" in norm
-            or "salesreturns" in norm
-            or "sales_returns" in norm
-        )
-
-    if isinstance(facts_cfg, list):
-        return _list_has_returns(facts_cfg)
-
-    if facts_cfg is None or not isinstance(facts_cfg, Mapping):
-        return True
-
-    if isinstance(facts_cfg.get("returns"), (bool, int)):
-        return bool(facts_cfg.get("returns"))
-
-    enabled_cfg = facts_cfg.get("enabled")
-    if isinstance(enabled_cfg, list):
-        return _list_has_returns(enabled_cfg)
-
-    if isinstance(enabled_cfg, Mapping) and isinstance(enabled_cfg.get("returns"), (bool, int)):
-        return bool(enabled_cfg.get("returns"))
-
+    """Return True if returns are enabled via ``returns.enabled``."""
+    returns_cfg = cfg.get("returns")
+    if isinstance(returns_cfg, Mapping) and isinstance(returns_cfg.get("enabled"), (bool, int)):
+        return bool(returns_cfg["enabled"])
     return True
 
 

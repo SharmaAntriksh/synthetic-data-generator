@@ -107,45 +107,12 @@ def _pick_target_table(csv_path: Path, *, allowed_tables: Optional[Set[str]]) ->
 # -----------------------------
 
 def _returns_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
-    """
-    Returns True if returns are enabled. Supports:
-      - facts: ['sales','returns']
-      - facts: { enabled: ['sales','returns'] }
-      - facts: { returns: true/false }
-      - facts: { enabled: { returns: true/false } }
-    Default: True when unspecified.
-    """
+    """Return True if returns are enabled via ``returns.enabled``."""
     if cfg is None:
         return True
-
-    facts_cfg = cfg.get("facts")
-
-    def _list_has_returns(v) -> bool:
-        norm = {str(x).strip().lower() for x in (v or [])}
-        return (
-            "returns" in norm
-            or "salesreturn" in norm
-            or "sales_return" in norm
-            or "salesreturns" in norm
-            or "sales_returns" in norm
-        )
-
-    if isinstance(facts_cfg, list):
-        return _list_has_returns(facts_cfg)
-
-    if facts_cfg is None or not isinstance(facts_cfg, Mapping):
-        return True
-
-    if isinstance(facts_cfg.get("returns"), (bool, int)):
-        return bool(facts_cfg.get("returns"))
-
-    enabled_cfg = facts_cfg.get("enabled")
-    if isinstance(enabled_cfg, list):
-        return _list_has_returns(enabled_cfg)
-
-    if isinstance(enabled_cfg, Mapping) and isinstance(enabled_cfg.get("returns"), (bool, int)):
-        return bool(enabled_cfg.get("returns"))
-
+    returns_cfg = cfg.get("returns")
+    if isinstance(returns_cfg, Mapping) and isinstance(returns_cfg.get("enabled"), (bool, int)):
+        return bool(returns_cfg["enabled"])
     return True
 
 

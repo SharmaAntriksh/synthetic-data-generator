@@ -23,13 +23,10 @@ defaults:
     end: "2025-12-31"
 
 paths:
-  data_root: "./data"
   geography: "./data/parquet_dims/geography.parquet"
   names_folder: "./data/name_pools/people"
+  fx_master: "./data/exchange_rates_master/fx_master.parquet"
   final_output: "./generated_datasets"
-
-facts:
-  enabled: ["sales", "returns"]
 
 # ------------------------------------------------------------------
 # SALES
@@ -42,13 +39,12 @@ sales:
   write_delta: true
   skip_order_cols: false
 
-  merge_parquet: true
-  merged_file: "sales.parquet"
-  delete_chunks: true
-
-  partitioning:
+  merge:
     enabled: true
-    columns: ["Year", "Month"]
+    file: "sales.parquet"
+    delete_chunks: true
+
+  partition_by: ["Year", "Month"]     # null or [] to disable
 
   advanced:
     chunk_size: 1_000_000
@@ -84,10 +80,8 @@ products:
 customers:
   active_ratio: 0.95
 
-  pct_india: 10
-  pct_us: 51
-  pct_eu: 39
-  pct_org: 1
+  region_mix: { US: 51, EU: 39, India: 10 }
+  org_pct: 1
 
   lifecycle:
     enable_churn: true
@@ -170,6 +164,7 @@ stores:
 # ------------------------------------------------------------------
 employees:
   use_store_employee_count: false
+  include_store_cols: false
   min_staff_per_store: 3
   max_staff_per_store: 8
 
@@ -187,33 +182,11 @@ employees:
     allow_store_revisit: false
 
     role_profiles:
-      default:
-        role_multiplier: 0.25
-        episodes_min: 0
-        episodes_max: 1
-        duration_days_min: 60
-        duration_days_max: 180
-
-      Sales Associate:
-        role_multiplier: 2.50
-        episodes_min: 1
-        episodes_max: 4
-        duration_days_min: 60
-        duration_days_max: 240
-
-      Cashier:
-        role_multiplier: 1.10
-        episodes_min: 0
-        episodes_max: 3
-        duration_days_min: 14
-        duration_days_max: 120
-
-      Fulfillment Associate:
-        role_multiplier: 0.40
-        episodes_min: 0
-        episodes_max: 2
-        duration_days_min: 45
-        duration_days_max: 180
+      #                          mult  episodes    duration_days
+      default:                 { mult: 0.25, episodes: [0, 1], duration: [60, 180]  }
+      Sales Associate:         { mult: 2.50, episodes: [1, 4], duration: [60, 240]  }
+      Cashier:                 { mult: 1.10, episodes: [0, 3], duration: [14, 120]  }
+      Fulfillment Associate:   { mult: 0.40, episodes: [0, 2], duration: [45, 180]  }
 
 # ------------------------------------------------------------------
 # DATES (Dimension)
@@ -240,7 +213,6 @@ dates:
 # ------------------------------------------------------------------
 exchange_rates:
   use_global_dates: true
-  master_file: "./data/exchange_rates_master/fx_master.parquet"
 
   currencies: ["USD", "EUR", "INR", "GBP", "AUD", "CAD"]
   base_currency: "USD"
@@ -252,16 +224,8 @@ exchange_rates:
 budget:
   enabled: true
   report_currency: "USD"
-  scenarios:
-    Low: -0.03
-    Medium: 0.00
-    High: 0.05
-  growth_caps:
-    high: 0.30
-    low: -0.20
-  weights:
-    local: 0.60
-    category: 0.30
-    global: 0.10
+  scenarios:   { Low: -0.03, Medium: 0.00, High: 0.05 }
+  growth_caps: { high: 0.30, low: -0.20 }
+  weights:     { local: 0.60, category: 0.30, global: 0.10 }
   default_backcast_growth: 0.05
   return_rate_cap: 0.30

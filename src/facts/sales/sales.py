@@ -439,15 +439,8 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Returns (optional)
     # ------------------------------------------------------------
-    facts_enabled = _cfg_get(cfg, ["facts", "enabled"], default=[])
-    facts_enabled = facts_enabled if isinstance(facts_enabled, list) else []
-
     returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
     returns_enabled = _bool_or(returns_cfg.get("enabled"), False)
-
-    # If facts.enabled is used, treat it as an additional "feature gate"
-    if facts_enabled:
-        returns_enabled = bool(returns_enabled and ("returns" in {str(x).lower() for x in facts_enabled}))
 
     returns_rate = _float_or(returns_cfg.get("return_rate", 0.0), 0.0)
     if not np.isfinite(returns_rate):
