@@ -144,49 +144,11 @@ def load_config_file(path: str | Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def apply_acquisition_tuning(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Translate high-level acquisition tuning knobs into detailed model parameters.
+    """No-op: the tuning block has been replaced by models.customers.
 
-    Expected config shape::
-
-        tuning:
-          acquisition_intensity: 0..1   (higher ⇒ more new customers)
-          acquisition_smoothness: 0..1  (higher ⇒ flatter / fewer dead months)
-          acquisition_cycles: 0..1      (higher ⇒ stronger multi-year waves)
-
-    Notes:
-      - Does NOT require pipeline defaults, so safe for models.yaml too.
-      - Mutates only the ``models`` subtree and only when ``tuning`` exists.
+    Kept for backward compatibility with external callers.
+    If an old-style ``tuning`` block is present it is silently ignored.
     """
-    tuning = cfg.get("tuning")
-    if not isinstance(tuning, dict):
-        return cfg
-
-    cfg = dict(cfg)  # shallow copy – intentional: tuning only touches models subtree
-    models = cfg.get("models")
-    if models is None:
-        models = {}
-        cfg["models"] = models
-    if not isinstance(models, dict):
-        raise KeyError("Invalid 'models' section in config (expected mapping)")
-
-    discovery = models.setdefault("customer_discovery", {})
-    participation = models.setdefault("customer_participation", {})
-    cycles = participation.setdefault("cycles", {})
-
-    intensity = _clamp01(tuning.get("acquisition_intensity", 0.5))
-    smoothness = _clamp01(tuning.get("acquisition_smoothness", 0.5))
-    cycle_strength = _clamp01(tuning.get("acquisition_cycles", 0.3))
-
-    # Discovery mapping
-    discovery["orders_per_new_customer"] = int(round(40 - 30 * intensity))  # 40..10
-    discovery["min_new_customers_per_month"] = int(round(30 + 200 * smoothness))  # 30..230
-    discovery.setdefault("max_fraction_per_month", 0.03)
-    discovery["seasonal_amplitude"] = 0.0
-
-    # Participation mapping
-    cycles.setdefault("enabled", True)
-    cycles["amplitude"] = round(0.05 + 0.30 * cycle_strength, 3)  # 0.05..0.35
-
     return cfg
 
 

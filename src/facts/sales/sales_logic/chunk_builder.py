@@ -9,8 +9,6 @@ Adding columns:
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pyarrow as pa
 
@@ -18,7 +16,6 @@ from .globals import PA_AVAILABLE, State
 from .core import (
     _eligible_customer_mask_for_month,
     _normalize_end_month,
-    _participation_distinct_target,
     _sample_customers,
     apply_promotions,
     build_orders,
@@ -437,7 +434,7 @@ def build_chunk_table(
 ) -> pa.Table:
 
     # Lazy import to avoid circular import: sales_models imports State from sales_logic
-    from ..sales_models import apply_activity_thinning, build_quantity, build_prices
+    from ..sales_models import build_quantity, build_prices
 
     """
     Build a chunk of synthetic sales data.
@@ -566,23 +563,38 @@ def build_chunk_table(
     )
 
     # ------------------------------------------------------------
-    # DISCOVERY / PARTICIPATION CONFIG (EXPLICIT PRESENCE SEMANTICS)
+    # CUSTOMER MIX CONFIG
     # ------------------------------------------------------------
-    # Discovery is OFF if customer_discovery is absent.
-    disc_cfg = State.models_cfg.get("customer_discovery", None)
-    use_discovery = bool(disc_cfg) and bool(disc_cfg.get("enabled", True))
-    disc_cfg = disc_cfg or {}
+    cust_cfg = State.models_cfg.get("customers", {}) or {}
+    new_customer_share = float(np.clip(
+        cust_cfg.get("new_customer_share", 0.10), 0.0, 1.0))
+    distinct_ratio = float(np.clip(
+        cust_cfg.get("distinct_ratio", 0.55), 0.0, 1.0))
+    cycle_amplitude = float(np.clip(
+        cust_cfg.get("cycle_amplitude", 0.0), 0.0, 1.0))
+    discovery_shape = float(np.clip(
+        cust_cfg.get("discovery_shape", 0.0), -1.0, 1.0))
 
-    # Participation is OFF if block absent. If present without enabled, default-on.
-    participation_cfg = State.models_cfg.get("customer_participation", None)
-    use_participation = bool(participation_cfg) and bool(participation_cfg.get("enabled", True))
-    participation_cfg = participation_cfg or {}
+    use_discovery = new_customer_share > 0.0
+
+    # Precompute per-month discovery shape multipliers (normalized to mean=1)
+    if use_discovery and T > 1 and discovery_shape != 0.0:
+        progress = np.linspace(0.0, 1.0, T)
+        shape_mult = 1.0 + discovery_shape * (2.0 * progress - 1.0)
+        shape_mult = np.maximum(shape_mult, 0.1)
+        shape_mult /= shape_mult.mean()
+    else:
+        shape_mult = np.ones(T, dtype=np.float64)
+
+    _BOOTSTRAP_MONTHS = 6
+    _MAX_FRAC_PER_MONTH = 0.015
+    _MAX_DISTINCT_RATIO = 0.70
+    _MIN_DISTINCT_CUSTOMERS = 250
 
     # Brand popularity is OFF if block absent. If present without enabled, default-on.
     brand_cfg = State.models_cfg.get("brand_popularity", None)
     use_brand_popularity = bool(brand_cfg) and bool(brand_cfg.get("enabled", True))
 
-    # Discovery state only matters if discovery is enabled
     if use_discovery:
         seen_customers = getattr(State, "seen_customers", None)
         if seen_customers is None:
@@ -638,63 +650,37 @@ def build_chunk_table(
             continue
 
         # --------------------------------------------------------
-        # DISCOVERY TARGET (ONLY IF DISCOVERY ENABLED) - preserved semantics
+        # DISCOVERY TARGET
         # --------------------------------------------------------
         disc_cfg_local = {}
         if use_discovery:
-            disc_cfg_local = dict(disc_cfg)
+            target_new = int(round(
+                new_customer_share * m_rows * float(shape_mult[m_offset])))
 
-            opc = float(disc_cfg_local.get("orders_per_new_customer", 20.0))
-            min_month = int(disc_cfg_local.get("min_new_customers_per_month", 0) or 0)
+            # Bootstrap: smooth ramp over first months
+            if m_offset < _BOOTSTRAP_MONTHS:
+                target_new = int(round(
+                    target_new * (m_offset + 1) / _BOOTSTRAP_MONTHS))
 
-            # demand-driven discovery
-            target_new = int(max(1, round(m_rows / max(opc, 1e-9))))
-
-            # Discovery rate / seasonality (rate knobs)
-            base_rate = float(disc_cfg_local.get("base_discovery_rate", 0.06))
-            seasonal_amp = float(disc_cfg_local.get("seasonal_amplitude", 0.0))
-            seasonal_period = int(disc_cfg_local.get("seasonal_period_months", 24))
-            min_p = float(disc_cfg_local.get("min_discovery_rate", base_rate))
-            max_p = float(disc_cfg_local.get("max_discovery_rate", base_rate))
-
-            if base_rate > 0.0 and (seasonal_amp != 0.0 or min_p != base_rate or max_p != base_rate):
-                cyc = math.sin(2.0 * math.pi * float(m_offset) / max(seasonal_period, 1))
-                p = base_rate * (1.0 + seasonal_amp * cyc)
-                p = float(np.clip(p, min_p, max_p))
-                target_new = int(max(0, round(target_new * (p / base_rate))))
-
-            # Hard floor (helps prevent weak early years if desired)
-            if min_month > 0:
-                ramp_months = int(disc_cfg_local.get("floor_ramp_months", 12) or 0)
-                if ramp_months > 0:
-                    t = min(1.0, max(0.0, m_offset / float(ramp_months)))
-                    floor0 = float(min_month)
-                    floor1 = float(disc_cfg_local.get("min_new_customers_steady", min_month))
-                    floor = int(round(floor0 + t * (floor1 - floor0)))
-                else:
-                    floor = int(min_month)
-                target_new = max(target_new, floor)
-
-            # Bootstrap suppression (optional)
-            bootstrap_months = int(disc_cfg_local.get("bootstrap_suppression_months", 12) or 0)
-            if bootstrap_months > 0 and m_offset < bootstrap_months:
-                scale = (m_offset + 1) / float(bootstrap_months)
-                target_new = int(round(target_new * scale))
-
-            disc_cfg_local["_target_new_customers"] = int(max(0, target_new))
+            disc_cfg_local["_target_new_customers"] = max(0, target_new)
+            disc_cfg_local["max_fraction_per_month"] = _MAX_FRAC_PER_MONTH
 
         # --------------------------------------------------------
-        # PARTICIPATION DISTINCT TARGET (OPTIONAL)
+        # PARTICIPATION DISTINCT TARGET
         # --------------------------------------------------------
         target_distinct = None
-        if use_participation:
-            target_distinct = _participation_distinct_target(
-                rng=rng,
-                m_offset=int(m_offset),
-                eligible_count=int(eligible_mask.sum()),
-                n_orders=int(m_rows),
-                cfg=participation_cfg,
-            )
+        if distinct_ratio > 0.0:
+            eligible_count = int(eligible_mask.sum())
+            k = distinct_ratio * eligible_count
+
+            if cycle_amplitude > 0.0:
+                cyc = float(np.sin(2.0 * np.pi * m_offset / 24.0))
+                k *= 1.0 + cycle_amplitude * cyc
+
+            k = max(k, float(_MIN_DISTINCT_CUSTOMERS))
+            k = min(k, eligible_count * _MAX_DISTINCT_RATIO,
+                    float(eligible_count), float(m_rows))
+            target_distinct = max(1, int(round(k)))
 
         # --------------------------------------------------------
         # CUSTOMER SAMPLING (discovery/participation aware)
@@ -851,26 +837,6 @@ def build_chunk_table(
         promo_keys = np.asarray(promo_keys, dtype=np.int64)
 
         # --------------------------------------------------------
-        # ACTIVITY THINNING
-        # --------------------------------------------------------
-        keep_mask = apply_activity_thinning(rng=rng, order_dates=order_dates)
-        if not keep_mask.any():
-            continue
-
-        customer_keys_out = customer_keys_out[keep_mask]
-        product_keys = product_keys[keep_mask]
-        unit_price = unit_price[keep_mask]
-        unit_cost = unit_cost[keep_mask]
-        store_key_arr = store_key_arr[keep_mask]
-        currency_arr = currency_arr[keep_mask]
-        order_dates = order_dates[keep_mask]
-        promo_keys = promo_keys[keep_mask]
-
-        # Ensure order ids/line nums stay aligned after thinning
-        if not skip_cols:
-            order_ids_int = np.asarray(order_ids_int)[keep_mask]
-            line_num = np.asarray(line_num)[keep_mask]
-        # --------------------------------------------------------
         # EMPLOYEE (SalesPersonEmployeeKey)
         #   Agreement:
         #     - If order identifiers exist (skip_cols == False): 1 salesperson per order (broadcast to all lines),
@@ -919,7 +885,7 @@ def build_chunk_table(
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------
         if use_discovery:
-            # use post-thinning keys so "seen" means "actually appeared"
+            # track customers that actually appeared in this month
             seen_customers.update(map(int, np.unique(customer_keys_out)))
             State.seen_customers = seen_customers
 
@@ -970,8 +936,8 @@ def build_chunk_table(
         cols["CurrencyKey"] = currency_arr
 
         cols["OrderDate"] = _as_datetime64_D(order_dates)
-        cols["DueDate"] = _as_datetime64_D(dates["due_date"][keep_mask])
-        cols["DeliveryDate"] = _as_datetime64_D(dates["delivery_date"][keep_mask])
+        cols["DueDate"] = _as_datetime64_D(dates["due_date"])
+        cols["DeliveryDate"] = _as_datetime64_D(dates["delivery_date"])
 
         cols["Quantity"] = qty
         cols["NetPrice"] = price["final_net_price"]
@@ -979,8 +945,8 @@ def build_chunk_table(
         cols["UnitPrice"] = price["final_unit_price"]
         cols["DiscountAmount"] = price["discount_amt"]
 
-        cols["DeliveryStatus"] = dates["delivery_status"][keep_mask]
-        cols["IsOrderDelayed"] = dates["is_order_delayed"][keep_mask]
+        cols["DeliveryStatus"] = dates["delivery_status"]
+        cols["IsOrderDelayed"] = dates["is_order_delayed"]
 
         if file_format == "deltaparquet":
             m_int = order_dates.astype("datetime64[M]").astype("int64")
@@ -1014,10 +980,10 @@ def build_chunk_table(
                 # derived / measures
                 "qty": qty,
                 "price": price,
-                "due_date": dates["due_date"][keep_mask],
-                "delivery_date": dates["delivery_date"][keep_mask],
-                "delivery_status": dates["delivery_status"][keep_mask],
-                "is_order_delayed": dates["is_order_delayed"][keep_mask],
+                "due_date": dates["due_date"],
+                "delivery_date": dates["delivery_date"],
+                "delivery_status": dates["delivery_status"],
+                "is_order_delayed": dates["is_order_delayed"],
 
                 # current base columns (so extras can reference already-built cols)
                 "cols": cols,

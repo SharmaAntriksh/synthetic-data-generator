@@ -3,94 +3,22 @@
 # ==========================================================================
 #
 # This file controls *how* the synthetic sales rows behave over time:
-#   - How many rows land in each month (activity / demand shaping)
+#   - How many rows land in each month (macro demand / growth)
 #   - How many items per order (quantity / basket size)
 #   - How prices drift with inflation and get snapped to realistic values
-#   - Customer lifecycle: who is eligible to buy, and when
+#   - Customer mix: new vs returning buyers, and when they appear
 #   - Returns: rate, reasons, lag distribution
-#
-# The top-level "tuning" block gives you three easy sliders.
-# The "models" block gives you full control if you need it.
-#
-# TIP: Start by adjusting "tuning" knobs only. Dive into "models" only
-#      if the output doesn't match your needs.
 # ==========================================================================
 
-# ------------------------------------------------------------------
-# EASY TUNING (start here)
-# ------------------------------------------------------------------
-# These three sliders are translated into detailed model parameters
-# automatically by config_loader.apply_acquisition_tuning().
-#
-#   acquisition_intensity  — 0 = few new customers, 1 = many new customers
-#   acquisition_smoothness — 0 = spiky month-to-month, 1 = very flat spread
-#   acquisition_cycles     — 0 = no multi-year waves, 1 = dramatic waves
-# ------------------------------------------------------------------
-tuning:
-  acquisition_intensity: 0.55
-  acquisition_smoothness: 0.90
-  acquisition_cycles: 0.35
-
-
 models:
-
-  # ================================================================
-  # ACTIVITY — month-to-month order density shaping
-  # ================================================================
-  # Controls how many generated rows survive per calendar month.
-  # Think of this as a "seasonality + noise" filter applied after
-  # the raw row allocation.
-  #
-  # preserve_row_count: true  — keeps your exact total_rows target
-  # preserve_row_count: false — actually thins rows (use for realism)
-  # ================================================================
-  activity:
-    enabled: true
-    preserve_row_count: true
-
-    # Retail-like monthly seasonality (12 values, Jan–Dec).
-    # Values > 1.0 = busier than average, < 1.0 = quieter.
-    monthly_baseline:
-      - 0.92   # Jan
-      - 0.86   # Feb
-      - 0.96   # Mar
-      - 1.00   # Apr
-      - 1.13   # May
-      - 1.25   # Jun
-      - 1.04   # Jul
-      - 1.02   # Aug
-      - 0.99   # Sep
-      - 1.06   # Oct
-      - 1.28   # Nov
-      - 1.46   # Dec
-
-    # Month-to-month smoothing (0 = no smoothing, 0.98 = very sticky).
-    month_inertia: 0.73
-
-    # Random month-level spikiness (keep low for smooth curves).
-    volatility_sigma: 0.03
-
-    # Row-level noise that spreads orders within a month.
-    row_noise_sigma: 0.10             # for datasets < split_threshold rows
-    row_noise_sigma_large: 0.30       # for datasets >= split_threshold rows
-
-    # Clamp range for monthly row counts (as fraction of average).
-    bounds:
-      split_threshold: 300000         # below = "small dataset" rules
-      small: { low: 0.82, high: 1.22 }
-      large: { low: 0.82, high: 1.18 }
-
-    # Internal: datasets below this size get reduced volatility scaling.
-    size_scale_threshold: 200000
-
 
   # ================================================================
   # QUANTITY — items per order (basket size)
   # ================================================================
   quantity:
-    base_poisson_lambda: 1.8          # average basket before monthly factors
+    base_poisson_lambda: 1.7          # average basket before monthly factors
     min_qty: 1
-    max_qty: 4
+    max_qty: 8
 
     # Monthly seasonal multipliers (12 values, Jan–Dec).
     monthly_factors:
@@ -107,14 +35,7 @@ models:
       - 1.06
       - 1.05
 
-    month_inertia: 0.82               # smoothing across months
     noise_sigma: 0.12                 # per-row gaussian jitter
-
-    # Rare large orders (disabled by default).
-    tail_boost:
-      enabled: false
-      probability: 0.03               # chance per row
-      multiplier_range: [1.5, 3.0]    # random multiplier for boosted rows
 
 
   # ================================================================
@@ -124,8 +45,6 @@ models:
   #           → apply markdown ladder → enforce caps → round to cents
   # ================================================================
   pricing:
-    month_inertia: 0.85
-
     # --- Inflation ---
     inflation:
       annual_rate: 0.03
@@ -133,19 +52,6 @@ models:
       factor_clip: [1.00, 1.25]       # hard bounds on cumulative factor
       scale_discount: false            # true = discount grows with inflation
       volatility_seed: 123
-
-    # --- Seasonal price adjustment ---
-    seasonality:
-      enabled: true
-      amplitude: 0.03
-      sharpness: 1.2
-      phase_shift_months: -1
-
-    # --- New-product ramp (disabled by default) ---
-    ramp:
-      months: 0
-      min_multiplier: 1.0
-      max_multiplier: 1.0
 
     # --- Markdown / DiscountAmount ---
     # Independent from Promotions (analysis-time only via PromotionKey).
@@ -211,7 +117,7 @@ models:
 
     yoy_growth_schedule:
       mode: "repeat"
-      values: [0.06, 0.09, -0.18, 0.19, -0.09]
+      values: [0.02, 0.03, -0.18, 0.19, -0.09]
 
     shock_probability: 0.10
     shock_impact: [-0.25, 0.20]
@@ -237,59 +143,26 @@ models:
 
 
   # ================================================================
-  # CUSTOMER PARTICIPATION — distinct buyers per month
+  # CUSTOMERS — new vs returning buyer mix
   # ================================================================
-  # (Consumed by chunk_builder.py, not sales_models.)
-  # ================================================================
-  customer_participation:
-    base_distinct_ratio: 0.55
-    min_distinct_customers: 250
-    max_distinct_ratio: 0.70
+  customers:
+    # Fraction of eligible customers that buy each month.
+    # Higher = more repeat buyers per month, lower = sparser.
+    distinct_ratio: 0.55
 
-    cycles:
-      enabled: true
-      period_months: 24
-      amplitude: 0.35
-      phase: 0.0
-      noise_std: 0.06
+    # Approximate share of each month's orders from first-time buyers.
+    # 0.05 = 5% new customers, 0.20 = aggressive acquisition.
+    new_customer_share: 0.10
 
+    # Multi-year oscillation in the distinct buyer count.
+    # 0.0 = flat, 0.35 = ±35% swings over a 24-month cycle.
+    cycle_amplitude: 0.35
 
-  # ================================================================
-  # CUSTOMER DISCOVERY — first-time buyer appearance rate
-  # ================================================================
-  # (Consumed by chunk_builder.py, not sales_models.)
-  # ================================================================
-  customer_discovery:
-    base_discovery_rate: 0.08
-    min_discovery_rate: 0.05
-    max_discovery_rate: 0.20
-    seasonal_amplitude: 0.30
-    seasonal_period_months: 24
-
-    max_fraction_per_month: 0.015
-    orders_per_new_customer: 30
-
-    min_new_customers_per_month: 80
-    min_new_customers_steady: 160
-    floor_ramp_months: 60
-    bootstrap_suppression_months: 6
-
-
-  # ================================================================
-  # CUSTOMER ACTIVITY OVERLAY (optional, usually disabled)
-  # ================================================================
-  # Adds dormancy / reactivation on top of CustomerStartMonth/EndMonth.
-  # Only enable if you want some eligible customers to "skip" months.
-  # ================================================================
-  customer_activity_overlay:
-    enabled: false
-    base_monthly_activity_rate: 0.85
-    month_inertia: 0.75
-    monthly_reactivation_rate: 0.08
-    seasonal_amplitude: 0.10
-    seasonal_period_months: 12
-    per_customer_sigma: 0.20
-    seed: 1234
+    # When new customers appear relative to the dataset timeline.
+    # -1.0 = heavily front-loaded (most acquisition early)
+    #  0.0 = evenly spread
+    #  1.0 = heavily back-loaded (accelerating acquisition)
+    discovery_shape: 0.0
 
 
   # ================================================================
