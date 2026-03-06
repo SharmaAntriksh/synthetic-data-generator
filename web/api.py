@@ -51,6 +51,16 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # ---------------------------------------------------------------------------
+# Config normalization (reuse pipeline's normalizers)
+# ---------------------------------------------------------------------------
+
+try:
+    from src.engine.config.config import load_config as _load_pipeline_config
+    _HAS_NORMALIZER = True
+except ImportError:
+    _HAS_NORMALIZER = False
+
+# ---------------------------------------------------------------------------
 # Config state
 # ---------------------------------------------------------------------------
 
@@ -65,6 +75,11 @@ def _load_yaml(p: Path) -> dict:
 
 
 def _base_config() -> dict:
+    if _HAS_NORMALIZER:
+        try:
+            return _load_pipeline_config(str(_config_path))
+        except Exception:
+            pass
     return _load_yaml(_config_path)
 
 
@@ -173,8 +188,6 @@ def get_config():
     include = _g(dates_cfg, "include", default={})
     wc = _g(dates_cfg, "weekly_calendar", default={})
     lifecycle = _g(cust, "lifecycle", default={})
-    prod_lifecycle = _g(prods, "lifecycle", default={})
-    tuning = _g(_models_cfg, "tuning", default={})
 
     return {
         # Output
@@ -213,19 +226,15 @@ def get_config():
         "pctOrg": float(cust.get("pct_org", 10)),
         "customerActiveRatio": float(cust.get("active_ratio", 0.90)),
         "churnEnabled": bool(lifecycle.get("enable_churn", True)),
-        "baseMonthlyChurn": float(lifecycle.get("base_monthly_churn", 0.52)),
-        "minTenureMonths": int(lifecycle.get("min_tenure_months", 22)),
-        "initialActiveCust": int(lifecycle.get("initial_active_customers", 2000)),
-        "initialSpreadMonths": int(lifecycle.get("initial_spread_months", 36)),
+        "baseMonthlyChurn": float(lifecycle.get("base_monthly_churn", 0.04)),
+        "minTenureMonths": int(lifecycle.get("min_tenure_months", 3)),
+        "initialActiveCust": float(lifecycle.get("initial_active_customers", 0.35)),
+        "initialSpreadMonths": int(lifecycle.get("initial_spread_months", 1)),
         # Products detail
         "valueScale": float(pricing.get("value_scale", 1.0)),
-        "minPrice": float(pricing.get("min_unit_price", 100)),
-        "maxPrice": float(pricing.get("max_unit_price", 5000)),
+        "minPrice": float(pricing.get("min_unit_price", 10)),
+        "maxPrice": float(pricing.get("max_unit_price", 3000)),
         "productActiveRatio": float(prods.get("active_ratio", 0.94)),
-        "lookbackYears": int(prod_lifecycle.get("lookback_years", 10)),
-        "lookaheadYears": int(prod_lifecycle.get("lookahead_years", 2)),
-        "preexistingShare": float(prod_lifecycle.get("preexisting_share", 0.70)),
-        "discontinueRatio": float(prod_lifecycle.get("discontinue_ratio", 0.20)),
         # Geography
         "geoWeights": dict(geo.get("country_weights", {})),
         # Returns
@@ -233,10 +242,6 @@ def get_config():
         "returnRate": float(returns.get("return_rate", 0.03)),
         "returnMinDays": int(returns.get("min_days_after_sale", 1)),
         "returnMaxDays": int(returns.get("max_days_after_sale", 60)),
-        # Tuning
-        "tuningIntensity": float(tuning.get("acquisition_intensity", 0.55)),
-        "tuningSmoothness": float(tuning.get("acquisition_smoothness", 0.90)),
-        "tuningCycles": float(tuning.get("acquisition_cycles", 0.35)),
     }
 
 # ---------------------------------------------------------------------------
@@ -252,7 +257,6 @@ def update_config(body: ConfigUpdate):
     _cfg.setdefault("customers", {}).setdefault("lifecycle", {})
     _cfg.setdefault("stores", {})
     _cfg.setdefault("products", {}).setdefault("pricing", {}).setdefault("base", {})
-    _cfg["products"].setdefault("lifecycle", {})
     _cfg.setdefault("promotions", {})
     _cfg.setdefault("returns", {})
     _cfg.setdefault("geography", {}).setdefault("country_weights", {})
@@ -300,7 +304,7 @@ def update_config(body: ConfigUpdate):
     if "churnEnabled" in v: _cfg["customers"]["lifecycle"]["enable_churn"] = bool(v["churnEnabled"])
     if "baseMonthlyChurn" in v: _cfg["customers"]["lifecycle"]["base_monthly_churn"] = float(v["baseMonthlyChurn"])
     if "minTenureMonths" in v: _cfg["customers"]["lifecycle"]["min_tenure_months"] = int(v["minTenureMonths"])
-    if "initialActiveCust" in v: _cfg["customers"]["lifecycle"]["initial_active_customers"] = int(v["initialActiveCust"])
+    if "initialActiveCust" in v: _cfg["customers"]["lifecycle"]["initial_active_customers"] = float(v["initialActiveCust"])
     if "initialSpreadMonths" in v: _cfg["customers"]["lifecycle"]["initial_spread_months"] = int(v["initialSpreadMonths"])
 
     # Products detail
@@ -308,10 +312,6 @@ def update_config(body: ConfigUpdate):
     if "minPrice" in v: _cfg["products"]["pricing"]["base"]["min_unit_price"] = float(v["minPrice"])
     if "maxPrice" in v: _cfg["products"]["pricing"]["base"]["max_unit_price"] = float(v["maxPrice"])
     if "productActiveRatio" in v: _cfg["products"]["active_ratio"] = float(v["productActiveRatio"])
-    if "lookbackYears" in v: _cfg["products"]["lifecycle"]["lookback_years"] = int(v["lookbackYears"])
-    if "lookaheadYears" in v: _cfg["products"]["lifecycle"]["lookahead_years"] = int(v["lookaheadYears"])
-    if "preexistingShare" in v: _cfg["products"]["lifecycle"]["preexisting_share"] = float(v["preexistingShare"])
-    if "discontinueRatio" in v: _cfg["products"]["lifecycle"]["discontinue_ratio"] = float(v["discontinueRatio"])
 
     # Geography
     if "geoWeights" in v and isinstance(v["geoWeights"], dict):
@@ -322,12 +322,6 @@ def update_config(body: ConfigUpdate):
     if "returnRate" in v: _cfg["returns"]["return_rate"] = float(v["returnRate"])
     if "returnMinDays" in v: _cfg["returns"]["min_days_after_sale"] = int(v["returnMinDays"])
     if "returnMaxDays" in v: _cfg["returns"]["max_days_after_sale"] = int(v["returnMaxDays"])
-
-    # Models tuning
-    _models_cfg.setdefault("tuning", {})
-    if "tuningIntensity" in v: _models_cfg["tuning"]["acquisition_intensity"] = float(v["tuningIntensity"])
-    if "tuningSmoothness" in v: _models_cfg["tuning"]["acquisition_smoothness"] = float(v["tuningSmoothness"])
-    if "tuningCycles" in v: _models_cfg["tuning"]["acquisition_cycles"] = float(v["tuningCycles"])
 
     return {"ok": True}
 
@@ -360,10 +354,7 @@ class ConfigYamlUpdate(BaseModel):
 
 @app.post("/api/config/yaml")
 def update_config_yaml(body: ConfigYamlUpdate):
-    """Parse YAML, replace in-memory config. Original file untouched.
-
-    Returns the flat config shape so the form UI can sync.
-    """
+    """Parse YAML, normalize, replace in-memory config. Original file untouched."""
     global _cfg
     text = body.yaml_text
     try:
@@ -372,7 +363,23 @@ def update_config_yaml(body: ConfigYamlUpdate):
             raise HTTPException(400, "Config YAML must be a mapping at the top level.")
     except yaml.YAMLError as e:
         raise HTTPException(400, f"Invalid YAML: {e}")
-    _cfg = parsed
+
+    # Normalize shorthand keys (scale → per-section, region_mix → pct_*, etc.)
+    if _HAS_NORMALIZER:
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+            ) as tmp:
+                yaml.safe_dump(parsed, tmp, sort_keys=False)
+                tmp_path = tmp.name
+            _cfg = _load_pipeline_config(tmp_path)
+            os.unlink(tmp_path)
+        except Exception:
+            _cfg = parsed
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+    else:
+        _cfg = parsed
     return {"ok": True}
 
 
@@ -412,14 +419,7 @@ def update_models(body: ModelsUpdate):
         raise HTTPException(400, f"Invalid YAML: {e}")
     _models_cfg = parsed
     _models_yaml_text = text
-    # Sync tuning sliders from parsed content
-    tuning = parsed.get("tuning", {}) or {}
-    return {
-        "ok": True,
-        "tuningIntensity": float(tuning.get("acquisition_intensity", 0.55)),
-        "tuningSmoothness": float(tuning.get("acquisition_smoothness", 0.90)),
-        "tuningCycles": float(tuning.get("acquisition_cycles", 0.35)),
-    }
+    return {"ok": True}
 
 
 @app.post("/api/models/reset")
@@ -428,13 +428,7 @@ def reset_models():
     global _models_cfg, _models_yaml_text
     _models_cfg = _load_yaml(_models_path)
     _models_yaml_text = _models_path.read_text(encoding="utf-8") if _models_path.exists() else ""
-    tuning = _models_cfg.get("tuning", {}) or {}
-    return {
-        "ok": True,
-        "tuningIntensity": float(tuning.get("acquisition_intensity", 0.55)),
-        "tuningSmoothness": float(tuning.get("acquisition_smoothness", 0.90)),
-        "tuningCycles": float(tuning.get("acquisition_cycles", 0.35)),
-    }
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
