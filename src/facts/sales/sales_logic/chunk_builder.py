@@ -255,8 +255,12 @@ def _eligible_counts_fast(
     s = start_month[active]
     e = end_month_norm[active]
 
+    # Clamp negative start months to 0 (customers acquired before the
+    # dataset window are eligible from the first observed month).
+    s = np.maximum(s, 0)
+
     # keep only sane starts
-    valid_start = (s >= 0) & (s < T)
+    valid_start = s < T
     s = s[valid_start]
     e = e[valid_start]
     if s.size == 0:
@@ -575,6 +579,21 @@ def build_chunk_table(
     discovery_shape = float(np.clip(
         cust_cfg.get("discovery_shape", 0.0), -1.0, 1.0))
 
+    # Month-to-month noise on participation count
+    participation_noise = float(cust_cfg.get("participation_noise", 0.0))
+
+    # Seasonal spikes: calendar months (1-12) that get a boost.
+    # Each entry: { month: int, boost: float }
+    # e.g. month=11 boost=0.40 → November gets +40% distinct customers
+    spike_cfg = cust_cfg.get("seasonal_spikes", []) or []
+    spike_by_cal_month: dict[int, float] = {}
+    if isinstance(spike_cfg, list):
+        for entry in spike_cfg:
+            if isinstance(entry, dict) and "month" in entry and "boost" in entry:
+                cm = int(entry["month"])
+                if 1 <= cm <= 12:
+                    spike_by_cal_month[cm] = float(entry["boost"])
+
     use_discovery = new_customer_share > 0.0
 
     # Precompute per-month discovery shape multipliers (normalized to mean=1)
@@ -586,7 +605,6 @@ def build_chunk_table(
     else:
         shape_mult = np.ones(T, dtype=np.float64)
 
-    _BOOTSTRAP_MONTHS = 6
     _MAX_FRAC_PER_MONTH = float(cust_cfg.get("max_new_fraction_per_month", 0.015))
     _MAX_DISTINCT_RATIO = 0.70
     _MIN_DISTINCT_CUSTOMERS = 250
@@ -601,6 +619,13 @@ def build_chunk_table(
             seen_customers = set()
         elif not isinstance(seen_customers, set):
             seen_customers = set(seen_customers)
+
+        # Pre-seed with customers acquired before the dataset window
+        # (negative start_month).  These are established customers
+        # that don't need discovery — they're already "known".
+        pre_existing = customer_keys[start_month < 0]
+        if pre_existing.size > 0:
+            seen_customers.update(pre_existing.tolist())
     else:
         seen_customers = None
 
@@ -670,15 +695,23 @@ def build_chunk_table(
         # --------------------------------------------------------
         disc_cfg_local = {}
         if use_discovery:
-            target_new = int(round(
-                new_customer_share * n_customer_slots * float(shape_mult[m_offset])))
+            target_new = float(
+                new_customer_share * n_customer_slots * float(shape_mult[m_offset]))
 
-            # Bootstrap: smooth ramp over first months
-            if m_offset < _BOOTSTRAP_MONTHS:
-                target_new = int(round(
-                    target_new * (m_offset + 1) / _BOOTSTRAP_MONTHS))
+            # Apply the same seasonal spikes to new-customer discovery
+            if spike_by_cal_month:
+                month_date_first = month_date_pool[0] if month_date_pool.size > 0 else date_pool[0]
+                cal_month_disc = int(month_date_first.astype("datetime64[M]").astype(int) % 12 + 1)
+                disc_spike = spike_by_cal_month.get(cal_month_disc, 0.0)
+                if disc_spike != 0.0:
+                    target_new *= 1.0 + disc_spike
 
-            disc_cfg_local["_target_new_customers"] = max(0, target_new)
+            # Apply participation noise to discovery too
+            if participation_noise > 0.0:
+                disc_noise = float(rng.normal(loc=1.0, scale=participation_noise))
+                target_new *= max(0.3, disc_noise)
+
+            disc_cfg_local["_target_new_customers"] = max(0, int(round(target_new)))
             disc_cfg_local["max_fraction_per_month"] = _MAX_FRAC_PER_MONTH
 
         # --------------------------------------------------------
@@ -692,6 +725,19 @@ def build_chunk_table(
             if cycle_amplitude > 0.0:
                 cyc = float(np.sin(2.0 * np.pi * m_offset / 24.0))
                 k *= 1.0 + cycle_amplitude * cyc
+
+            # Seasonal spikes: boost distinct count for specific calendar months
+            if spike_by_cal_month:
+                month_date_first = month_date_pool[0] if month_date_pool.size > 0 else date_pool[0]
+                cal_month = int(month_date_first.astype("datetime64[M]").astype(int) % 12 + 1)
+                spike_boost = spike_by_cal_month.get(cal_month, 0.0)
+                if spike_boost != 0.0:
+                    k *= 1.0 + spike_boost
+
+            # Month-to-month noise on participation
+            if participation_noise > 0.0:
+                noise_mult = float(rng.normal(loc=1.0, scale=participation_noise))
+                k *= max(0.3, noise_mult)
 
             k = max(k, float(_MIN_DISTINCT_CUSTOMERS))
             k = min(k, eligible_count * _MAX_DISTINCT_RATIO,

@@ -157,18 +157,30 @@ models:
 
     # Approximate share of each month's orders from first-time buyers.
     # 0.05 = 5% new customers, 0.20 = aggressive acquisition.
-    new_customer_share: 0.05
-
+    new_customer_share: 0.08
+    max_new_fraction_per_month: 0.05
     # Multi-year oscillation in the distinct buyer count.
     # 0.0 = flat, 0.35 = ±35% swings over a 24-month cycle.
-    cycle_amplitude: 0.45
+    cycle_amplitude: 0.40
 
     # When new customers appear relative to the dataset timeline.
     # -1.0 = heavily front-loaded (most acquisition early)
     #  0.0 = evenly spread
     #  1.0 = heavily back-loaded (accelerating acquisition)
-    discovery_shape: 0.5
+    discovery_shape: 0.0
+    
+    # Month-to-month random noise on participation count.
+    # 0.0 = smooth, 0.12 = visible jitter (~±12%), 0.25 = choppy.
+    participation_noise: 0.12
 
+    # Seasonal spikes: specific calendar months get a customer count boost.
+    # Mimics real retail: holiday shopping, back-to-school, summer sales.
+    seasonal_spikes:
+      - { month: 3,  boost: 0.15 }    # spring sale
+      - { month: 7,  boost: 0.12 }    # summer clearance
+      - { month: 9,  boost: 0.10 }    # back-to-school
+      - { month: 11, boost: 0.35 }    # Black Friday / pre-holiday
+      - { month: 12, boost: 0.25 }    # holiday shopping
 
   # ================================================================
   # RETURNS

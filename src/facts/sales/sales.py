@@ -832,11 +832,10 @@ def generate_sales_fact(
         configured_max_frac = float(_cust_mdl.get("max_new_fraction_per_month", 0.015))
 
         total_active = int((is_active_in_sales == 1).sum())
-        # Count customers that start in the initial spread window
-        # (months 0..spread).  These are immediately eligible and have
-        # the full timeline to be naturally sampled.
-        _initial_spread = max(1, int(_cfg_get(cfg, ["customers", "lifecycle", "initial_spread_months"], default=0) or 0))
-        warm_start = int(((customer_start_month >= 0) & (customer_start_month <= _initial_spread)).sum())
+        # Customers with negative start_month are backdated (pre-existing)
+        # and will be pre-seeded into seen_customers by chunk_builder.
+        # Only customers with start_month >= 0 need discovery.
+        warm_start = int(((is_active_in_sales == 1) & (customer_start_month < 0)).sum())
         undiscovered = max(0, total_active - warm_start)
 
         if undiscovered > 0 and total_rows > 0:
