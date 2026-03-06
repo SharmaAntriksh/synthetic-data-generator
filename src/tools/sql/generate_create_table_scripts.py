@@ -52,10 +52,16 @@ def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
 
 
 def _returns_enabled(cfg: Mapping) -> bool:
-    """Return True if returns are enabled via ``returns.enabled``."""
+    """Return True if returns are effectively enabled (not disabled by config or skip_order_cols)."""
     returns_cfg = cfg.get("returns")
     if isinstance(returns_cfg, Mapping) and isinstance(returns_cfg.get("enabled"), (bool, int)):
-        return bool(returns_cfg["enabled"])
+        if not bool(returns_cfg["enabled"]):
+            return False
+    sales_cfg = cfg.get("sales") or {}
+    skip_order = bool(sales_cfg.get("skip_order_cols", False))
+    sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+    if skip_order and sales_output == "sales":
+        return False
     return True
 
 
@@ -163,6 +169,9 @@ def generate_all_create_tables(
             skip_tables.add("CustomerSuperpowers")
         elif not bool(sp_cfg.get("generate_bridge", True)):
             skip_tables.add("CustomerSuperpowers")
+
+    if not _returns_enabled(cfg):
+        skip_tables.add("ReturnReason")
 
     # Dimensions
     dim_scripts: list[str] = []

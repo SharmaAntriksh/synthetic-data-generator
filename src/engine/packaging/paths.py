@@ -78,6 +78,10 @@ def tables_from_sales_cfg(sales_cfg: dict, cfg: Optional[dict] = None) -> list[s
     if isinstance(cfg, dict):
         returns_cfg = cfg.get("returns") or {}
         returns_enabled = bool(returns_cfg.get("enabled", False))
+        if returns_enabled:
+            skip_order = bool(sales_cfg.get("skip_order_cols", False))
+            if skip_order and sales_output == "sales":
+                returns_enabled = False
 
     if returns_enabled:
         # Import locally to avoid hard dependency if returns isn’t wired in some branches yet
