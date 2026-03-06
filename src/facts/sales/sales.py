@@ -439,8 +439,15 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Returns (optional)
     # ------------------------------------------------------------
+    facts_enabled = _cfg_get(cfg, ["facts", "enabled"], default=[])
+    facts_enabled = facts_enabled if isinstance(facts_enabled, list) else []
+
     returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
     returns_enabled = _bool_or(returns_cfg.get("enabled"), False)
+
+    # If facts.enabled is used, treat it as an additional "feature gate"
+    if facts_enabled:
+        returns_enabled = bool(returns_enabled and ("returns" in {str(x).lower() for x in facts_enabled}))
 
     returns_rate = _float_or(returns_cfg.get("return_rate", 0.0), 0.0)
     if not np.isfinite(returns_rate):
@@ -811,6 +818,69 @@ def generate_sales_fact(
         order_id_run_id = int(order_id_run_id_raw) % 1000
     if order_id_run_id < 0:
         order_id_run_id += 1000
+
+    # ------------------------------------------------------------
+    # Auto-adjust new_customer_share so all customers can be
+    # discovered within the available rows.  Without this, low
+    # row-to-customer ratios silently leave thousands of customers
+    # without any sales.
+    # ------------------------------------------------------------
+    _models = State.models_cfg
+    if isinstance(_models, dict):
+        _cust_mdl = _models.get("customers", {}) or {}
+        configured_share = float(_cust_mdl.get("new_customer_share", 0.10))
+        configured_max_frac = float(_cust_mdl.get("max_new_fraction_per_month", 0.015))
+
+        total_active = int((is_active_in_sales == 1).sum())
+        # Count customers that start in the initial spread window
+        # (months 0..spread).  These are immediately eligible and have
+        # the full timeline to be naturally sampled.
+        _initial_spread = max(1, int(_cfg_get(cfg, ["customers", "lifecycle", "initial_spread_months"], default=0) or 0))
+        warm_start = int(((customer_start_month >= 0) & (customer_start_month <= _initial_spread)).sum())
+        undiscovered = max(0, total_active - warm_start)
+
+        if undiscovered > 0 and total_rows > 0:
+            headroom = 1.5
+            # Customer sampling operates at order granularity (avg ~2
+            # lines per order), so the effective number of customer
+            # slots is roughly total_rows / avg_lines_per_order.
+            avg_lines_per_order = 2.0
+            effective_slots = total_rows / avg_lines_per_order
+            needed_share = (undiscovered * headroom) / effective_slots
+            needed_share = float(np.clip(needed_share, 0.0, 0.50))
+
+            # Compute the per-month fraction cap needed to sustain discovery.
+            # With T months and avg_eligible customers, each month must discover
+            # undiscovered / T customers, i.e. (undiscovered / T) / avg_eligible
+            # of the eligible pool.
+            months_int = date_pool.astype("datetime64[M]").astype("int64")
+            T_est = max(1, int(months_int.max() - months_int.min() + 1))
+            avg_eligible = max(1, total_active // 2)
+            needed_frac = (undiscovered * headroom) / (avg_eligible * T_est)
+            needed_frac = float(np.clip(needed_frac, 0.0, 0.50))
+
+            adjusted = False
+            _cust_mdl_copy = dict(_cust_mdl)
+
+            if needed_share > configured_share:
+                _cust_mdl_copy["new_customer_share"] = needed_share
+                adjusted = True
+
+            if needed_frac > configured_max_frac:
+                _cust_mdl_copy["max_new_fraction_per_month"] = needed_frac
+                adjusted = True
+
+            if adjusted:
+                info(
+                    f"Auto-adjusting customer discovery: new_customer_share "
+                    f"{configured_share:.3f} -> {_cust_mdl_copy.get('new_customer_share', configured_share):.3f}, "
+                    f"max_new_fraction_per_month "
+                    f"{configured_max_frac:.4f} -> {_cust_mdl_copy.get('max_new_fraction_per_month', configured_max_frac):.4f} "
+                    f"({undiscovered:,} undiscovered customers across {total_rows:,} rows)."
+                )
+                _models_copy = dict(_models)
+                _models_copy["customers"] = _cust_mdl_copy
+                State.models_cfg = _models_copy
 
     # ------------------------------------------------------------
     # Worker configuration (keep keys stable for compatibility)

@@ -502,20 +502,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
                 "space across chunks and must be constant across the run."
             )
 
-        # ------------------------------------------------------------
-        # Per-run id for SalesOrderNumber (0..999).
-        # If caller doesn't provide it, derive deterministically from seed_master.
-        # ------------------------------------------------------------
-        run_id_raw = worker_cfg.get("order_id_run_id", None)
-        if run_id_raw is None:
-            seed_master = int(worker_cfg.get("seed_master", 0) or 0)
-            order_id_run_id = int(seed_master % 1000)
-        else:
-            order_id_run_id = int(run_id_raw)
-
-        if order_id_run_id < 0 or order_id_run_id > 999:
-            raise RuntimeError(f"order_id_run_id must be in [0,999], got {order_id_run_id}")
-
         no_discount_key = worker_cfg["no_discount_key"]
         delta_output_folder = worker_cfg.get("delta_output_folder") or op.get("delta_output_folder")
         merged_file = worker_cfg.get("merged_file") or op.get("merged_file")
@@ -739,7 +725,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
             # CRITICAL: constant per-run stride used to partition SalesOrderNumber ranges
             "chunk_size": int(max(1, chunk_size)),
             "order_id_stride_orders": int(max(1, chunk_size)),
-            "order_id_run_id": int(order_id_run_id),
             "max_lines_per_order": int(max_lines_per_order),
             
             "row_group_size": int(max(1, row_group_size)),

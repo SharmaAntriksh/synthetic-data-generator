@@ -587,18 +587,9 @@ def build_chunk_table(
         shape_mult = np.ones(T, dtype=np.float64)
 
     _BOOTSTRAP_MONTHS = 6
+    _MAX_FRAC_PER_MONTH = float(cust_cfg.get("max_new_fraction_per_month", 0.015))
     _MAX_DISTINCT_RATIO = 0.70
     _MIN_DISTINCT_CUSTOMERS = 250
-
-    # Per-month cap on new-customer fraction of the eligible pool.
-    # Derived from the actual new_customer_share and the shaped peak so the
-    # cap accommodates the user's intent rather than flattening it.
-    _active_months = max(1, int((eligible_counts > 0).sum()))
-    _avg_rows = int(n) / _active_months
-    _avg_eligible = float(eligible_counts[eligible_counts > 0].mean()) if _active_months > 0 else 1.0
-    _base_frac = new_customer_share * _avg_rows / _avg_eligible
-    _shape_peak = float(shape_mult.max())
-    _MAX_FRAC_PER_MONTH = max(0.015, _base_frac * _shape_peak)
 
     # Brand popularity is OFF if block absent. If present without enabled, default-on.
     brand_cfg = State.models_cfg.get("brand_popularity", None)
@@ -659,12 +650,28 @@ def build_chunk_table(
             continue
 
         # --------------------------------------------------------
+        # Effective customer slots for this month.
+        # When order expansion is active (not skip_cols), each order
+        # gets exactly one customer, so customer sampling operates at
+        # order granularity.  Products are sampled per-line AFTER
+        # expansion so they aren't lost to re-sampling.
+        # --------------------------------------------------------
+        _max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
+        if not skip_cols:
+            _avg_lines = 2.0
+            n_customer_slots = max(1, int(m_rows / _avg_lines))
+            _min_orders = (m_rows + _max_lines - 1) // _max_lines
+            n_customer_slots = max(n_customer_slots, _min_orders)
+        else:
+            n_customer_slots = m_rows
+
+        # --------------------------------------------------------
         # DISCOVERY TARGET
         # --------------------------------------------------------
         disc_cfg_local = {}
         if use_discovery:
             target_new = int(round(
-                new_customer_share * m_rows * float(shape_mult[m_offset])))
+                new_customer_share * n_customer_slots * float(shape_mult[m_offset])))
 
             # Bootstrap: smooth ramp over first months
             if m_offset < _BOOTSTRAP_MONTHS:
@@ -688,7 +695,19 @@ def build_chunk_table(
 
             k = max(k, float(_MIN_DISTINCT_CUSTOMERS))
             k = min(k, eligible_count * _MAX_DISTINCT_RATIO,
-                    float(eligible_count), float(m_rows))
+                    float(eligible_count), float(n_customer_slots))
+
+            # Guarantee the distinct pool can hold every undiscovered
+            # eligible customer so none are deferred to a later month.
+            # Without this, customers whose eligibility window is
+            # shorter than the backlog-clearing time are permanently
+            # lost from the output.
+            if use_discovery and seen_customers is not None:
+                eligible_keys_this = set(
+                    customer_keys[np.flatnonzero(eligible_mask)].tolist())
+                n_undiscovered = len(eligible_keys_this - seen_customers)
+                k = max(k, min(float(n_undiscovered), float(n_customer_slots)))
+
             target_distinct = max(1, int(round(k)))
 
         # --------------------------------------------------------
@@ -699,39 +718,23 @@ def build_chunk_table(
             customer_keys=customer_keys,
             eligible_mask=eligible_mask,
             seen_set=seen_customers,
-            n=int(m_rows),
+            n=int(n_customer_slots),
             use_discovery=use_discovery,
             discovery_cfg=disc_cfg_local,
             base_weight=base_weight,
             target_distinct=target_distinct,
+            end_month_norm=end_month_norm,
+            m_offset=int(m_offset),
         )
 
         if customer_keys_for_orders.size == 0:
             continue
 
-        n_orders = int(customer_keys_for_orders.size)
-
-        # --------------------------------------------------------
-        # PRODUCTS (PER ORDER) - avoid temporary prods array
-        # --------------------------------------------------------
-        prod_idx = _sample_product_row_indices(
-            rng=rng,
-            n=n_orders,
-            product_np=product_np,
-            m_offset=int(m_offset),
-            enabled=use_brand_popularity,
-        )
-
-        product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
-        unit_price  = product_np[prod_idx, 1].astype(np.float64, copy=False)
-        unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
-
         # --------------------------------------------------------
         # ORDERS (use month-specific date pool so month loop is real)
         # --------------------------------------------------------
         if not skip_cols:
-            # build_orders allocates suffixes per *order* (avg ~2 lines/order)
-            order_count = max(1, int(n_orders / 2.0))
+            order_count = int(customer_keys_for_orders.size)
 
             # Each chunk owns suffix range [base, base + cap)
             if order_cursor + np.int64(order_count) > np.int64(cap):
@@ -746,14 +749,14 @@ def build_chunk_table(
 
             orders = build_orders(
                 rng=rng,
-                n=n_orders,
+                n=m_rows,
                 skip_cols=False,
                 date_pool=month_date_pool,
                 date_prob=month_date_prob,
                 customers=customer_keys_for_orders,
-                product_keys=product_keys,
+                product_keys=None,
                 _len_date_pool=len(month_date_pool),
-                _len_customers=n_orders,
+                _len_customers=order_count,
                 order_id_start=int(order_id_start),
             )
 
@@ -765,11 +768,41 @@ def build_chunk_table(
             order_ids_int = orders["order_ids_int"]
             line_num = orders["line_num"]
 
+            n_lines = int(customer_keys_out.size)
+
+            # Products are per-line, sampled AFTER order expansion so
+            # every line gets its own product assignment.
+            prod_idx = _sample_product_row_indices(
+                rng=rng,
+                n=n_lines,
+                product_np=product_np,
+                m_offset=int(m_offset),
+                enabled=use_brand_popularity,
+            )
+            product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
+            unit_price  = product_np[prod_idx, 1].astype(np.float64, copy=False)
+            unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
+
         else:
             customer_keys_out = customer_keys_for_orders
-            order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=n_orders)]
+            order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=m_rows)]
             order_ids_int = None
             line_num = None
+
+            n_lines = m_rows
+
+            prod_idx = _sample_product_row_indices(
+                rng=rng,
+                n=n_lines,
+                product_np=product_np,
+                m_offset=int(m_offset),
+                enabled=use_brand_popularity,
+            )
+            product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
+            unit_price  = product_np[prod_idx, 1].astype(np.float64, copy=False)
+            unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
+
+        n_orders = int(customer_keys_out.size)
 
         # --------------------------------------------------------
         # STORE → GEO → CURRENCY (guard missing mappings)

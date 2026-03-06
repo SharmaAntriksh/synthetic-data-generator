@@ -116,19 +116,20 @@ models:
     yearly_growth: 0.08
     seasonality_amplitude: 0.08
     seasonality_phase: 0.0
-    noise_std: 0.20
-    eligible_blend: 0.20
+    noise_std: 0.04
+    eligible_blend: 0.0
 
     yoy_growth_schedule:
       mode: "repeat"
-      values: [0.02, 0.03, -0.18, 0.19, -0.09]
+      values: [0.09, 0.05, 0.4, 0.2, 0.06]
+    row_share_of_growth: 0.5
 
-    shock_probability: 0.20
-    shock_impact: [-0.35, 0.30]
+    shock_probability: 0.08
+    shock_impact: [-0.15, 0.20]
 
     early_month_cap:
       enabled: true
-      max_rows_per_customer: 12
+      max_rows_per_customer: 25
       redistribute_excess: true
 
 
@@ -166,7 +167,7 @@ models:
     # -1.0 = heavily front-loaded (most acquisition early)
     #  0.0 = evenly spread
     #  1.0 = heavily back-loaded (accelerating acquisition)
-    discovery_shape: 0.0
+    discovery_shape: 0.5
 
 
   # ================================================================

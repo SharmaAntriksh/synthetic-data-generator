@@ -1255,7 +1255,12 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     lifecycle_cfg = cust_cfg.get("lifecycle", {}) or {}
 
-    initial_active_customers = int(lifecycle_cfg.get("initial_active_customers", 0) or 0)
+    initial_active_raw = lifecycle_cfg.get("initial_active_customers", 0) or 0
+    initial_active_raw = float(initial_active_raw)
+    if 0.0 < initial_active_raw <= 1.0:
+        initial_active_customers = int(round(initial_active_raw * N))
+    else:
+        initial_active_customers = int(initial_active_raw)
     initial_spread_months = int(lifecycle_cfg.get("initial_spread_months", 0) or 0)
 
     even_start_months = bool(lifecycle_cfg.get("even_start_months", False))

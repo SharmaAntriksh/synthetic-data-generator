@@ -150,6 +150,12 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     phase = float(cfg.get("seasonality_phase", 0.0))
     noise_std = float(cfg.get("noise_std", 0.0))
 
+    # Row share of growth: what fraction of the stated YoY growth should
+    # come from more rows vs. higher prices/quantities.  Default 1.0
+    # preserves legacy behaviour (all growth = more rows).  Values < 1.0
+    # dampen the row-level growth so Year 1 isn't starved in a fixed-pie.
+    row_share = float(np.clip(cfg.get("row_share_of_growth", 1.0), 0.0, 1.0))
+
     shock_p = float(cfg.get("shock_probability", 0.0))
     shock_lo, shock_hi = cfg.get("shock_impact", [-0.25, -0.08])
     shock_lo = float(shock_lo)
@@ -169,12 +175,15 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     year_idx = (m // 12).astype("int64")  # year index per month, relative to dataset start
 
     # baseline smooth drift: per-month multiplier derived from yearly_growth
-    if yearly_growth != 0.0:
-        g = (1.0 + yearly_growth) ** (m / 12.0)
+    # Dampened by row_share so only that fraction drives row allocation.
+    effective_yearly_growth = yearly_growth * row_share
+    if effective_yearly_growth != 0.0:
+        g = (1.0 + effective_yearly_growth) ** (m / 12.0)
     else:
         g = 1.0
 
-    # year-level factors (pin exact per-year levels)
+    # year-level factors (pin exact per-year levels — no dampening, user
+    # controls these directly)
     if lvl_node:
         mode, vals = _sched_mode_and_values(lvl_node, "year_level_factors")
         if any(v <= 0.0 for v in vals):
@@ -185,15 +194,16 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
             yfac = levels[year_idx % len(levels)]
         else:  # once
             yfac = levels[np.minimum(year_idx, len(levels) - 1)]
+
         g = g * yfac
 
-    # yoy growth schedule (compounding)
+    # yoy growth schedule (compounding, dampened by row_share)
     elif yoy_node:
         mode, vals = _sched_mode_and_values(yoy_node, "yoy_growth_schedule")
         if any(v <= -0.99 for v in vals):
             raise ValueError("yoy_growth_schedule.values must be > -0.99")
 
-        yoy = np.asarray(vals, dtype="float64")
+        yoy = np.asarray(vals, dtype="float64") * row_share
         n_years = int((T + 11) // 12)
 
         year_factor = np.ones(n_years, dtype="float64")
@@ -302,8 +312,18 @@ def build_rows_per_month(
         macro_w = macro_w / macro_w.sum()
 
         # Optional: blend macro weights with eligibility weights (0.0 = macro-only)
+        # Skip blend when early_month_cap is enabled — the cap already
+        # prevents overloading months with few customers, so blending
+        # eligible counts into the weights double-penalises early months.
+        cap_cfg_peek = macro_cfg.get("early_month_cap", None)
+        cap_active = (
+            isinstance(cap_cfg_peek, dict)
+            and cap_cfg_peek
+            and bool(cap_cfg_peek.get("enabled", True))
+        )
+
         blend = float(macro_cfg.get("eligible_blend", 0.0))
-        if blend > 0.0:
+        if blend > 0.0 and not cap_active:
             blend = float(np.clip(blend, 0.0, 1.0))
             elig_w = eligible_counts.astype("float64")
             elig_s = elig_w.sum()

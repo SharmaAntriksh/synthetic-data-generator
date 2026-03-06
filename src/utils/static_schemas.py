@@ -139,7 +139,7 @@ def _validate_schema_map(schema_map: Mapping[str, Schema]) -> None:
 # FACT BASE SCHEMAS (single source of truth for derivations)
 # ============================================================================
 _SALES_SCHEMA: Schema = (
-    ("SalesOrderNumber", BIGINT_NN),
+    ("SalesOrderNumber", INT_NN),
     ("SalesOrderLineNumber", INT_NN),
     ("CustomerKey", INT_NN),
     ("ProductKey", INT_NN),
@@ -675,7 +675,7 @@ FACT_SCHEMAS: Dict[str, Schema] = {
     "SalesOrderHeader": _SALES_ORDER_HEADER_SCHEMA,
     "SalesOrderDetail": _SALES_ORDER_DETAIL_SCHEMA,
     "SalesReturn": (
-        ("SalesOrderNumber", BIGINT_NN),
+        ("SalesOrderNumber", INT_NN),
         ("SalesOrderLineNumber", INT_NN),
         ("ReturnDate", DATE_NN),
         ("ReturnReasonKey", INT_NN),
