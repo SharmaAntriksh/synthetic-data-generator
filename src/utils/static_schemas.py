@@ -639,6 +639,11 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("PowerLevel", TINYINT(not_null=True)),
         ("IsPrimaryFlag", BIT(not_null=True)),
         ("AcquiredDate", DATETIME2(7, not_null=True)),
+        ("PowerRank", TINYINT(not_null=True)),
+        ("AcquisitionOrder", TINYINT(not_null=True)),
+        ("RarityWeight", REAL(not_null=True)),
+        ("DaysToAcquire", INT(not_null=True)),
+        ("IsLatestPower", BIT(not_null=True)),
     ),
     "LoyaltyTiers": (
         ("LoyaltyTierKey", INT_NN),

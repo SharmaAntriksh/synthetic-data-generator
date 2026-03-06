@@ -6,9 +6,9 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 10_0030
-  products: 2832
-  customers: 3783
+  sales_rows: 1_032_851
+  products: 20832
+  customers: 83783
   stores: 20
   geographies: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5 }
@@ -59,8 +59,8 @@ sales:
 # RETURNS
 # ------------------------------------------------------------------
 returns:
-  enabled: false
-  return_rate: 0.03
+  enabled: true
+  return_rate: 0.13
   min_days_after_sale: 1
   max_days_after_sale: 60
 
@@ -122,9 +122,9 @@ superpowers:
   enabled: false
   generate_bridge: false
 
-  powers_count: 10
+  powers_count: 20
   powers_per_customer_min: 1
-  powers_per_customer_max: 2
+  powers_per_customer_max: 3
 
   include_power_level: true
   include_primary_flag: true

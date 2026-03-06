@@ -7,19 +7,28 @@ Writes:
   - superpowers.parquet
   - customer_superpowers.parquet
 
-Key changes vs earlier versions:
-  - ValidFromDate / ValidToDate are ALWAYS present (stable schema).
-  - Bridge is written STREAMING with pyarrow ParquetWriter (does not hold the whole bridge in RAM).
-  - Avoids per-row Pandas .loc lookups and list-of-dict construction (major perf/memory win).
-  - Per-power acquisition dates (not identical within a customer), biased by rarity.
+Bridge is written STREAMING with pyarrow ParquetWriter (does not hold the
+whole bridge in RAM).  Per-power acquisition dates are biased by rarity
+using beta-distributed offsets.
 
-Bridge validity semantics (always):
+Bridge validity semantics:
   ValidFromDate = acquired date of that power (per row)
   ValidToDate   = customer end date (or global end date)
+
+Bridge analytical columns:
+  PowerLevel       – rarity-biased integer level (2-5)
+  IsPrimaryFlag    – 1 for the highest-level power per customer
+  AcquiredDate     – when the customer gained this power
+  PowerRank        – ordinal rank within customer portfolio (1 = strongest)
+  AcquisitionOrder – chronological order of acquisition (1 = first gained)
+  RarityWeight     – normalised selection probability used for this power
+  DaysToAcquire    – days between CustomerStartDate and AcquiredDate
+  IsLatestPower    – 1 for the most recently acquired power per customer
 
 Config (optional)
 superpowers:
   enabled: true
+  generate_bridge: true
   powers_count: 40
   powers_per_customer_min: 1
   powers_per_customer_max: 4
@@ -28,7 +37,7 @@ superpowers:
   include_acquired_date: true
   seed: 123
   _force_regenerate: false
-  write_chunk_rows: 250000       # optional: approximate max rows per parquet write batch
+  write_chunk_rows: 250000
 
 Requires:
   defaults.dates.start/end (or _defaults.dates.start/end) in cfg.
@@ -106,18 +115,14 @@ POWERS_CATALOG: List[Tuple[str, str, str, str, str]] = [
 
 _RARITY_WEIGHT = {"Common": 6.0, "Rare": 2.5, "Legendary": 1.0}
 
-# Nanoseconds in one calendar day — used for integer datetime math.
 _NS_PER_DAY: int = 86_400_000_000_000
 
-# Beta distribution parameters keyed by rarity.
-# Common → early-biased, Legendary → late-biased, Rare/fallback → symmetric.
 _RARITY_BETA: Dict[str, Tuple[float, float]] = {
     "Common": (2.0, 5.0),
     "Legendary": (5.0, 2.0),
 }
 _BETA_FALLBACK: Tuple[float, float] = (2.0, 2.0)
 
-# Level ranges keyed by rarity: (low_inclusive, high_exclusive) matching rng.integers.
 _RARITY_LEVEL_BOUNDS: Dict[str, Tuple[int, int]] = {
     "Common": (2, 5),
     "Rare": (3, 6),
@@ -133,6 +138,7 @@ _LEVEL_BOUNDS_FALLBACK: Tuple[int, int] = (3, 6)
 @dataclass(frozen=True)
 class SuperpowersCfg:
     enabled: bool = True
+    generate_bridge: bool = True
     powers_count: int = 40
     per_customer_min: int = 1
     per_customer_max: int = 4
@@ -141,7 +147,7 @@ class SuperpowersCfg:
     include_acquired_date: bool = True
     seed: int = 123
     _force_regenerate: bool = False
-    write_chunk_rows: int = 250_000  # rows per parquet write batch (bridge)
+    write_chunk_rows: int = 250_000
 
 
 def _read_cfg(cfg: Dict[str, Any]) -> SuperpowersCfg:
@@ -150,6 +156,7 @@ def _read_cfg(cfg: Dict[str, Any]) -> SuperpowersCfg:
         sp = {}
     return SuperpowersCfg(
         enabled=bool(sp.get("enabled", True)),
+        generate_bridge=bool(sp.get("generate_bridge", True)),
         powers_count=int(sp.get("powers_count", 40)),
         per_customer_min=int(sp.get("powers_per_customer_min", 1)),
         per_customer_max=int(sp.get("powers_per_customer_max", 4)),
@@ -163,6 +170,22 @@ def _read_cfg(cfg: Dict[str, Any]) -> SuperpowersCfg:
 
 
 def _parse_global_dates(cfg: Dict[str, Any]) -> Tuple[pd.Timestamp, pd.Timestamp]:
+    """
+    Resolve timeline dates from (priority order):
+      1) cfg['superpowers']['global_dates']  (runner injected)
+      2) cfg['defaults']['dates']
+      3) cfg['_defaults']['dates']           (backward compatibility)
+    """
+    sp = cfg.get("superpowers") or {}
+    if isinstance(sp, dict):
+        gd = sp.get("global_dates")
+        if isinstance(gd, dict) and gd.get("start") and gd.get("end"):
+            start = pd.to_datetime(gd["start"]).normalize()
+            end = pd.to_datetime(gd["end"]).normalize()
+            if end < start:
+                raise ValueError("defaults.dates.end must be >= defaults.dates.start")
+            return start, end
+
     defaults = cfg.get("defaults") or cfg.get("_defaults") or {}
     d = defaults.get("dates") or {}
     if not isinstance(d, dict) or not d.get("start") or not d.get("end"):
@@ -212,6 +235,12 @@ def _bridge_schema(
         fields.append(pa.field("IsPrimaryFlag", pa.int8()))
     if include_acquired_date:
         fields.append(pa.field("AcquiredDate", pa.timestamp("ns")))
+
+    fields.append(pa.field("PowerRank", pa.int8()))
+    fields.append(pa.field("AcquisitionOrder", pa.int8()))
+    fields.append(pa.field("RarityWeight", pa.float32()))
+    fields.append(pa.field("DaysToAcquire", pa.int32()))
+    fields.append(pa.field("IsLatestPower", pa.int8()))
     return pa.schema(fields)
 
 
@@ -234,7 +263,7 @@ def _compute_customer_windows(
     """
     Extract sorted (CustomerKey, start_ns, end_ns) arrays from the customers
     DataFrame.  All dates are clamped to [g_start, g_end] and returned as
-    int64 nanosecond timestamps for zero-overhead arithmetic in the hot loop.
+    int64 nanosecond timestamps.
     """
     cust_keys = customers["CustomerKey"].astype(np.int64).to_numpy()
     order = np.argsort(cust_keys)
@@ -243,25 +272,27 @@ def _compute_customer_windows(
     g_start_ns = np.int64(g_start.value)
     g_end_ns = np.int64(g_end.value)
 
-    # Start dates
-    raw_start = (
-        pd.to_datetime(customers.get("CustomerStartDate", g_start), errors="coerce")
-        .dt.normalize()
-        .fillna(g_start)
-        .clip(lower=g_start, upper=g_end)
-    )
-    start_ns = raw_start.to_numpy().astype("datetime64[ns]").view(np.int64)[order]
+    has_start = "CustomerStartDate" in customers.columns
+    has_end = "CustomerEndDate" in customers.columns
 
-    # End dates
-    raw_end = (
-        pd.to_datetime(customers.get("CustomerEndDate", pd.NaT), errors="coerce")
-        .dt.normalize()
-        .fillna(g_end)
-        .clip(lower=g_start, upper=g_end)
-    )
-    end_ns = raw_end.to_numpy().astype("datetime64[ns]").view(np.int64)[order]
+    if has_start:
+        start_vals = customers["CustomerStartDate"].to_numpy().astype("datetime64[ns]")
+        start_ns = start_vals.view(np.int64).copy()
+        start_ns[np.isnat(start_vals)] = g_start_ns
+        start_ns = np.clip(start_ns, g_start_ns, g_end_ns)
+    else:
+        start_ns = np.full(len(cust_keys), g_start_ns, dtype=np.int64)
 
-    # Clamp end < start
+    if has_end:
+        end_vals = customers["CustomerEndDate"].to_numpy().astype("datetime64[ns]")
+        end_ns = end_vals.view(np.int64).copy()
+        end_ns[np.isnat(end_vals)] = g_end_ns
+        end_ns = np.clip(end_ns, g_start_ns, g_end_ns)
+    else:
+        end_ns = np.full(len(cust_keys), g_end_ns, dtype=np.int64)
+
+    start_ns = start_ns[order]
+    end_ns = end_ns[order]
     end_ns = np.maximum(end_ns, start_ns)
 
     return cust_keys, start_ns, end_ns
@@ -282,7 +313,6 @@ def _vectorized_levels(
         mask = chosen_rarity == rarity
         lo[mask] = l
         hi[mask] = h
-    # Fallback for unknown rarities
     unknown = ~np.isin(chosen_rarity, list(_RARITY_LEVEL_BOUNDS))
     if unknown.any():
         fb_lo, fb_hi = _LEVEL_BOUNDS_FALLBACK
@@ -301,21 +331,33 @@ def _acquired_dates_ns(
 ) -> np.ndarray:
     """
     Compute acquired-date nanosecond timestamps for *count* powers belonging
-    to one customer.  Uses beta-distributed offsets biased by rarity — purely
-    integer arithmetic, no pandas objects.
+    to one customer.  Uses beta-distributed offsets biased by rarity.
+    Vectorised by rarity bucket rather than per-element draws.
     """
     if span_days <= 0:
         return np.full(count, start_ns, dtype=np.int64)
 
-    # Draw beta samples per-power (preserves per-element RNG ordering)
     u = np.empty(count, dtype=np.float64)
-    for j in range(count):
-        a, b = _RARITY_BETA.get(str(chosen_rarity[j]), _BETA_FALLBACK)
-        u[j] = rng.beta(a, b)
+    matched = np.zeros(count, dtype=bool)
+    for rarity_str, (a, b) in _RARITY_BETA.items():
+        mask = chosen_rarity == rarity_str
+        n = int(mask.sum())
+        if n:
+            u[mask] = rng.beta(a, b, size=n)
+            matched |= mask
+
+    n_fb = int((~matched).sum())
+    if n_fb:
+        a, b = _BETA_FALLBACK
+        u[~matched] = rng.beta(a, b, size=n_fb)
 
     offsets = np.clip(np.round(u * span_days).astype(np.int64), 0, span_days)
     return start_ns + offsets * _NS_PER_DAY
 
+
+# ---------------------------------------------------------------------------
+# Bridge writer (streaming, vectorised inner loop)
+# ---------------------------------------------------------------------------
 
 def _write_bridge_streaming(
     customers: pd.DataFrame,
@@ -329,21 +371,21 @@ def _write_bridge_streaming(
     Stream-write customer_superpowers bridge to parquet.
     Returns number of rows written.
 
-    Accepts a pre-parsed ``SuperpowersCfg`` and global date boundaries to
-    avoid redundant config / date parsing.
+    Uses pre-allocated numpy chunk buffers with vectorised slice assignment
+    instead of per-element Python list appends.
     """
     if "CustomerKey" not in customers.columns:
         raise KeyError("customers must include CustomerKey")
     if "SuperpowerKey" not in dim_powers.columns or "Rarity" not in dim_powers.columns:
         raise KeyError("dim_powers must include SuperpowerKey and Rarity")
 
-    # ---- Power arrays ----
     power_keys = dim_powers["SuperpowerKey"].astype(np.int32).to_numpy()
     rarity_arr = dim_powers["Rarity"].astype(str).to_numpy()
     n_powers = len(power_keys)
     w = _compute_rarity_weights(rarity_arr)
 
-    # ---- Customer windows (int64 ns — zero pandas overhead in loop) ----
+    per_power_weight = w.astype(np.float32)
+
     cust_keys, cust_start_ns, cust_end_ns = _compute_customer_windows(
         customers, g_start, g_end,
     )
@@ -351,65 +393,77 @@ def _write_bridge_streaming(
     mn = max(c.per_customer_min, 1)
     mx = max(c.per_customer_max, mn)
     write_chunk_rows = max(c.write_chunk_rows, 10_000)
+    max_per_cust = min(mx, n_powers)
 
     rng = np.random.default_rng(c.seed)
     schema = _bridge_schema(c.include_power_level, c.include_primary_flag, c.include_acquired_date)
 
-    # ---- Column buffers (primitive lists — lighter than list-of-dict) ----
-    buf_ck: List[int] = []
-    buf_sk: List[int] = []
-    buf_vf: List[int] = []          # int64 nanosecond timestamps
-    buf_vt: List[int] = []          # int64 nanosecond timestamps
-    buf_lvl: Optional[List[int]] = [] if c.include_power_level else None
-    buf_pri: Optional[List[int]] = [] if c.include_primary_flag else None
-    buf_acq: Optional[List[int]] = [] if c.include_acquired_date else None
+    buf_cap = write_chunk_rows + max_per_cust
+    buf_ck = np.empty(buf_cap, dtype=np.int64)
+    buf_sk = np.empty(buf_cap, dtype=np.int32)
+    buf_vf = np.empty(buf_cap, dtype=np.int64)
+    buf_vt = np.empty(buf_cap, dtype=np.int64)
+
+    buf_lvl: Optional[np.ndarray] = np.empty(buf_cap, dtype=np.int8) if c.include_power_level else None
+    buf_pri: Optional[np.ndarray] = np.empty(buf_cap, dtype=np.int8) if c.include_primary_flag else None
+    buf_acq: Optional[np.ndarray] = np.empty(buf_cap, dtype=np.int64) if c.include_acquired_date else None
+
+    buf_rank = np.empty(buf_cap, dtype=np.int8)
+    buf_acq_ord = np.empty(buf_cap, dtype=np.int8)
+    buf_rw = np.empty(buf_cap, dtype=np.float32)
+    buf_days = np.empty(buf_cap, dtype=np.int32)
+    buf_latest = np.empty(buf_cap, dtype=np.int8)
 
     total_rows = 0
+    pos = 0
 
-    def flush(writer: pq.ParquetWriter) -> None:
-        nonlocal total_rows
-        if not buf_ck:
+    def flush(writer: pq.ParquetWriter, n: int) -> None:
+        nonlocal total_rows, pos
+        if n == 0:
             return
 
-        # Build arrow arrays — timestamps from int64 ns buffers directly.
         arrays: List[pa.Array] = [
-            pa.array(buf_ck, type=pa.int64()),
-            pa.array(buf_sk, type=pa.int32()),
-            pa.array(np.array(buf_vf, dtype=np.int64), type=pa.timestamp("ns")),
-            pa.array(np.array(buf_vt, dtype=np.int64), type=pa.timestamp("ns")),
+            pa.array(buf_ck[:n], type=pa.int64()),
+            pa.array(buf_sk[:n], type=pa.int32()),
+            pa.array(buf_vf[:n].copy(), type=pa.timestamp("ns")),
+            pa.array(buf_vt[:n].copy(), type=pa.timestamp("ns")),
         ]
         names = ["CustomerKey", "SuperpowerKey", "ValidFromDate", "ValidToDate"]
 
         if buf_lvl is not None:
-            arrays.append(pa.array(buf_lvl, type=pa.int8()))
+            arrays.append(pa.array(buf_lvl[:n], type=pa.int8()))
             names.append("PowerLevel")
         if buf_pri is not None:
-            arrays.append(pa.array(buf_pri, type=pa.int8()))
+            arrays.append(pa.array(buf_pri[:n], type=pa.int8()))
             names.append("IsPrimaryFlag")
         if buf_acq is not None:
-            arrays.append(pa.array(np.array(buf_acq, dtype=np.int64), type=pa.timestamp("ns")))
+            arrays.append(pa.array(buf_acq[:n].copy(), type=pa.timestamp("ns")))
             names.append("AcquiredDate")
+
+        arrays.append(pa.array(buf_rank[:n], type=pa.int8()))
+        names.append("PowerRank")
+        arrays.append(pa.array(buf_acq_ord[:n], type=pa.int8()))
+        names.append("AcquisitionOrder")
+        arrays.append(pa.array(buf_rw[:n], type=pa.float32()))
+        names.append("RarityWeight")
+        arrays.append(pa.array(buf_days[:n], type=pa.int32()))
+        names.append("DaysToAcquire")
+        arrays.append(pa.array(buf_latest[:n], type=pa.int8()))
+        names.append("IsLatestPower")
 
         table = pa.Table.from_arrays(arrays, names=names).cast(schema)
         writer.write_table(table)
-
-        total_rows += len(buf_ck)
-
-        # Clear buffers
-        buf_ck.clear(); buf_sk.clear(); buf_vf.clear(); buf_vt.clear()
-        if buf_lvl is not None:
-            buf_lvl.clear()
-        if buf_pri is not None:
-            buf_pri.clear()
-        if buf_acq is not None:
-            buf_acq.clear()
+        total_rows += n
+        pos = 0
 
     out_bridge.parent.mkdir(parents=True, exist_ok=True)
     if out_bridge.exists():
         out_bridge.unlink()
 
+    n_cust = len(cust_keys)
+
     with pq.ParquetWriter(out_bridge, schema=schema, compression="snappy") as writer:
-        for i in range(len(cust_keys)):
+        for i in range(n_cust):
             ck = int(cust_keys[i])
             count = int(rng.integers(mn, mx + 1)) if mx > mn else mn
             if count > n_powers:
@@ -419,17 +473,11 @@ def _write_bridge_streaming(
             chosen_keys = power_keys[chosen_idx]
             chosen_rarity = rarity_arr[chosen_idx]
 
-            # ---- Levels (vectorised) ----
             if c.include_power_level:
                 levels = _vectorized_levels(rng, chosen_rarity, count)
-                max_lvl = int(levels.max())
-                tie = chosen_keys[levels == max_lvl]
-                primary_sk = int(tie.min())
             else:
                 levels = None
-                primary_sk = int(chosen_keys.min())
 
-            # ---- Acquired / validity dates (int64 ns — no pandas) ----
             lo_ns = int(cust_start_ns[i])
             hi_ns = int(cust_end_ns[i])
             span_days = max(0, (hi_ns - lo_ns) // _NS_PER_DAY)
@@ -437,26 +485,52 @@ def _write_bridge_streaming(
 
             acq_ns = _acquired_dates_ns(rng, chosen_rarity, count, lo_ns, span_days)
 
-            # ---- Append to column buffers ----
-            for j in range(count):
-                buf_ck.append(ck)
-                buf_sk.append(int(chosen_keys[j]))
-                buf_vf.append(int(acq_ns[j]))
-                buf_vt.append(vt_ns)
+            # PowerRank: 1 = strongest (by level desc, key asc for ties)
+            if levels is not None:
+                rank_order = np.lexsort((chosen_keys, -levels.astype(np.int64)))
+            else:
+                rank_order = np.argsort(chosen_keys)
+            power_rank = np.empty(count, dtype=np.int8)
+            power_rank[rank_order] = np.arange(1, count + 1, dtype=np.int8)
 
-                if buf_lvl is not None:
-                    buf_lvl.append(int(levels[j]))       # type: ignore[index]
-                if buf_pri is not None:
-                    buf_pri.append(1 if int(chosen_keys[j]) == primary_sk else 0)
-                if buf_acq is not None:
-                    buf_acq.append(int(acq_ns[j]))
+            # IsPrimaryFlag derived from PowerRank
+            if c.include_primary_flag:
+                primary_flags = (power_rank == 1).astype(np.int8)
 
-            # Flush when buffers exceed threshold
-            if len(buf_ck) >= write_chunk_rows:
-                flush(writer)
+            # AcquisitionOrder: 1 = earliest (by acq date asc, key asc for ties)
+            acq_order_idx = np.lexsort((chosen_keys, acq_ns))
+            acq_order = np.empty(count, dtype=np.int8)
+            acq_order[acq_order_idx] = np.arange(1, count + 1, dtype=np.int8)
 
-        # Final flush for remaining rows
-        flush(writer)
+            latest_flags = (acq_order == count).astype(np.int8)
+            rarity_weights = per_power_weight[chosen_idx]
+            days_to_acquire = ((acq_ns - lo_ns) // _NS_PER_DAY).astype(np.int32)
+
+            sl = slice(pos, pos + count)
+            buf_ck[sl] = ck
+            buf_sk[sl] = chosen_keys
+            buf_vf[sl] = acq_ns
+            buf_vt[sl] = vt_ns
+
+            if buf_lvl is not None:
+                buf_lvl[sl] = levels
+            if buf_pri is not None:
+                buf_pri[sl] = primary_flags
+            if buf_acq is not None:
+                buf_acq[sl] = acq_ns
+
+            buf_rank[sl] = power_rank
+            buf_acq_ord[sl] = acq_order
+            buf_rw[sl] = rarity_weights
+            buf_days[sl] = days_to_acquire
+            buf_latest[sl] = latest_flags
+
+            pos += count
+
+            if pos >= write_chunk_rows:
+                flush(writer, pos)
+
+        flush(writer, pos)
 
     return total_rows
 
@@ -488,22 +562,17 @@ def run_superpowers(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]
 
     st = os.stat(customers_fp)
     version_cfg = dict(cfg.get("superpowers") or {})
-    version_cfg["_schema_version"] = 3  # streaming + always validity
+    version_cfg["_schema_version"] = 4
     version_cfg["_upstream_customers_sig"] = {
         "path": str(customers_fp),
         "size": int(st.st_size),
         "mtime_ns": int(st.st_mtime_ns),
     }
 
-    sp_cfg = cfg.get("superpowers") if isinstance(cfg.get("superpowers"), dict) else {}
-    generate_bridge = bool(sp_cfg.get("generate_bridge", True))
-
-    # --- Version skip (bridge-aware) ---
     if not c._force_regenerate:
-        version_files_exist = out_dim.exists() and (out_bridge.exists() or not generate_bridge)
+        version_files_exist = out_dim.exists() and (out_bridge.exists() or not c.generate_bridge)
         if version_files_exist and (not should_regenerate("superpowers", version_cfg, out_dim)):
-            # Clean up stale bridge from a previous run where generate_bridge was true
-            if not generate_bridge and out_bridge.exists():
+            if not c.generate_bridge and out_bridge.exists():
                 out_bridge.unlink()
                 info("Removed stale customer_superpowers bridge file.")
             skip("Superpowers up-to-date; skipping.")
@@ -516,7 +585,7 @@ def run_superpowers(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]
         info(f"Superpowers written: {out_dim} ({len(dim):,} rows)")
 
         n_rows = 0
-        if generate_bridge:
+        if c.generate_bridge:
             customers = pd.read_parquet(customers_fp)
             n_rows = _write_bridge_streaming(
                 customers=customers,
@@ -533,4 +602,9 @@ def run_superpowers(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]
             if out_bridge.exists():
                 out_bridge.unlink()
 
-    return {"_regenerated": True, "dim": str(out_dim), "bridge": str(out_bridge) if generate_bridge else None, "bridge_rows": n_rows}
+    return {
+        "_regenerated": True,
+        "dim": str(out_dim),
+        "bridge": str(out_bridge) if c.generate_bridge else None,
+        "bridge_rows": n_rows,
+    }

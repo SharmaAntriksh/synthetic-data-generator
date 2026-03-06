@@ -604,3 +604,244 @@ BEGIN
     ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_Dates;
 END;
 GO
+
+-----------------------------------------------------------------------
+-- 4. LOYALTY TIERS
+-----------------------------------------------------------------------
+
+-- LoyaltyTiers: PK
+IF OBJECT_ID(N'dbo.LoyaltyTiers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.LoyaltyTiers', N'LoyaltyTierKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_LoyaltyTiers'
+      AND parent_object_id = OBJECT_ID(N'dbo.LoyaltyTiers')
+)
+BEGIN
+    ALTER TABLE dbo.LoyaltyTiers
+    ADD CONSTRAINT PK_LoyaltyTiers PRIMARY KEY NONCLUSTERED ([LoyaltyTierKey]);
+END;
+GO
+
+-- Customers -> LoyaltyTiers FK
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.LoyaltyTiers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Customers', N'LoyaltyTierKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Customers_LoyaltyTiers'
+      AND parent_object_id = OBJECT_ID(N'dbo.Customers')
+)
+BEGIN
+    ALTER TABLE dbo.Customers WITH CHECK
+    ADD CONSTRAINT FK_Customers_LoyaltyTiers
+        FOREIGN KEY ([LoyaltyTierKey])
+        REFERENCES dbo.LoyaltyTiers ([LoyaltyTierKey]);
+
+    ALTER TABLE dbo.Customers CHECK CONSTRAINT FK_Customers_LoyaltyTiers;
+END;
+GO
+
+-----------------------------------------------------------------------
+-- 5. CUSTOMER ACQUISITION CHANNELS
+-----------------------------------------------------------------------
+
+-- CustomerAcquisitionChannels: PK
+IF OBJECT_ID(N'dbo.CustomerAcquisitionChannels', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerAcquisitionChannels', N'CustomerAcquisitionChannelKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_CustomerAcquisitionChannels'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerAcquisitionChannels')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerAcquisitionChannels
+    ADD CONSTRAINT PK_CustomerAcquisitionChannels
+        PRIMARY KEY NONCLUSTERED ([CustomerAcquisitionChannelKey]);
+END;
+GO
+
+-- Customers -> CustomerAcquisitionChannels FK
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.CustomerAcquisitionChannels', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Customers', N'CustomerAcquisitionChannelKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Customers_AcquisitionChannels'
+      AND parent_object_id = OBJECT_ID(N'dbo.Customers')
+)
+BEGIN
+    ALTER TABLE dbo.Customers WITH CHECK
+    ADD CONSTRAINT FK_Customers_AcquisitionChannels
+        FOREIGN KEY ([CustomerAcquisitionChannelKey])
+        REFERENCES dbo.CustomerAcquisitionChannels ([CustomerAcquisitionChannelKey]);
+
+    ALTER TABLE dbo.Customers CHECK CONSTRAINT FK_Customers_AcquisitionChannels;
+END;
+GO
+
+-----------------------------------------------------------------------
+-- 6. SUPERPOWERS + CUSTOMER SUPERPOWERS BRIDGE
+-----------------------------------------------------------------------
+
+-- Superpowers: PK
+IF OBJECT_ID(N'dbo.Superpowers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Superpowers', N'SuperpowerKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_Superpowers'
+      AND parent_object_id = OBJECT_ID(N'dbo.Superpowers')
+)
+BEGIN
+    ALTER TABLE dbo.Superpowers
+    ADD CONSTRAINT PK_Superpowers PRIMARY KEY NONCLUSTERED ([SuperpowerKey]);
+END;
+GO
+
+-- CustomerSuperpowers: composite PK (each customer holds a given power at most once)
+IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'CustomerKey') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'SuperpowerKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_CustomerSuperpowers'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerSuperpowers
+    ADD CONSTRAINT PK_CustomerSuperpowers
+        PRIMARY KEY NONCLUSTERED ([CustomerKey], [SuperpowerKey]);
+END;
+GO
+
+-- CustomerSuperpowers -> Customers FK
+IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'CustomerKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_CustomerSuperpowers_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerSuperpowers WITH CHECK
+    ADD CONSTRAINT FK_CustomerSuperpowers_Customers
+        FOREIGN KEY ([CustomerKey])
+        REFERENCES dbo.Customers ([CustomerKey]);
+
+    ALTER TABLE dbo.CustomerSuperpowers CHECK CONSTRAINT FK_CustomerSuperpowers_Customers;
+END;
+GO
+
+-- CustomerSuperpowers -> Superpowers FK
+IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Superpowers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'SuperpowerKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_CustomerSuperpowers_Superpowers'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerSuperpowers WITH CHECK
+    ADD CONSTRAINT FK_CustomerSuperpowers_Superpowers
+        FOREIGN KEY ([SuperpowerKey])
+        REFERENCES dbo.Superpowers ([SuperpowerKey]);
+
+    ALTER TABLE dbo.CustomerSuperpowers CHECK CONSTRAINT FK_CustomerSuperpowers_Superpowers;
+END;
+GO
+
+-- CustomerSuperpowers: CHECK constraints on analytical columns
+IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'PowerLevel') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSuperpowers_PowerLevel'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    )
+        ALTER TABLE dbo.CustomerSuperpowers
+        ADD CONSTRAINT CK_CustomerSuperpowers_PowerLevel
+            CHECK ([PowerLevel] BETWEEN 1 AND 5);
+
+    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'IsPrimaryFlag') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSuperpowers_IsPrimaryFlag'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    )
+        ALTER TABLE dbo.CustomerSuperpowers
+        ADD CONSTRAINT CK_CustomerSuperpowers_IsPrimaryFlag
+            CHECK ([IsPrimaryFlag] IN (0, 1));
+
+    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'PowerRank') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSuperpowers_PowerRank'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    )
+        ALTER TABLE dbo.CustomerSuperpowers
+        ADD CONSTRAINT CK_CustomerSuperpowers_PowerRank
+            CHECK ([PowerRank] >= 1);
+
+    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'AcquisitionOrder') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSuperpowers_AcquisitionOrder'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    )
+        ALTER TABLE dbo.CustomerSuperpowers
+        ADD CONSTRAINT CK_CustomerSuperpowers_AcquisitionOrder
+            CHECK ([AcquisitionOrder] >= 1);
+
+    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'RarityWeight') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSuperpowers_RarityWeight'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    )
+        ALTER TABLE dbo.CustomerSuperpowers
+        ADD CONSTRAINT CK_CustomerSuperpowers_RarityWeight
+            CHECK ([RarityWeight] >= 0.0 AND [RarityWeight] <= 1.0);
+
+    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'DaysToAcquire') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSuperpowers_DaysToAcquire'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    )
+        ALTER TABLE dbo.CustomerSuperpowers
+        ADD CONSTRAINT CK_CustomerSuperpowers_DaysToAcquire
+            CHECK ([DaysToAcquire] >= 0);
+
+    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'IsLatestPower') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSuperpowers_IsLatestPower'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    )
+        ALTER TABLE dbo.CustomerSuperpowers
+        ADD CONSTRAINT CK_CustomerSuperpowers_IsLatestPower
+            CHECK ([IsLatestPower] IN (0, 1));
+
+    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'ValidFromDate') IS NOT NULL
+    AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'ValidToDate') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSuperpowers_ValidDateRange'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    )
+        ALTER TABLE dbo.CustomerSuperpowers
+        ADD CONSTRAINT CK_CustomerSuperpowers_ValidDateRange
+            CHECK ([ValidFromDate] <= [ValidToDate]);
+END;
+GO
