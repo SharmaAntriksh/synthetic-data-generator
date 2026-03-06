@@ -6,9 +6,9 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1_003_15
+  sales_rows: 10_0030
   products: 2832
-  customers: 28783
+  customers: 3783
   stores: 20
   geographies: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5 }
@@ -19,7 +19,7 @@ scale:
 defaults:
   seed: 42
   dates:
-    start: "2023-01-01"
+    start: "2022-01-01"
     end: "2025-12-31"
 
 paths:
@@ -85,11 +85,14 @@ customers:
 
   lifecycle:
     enable_churn: true              # true = customers can leave over time, false = once acquired they stay forever
-    base_monthly_churn: 0.025       # ↑ = customers leave faster (more turnover, pool shrinks), ↓ = stickier customers (pool only grows)
+    base_monthly_churn: 0.055       # ↑ = customers leave faster (more turnover, pool shrinks), ↓ = stickier customers (pool only grows)
     min_tenure_months: 4            # ↑ = longer grace period before any customer can churn (delays first dip), ↓ = churn starts almost immediately
-    initial_active_customers: 0.15  # ↑ = more customers from month 0 (no sales dip, but spikes new-customer chart), ↓ = slower ramp-up
+    initial_active_customers: 0.40  # ↑ = more customers from month 0 (no sales dip, but spikes new-customer chart), ↓ = slower ramp-up
     initial_spread_months: 36     # ↑ = spreads initial customers across months (smooth new-cust curve, starves early sales), 0 = all available day one
-    acquisition_curve: "uniform"
+    acquisition_curve: "logistic"
+    acquisition_params:
+      midpoint: 0.30
+      steepness: 8.0
 # ------------------------------------------------------------------
 # CUSTOMER SEGMENTS (disabled by default)
 # ------------------------------------------------------------------

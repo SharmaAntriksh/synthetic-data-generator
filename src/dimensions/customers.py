@@ -340,24 +340,18 @@ def _simulate_end_month(
     enable: bool,
     base_monthly_churn: float,
     min_tenure_months: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> np.ndarray:
     """
     For each customer, possibly sample an end month (churn month).
     If churn is disabled, returns pd.NA for all entries.
 
-    Handles negative start months (backdated warm-starters): churn is
-    simulated from the actual start month, so customers can churn
-    before the dataset window (month 0).
-
-    Returns:
-      end_month: object array with int churn months or pd.NA (no churn)
-      pre_churned: bool array — True for customers who churned before month 0
+    Vectorized implementation: uses geometric sampling to determine
+    tenure length, avoiding per-customer Python loops.
     """
     N = len(start_month)
-    pre_churned = np.zeros(N, dtype=bool)
 
     if not enable:
-        return np.full(N, pd.NA, dtype="object"), pre_churned
+        return np.full(N, pd.NA, dtype="object")
 
     if base_monthly_churn < 0:
         raise ValueError("base_monthly_churn must be >= 0")
@@ -365,37 +359,37 @@ def _simulate_end_month(
     end_month = np.full(N, pd.NA, dtype="object")
     mt = max(int(min_tenure_months), 0)
 
-    # Preserve negative start months (no clamping)
-    s = start_month.astype("int64")
+    # Clamp start months
+    s = np.clip(start_month.astype("int64"), 0, T)
 
     # Per-customer hazard rate
     hazard = np.clip(base_monthly_churn * churn_bias.astype("float64"), 0.0, 0.95)
 
-    # Customers that can potentially churn: started and hazard > 0
+    # Customers that can potentially churn: start < T and hazard > 0
     eligible = (s < T) & (hazard > 0.0)
 
     if not eligible.any():
-        return end_month, pre_churned
+        return end_month
 
+    # For eligible customers, sample a geometric tenure from the earliest
+    # eligible month (start + min_tenure).  geometric(p) gives the number
+    # of Bernoulli trials until first success (1-based), so the churn
+    # happens at month = start + min_tenure + (sample - 1).
     eligible_idx = np.where(eligible)[0]
     h = hazard[eligible_idx]
-    tenure_samples = rng.geometric(p=h)
+    tenure_samples = rng.geometric(p=h)  # shape: (eligible_count,)
 
     # Churn month = start + min_tenure + (sample - 1)
     churn_month = s[eligible_idx] + mt + (tenure_samples - 1)
 
-    # Customers who churned before the dataset window
-    before_dataset = churn_month < 0
-    pre_churned[eligible_idx[before_dataset]] = True
-
-    # Only record churn month if it falls within the dataset timeline
-    within = (churn_month >= 0) & (churn_month < T)
+    # Only apply churn if it falls within the timeline
+    within = churn_month < T
     apply_idx = eligible_idx[within]
     apply_vals = churn_month[within]
 
     end_month[apply_idx] = apply_vals.astype(int)
 
-    return end_month, pre_churned
+    return end_month
 
 
 def _validate_percentages(
@@ -1261,27 +1255,23 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     lifecycle_cfg = cust_cfg.get("lifecycle", {}) or {}
 
-    initial_active_raw = lifecycle_cfg.get("initial_active_customers", 0) or 0
+    initial_active_raw = lifecycle_cfg.get("initial_active_customers", 0.45) or 0
     initial_active_raw = float(initial_active_raw)
     if 0.0 < initial_active_raw <= 1.0:
         initial_active_customers = int(round(initial_active_raw * N))
     else:
         initial_active_customers = int(initial_active_raw)
-
-    # Pre-dataset months: how far back warm-starters are backdated.
-    # Negative start months mean the customer was acquired before the
-    # dataset window and is already "known" at month 0 — no discovery
-    # needed.  This eliminates the first-month spike entirely.
-    pre_dataset_months = int(lifecycle_cfg.get("pre_dataset_months", 12) or 12)
-    pre_dataset_months = max(1, pre_dataset_months)
+    initial_spread_months = int(lifecycle_cfg.get("initial_spread_months", 3) or 0)
 
     even_start_months = bool(lifecycle_cfg.get("even_start_months", False))
 
     acquisition_curve = lifecycle_cfg.get("acquisition_curve")
     if acquisition_curve is None:
-        acquisition_curve = "uniform" if even_start_months else "linear_ramp"
+        acquisition_curve = "logistic"
 
     acquisition_params = lifecycle_cfg.get("acquisition_params", {}) or {}
+    if acquisition_curve == "logistic" and not acquisition_params:
+        acquisition_params = {"midpoint": 0.30, "steepness": 8.0}
     weights = _acquisition_weights(T, acquisition_curve, acquisition_params)
 
     CustomerStartMonth = rng.choice(np.arange(T), size=N, p=weights).astype("int64")
@@ -1300,28 +1290,18 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         else:
             warm_idx = rng.choice(np.arange(N), size=k, replace=False)
 
-        # Backdate warm-starters to negative months (before dataset window).
-        # Spread uniformly across [-pre_dataset_months, -1].
-        CustomerStartMonth[warm_idx] = rng.integers(
-            -pre_dataset_months, 0, size=warm_idx.size, dtype=np.int64,
-        )
+        spread_hi = int(min(max(initial_spread_months, 0), max(T - 1, 0)))
+        if spread_hi > 0:
+            CustomerStartMonth[warm_idx] = rng.integers(0, spread_hi + 1, size=warm_idx.size, dtype=np.int64)
+        else:
+            CustomerStartMonth[warm_idx] = 0
 
-    enable_churn = bool(lifecycle_cfg.get("enable_churn", False))
-    base_monthly_churn = float(lifecycle_cfg.get("base_monthly_churn", 0.01))
-    min_tenure_months = int(lifecycle_cfg.get("min_tenure_months", 2))
+    enable_churn = bool(lifecycle_cfg.get("enable_churn", True))
+    base_monthly_churn = float(lifecycle_cfg.get("base_monthly_churn", 0.04))
+    min_tenure_months = int(lifecycle_cfg.get("min_tenure_months", 3))
 
-    # --- Weight / Temperature / Segment ---
-    # CustomerWeight: spending intensity (used as sampling weight in sales).
     CustomerWeight = rng.lognormal(mean=0.0, sigma=0.6, size=N).astype("float64")
-
-    # CustomerTemperature: engagement/warmth.  Correlated with weight so
-    # high-value customers are also highly engaged.
-    weight_norm = np.clip(CustomerWeight / (np.percentile(CustomerWeight, 95) + 1e-9), 0.0, 1.0)
-    temp_base = 0.35 + 0.45 * weight_norm
-    CustomerTemperature = np.clip(
-        temp_base + rng.normal(0.0, 0.12, size=N),
-        0.05, 1.0,
-    ).astype("float64")
+    CustomerTemperature = np.clip(rng.normal(loc=0.6, scale=0.25, size=N), 0.05, 1.0).astype("float64")
 
     segment_cfg = lifecycle_cfg.get("segments", {}) or {}
     seg_names = np.array(segment_cfg.get("names", ["Budget", "Mainstream", "Premium"]), dtype=object)
@@ -1329,28 +1309,9 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     seg_probs = seg_probs / seg_probs.sum()
     CustomerSegment = rng.choice(seg_names, size=N, p=seg_probs)
 
-    # --- Churn bias: derived from weight + segment ---
-    # High-weight (loyal) customers churn less.  Premium segment
-    # customers are stickier.  A random lognormal component still
-    # allows individual variation.
     churn_bias_cfg = lifecycle_cfg.get("churn_bias", {}) or {}
     bias_sigma = float(churn_bias_cfg.get("sigma", 0.5))
-
-    # Base random component
-    raw_bias = rng.lognormal(mean=0.0, sigma=bias_sigma, size=N).astype("float64")
-
-    # Weight dampening: high-weight customers get lower churn bias.
-    # Inverse relationship: top spenders → bias multiplied by ~0.4,
-    # low spenders → bias multiplied by ~1.2.
-    weight_churn_factor = np.clip(1.3 - 0.9 * weight_norm, 0.3, 1.3)
-
-    # Segment dampening
-    seg_churn_mult = np.ones(N, dtype="float64")
-    seg_churn_mult[CustomerSegment == "Premium"] = 0.50
-    seg_churn_mult[CustomerSegment == "Mainstream"] = 0.90
-    seg_churn_mult[CustomerSegment == "Budget"] = 1.30
-
-    CustomerChurnBias = np.clip(raw_bias * weight_churn_factor * seg_churn_mult, 0.05, 5.0)
+    CustomerChurnBias = rng.lognormal(mean=0.0, sigma=bias_sigma, size=N).astype("float64")
 
     # -----------------------------------------------------
     # Loyalty tier + acquisition channel
@@ -1419,7 +1380,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     if IsOrg.any():
         CustomerAcquisitionChannelKey[IsOrg] = rng.choice(acq_keys, size=int(IsOrg.sum()), replace=True, p=w_org)
 
-    CustomerEndMonth, pre_churned = _simulate_end_month(
+    CustomerEndMonth = _simulate_end_month(
         rng=rng,
         start_month=CustomerStartMonth,
         churn_bias=CustomerChurnBias,
@@ -1428,11 +1389,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         base_monthly_churn=base_monthly_churn,
         min_tenure_months=min_tenure_months,
     )
-
-    # Deactivate customers who churned before the dataset window
-    if pre_churned.any():
-        is_active[pre_churned] = 0
-        active_customer_keys = CustomerKey[is_active == 1]
 
     CustomerStartDate = _month_idx_to_date(start_month0, CustomerStartMonth)
 

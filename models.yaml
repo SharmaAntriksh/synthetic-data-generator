@@ -114,7 +114,7 @@ models:
   macro_demand:
     base_level: 1.0
     yearly_growth: 0.08
-    seasonality_amplitude: 0.08
+    seasonality_amplitude: 0.20
     seasonality_phase: 0.0
     noise_std: 0.04
     eligible_blend: 0.0
@@ -171,16 +171,16 @@ models:
     
     # Month-to-month random noise on participation count.
     # 0.0 = smooth, 0.12 = visible jitter (~±12%), 0.25 = choppy.
-    participation_noise: 0.12
+    participation_noise: 0.25
 
     # Seasonal spikes: specific calendar months get a customer count boost.
     # Mimics real retail: holiday shopping, back-to-school, summer sales.
     seasonal_spikes:
-      - { month: 3,  boost: 0.15 }    # spring sale
-      - { month: 7,  boost: 0.12 }    # summer clearance
-      - { month: 9,  boost: 0.10 }    # back-to-school
-      - { month: 11, boost: 0.35 }    # Black Friday / pre-holiday
-      - { month: 12, boost: 0.25 }    # holiday shopping
+      - { month: 3,  boost: 0.30 }    # spring sale
+      - { month: 7,  boost: 0.25 }    # summer clearance
+      - { month: 9,  boost: 0.20 }    # back-to-school
+      - { month: 11, boost: 0.65 }    # Black Friday / pre-holiday
+      - { month: 12, boost: 0.45 }    # holiday shopping
 
   # ================================================================
   # RETURNS

@@ -255,12 +255,8 @@ def _eligible_counts_fast(
     s = start_month[active]
     e = end_month_norm[active]
 
-    # Clamp negative start months to 0 (customers acquired before the
-    # dataset window are eligible from the first observed month).
-    s = np.maximum(s, 0)
-
     # keep only sane starts
-    valid_start = s < T
+    valid_start = (s >= 0) & (s < T)
     s = s[valid_start]
     e = e[valid_start]
     if s.size == 0:
@@ -575,24 +571,29 @@ def build_chunk_table(
     distinct_ratio = float(np.clip(
         cust_cfg.get("distinct_ratio", 0.55), 0.0, 1.0))
     cycle_amplitude = float(np.clip(
-        cust_cfg.get("cycle_amplitude", 0.0), 0.0, 1.0))
+        cust_cfg.get("cycle_amplitude", 0.35), 0.0, 1.0))
     discovery_shape = float(np.clip(
         cust_cfg.get("discovery_shape", 0.0), -1.0, 1.0))
 
-    # Month-to-month noise on participation count
-    participation_noise = float(cust_cfg.get("participation_noise", 0.0))
+    participation_noise = float(np.clip(
+        cust_cfg.get("participation_noise", 0.10), 0.0, 1.0))
 
-    # Seasonal spikes: calendar months (1-12) that get a boost.
-    # Each entry: { month: int, boost: float }
-    # e.g. month=11 boost=0.40 → November gets +40% distinct customers
-    spike_cfg = cust_cfg.get("seasonal_spikes", []) or []
-    spike_by_cal_month: dict[int, float] = {}
-    if isinstance(spike_cfg, list):
-        for entry in spike_cfg:
-            if isinstance(entry, dict) and "month" in entry and "boost" in entry:
-                cm = int(entry["month"])
-                if 1 <= cm <= 12:
-                    spike_by_cal_month[cm] = float(entry["boost"])
+    _DEFAULT_SEASONAL_SPIKES = [
+        {"month": 3,  "boost": 0.15},
+        {"month": 7,  "boost": 0.12},
+        {"month": 9,  "boost": 0.10},
+        {"month": 11, "boost": 0.40},
+        {"month": 12, "boost": 0.25},
+    ]
+    seasonal_spikes_raw = cust_cfg.get("seasonal_spikes", None)
+    if seasonal_spikes_raw is None:
+        seasonal_spikes_raw = _DEFAULT_SEASONAL_SPIKES
+    seasonal_spike_map: dict[int, float] = {}
+    for entry in seasonal_spikes_raw:
+        if isinstance(entry, dict) and "month" in entry and "boost" in entry:
+            cal_month = int(entry["month"])
+            if 1 <= cal_month <= 12:
+                seasonal_spike_map[cal_month] = float(entry["boost"])
 
     use_discovery = new_customer_share > 0.0
 
@@ -605,6 +606,7 @@ def build_chunk_table(
     else:
         shape_mult = np.ones(T, dtype=np.float64)
 
+    _BOOTSTRAP_MONTHS = 6
     _MAX_FRAC_PER_MONTH = float(cust_cfg.get("max_new_fraction_per_month", 0.015))
     _MAX_DISTINCT_RATIO = 0.70
     _MIN_DISTINCT_CUSTOMERS = 250
@@ -619,13 +621,6 @@ def build_chunk_table(
             seen_customers = set()
         elif not isinstance(seen_customers, set):
             seen_customers = set(seen_customers)
-
-        # Pre-seed with customers acquired before the dataset window
-        # (negative start_month).  These are established customers
-        # that don't need discovery — they're already "known".
-        pre_existing = customer_keys[start_month < 0]
-        if pre_existing.size > 0:
-            seen_customers.update(pre_existing.tolist())
     else:
         seen_customers = None
 
@@ -675,43 +670,19 @@ def build_chunk_table(
             continue
 
         # --------------------------------------------------------
-        # Effective customer slots for this month.
-        # When order expansion is active (not skip_cols), each order
-        # gets exactly one customer, so customer sampling operates at
-        # order granularity.  Products are sampled per-line AFTER
-        # expansion so they aren't lost to re-sampling.
-        # --------------------------------------------------------
-        _max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
-        if not skip_cols:
-            _avg_lines = 2.0
-            n_customer_slots = max(1, int(m_rows / _avg_lines))
-            _min_orders = (m_rows + _max_lines - 1) // _max_lines
-            n_customer_slots = max(n_customer_slots, _min_orders)
-        else:
-            n_customer_slots = m_rows
-
-        # --------------------------------------------------------
         # DISCOVERY TARGET
         # --------------------------------------------------------
         disc_cfg_local = {}
         if use_discovery:
-            target_new = float(
-                new_customer_share * n_customer_slots * float(shape_mult[m_offset]))
+            target_new = int(round(
+                new_customer_share * m_rows * float(shape_mult[m_offset])))
 
-            # Apply the same seasonal spikes to new-customer discovery
-            if spike_by_cal_month:
-                month_date_first = month_date_pool[0] if month_date_pool.size > 0 else date_pool[0]
-                cal_month_disc = int(month_date_first.astype("datetime64[M]").astype(int) % 12 + 1)
-                disc_spike = spike_by_cal_month.get(cal_month_disc, 0.0)
-                if disc_spike != 0.0:
-                    target_new *= 1.0 + disc_spike
+            # Bootstrap: smooth ramp over first months
+            if m_offset < _BOOTSTRAP_MONTHS:
+                target_new = int(round(
+                    target_new * (m_offset + 1) / _BOOTSTRAP_MONTHS))
 
-            # Apply participation noise to discovery too
-            if participation_noise > 0.0:
-                disc_noise = float(rng.normal(loc=1.0, scale=participation_noise))
-                target_new *= max(0.3, disc_noise)
-
-            disc_cfg_local["_target_new_customers"] = max(0, int(round(target_new)))
+            disc_cfg_local["_target_new_customers"] = max(0, target_new)
             disc_cfg_local["max_fraction_per_month"] = _MAX_FRAC_PER_MONTH
 
         # --------------------------------------------------------
@@ -726,34 +697,16 @@ def build_chunk_table(
                 cyc = float(np.sin(2.0 * np.pi * m_offset / 24.0))
                 k *= 1.0 + cycle_amplitude * cyc
 
-            # Seasonal spikes: boost distinct count for specific calendar months
-            if spike_by_cal_month:
-                month_date_first = month_date_pool[0] if month_date_pool.size > 0 else date_pool[0]
-                cal_month = int(month_date_first.astype("datetime64[M]").astype(int) % 12 + 1)
-                spike_boost = spike_by_cal_month.get(cal_month, 0.0)
-                if spike_boost != 0.0:
-                    k *= 1.0 + spike_boost
+            if seasonal_spike_map and month_date_pool.size > 0:
+                cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1
+                k *= 1.0 + seasonal_spike_map.get(cal_month, 0.0)
 
-            # Month-to-month noise on participation
             if participation_noise > 0.0:
-                noise_mult = float(rng.normal(loc=1.0, scale=participation_noise))
-                k *= max(0.3, noise_mult)
+                k *= 1.0 + participation_noise * float(rng.standard_normal())
 
             k = max(k, float(_MIN_DISTINCT_CUSTOMERS))
             k = min(k, eligible_count * _MAX_DISTINCT_RATIO,
-                    float(eligible_count), float(n_customer_slots))
-
-            # Guarantee the distinct pool can hold every undiscovered
-            # eligible customer so none are deferred to a later month.
-            # Without this, customers whose eligibility window is
-            # shorter than the backlog-clearing time are permanently
-            # lost from the output.
-            if use_discovery and seen_customers is not None:
-                eligible_keys_this = set(
-                    customer_keys[np.flatnonzero(eligible_mask)].tolist())
-                n_undiscovered = len(eligible_keys_this - seen_customers)
-                k = max(k, min(float(n_undiscovered), float(n_customer_slots)))
-
+                    float(eligible_count), float(m_rows))
             target_distinct = max(1, int(round(k)))
 
         # --------------------------------------------------------
@@ -764,23 +717,39 @@ def build_chunk_table(
             customer_keys=customer_keys,
             eligible_mask=eligible_mask,
             seen_set=seen_customers,
-            n=int(n_customer_slots),
+            n=int(m_rows),
             use_discovery=use_discovery,
             discovery_cfg=disc_cfg_local,
             base_weight=base_weight,
             target_distinct=target_distinct,
-            end_month_norm=end_month_norm,
-            m_offset=int(m_offset),
         )
 
         if customer_keys_for_orders.size == 0:
             continue
 
+        n_orders = int(customer_keys_for_orders.size)
+
+        # --------------------------------------------------------
+        # PRODUCTS (PER ORDER) - avoid temporary prods array
+        # --------------------------------------------------------
+        prod_idx = _sample_product_row_indices(
+            rng=rng,
+            n=n_orders,
+            product_np=product_np,
+            m_offset=int(m_offset),
+            enabled=use_brand_popularity,
+        )
+
+        product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
+        unit_price  = product_np[prod_idx, 1].astype(np.float64, copy=False)
+        unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
+
         # --------------------------------------------------------
         # ORDERS (use month-specific date pool so month loop is real)
         # --------------------------------------------------------
         if not skip_cols:
-            order_count = int(customer_keys_for_orders.size)
+            # build_orders allocates suffixes per *order* (avg ~2 lines/order)
+            order_count = max(1, int(n_orders / 2.0))
 
             # Each chunk owns suffix range [base, base + cap)
             if order_cursor + np.int64(order_count) > np.int64(cap):
@@ -795,14 +764,14 @@ def build_chunk_table(
 
             orders = build_orders(
                 rng=rng,
-                n=m_rows,
+                n=n_orders,
                 skip_cols=False,
                 date_pool=month_date_pool,
                 date_prob=month_date_prob,
                 customers=customer_keys_for_orders,
-                product_keys=None,
+                product_keys=product_keys,
                 _len_date_pool=len(month_date_pool),
-                _len_customers=order_count,
+                _len_customers=n_orders,
                 order_id_start=int(order_id_start),
             )
 
@@ -814,41 +783,11 @@ def build_chunk_table(
             order_ids_int = orders["order_ids_int"]
             line_num = orders["line_num"]
 
-            n_lines = int(customer_keys_out.size)
-
-            # Products are per-line, sampled AFTER order expansion so
-            # every line gets its own product assignment.
-            prod_idx = _sample_product_row_indices(
-                rng=rng,
-                n=n_lines,
-                product_np=product_np,
-                m_offset=int(m_offset),
-                enabled=use_brand_popularity,
-            )
-            product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
-            unit_price  = product_np[prod_idx, 1].astype(np.float64, copy=False)
-            unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
-
         else:
             customer_keys_out = customer_keys_for_orders
-            order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=m_rows)]
+            order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=n_orders)]
             order_ids_int = None
             line_num = None
-
-            n_lines = m_rows
-
-            prod_idx = _sample_product_row_indices(
-                rng=rng,
-                n=n_lines,
-                product_np=product_np,
-                m_offset=int(m_offset),
-                enabled=use_brand_popularity,
-            )
-            product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
-            unit_price  = product_np[prod_idx, 1].astype(np.float64, copy=False)
-            unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
-
-        n_orders = int(customer_keys_out.size)
 
         # --------------------------------------------------------
         # STORE → GEO → CURRENCY (guard missing mappings)
