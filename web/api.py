@@ -187,15 +187,14 @@ def get_config():
     dates_cfg = _g(_cfg, "dates", default={})
     include = _g(dates_cfg, "include", default={})
     wc = _g(dates_cfg, "weekly_calendar", default={})
-    lifecycle = _g(cust, "lifecycle", default={})
 
     return {
         # Output
-        "format": str(sales.get("file_format", "csv")),
+        "format": str(sales.get("file_format", "parquet")),
         "salesOutput": str(sales.get("sales_output", "sales")),
         "skipOrderCols": bool(sales.get("skip_order_cols", False)),
-        "compression": str(sales.get("compression", "snappy")),
-        "rowGroupSize": int(sales.get("row_group_size", 2000000)),
+        "compression": str(_g(sales, "compression", default="snappy")),
+        "rowGroupSize": int(_g(sales, "row_group_size", default=2000000)),
         "mergeParquet": bool(sales.get("merge_parquet", True)),
         "partitionEnabled": bool(_g(sales, "partitioning", "enabled", default=True)),
         # Dates
@@ -225,11 +224,8 @@ def get_config():
         "pctAsia": float(cust.get("pct_asia", 0)),
         "pctOrg": float(cust.get("pct_org", 10)),
         "customerActiveRatio": float(cust.get("active_ratio", 0.90)),
-        "churnEnabled": bool(lifecycle.get("enable_churn", True)),
-        "baseMonthlyChurn": float(lifecycle.get("base_monthly_churn", 0.04)),
-        "minTenureMonths": int(lifecycle.get("min_tenure_months", 3)),
-        "initialActiveCust": float(lifecycle.get("initial_active_customers", 0.35)),
-        "initialSpreadMonths": int(lifecycle.get("initial_spread_months", 1)),
+        "profile": str(cust.get("profile", "steady")),
+        "firstYearPct": float(cust.get("first_year_pct", 0.27)),
         # Products detail
         "valueScale": float(pricing.get("value_scale", 1.0)),
         "minPrice": float(pricing.get("min_unit_price", 10)),
@@ -242,6 +238,9 @@ def get_config():
         "returnRate": float(returns.get("return_rate", 0.03)),
         "returnMinDays": int(returns.get("min_days_after_sale", 1)),
         "returnMaxDays": int(returns.get("max_days_after_sale", 60)),
+        # Budget & Inventory
+        "budgetEnabled": bool(_g(_cfg, "budget", "enabled", default=True)),
+        "inventoryEnabled": bool(_g(_cfg, "inventory", "enabled", default=True)),
     }
 
 # ---------------------------------------------------------------------------
@@ -254,7 +253,7 @@ def update_config(body: ConfigUpdate):
 
     _cfg.setdefault("defaults", {}).setdefault("dates", {})
     _cfg.setdefault("sales", {}).setdefault("partitioning", {})
-    _cfg.setdefault("customers", {}).setdefault("lifecycle", {})
+    _cfg.setdefault("customers", {})
     _cfg.setdefault("stores", {})
     _cfg.setdefault("products", {}).setdefault("pricing", {}).setdefault("base", {})
     _cfg.setdefault("promotions", {})
@@ -301,11 +300,8 @@ def update_config(body: ConfigUpdate):
     if "pctAsia" in v: _cfg["customers"]["pct_asia"] = float(v["pctAsia"])
     if "pctOrg" in v: _cfg["customers"]["pct_org"] = float(v["pctOrg"])
     if "customerActiveRatio" in v: _cfg["customers"]["active_ratio"] = float(v["customerActiveRatio"])
-    if "churnEnabled" in v: _cfg["customers"]["lifecycle"]["enable_churn"] = bool(v["churnEnabled"])
-    if "baseMonthlyChurn" in v: _cfg["customers"]["lifecycle"]["base_monthly_churn"] = float(v["baseMonthlyChurn"])
-    if "minTenureMonths" in v: _cfg["customers"]["lifecycle"]["min_tenure_months"] = int(v["minTenureMonths"])
-    if "initialActiveCust" in v: _cfg["customers"]["lifecycle"]["initial_active_customers"] = float(v["initialActiveCust"])
-    if "initialSpreadMonths" in v: _cfg["customers"]["lifecycle"]["initial_spread_months"] = int(v["initialSpreadMonths"])
+    if "profile" in v: _cfg["customers"]["profile"] = v["profile"]
+    if "firstYearPct" in v: _cfg["customers"]["first_year_pct"] = float(v["firstYearPct"])
 
     # Products detail
     if "valueScale" in v: _cfg["products"]["pricing"]["base"]["value_scale"] = float(v["valueScale"])
@@ -322,6 +318,10 @@ def update_config(body: ConfigUpdate):
     if "returnRate" in v: _cfg["returns"]["return_rate"] = float(v["returnRate"])
     if "returnMinDays" in v: _cfg["returns"]["min_days_after_sale"] = int(v["returnMinDays"])
     if "returnMaxDays" in v: _cfg["returns"]["max_days_after_sale"] = int(v["returnMaxDays"])
+
+    # Budget & Inventory
+    if "budgetEnabled" in v: _cfg.setdefault("budget", {})["enabled"] = bool(v["budgetEnabled"])
+    if "inventoryEnabled" in v: _cfg.setdefault("inventory", {})["enabled"] = bool(v["inventoryEnabled"])
 
     return {"ok": True}
 
@@ -474,9 +474,12 @@ def validate_config():
     chunk = int(sales.get("chunk_size", 0))
     if chunk > rows > 0:
         warnings.append("Chunk size exceeds total rows.")
-    fmt = sales.get("file_format", "csv")
+    fmt = sales.get("file_format", "parquet")
     if fmt == "csv" and rows > 5_000_000:
         warnings.append("Large CSV outputs can be slow. Consider parquet.")
+
+    if sales.get("skip_order_cols"):
+        warnings.append("Order columns skipped — Returns will not be generated.")
 
     customers = int(_g(_cfg, "customers", "total_customers", default=0))
     products = int(_g(_cfg, "products", "num_products", default=0))
@@ -506,7 +509,7 @@ def validate_config():
     cust = _g(_cfg, "customers", default={})
     rS = float(cust.get("pct_india", 0)) + float(cust.get("pct_us", 0)) + float(cust.get("pct_eu", 0)) + float(cust.get("pct_asia", 0))
     if rS <= 0:
-        errors.append("Customer regional percentages must sum to > 0.")
+        warnings.append("Customer regional percentages sum to 0.")
 
     ret = _g(_cfg, "returns", default={})
     if ret.get("enabled"):

@@ -8,9 +8,10 @@ function validate(c){
   if(c.maxPrice<=c.minPrice) e.push("Max unit price must exceed min unit price.");
   if(c.returnsEnabled&&(c.returnRate<0||c.returnRate>1)) e.push("Return rate must be 0\u20131.");
   const rS=c.pctIndia+c.pctUs+c.pctEu+c.pctAsia;
-  if(rS<=0) e.push("Customer regional % must sum to > 0.");
+  if(rS<=0) w.push("Customer regional % sum to 0.");
   if(c.chunkSize>c.salesRows) w.push("Chunk size exceeds total rows.");
   if(c.format==="csv"&&c.salesRows>5000000) w.push("Large CSV outputs can be slow. Consider parquet.");
+  if(c.skipOrderCols) w.push("Order columns skipped \u2014 Returns will not be generated.");
   if(c.customers>c.salesRows&&c.salesRows>0) w.push(`Customers (${c.customers.toLocaleString()}) exceed sales rows.`);
   if(c.products>c.salesRows&&c.salesRows>0) w.push(`Products (${c.products.toLocaleString()}) exceed sales rows.`);
   if(c.customers>0&&c.salesRows/c.customers<1.5) w.push(`Low rows-per-customer ratio (${(c.salesRows/c.customers).toFixed(1)}).`);
@@ -60,9 +61,14 @@ function App(){
   /* Page navigation */
   const[page,setPage_]=useState("main");
   const setPage=useCallback((p)=>{
+    document.activeElement?.blur();
+    const scrollY=window.scrollY;
     setPage_(p);
     if(p==="config")loadCfgYaml();
     if(p==="models")fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);}).catch(()=>{});
+    const restore=()=>window.scrollTo(0,scrollY);
+    restore();
+    requestAnimationFrame(()=>{restore();requestAnimationFrame(restore);});
   },[]);
 
   /* ─── Initial load ─── */
@@ -72,7 +78,7 @@ function App(){
       d.regenAll=false;d.regenDims={};d.autoWorkers=!d.workers;
       setCfg(d);
     }).catch(()=>{
-      setCfg({format:"csv",salesOutput:"sales",skipOrderCols:false,compression:"snappy",rowGroupSize:2000000,mergeParquet:true,partitionEnabled:true,startDate:"2023-01-01",endDate:"2026-12-31",fiscalMonthOffset:0,includeCalendar:true,includeIso:false,includeFiscal:true,includeWeeklyFiscal:false,wfFirstDay:0,wfWeeklyType:"Last",wfQuarterType:"445",salesRows:50015,chunkSize:1000000,autoWorkers:false,workers:8,customers:48832,stores:20,products:4338,promotions:20,pctIndia:10,pctUs:51,pctEu:39,pctAsia:0,pctOrg:10,customerActiveRatio:.9,churnEnabled:true,baseMonthlyChurn:.04,minTenureMonths:3,initialActiveCust:.35,initialSpreadMonths:1,valueScale:1,minPrice:10,maxPrice:3000,productActiveRatio:.94,geoWeights:{"United States":.35,India:.2,"United Kingdom":.1,Germany:.1,France:.1,Australia:.07,Canada:.08},returnsEnabled:true,returnRate:.03,returnMinDays:1,returnMaxDays:60,regenAll:false,regenDims:{}});
+      setCfg({format:"parquet",salesOutput:"sales",skipOrderCols:false,compression:"snappy",rowGroupSize:2000000,mergeParquet:true,partitionEnabled:true,startDate:"2020-01-01",endDate:"2025-12-31",fiscalMonthOffset:0,includeCalendar:true,includeIso:false,includeFiscal:true,includeWeeklyFiscal:false,wfFirstDay:0,wfWeeklyType:"Last",wfQuarterType:"445",salesRows:103285,chunkSize:1000000,autoWorkers:false,workers:8,customers:48837,stores:10,products:2581,promotions:20,pctIndia:10,pctUs:51,pctEu:39,pctAsia:0,pctOrg:1,customerActiveRatio:.98,profile:"steady",firstYearPct:.27,valueScale:1,minPrice:10,maxPrice:3000,productActiveRatio:.98,geoWeights:{"United States":.35,India:.2,"United Kingdom":.1,Germany:.1,France:.1,Australia:.07,Canada:.08},returnsEnabled:true,returnRate:.03,returnMinDays:1,returnMaxDays:60,budgetEnabled:true,inventoryEnabled:true,regenAll:false,regenDims:{}});
     });
     fetch(API+"/presets").then(r=>r.json()).then(d=>{setPresets(d);setPresetBucket(Object.keys(d)[0]||"");}).catch(()=>{});
     fetch(API+"/models").then(r=>r.text()).then(t=>{setModelsYaml(t);setModelsOrig(t);setModelsDisk(t);}).catch(()=>{});
@@ -185,6 +191,7 @@ function App(){
   if(!cfg)return <div style={{padding:40,textAlign:"center",color:"var(--muted)"}}>Loading configuration...</div>;
   const{errors,warnings}=validate(cfg);
   const showPq=cfg.format==="parquet"||cfg.format==="deltaparquet";
+  const showDelta=cfg.format==="deltaparquet";
 
   return(
     <div style={{display:"flex",minHeight:"100vh"}}>
@@ -276,14 +283,14 @@ function App(){
         {/* 1 OUTPUT */}
         <Section num="1" title="Output">
           <R2>
-            <F label="Output format"><Sel value={cfg.format} onChange={v=>s("format",v)} options={["csv","parquet","deltaparquet"]} /></F>
+            <F label="Output format"><Sel value={cfg.format} onChange={v=>s("format",v)} options={["parquet","csv","deltaparquet"]} labels={["Parquet","CSV","Delta (Parquet)"]} /></F>
             <F label="Sales output"><Sel value={cfg.salesOutput} onChange={v=>s("salesOutput",v)} options={["sales","sales_order","both"]} labels={["Sales (flat)","Order Header + Detail","Both"]} /></F>
           </R2>
           <div style={{marginTop:12}}><Check checked={cfg.skipOrderCols} onChange={v=>s("skipOrderCols",v)} label="Skip order columns" /></div>
-          {showPq&&<Box title="Parquet / Delta options"><R3>
+          {showPq&&<Box title="Parquet options"><R3>
             <F label="Compression"><Sel value={cfg.compression} onChange={v=>s("compression",v)} options={["snappy","zstd","gzip","none"]} /></F>
             <F label="Row group size"><N value={cfg.rowGroupSize} onChange={v=>s("rowGroupSize",v)} min={100000} step={500000} /></F>
-            <F label=" "><div style={{display:"flex",flexDirection:"column",gap:8,paddingTop:3}}><Check checked={cfg.mergeParquet} onChange={v=>s("mergeParquet",v)} label="Merge parquet chunks" /><Check checked={cfg.partitionEnabled} onChange={v=>s("partitionEnabled",v)} label="Partition by Year/Month" /></div></F>
+            <F label=" "><div style={{display:"flex",flexDirection:"column",gap:8,paddingTop:3}}><Check checked={cfg.mergeParquet} onChange={v=>s("mergeParquet",v)} label="Merge parquet chunks" />{showDelta&&<Check checked={cfg.partitionEnabled} onChange={v=>s("partitionEnabled",v)} label="Partition by Year/Month" />}</div></F>
           </R3></Box>}
         </Section>
 
@@ -339,16 +346,11 @@ function App(){
             <Sld label="Organization %" value={cfg.pctOrg} min={0} max={100} step={1} onChange={v=>s("pctOrg",v)} fmt={v=>`${v}%`} />
           </Box>
           <Sld label="Active ratio" value={cfg.customerActiveRatio} min={.1} max={1} step={.01} onChange={v=>s("customerActiveRatio",v)} />
-          <Box title="Lifecycle / Churn">
-            <Check checked={cfg.churnEnabled} onChange={v=>s("churnEnabled",v)} label="Enable customer churn" />
-            {cfg.churnEnabled&&<div style={{marginTop:12}}>
-              <R3>
-                <F label="Monthly churn rate"><N value={cfg.baseMonthlyChurn} onChange={v=>s("baseMonthlyChurn",v)} min={0} max={1} step={.01} /></F>
-                <F label="Min tenure (months)"><N value={cfg.minTenureMonths} onChange={v=>s("minTenureMonths",v)} min={0} step={1} /></F>
-                <F label="Initial active customers"><N value={cfg.initialActiveCust} onChange={v=>s("initialActiveCust",v)} min={1} step={100} /></F>
-              </R3>
-              <F label="Initial spread (months)" help="Months before start_date that existing customers are spread over."><N value={cfg.initialSpreadMonths} onChange={v=>s("initialSpreadMonths",v)} min={1} step={6} /></F>
-            </div>}
+          <Box title="Behavior Profile">
+            <R2>
+              <F label="Profile" help="Controls acquisition curve, churn, seasonality, and demand shape."><Sel value={cfg.profile} onChange={v=>s("profile",v)} options={["gradual","steady","aggressive","instant"]} labels={["Gradual (S-curve ramp)","Steady (mature business)","Aggressive (fast growth)","Instant (all customers day 1)"]} /></F>
+              <F label="First year %" help="% of customers that exist in year 1. Rest are acquired over time."><N value={cfg.firstYearPct} onChange={v=>s("firstYearPct",v)} min={0.05} max={1} step={0.01} /></F>
+            </R2>
           </Box>
         </Section>
 
@@ -388,14 +390,22 @@ function App(){
           </R3>}
         </Section>
 
-        {/* 9 REGENERATE */}
-        <Section num="9" title="Regenerate Dimensions" defaultOpen={false}>
+        {/* 9 BUDGET & INVENTORY */}
+        <Section num="9" title="Budget & Inventory" defaultOpen={false}>
+          <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}>
+            <Check checked={cfg.budgetEnabled} onChange={v=>s("budgetEnabled",v)} label="Generate Budget fact table" />
+            <Check checked={cfg.inventoryEnabled} onChange={v=>s("inventoryEnabled",v)} label="Generate Inventory Snapshot fact table" />
+          </div>
+        </Section>
+
+        {/* 10 REGENERATE */}
+        <Section num="10" title="Regenerate Dimensions" defaultOpen={false}>
           <div style={{marginTop:10}}><Check checked={cfg.regenAll} onChange={v=>s("regenAll",v)} label="Regenerate all dimensions" /></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:12}}>{DIMS.map(d=><Check key={d} checked={cfg.regenAll||!!cfg.regenDims[d]} onChange={v=>s("regenDims",{...cfg.regenDims,[d]:v})} label={d.replace("_"," ")} />)}</div>
         </Section>
 
-        {/* 10 VALIDATION */}
-        <Section num="10" title="Validation" badge={errors.length>0?{v:"error",t:`${errors.length} error${errors.length>1?"s":""}`}:warnings.length>0?{v:"warning",t:`${warnings.length} warning${warnings.length>1?"s":""}`}:{v:"success",t:"Valid"}}>
+        {/* 11 VALIDATION */}
+        <Section num="11" title="Validation" badge={errors.length>0?{v:"error",t:`${errors.length} error${errors.length>1?"s":""}`}:warnings.length>0?{v:"warning",t:`${warnings.length} warning${warnings.length>1?"s":""}`}:{v:"success",t:"Valid"}}>
           <div style={{marginTop:8}}>
             {errors.length===0&&warnings.length===0&&<div style={{display:"flex",alignItems:"center",gap:8}}><Badge variant="success">Valid</Badge><span style={{fontSize:13,color:"var(--dim)"}}>Configuration looks good.</span></div>}
             {errors.map((e,i)=><div key={`e${i}`} style={{padding:"9px 13px",borderRadius:8,marginTop:6,fontSize:12.5,display:"flex",alignItems:"center",gap:7,background:"var(--errBg)",color:"var(--err)",border:"1px solid rgba(220,38,38,.12)"}}><span style={{fontWeight:700}}>✕</span> {e}</div>)}
@@ -403,8 +413,8 @@ function App(){
           </div>
         </Section>
 
-        {/* 11 GENERATE */}
-        <Section num="11" title="Generate">
+        {/* 12 GENERATE */}
+        <Section num="12" title="Generate">
           <div style={{marginTop:10,padding:"12px 16px",background:"var(--alt)",borderRadius:10,border:"1px solid var(--border)",fontSize:13,color:"var(--dim)",lineHeight:1.7}}>
             <strong style={{color:"var(--text)"}}>{cfg.salesRows.toLocaleString()}</strong> rows · <strong style={{color:"var(--text)"}}>{cfg.customers.toLocaleString()}</strong> cust · <strong style={{color:"var(--text)"}}>{cfg.products.toLocaleString()}</strong> prod · {cfg.startDate} {"\u2192"} {cfg.endDate} · <Badge>{cfg.format.toUpperCase()}</Badge>
             {cfg.salesOutput!=="sales"&&<>{" · "}<Badge>{cfg.salesOutput==="both"?"Sales + Orders":"Orders"}</Badge></>}
