@@ -34,10 +34,10 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "csv"              # csv | parquet | deltaparquet
+  file_format: "parquet"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   write_delta: true
-  skip_order_cols: true
+  skip_order_cols: false
 
   merge:
     enabled: true
