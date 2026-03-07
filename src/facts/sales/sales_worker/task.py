@@ -32,6 +32,13 @@ try:
 except ImportError:
     _BUDGET_AGG_AVAILABLE = False
 
+try:
+    from src.facts.inventory.micro_agg import micro_aggregate_inventory
+    _INVENTORY_AGG_AVAILABLE = True
+except ImportError:
+    _INVENTORY_AGG_AVAILABLE = False
+
+
 Task = Tuple[int, int, Any]  # (idx, batch_size, seed)
 TaskArgs = Union[Task, Sequence[Task]]
 
@@ -784,6 +791,19 @@ def build_header_from_detail(detail: pa.Table, *, validate_invariants: bool = Tr
     return pa.Table.from_arrays(cols, names=names)
 
 
+def _inventory_enabled() -> bool:
+    return (
+        _INVENTORY_AGG_AVAILABLE
+        and bool(getattr(State, "inventory_enabled", False))
+    )
+
+
+def _maybe_inventory_agg(detail_table: pa.Table) -> Optional[Dict[str, Any]]:
+    if not _inventory_enabled():
+        return None
+    return micro_aggregate_inventory(detail_table)
+
+
 def _budget_enabled() -> bool:
     """Check if budget streaming aggregation is active for this worker."""
     return (
@@ -828,17 +848,19 @@ def _attach_budget(
     budget_agg: Optional[Dict[str, Any]],
     returns_agg: Optional[Dict[str, Any]],
     table_name_fallback: str = TABLE_SALES,
+    inventory_agg: Optional[Dict[str, Any]] = None,
 ) -> Any:
     """
-    Attach budget micro-aggregates to a worker result.
+    Attach budget and inventory micro-aggregates to a worker result.
 
     Normalizes bare str/dict results into a dict so the main process can
-    pop _budget_agg / _returns_agg without breaking existing result handling.
+    pop _budget_agg / _returns_agg / _inventory_agg without breaking
+    existing result handling.
 
-    If budget is disabled (both aggs are None), returns the original result untouched
-    to preserve backward compatibility for non-budget runs.
+    If all aggs are None, returns the original result untouched
+    to preserve backward compatibility for non-budget/inventory runs.
     """
-    if budget_agg is None and returns_agg is None:
+    if budget_agg is None and returns_agg is None and inventory_agg is None:
         return result
 
     if isinstance(result, str):
@@ -851,6 +873,8 @@ def _attach_budget(
         result["_budget_agg"] = budget_agg
     if returns_agg is not None:
         result["_returns_agg"] = returns_agg
+    if inventory_agg is not None:
+        result["_inventory_agg"] = inventory_agg
 
     return result
 
@@ -875,6 +899,7 @@ def _worker_task(args):
     mode = _mode()
     returns_cfg = _build_returns_config()
     do_budget = _budget_enabled()
+    do_inventory = _inventory_enabled()
 
     # Pre-validate column requirements for sales_order/both modes once
     so_require = None
@@ -920,6 +945,7 @@ def _worker_task(args):
             raise TypeError("chunk_builder must return pyarrow.Table")
 
         budget_agg = _maybe_budget_agg(detail_table) if do_budget else None
+        inventory_agg = _maybe_inventory_agg(detail_table) if do_inventory else None
 
         if mode in {"sales_order", "both"}:
             got = set(detail_table.column_names)
@@ -946,14 +972,14 @@ def _worker_task(args):
 
             if returns_table is None:
                 result = _write_table(TABLE_SALES, idx_i, sales_out)
-                results.append(_attach_budget(result, budget_agg, None, TABLE_SALES))
+                results.append(_attach_budget(result, budget_agg, None, TABLE_SALES, inventory_agg=inventory_agg))
                 continue
 
             out: Dict[str, Any] = {TABLE_SALES: _write_table(TABLE_SALES, idx_i, sales_out)}
             returns_out = _project_for_table(TABLE_SALES_RETURN, returns_table)  # type: ignore[arg-type]
             out[TABLE_SALES_RETURN] = _write_table(TABLE_SALES_RETURN, idx_i, returns_out)  # type: ignore[arg-type]
             returns_agg = _maybe_returns_agg(returns_table, detail_table) if do_budget else None
-            results.append(_attach_budget(out, budget_agg, returns_agg))
+            results.append(_attach_budget(out, budget_agg, returns_agg, inventory_agg=inventory_agg))
             continue
 
         out: Dict[str, Any] = {}
@@ -982,6 +1008,6 @@ def _worker_task(args):
             )
 
         returns_agg = _maybe_returns_agg(returns_table, detail_table) if do_budget else None
-        results.append(_attach_budget(out, budget_agg, returns_agg))
+        results.append(_attach_budget(out, budget_agg, returns_agg, inventory_agg=inventory_agg))
 
     return results[0] if single else results

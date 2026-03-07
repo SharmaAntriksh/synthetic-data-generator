@@ -766,5 +766,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "budget_store_to_country": budget_store_to_country,
             "budget_product_to_cat": budget_product_to_cat,
 
+            "inventory_enabled": bool(worker_cfg.get("inventory_enabled", False)),
+
         }
     )

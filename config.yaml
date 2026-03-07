@@ -6,9 +6,9 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1_032_851
-  products: 20832
-  customers: 83783
+  sales_rows: 1_032_85
+  products: 2581
+  customers: 837
   stores: 20
   geographies: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5 }
@@ -34,7 +34,7 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "csv"              # csv | parquet | deltaparquet
+  file_format: "parquet"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   write_delta: true
   skip_order_cols: false
@@ -232,3 +232,26 @@ budget:
   weights:     { local: 0.60, category: 0.30, global: 0.10 }
   default_backcast_growth: 0.05
   return_rate_cap: 0.30
+  
+# ------------------------------------------------------------------
+# INVENTORY SNAPSHOT
+# ------------------------------------------------------------------
+inventory:
+  enabled: true
+  seed: 42
+  grain: monthly
+
+  min_demand_months: 6
+  initial_stock_multiplier: 1.5        # was 3.0 — start with 1.5 months of avg demand, not 3
+  reorder_compliance: 0.65             # was 0.85 — 35% of reorders are late/missed (realistic)
+  lead_time_variance: 0.40             # was 0.20 — wider delivery jitter (±40%)
+  overstock_bias: 1.0                  # was 1.15 — no systematic over-ordering
+
+  abc_stock_multiplier:
+    A: 1.20                            # was 1.30
+    B: 1.00
+    C: 0.60                            # was 0.70 — C-class products are more neglected
+
+  shrinkage:
+    enabled: true
+    rate: 0.02

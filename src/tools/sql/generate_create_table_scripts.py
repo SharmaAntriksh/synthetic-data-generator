@@ -18,6 +18,7 @@ TABLE_SALES_RETURN = "SalesReturn"
 # Budget fact table names
 TABLE_BUDGET_YEARLY = "BudgetYearly"
 TABLE_BUDGET_MONTHLY = "BudgetMonthly"
+TABLE_INVENTORY_SNAPSHOT = "InventorySnapshot"
 
 # Tables that should be emitted in the Facts script (not Dimensions),
 # even though they live inside STATIC_SCHEMAS.
@@ -28,6 +29,7 @@ _FACT_TABLE_NAMES = {
     TABLE_SALES_RETURN,
     TABLE_BUDGET_YEARLY,
     TABLE_BUDGET_MONTHLY,
+    TABLE_INVENTORY_SNAPSHOT,
 }
 
 
