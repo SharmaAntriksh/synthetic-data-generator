@@ -594,13 +594,14 @@ def generate_sales_fact(
 
     # Products: respect runner-bound active_product_np
     product_brand_key = None
+    brand_names = None
     products_path = parquet_folder_p / "products.parquet"
 
-    def _brand_codes_from_series(s: pd.Series) -> np.ndarray:
+    def _brand_codes_from_series(s: pd.Series) -> tuple[np.ndarray, np.ndarray]:
         # Guarantee no NA => no -1 codes
         s2 = s.fillna("Unknown").astype(str)
-        codes, _ = pd.factorize(s2, sort=True)
-        return np.asarray(codes, dtype=np.int64)
+        codes, uniques = pd.factorize(s2, sort=True)
+        return np.asarray(codes, dtype=np.int64), np.asarray(uniques, dtype=object)
 
     if getattr(State, "active_product_np", None) is not None:
         product_np = State.active_product_np
@@ -610,7 +611,8 @@ def generate_sales_fact(
             brand_df = brand_df.drop_duplicates("ProductKey", keep="first")
 
             brand_df["ProductKey"] = brand_df["ProductKey"].astype("int64", copy=False)
-            brand_df["_BrandKey"] = _brand_codes_from_series(brand_df["Brand"])
+            codes, brand_names = _brand_codes_from_series(brand_df["Brand"])
+            brand_df["_BrandKey"] = codes
 
             # Map ProductKey -> BrandKey
             brand_map = pd.Series(
@@ -653,7 +655,7 @@ def generate_sales_fact(
                 ]
             )
 
-            codes = _brand_codes_from_series(prod_df["Brand"])
+            codes, brand_names = _brand_codes_from_series(prod_df["Brand"])
             product_brand_key = codes if not np.any(codes < 0) else None
 
         except Exception as exc:
@@ -892,6 +894,7 @@ def generate_sales_fact(
     worker_cfg = dict(
         product_np=product_np,
         product_brand_key=product_brand_key,
+        brand_names=brand_names,
         store_keys=store_keys,
         promo_keys_all=promo_keys_all,
         promo_pct_all=promo_pct_all,

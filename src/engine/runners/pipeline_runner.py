@@ -191,6 +191,12 @@ def run_pipeline(
             fact_out.mkdir(parents=True, exist_ok=True)
 
         # ----------------------------
+        # Resolve customer profile (must run before State and models injection)
+        # ----------------------------
+        from src.utils.customer_profiles import resolve_customer_profile
+        cfg, models_cfg = resolve_customer_profile(cfg, models_cfg)
+
+        # ----------------------------
         # Attach models config to runtime state (ONLY if sales will run)
         # ----------------------------
         if only != "dimensions":

@@ -6,9 +6,9 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1_032_85
+  sales_rows: 1032850
   products: 2581
-  customers: 837
+  customers: 48837
   stores: 20
   geographies: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5 }
@@ -19,7 +19,7 @@ scale:
 defaults:
   seed: 42
   dates:
-    start: "2022-01-01"
+    start: "2018-01-01"
     end: "2025-12-31"
 
 paths:
@@ -68,11 +68,13 @@ returns:
 # PRODUCTS
 # ------------------------------------------------------------------
 products:
-  active_ratio: 0.94
+  active_ratio: 0.98
   value_scale: 1                      # multiplier on all base prices
   price_range: [10, 3000]             # [min, max] UnitPrice
   margin_range: [0.20, 0.35]          # [min, max] cost margin pct
   brand_normalize: true               # pull brand prices toward global median
+  brand_normalize_alpha: 0.35         # brands keep 65% of price identity
+
 
 # ------------------------------------------------------------------
 # CUSTOMERS
@@ -83,16 +85,10 @@ customers:
   region_mix: { US: 51, EU: 39, India: 10 }
   org_pct: 1
 
-  lifecycle:
-    enable_churn: true              # true = customers can leave over time, false = once acquired they stay forever
-    base_monthly_churn: 0.055       # ↑ = customers leave faster (more turnover, pool shrinks), ↓ = stickier customers (pool only grows)
-    min_tenure_months: 4            # ↑ = longer grace period before any customer can churn (delays first dip), ↓ = churn starts almost immediately
-    initial_active_customers: 0.40  # ↑ = more customers from month 0 (no sales dip, but spikes new-customer chart), ↓ = slower ramp-up
-    initial_spread_months: 36     # ↑ = spreads initial customers across months (smooth new-cust curve, starves early sales), 0 = all available day one
-    acquisition_curve: "logistic"
-    acquisition_params:
-      midpoint: 0.30
-      steepness: 8.0
+  profile: steady                   # gradual | steady | aggressive | instant
+  first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
+
+
 # ------------------------------------------------------------------
 # CUSTOMER SEGMENTS (disabled by default)
 # ------------------------------------------------------------------
@@ -239,19 +235,18 @@ budget:
 inventory:
   enabled: true
   seed: 42
-  grain: monthly
+  grain: monthly                       # monthly snapshot grain
 
-  min_demand_months: 6
-  initial_stock_multiplier: 1.5        # was 3.0 — start with 1.5 months of avg demand, not 3
-  reorder_compliance: 0.65             # was 0.85 — 35% of reorders are late/missed (realistic)
-  lead_time_variance: 0.40             # was 0.20 — wider delivery jitter (±40%)
-  overstock_bias: 1.0                  # was 1.15 — no systematic over-ordering
+  initial_stock_multiplier: 3.0        # initial QOH = avg monthly demand × this
+  reorder_compliance: 0.85             # probability replenishment triggers on schedule
+  lead_time_variance: 0.20             # ±jitter on ProductProfile.LeadTimeDays
+  overstock_bias: 1.15                 # slight tendency to over-order (realistic)
 
-  abc_stock_multiplier:
-    A: 1.20                            # was 1.30
+  abc_stock_multiplier:                # stock targets scaled by ABC class
+    A: 1.30
     B: 1.00
-    C: 0.60                            # was 0.70 — C-class products are more neglected
+    C: 0.70
 
   shrinkage:
     enabled: true
-    rate: 0.02
+    rate: 0.02                         # 2% annual shrinkage

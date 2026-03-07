@@ -507,6 +507,7 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
     min_margin, max_margin = float(mr[0]), float(mr[1])
 
     brand_norm = bool(products.get("brand_normalize", True))
+    brand_norm_alpha = float(products.get("brand_normalize_alpha", 0.35))
     value_scale = float(products.get("value_scale", 1))
 
     products["pricing"] = {
@@ -527,7 +528,7 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "brand_normalization": {
             "enabled": brand_norm,
             "brand_col": "Brand",
-            "alpha": 0.70,
+            "alpha": max(0.0, min(1.0, brand_norm_alpha)),
             "min_factor": 0.60,
             "max_factor": 1.60,
             "min_count": 10,
