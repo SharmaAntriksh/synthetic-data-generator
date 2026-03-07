@@ -468,7 +468,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
         geo_to_currency = worker_cfg.get("geo_to_currency")
 
         promo_keys_all = worker_cfg["promo_keys_all"]
-        promo_pct_all = worker_cfg["promo_pct_all"]
         promo_start_all = worker_cfg["promo_start_all"]
         promo_end_all = worker_cfg["promo_end_all"]
 
@@ -643,7 +642,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
         )
 
     promo_keys_all = as_int64(promo_keys_all)
-    promo_pct_all = as_f64(promo_pct_all)
     promo_start_all = np.asarray(promo_start_all, dtype="datetime64[D]")
     promo_end_all = np.asarray(promo_end_all, dtype="datetime64[D]")
 
@@ -767,7 +765,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "brand_prob_by_month": brand_prob_by_month,
             "store_keys": store_keys,
             "promo_keys_all": promo_keys_all,
-            "promo_pct_all": promo_pct_all,
             "promo_start_all": promo_start_all,
             "promo_end_all": promo_end_all,
             "customer_keys": customer_keys,

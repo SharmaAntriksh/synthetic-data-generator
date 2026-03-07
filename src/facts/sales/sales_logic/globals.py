@@ -119,7 +119,6 @@ class State:
     # Promotions
     # --------------------------------------------------------------
     promo_keys_all = None
-    promo_pct_all = None
     promo_start_all = None
     promo_end_all = None
 

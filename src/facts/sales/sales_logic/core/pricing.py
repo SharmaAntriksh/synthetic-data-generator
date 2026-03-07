@@ -16,7 +16,6 @@ def compute_prices(
     n,
     unit_price,
     unit_cost,
-    promo_pct=None,  # accepted for backward compatibility; intentionally ignored
     *,
     price_pressure: float = 1.0,
     row_price_jitter_pct: float = 0.0,
@@ -32,11 +31,9 @@ def compute_prices(
     rng : numpy.random.Generator
     n : int - number of rows
     unit_price, unit_cost : array-like - per-row base prices from products
-    promo_pct : ignored (backward compat)
     price_pressure : float - global multiplier (default 1.0, no effect)
     row_price_jitter_pct : float - per-row noise (default 0.0, no effect)
     """
-    _ = promo_pct
 
     n = int(n)
     if n <= 0:

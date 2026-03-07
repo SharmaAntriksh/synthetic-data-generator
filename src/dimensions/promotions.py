@@ -226,9 +226,11 @@ def generate_promotions_catalog(
     seed: int = 42,
 ) -> pd.DataFrame:
     """
-    Returns columns (UNCHANGED):
+    Returns columns:
       PromotionKey, PromotionLabel, PromotionName, PromotionDescription,
       DiscountPct, PromotionType, PromotionCategory, StartDate, EndDate
+
+    PromotionKey=1 is always the "No Discount" sentinel row.
     """
     if not years:
         raise ValueError("Promotions: No years provided.")
@@ -237,6 +239,8 @@ def generate_promotions_catalog(
 
     rng = np.random.default_rng(int(seed))
     rows: List[Dict] = []
+    requested = {"Seasonal": int(num_seasonal), "Clearance": int(num_clearance), "Limited": int(num_limited)}
+    generated = {"Seasonal": 0, "Clearance": 0, "Limited": 0}
 
     # Holidays
     for y in years:
@@ -283,6 +287,7 @@ def generate_promotions_catalog(
         if not _valid_window(start, end):
             continue
 
+        generated["Seasonal"] += 1
         rows.append(
             {
                 "TypeGroup": "Seasonal",
@@ -310,6 +315,7 @@ def generate_promotions_catalog(
         if not _valid_window(start, end):
             continue
 
+        generated["Clearance"] += 1
         rows.append(
             {
                 "TypeGroup": "Clearance",
@@ -337,6 +343,7 @@ def generate_promotions_catalog(
         if not _valid_window(start, end):
             continue
 
+        generated["Limited"] += 1
         rows.append(
             {
                 "TypeGroup": "Limited",
@@ -352,6 +359,13 @@ def generate_promotions_catalog(
             }
         )
 
+    # Warn when date-window clamping dropped promotions
+    for type_group, req in requested.items():
+        got = generated[type_group]
+        if got < req:
+            info(f"WARNING: {type_group} promotions — requested {req}, generated {got} "
+                 f"({req - got} dropped by date-window clamping)")
+
     if not rows:
         raise ValueError("Promotions: No promotions could be generated (check date windows and config).")
 
@@ -360,7 +374,7 @@ def generate_promotions_catalog(
     # Stable ordering
     df = df.sort_values(["TypeGroup", "Year", "SeasonType", "StartDate"]).reset_index(drop=True)
 
-    # Number + label non-holiday promos
+    # Name non-holiday promos
     mask_non_holiday = df["TypeGroup"] != "Holiday"
     if mask_non_holiday.any():
         grp = df.loc[mask_non_holiday].groupby(["Year", "TypeGroup", "SeasonType"], sort=False)
@@ -380,17 +394,17 @@ def generate_promotions_catalog(
             + df.loc[mask_non_holiday, "Year"].astype(int).astype(str)
         )
 
-    df.loc[~mask_non_holiday, "LocalIndex"] = None
+    # Sort promos by StartDate; keys start at 2 (key 1 reserved for No Discount)
+    df = df.sort_values("StartDate").reset_index(drop=True)
+    df["PromotionKey"] = (df.index + 2).astype(np.int64)
 
-    # Append "No Discount"
+    # Build "No Discount" sentinel — always PromotionKey=1
     min_year = min(years)
     max_year = max(years)
     no_discount = pd.DataFrame(
         [
             {
-                "TypeGroup": "NoDiscount",
-                "SeasonType": "NoDiscount",
-                "Year": min_year,
+                "PromotionKey": np.int64(1),
                 "PromotionName": "No Discount",
                 "PromotionDescription": "No Discount",
                 "DiscountPct": 0.0,
@@ -398,7 +412,6 @@ def generate_promotions_catalog(
                 "PromotionCategory": "No Discount",
                 "StartDate": pd.Timestamp(year_windows[min_year][0]),
                 "EndDate": pd.Timestamp(year_windows[max_year][1]),
-                "LocalIndex": None,
             }
         ]
     )
@@ -409,14 +422,11 @@ def generate_promotions_catalog(
             category=FutureWarning,
             message=r".*DataFrame concatenation with empty or all-NA entries.*",
         )
-        final = pd.concat([df, no_discount], ignore_index=True)
+        final = pd.concat([no_discount, df], ignore_index=True)
 
-    # Final ordering + keys
-    final = final.sort_values("StartDate").reset_index(drop=True)
-    final["PromotionKey"] = (final.index + 1).astype(np.int64)
-    final["PromotionLabel"] = final["PromotionKey"]
+    # PromotionLabel — readable short code (e.g. "PROMO-001")
+    final["PromotionLabel"] = [f"PROMO-{k:03d}" for k in final["PromotionKey"]]
 
-    # Output schema (UNCHANGED)
     return final[
         [
             "PromotionKey",
