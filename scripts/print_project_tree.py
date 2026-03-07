@@ -6,13 +6,13 @@ EXCLUDE_DIRS = {
     ".mypy_cache", ".pytest_cache",
     "generated_datasets",
     "logs", "output", "fact_out", "parquet_dims", 
-    "PBIP Parquet", "PBIP CSV", "ui", "samples", "docs", "data"
+    "PBIP Parquet", "PBIP CSV", "ui", "samples", "docs", "data", "pages", "Sales.Report", "Sales.SemanticModel"
 }
 
 EXCLUDE_EXT = {".pyc", ".pyo", ".pyd", ".so"}
 
 # file types to display
-INCLUDE_EXT = {".py", ".ps1", ".pbix", ".pbit", '.png', ".parquet", ".sql"}
+INCLUDE_EXT = {".py", ".ps1", ".pbix", ".pbit", '.png', ".parquet", ".sql", ".pbip", ".yaml", ".csv"}
 
 def print_tree(root=".", prefix=""):
     try:
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     root_path = (
         sys.argv[1]
         if len(sys.argv) > 1
-        else r"." # generated_datasets\2026-01-31 02_02_58 PM Customers 53K Sales 50K CSV
+        else r"C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-03-07 10_18_21 PM Customers 49K Sales 103K CSV" # generated_datasets\2026-01-31 02_02_58 PM Customers 53K Sales 50K CSV
     )
 
     print(f"Project Structure ({os.path.abspath(root_path)}):\n")

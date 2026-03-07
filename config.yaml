@@ -37,7 +37,7 @@ sales:
   file_format: "csv"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   write_delta: true
-  skip_order_cols: true
+  skip_order_cols: false
 
   merge:
     enabled: true
