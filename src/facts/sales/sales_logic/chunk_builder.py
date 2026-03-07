@@ -512,7 +512,6 @@ def build_chunk_table(
     store_keys = State.store_keys
 
     promo_keys_all = State.promo_keys_all
-    promo_pct_all = State.promo_pct_all
     promo_start_all = State.promo_start_all
     promo_end_all = State.promo_end_all
 
@@ -838,12 +837,11 @@ def build_chunk_table(
             # use order-level dates (first line per order)
             order_dates_order = np.asarray(order_dates, dtype="datetime64[D]")[order_starts]
 
-            promo_order_keys, _promo_pct = apply_promotions(
+            promo_order_keys = apply_promotions(
                 rng=rng,
                 n=n_unique_orders,
                 order_dates=order_dates_order,
                 promo_keys_all=promo_keys_all,
-                promo_pct_all=promo_pct_all,
                 promo_start_all=promo_start_all,
                 promo_end_all=promo_end_all,
                 no_discount_key=no_discount_key,
@@ -851,12 +849,11 @@ def build_chunk_table(
 
             promo_keys = np.asarray(promo_order_keys, dtype=np.int64)[order_idx]
         else:
-            promo_keys, _promo_pct = apply_promotions(
+            promo_keys = apply_promotions(
                 rng=rng,
                 n=n_orders,
                 order_dates=order_dates,
                 promo_keys_all=promo_keys_all,
-                promo_pct_all=promo_pct_all,
                 promo_start_all=promo_start_all,
                 promo_end_all=promo_end_all,
                 no_discount_key=no_discount_key,
@@ -926,7 +923,6 @@ def build_chunk_table(
             n=len(customer_keys_out),
             unit_price=unit_price,
             unit_cost=unit_cost,
-            # promo_pct intentionally NOT passed: promo discount must be applied in analysis via PromotionKey join
         )
 
         price = build_prices(

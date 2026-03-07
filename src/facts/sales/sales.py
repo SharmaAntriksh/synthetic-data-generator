@@ -705,7 +705,6 @@ def generate_sales_fact(
 
     if promo_df.empty:
         promo_keys_all = np.array([], dtype=np.int64)
-        promo_pct_all = np.array([], dtype=np.float64)
         promo_start_all = np.array([], dtype="datetime64[D]")
         promo_end_all = np.array([], dtype="datetime64[D]")
     else:
@@ -713,7 +712,6 @@ def generate_sales_fact(
         promo_end = _normalize_dt_any(promo_df["EndDate"])
 
         promo_keys_all = _as_np(promo_df["PromotionKey"], np.int64)
-        promo_pct_all = _as_np(promo_df["DiscountPct"], np.float64)
         promo_start_all = _as_np(promo_start, "datetime64[D]")
         promo_end_all = _as_np(promo_end, "datetime64[D]")
 
@@ -897,7 +895,6 @@ def generate_sales_fact(
         brand_names=brand_names,
         store_keys=store_keys,
         promo_keys_all=promo_keys_all,
-        promo_pct_all=promo_pct_all,
         promo_start_all=promo_start_all,
         promo_end_all=promo_end_all,
 
