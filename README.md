@@ -281,28 +281,9 @@ A Streamlit-based UI is also available for interactive generation:
 
 ---
 
-## Output Structure
+## Generated Dataset Folder
 
 <img src="docs/assets/output.png" alt="Output folder structure" width="700" />
-
-<details>
-  <summary><strong>CSV output</strong></summary>
-
-  <img src="docs/assets/csv-with-sql.png" alt="CSV with SQL scripts" width="600" />
-  <img src="docs/assets/csv.png" alt="CSV files" width="600" />
-</details>
-
-<details>
-  <summary><strong>Parquet output</strong></summary>
-
-  <img src="docs/assets/parquet.png" alt="Parquet files" width="600" />
-</details>
-
-<details>
-  <summary><strong>DeltaParquet output</strong></summary>
-
-  <img src="docs/assets/deltaparquet.png" alt="Delta Parquet partitions" width="600" />
-</details>
 
 ---
 
@@ -310,49 +291,14 @@ A Streamlit-based UI is also available for interactive generation:
 
 Each output includes a Power BI Project (`.pbip`) template with pre-configured folder paths. Open the `.pbip` file directly in Power BI Desktop — no manual path setup required.
 
-<details>
-  <summary><strong>Collapsed view</strong></summary>
-
-  <img src="docs/assets/data-model-collapsed.png" alt="Power BI model collapsed" width="600" />
-</details>
-
-<details>
-  <summary><strong>Expanded view</strong></summary>
-
-  <img src="docs/assets/data-model-expanded.png" alt="Power BI model expanded" width="600" />
-</details>
+<img src="docs/assets/data-model-diagram-view.png" alt="Power BI model collapsed" width="600" />
 
 ---
+## License
 
-## Data Model
-
-The generated schema follows a star/snowflake pattern suitable for analytical workloads. Here's how the key tables relate:
-
-```
-                          ┌──────────────┐
-                          │   Dates      │
-                          └──────┬───────┘
-                                 │
-┌───────────┐  ┌──────────┐  ┌──┴───────┐  ┌────────────┐  ┌───────────┐
-│ Customers │──│Geography │  │  Sales   │──│ Promotions │  │  Stores   │
-└─────┬─────┘  └──────────┘  └──┬───┬───┘  └────────────┘  └─────┬─────┘
-      │                         │   │                             │
-┌─────┴────────┐  ┌─────────┴──┐ └──┬──────────┐  ┌──────────────┴──┐
-│CustomerProfile│  │  Products  │    │SalesReturn│  │EmployeeStore   │
-│  OrgProfile  │  └─────┬──────┘    └───────────┘  │  Assignments   │
-└──────────────┘        │                          └────────┬───────┘
-                  ┌─────┴──────┐                     ┌─────┴──────┐
-                  │ProductProfile│                   │ Employees  │
-                  │Subcategory │                     └────────────┘
-                  │  Category  │
-                  └────────────┘
-
-Supporting: Currency, ExchangeRates, Time, SalesChannels, LoyaltyTiers,
-            Suppliers, ReturnReason, BudgetYearly/Monthly, InventorySnapshot
-```
+This project is licensed under the [MIT License](LICENSE).
 
 ---
-
 ## Releases
 
 See [CHANGELOG.md](CHANGELOG.md) for details on each release.

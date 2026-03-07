@@ -264,6 +264,11 @@ def info(msg: Any) -> None:
     _flush(_line("INFO", msg))
 
 
+def debug(msg: Any) -> None:
+    """Log to file only (suppressed from console output)."""
+    _write_to_file(_line("DEBUG", msg))
+
+
 def warn(msg: Any) -> None:
     _activate_pending()
     _flush(_line("WARN", msg))

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from src.utils.logging_utils import done, info, skip, work
+from src.utils.logging_utils import debug, done, info, skip, work
 from .sales_logic import State
 from .sales_worker import PoolRunSpec, iter_imap_unordered, _worker_task, init_sales_worker
 from .sales_writer import merge_parquet_files
@@ -877,7 +877,7 @@ def generate_sales_fact(
                 adjusted = True
 
             if adjusted:
-                info(
+                debug(
                     f"Auto-adjusting customer discovery: new_customer_share "
                     f"{configured_share:.3f} -> {_cust_mdl_copy.get('new_customer_share', configured_share):.3f}, "
                     f"max_new_fraction_per_month "
