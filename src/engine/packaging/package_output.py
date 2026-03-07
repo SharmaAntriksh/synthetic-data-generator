@@ -64,6 +64,32 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     facts_out = final_folder / "facts"
     facts_out.mkdir(parents=True, exist_ok=True)
 
+
+    def _copy_inventory_if_exists():
+        """Copy inventory outputs into the packaged facts folder (format-aware)."""
+        inv_src = fact_out / "inventory"
+        if not inv_src.exists():
+            return
+
+        if file_format == "parquet":
+            for f in inv_src.glob("*.parquet"):
+                shutil.copy2(f, facts_out / f.name)
+        elif file_format == "csv":
+            inv_dst = facts_out / "inventory"
+            inv_dst.mkdir(parents=True, exist_ok=True)
+            for f in inv_src.glob("*.csv"):
+                shutil.copy2(f, inv_dst / f.name)
+        else:
+            inv_dst = facts_out / "inventory"
+            inv_dst.mkdir(parents=True, exist_ok=True)
+            for item in inv_src.iterdir():
+                target = inv_dst / item.name
+                if item.is_dir():
+                    shutil.copytree(item, target, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(item, target)
+
+
     def _copy_budget_if_exists():
         """Copy budget outputs into the packaged facts folder (format-aware)."""
         budget_src = fact_out / "budget"
@@ -96,11 +122,13 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     if file_format == "parquet":
         copy_parquet_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)
         _copy_budget_if_exists()
+        _copy_inventory_if_exists()
         return final_folder
 
     if file_format == "deltaparquet":
         copy_delta_facts(fact_out=fact_out, facts_out=facts_out, sales_cfg=sales_cfg, tables=tables)
         _copy_budget_if_exists()
+        _copy_inventory_if_exists()
         return final_folder
 
     if file_format != "csv":
@@ -108,6 +136,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
 
     copy_csv_facts(fact_out=fact_out, facts_out=facts_out, tables=tables)
     _copy_budget_if_exists()
+    _copy_inventory_if_exists()
 
     # SQL SCRIPT GENERATION — CSV ONLY
     if is_csv:

@@ -32,6 +32,11 @@ try:
 except ImportError:
     _BUDGET_AVAILABLE = False
 
+try:
+    from src.facts.inventory.accumulator import InventoryAccumulator
+    _INVENTORY_AVAILABLE = True
+except ImportError:
+    _INVENTORY_AVAILABLE = False
 
 @dataclass(frozen=True)
 class TableOutputs:
@@ -998,6 +1003,20 @@ def generate_sales_fact(
     else:
         worker_cfg["budget_enabled"] = False
 
+    # ------------------------------------------------------------
+    # Inventory
+    # ------------------------------------------------------------
+    inv_cfg = cfg.get("inventory") if isinstance(cfg.get("inventory"), dict) else {}
+    inventory_enabled = _INVENTORY_AVAILABLE and bool(inv_cfg.get("enabled", False))
+    inventory_acc = None
+
+    if inventory_enabled:
+        inventory_acc = InventoryAccumulator()
+        worker_cfg["inventory_enabled"] = True
+        info("Inventory streaming aggregation: enabled")
+    else:
+        worker_cfg["inventory_enabled"] = False
+
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)
     created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
     created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
@@ -1016,6 +1035,8 @@ def generate_sales_fact(
             budget_acc.add_sales(r.pop("_budget_agg", None))
             budget_acc.add_returns(r.pop("_returns_agg", None))
 
+        if inventory_acc is not None and isinstance(r, dict):
+            inventory_acc.add(r.pop("_inventory_agg", None))
         def _chunk_tag(path_like: str) -> str:
             b = os.path.basename(path_like)
             i = b.find("chunk")
@@ -1165,11 +1186,11 @@ def generate_sales_fact(
             raise RuntimeError(f"No delta parts found for any table. {msg}")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc) if return_manifest else created_files
 
     if file_format == "csv":
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc) if return_manifest else created_files
 
     if file_format == "parquet":
         if merge_parquet:
@@ -1214,6 +1235,6 @@ def generate_sales_fact(
                 info("Merge parquet: none")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc) if return_manifest else created_files
 
     raise ValueError(f"Unknown file_format: {file_format}")

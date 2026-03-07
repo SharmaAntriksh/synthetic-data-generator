@@ -714,6 +714,18 @@ FACT_SCHEMAS: Dict[str, Schema] = {
         ("BudgetQuantity", DECIMAL(19, 2, not_null=True)),
         ("BudgetMethod", VARCHAR(140, not_null=True)),
     ),
+    "InventorySnapshot": (
+        ("ProductKey", INT_NN),
+        ("StoreKey", INT_NN),
+        ("SnapshotDate", DATE_NN),
+        ("QuantityOnHand", INT_NN),
+        ("QuantityOnOrder", INT_NN),
+        ("QuantitySold", INT_NN),
+        ("QuantityReceived", INT_NN),
+        ("ReorderFlag", TINYINT(not_null=True)),
+        ("StockoutFlag", TINYINT(not_null=True)),
+        ("DaysOutOfStock", TINYINT(not_null=True)),
+    ),
 }
 
 # Validate before freezing (fail fast at import time)
