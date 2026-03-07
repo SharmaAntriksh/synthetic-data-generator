@@ -32,6 +32,11 @@ try:
 except ImportError:
     _BUDGET_AVAILABLE = False
 
+try:
+    from src.facts.inventory.accumulator import InventoryAccumulator
+    _INVENTORY_AVAILABLE = True
+except ImportError:
+    _INVENTORY_AVAILABLE = False
 
 @dataclass(frozen=True)
 class TableOutputs:
@@ -589,13 +594,14 @@ def generate_sales_fact(
 
     # Products: respect runner-bound active_product_np
     product_brand_key = None
+    brand_names = None
     products_path = parquet_folder_p / "products.parquet"
 
-    def _brand_codes_from_series(s: pd.Series) -> np.ndarray:
+    def _brand_codes_from_series(s: pd.Series) -> tuple[np.ndarray, np.ndarray]:
         # Guarantee no NA => no -1 codes
         s2 = s.fillna("Unknown").astype(str)
-        codes, _ = pd.factorize(s2, sort=True)
-        return np.asarray(codes, dtype=np.int64)
+        codes, uniques = pd.factorize(s2, sort=True)
+        return np.asarray(codes, dtype=np.int64), np.asarray(uniques, dtype=object)
 
     if getattr(State, "active_product_np", None) is not None:
         product_np = State.active_product_np
@@ -605,7 +611,8 @@ def generate_sales_fact(
             brand_df = brand_df.drop_duplicates("ProductKey", keep="first")
 
             brand_df["ProductKey"] = brand_df["ProductKey"].astype("int64", copy=False)
-            brand_df["_BrandKey"] = _brand_codes_from_series(brand_df["Brand"])
+            codes, brand_names = _brand_codes_from_series(brand_df["Brand"])
+            brand_df["_BrandKey"] = codes
 
             # Map ProductKey -> BrandKey
             brand_map = pd.Series(
@@ -648,7 +655,7 @@ def generate_sales_fact(
                 ]
             )
 
-            codes = _brand_codes_from_series(prod_df["Brand"])
+            codes, brand_names = _brand_codes_from_series(prod_df["Brand"])
             product_brand_key = codes if not np.any(codes < 0) else None
 
         except Exception as exc:
@@ -820,11 +827,74 @@ def generate_sales_fact(
         order_id_run_id += 1000
 
     # ------------------------------------------------------------
+    # Auto-adjust new_customer_share so all customers can be
+    # discovered within the available rows.  Without this, low
+    # row-to-customer ratios silently leave thousands of customers
+    # without any sales.
+    # ------------------------------------------------------------
+    _models = State.models_cfg
+    if isinstance(_models, dict):
+        _cust_mdl = _models.get("customers", {}) or {}
+        configured_share = float(_cust_mdl.get("new_customer_share", 0.10))
+        configured_max_frac = float(_cust_mdl.get("max_new_fraction_per_month", 0.015))
+
+        total_active = int((is_active_in_sales == 1).sum())
+        # Customers with negative start_month are backdated (pre-existing)
+        # and will be pre-seeded into seen_customers by chunk_builder.
+        # Only customers with start_month >= 0 need discovery.
+        warm_start = int(((is_active_in_sales == 1) & (customer_start_month < 0)).sum())
+        undiscovered = max(0, total_active - warm_start)
+
+        if undiscovered > 0 and total_rows > 0:
+            headroom = 1.5
+            # Customer sampling operates at order granularity (avg ~2
+            # lines per order), so the effective number of customer
+            # slots is roughly total_rows / avg_lines_per_order.
+            avg_lines_per_order = 2.0
+            effective_slots = total_rows / avg_lines_per_order
+            needed_share = (undiscovered * headroom) / effective_slots
+            needed_share = float(np.clip(needed_share, 0.0, 0.50))
+
+            # Compute the per-month fraction cap needed to sustain discovery.
+            # With T months and avg_eligible customers, each month must discover
+            # undiscovered / T customers, i.e. (undiscovered / T) / avg_eligible
+            # of the eligible pool.
+            months_int = date_pool.astype("datetime64[M]").astype("int64")
+            T_est = max(1, int(months_int.max() - months_int.min() + 1))
+            avg_eligible = max(1, total_active // 2)
+            needed_frac = (undiscovered * headroom) / (avg_eligible * T_est)
+            needed_frac = float(np.clip(needed_frac, 0.0, 0.50))
+
+            adjusted = False
+            _cust_mdl_copy = dict(_cust_mdl)
+
+            if needed_share > configured_share:
+                _cust_mdl_copy["new_customer_share"] = needed_share
+                adjusted = True
+
+            if needed_frac > configured_max_frac:
+                _cust_mdl_copy["max_new_fraction_per_month"] = needed_frac
+                adjusted = True
+
+            if adjusted:
+                info(
+                    f"Auto-adjusting customer discovery: new_customer_share "
+                    f"{configured_share:.3f} -> {_cust_mdl_copy.get('new_customer_share', configured_share):.3f}, "
+                    f"max_new_fraction_per_month "
+                    f"{configured_max_frac:.4f} -> {_cust_mdl_copy.get('max_new_fraction_per_month', configured_max_frac):.4f} "
+                    f"({undiscovered:,} undiscovered customers across {total_rows:,} rows)."
+                )
+                _models_copy = dict(_models)
+                _models_copy["customers"] = _cust_mdl_copy
+                State.models_cfg = _models_copy
+
+    # ------------------------------------------------------------
     # Worker configuration (keep keys stable for compatibility)
     # ------------------------------------------------------------
     worker_cfg = dict(
         product_np=product_np,
         product_brand_key=product_brand_key,
+        brand_names=brand_names,
         store_keys=store_keys,
         promo_keys_all=promo_keys_all,
         promo_pct_all=promo_pct_all,
@@ -936,6 +1006,20 @@ def generate_sales_fact(
     else:
         worker_cfg["budget_enabled"] = False
 
+    # ------------------------------------------------------------
+    # Inventory
+    # ------------------------------------------------------------
+    inv_cfg = cfg.get("inventory") if isinstance(cfg.get("inventory"), dict) else {}
+    inventory_enabled = _INVENTORY_AVAILABLE and bool(inv_cfg.get("enabled", False))
+    inventory_acc = None
+
+    if inventory_enabled:
+        inventory_acc = InventoryAccumulator()
+        worker_cfg["inventory_enabled"] = True
+        info("Inventory streaming aggregation: enabled")
+    else:
+        worker_cfg["inventory_enabled"] = False
+
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)
     created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
     created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
@@ -954,6 +1038,8 @@ def generate_sales_fact(
             budget_acc.add_sales(r.pop("_budget_agg", None))
             budget_acc.add_returns(r.pop("_returns_agg", None))
 
+        if inventory_acc is not None and isinstance(r, dict):
+            inventory_acc.add(r.pop("_inventory_agg", None))
         def _chunk_tag(path_like: str) -> str:
             b = os.path.basename(path_like)
             i = b.find("chunk")
@@ -1103,11 +1189,11 @@ def generate_sales_fact(
             raise RuntimeError(f"No delta parts found for any table. {msg}")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc) if return_manifest else created_files
 
     if file_format == "csv":
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc) if return_manifest else created_files
 
     if file_format == "parquet":
         if merge_parquet:
@@ -1152,6 +1238,6 @@ def generate_sales_fact(
                 info("Merge parquet: none")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc) if return_manifest else created_files
 
     raise ValueError(f"Unknown file_format: {file_format}")

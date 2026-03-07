@@ -14,6 +14,10 @@
     config-optional dimensions (SalesChannels, Time, Employees) so the FK
     is silently skipped when the column is absent.
 
+  • The Sales PK and SalesReturn natural-key index are also guarded by
+    COL_LENGTH on SalesOrderNumber / SalesOrderLineNumber so they are
+    silently skipped when skip_order_cols is true.
+
   • The Employees FK uses a full type-compatibility check (system_type_id,
     user_type_id, max_length, precision, scale) because the Sales fact
     stores SalesPersonEmployeeKey as BIGINT while Employees.EmployeeKey
@@ -36,6 +40,8 @@ SET XACT_ABORT ON;
 -----------------------------------------------------------------------
 
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Sales', N'SalesOrderNumber') IS NOT NULL
+AND COL_LENGTH(N'dbo.Sales', N'SalesOrderLineNumber') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.key_constraints
@@ -316,6 +322,8 @@ END;
 
 -- Natural-key access path (non-unique; supports joins back to Sales)
 IF OBJECT_ID(N'dbo.SalesReturn', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.SalesReturn', N'SalesOrderNumber') IS NOT NULL
+AND COL_LENGTH(N'dbo.SalesReturn', N'SalesOrderLineNumber') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.indexes

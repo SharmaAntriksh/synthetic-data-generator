@@ -12,7 +12,7 @@ from src.dimensions.employees import (
     STAFF_KEY_STORE_MULT,
 )
 
-from src.utils.logging_utils import info, skip, stage, warn
+from src.utils.logging_utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 from src.utils.config_helpers import (
@@ -634,8 +634,6 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     role_profiles = as_dict(a_cfg.get("role_profiles"))
 
     with stage("Generating EmployeeStoreAssignments"):
-        if "allow_store_revisit" not in a_cfg:
-            warn("employees.store_assignments.allow_store_revisit missing; defaulting to true")
         df = generate_employee_store_assignments(
             employees=employees,
             seed=seed,

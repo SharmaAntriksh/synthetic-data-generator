@@ -156,7 +156,6 @@ class State:
 
     # Forward-compat aliases for SalesOrderNumber generation
     order_id_stride_orders = None      # usually == chunk_size
-    order_id_run_id = None             # 0..999 (used in SalesOrderNumber prefix)
 
     # used by task.py when deciding to drop order cols in Sales output
     skip_order_cols_requested = None

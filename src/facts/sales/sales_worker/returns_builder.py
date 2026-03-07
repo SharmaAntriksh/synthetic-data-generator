@@ -22,7 +22,7 @@ RETURNS_REQUIRED_DETAIL_COLS: tuple[str, ...] = (
 # - ReturnNetPrice is a *line amount* prorated by returned quantity.
 RETURNS_SCHEMA = pa.schema(
     [
-        ("SalesOrderNumber", pa.int64()),
+        ("SalesOrderNumber", pa.int32()),
         ("SalesOrderLineNumber", pa.int64()),
         ("ReturnDate", pa.date32()),
         ("ReturnReasonKey", pa.int64()),
@@ -250,7 +250,7 @@ def build_sales_returns_from_detail(
     # Build table using explicit schema to keep empty/non-empty consistent.
     return pa.table(
         {
-            "SalesOrderNumber": pa.array(so, type=pa.int64()),
+            "SalesOrderNumber": pa.array(so, type=pa.int32()),
             "SalesOrderLineNumber": pa.array(line, type=pa.int64()),
             "ReturnDate": pa.array(ret_date, type=pa.date32()),
             "ReturnReasonKey": pa.array(reason, type=pa.int64()),

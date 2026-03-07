@@ -25,6 +25,7 @@ _DIM_FILE_CUSTOMER_SEGMENT = "customer_segment.parquet"
 _DIM_FILE_CUSTOMER_SEGMENT_BRIDGE = "customer_segment_membership.parquet"
 _DIM_FILE_SUPERPOWERS = "superpowers.parquet"
 _DIM_FILE_SUPERPOWERS_BRIDGE = "customer_superpowers.parquet"
+_DIM_FILE_RETURN_REASON = "return_reason.parquet"
 
 
 # ============================================================
@@ -280,6 +281,7 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
 
     - ``enabled: false``        → exclude both the dim table and its bridge table
     - ``generate_bridge: false`` → exclude only the bridge table
+    - returns effectively disabled → exclude ReturnReason
     """
     excluded: set[str] = set()
 
@@ -298,6 +300,17 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
             excluded.add(_DIM_FILE_SUPERPOWERS_BRIDGE)
         elif not bool(sp_cfg.get("generate_bridge", True)):
             excluded.add(_DIM_FILE_SUPERPOWERS_BRIDGE)
+
+    returns_cfg = cfg.get("returns")
+    returns_on = bool(returns_cfg.get("enabled", False)) if isinstance(returns_cfg, dict) else False
+    if returns_on:
+        sales_cfg = cfg.get("sales") or {}
+        skip_order = bool(sales_cfg.get("skip_order_cols", False))
+        sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+        if skip_order and sales_output == "sales":
+            returns_on = False
+    if not returns_on:
+        excluded.add(_DIM_FILE_RETURN_REASON)
 
     return excluded
 

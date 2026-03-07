@@ -1255,16 +1255,23 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     lifecycle_cfg = cust_cfg.get("lifecycle", {}) or {}
 
-    initial_active_customers = int(lifecycle_cfg.get("initial_active_customers", 0) or 0)
-    initial_spread_months = int(lifecycle_cfg.get("initial_spread_months", 0) or 0)
+    initial_active_raw = lifecycle_cfg.get("initial_active_customers", 0.45) or 0
+    initial_active_raw = float(initial_active_raw)
+    if 0.0 < initial_active_raw <= 1.0:
+        initial_active_customers = int(round(initial_active_raw * N))
+    else:
+        initial_active_customers = int(initial_active_raw)
+    initial_spread_months = int(lifecycle_cfg.get("initial_spread_months", 3) or 0)
 
     even_start_months = bool(lifecycle_cfg.get("even_start_months", False))
 
     acquisition_curve = lifecycle_cfg.get("acquisition_curve")
     if acquisition_curve is None:
-        acquisition_curve = "uniform" if (even_start_months or initial_spread_months > 0) else "linear_ramp"
+        acquisition_curve = "logistic"
 
     acquisition_params = lifecycle_cfg.get("acquisition_params", {}) or {}
+    if acquisition_curve == "logistic" and not acquisition_params:
+        acquisition_params = {"midpoint": 0.30, "steepness": 8.0}
     weights = _acquisition_weights(T, acquisition_curve, acquisition_params)
 
     CustomerStartMonth = rng.choice(np.arange(T), size=N, p=weights).astype("int64")
@@ -1289,9 +1296,9 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         else:
             CustomerStartMonth[warm_idx] = 0
 
-    enable_churn = bool(lifecycle_cfg.get("enable_churn", False))
-    base_monthly_churn = float(lifecycle_cfg.get("base_monthly_churn", 0.01))
-    min_tenure_months = int(lifecycle_cfg.get("min_tenure_months", 2))
+    enable_churn = bool(lifecycle_cfg.get("enable_churn", True))
+    base_monthly_churn = float(lifecycle_cfg.get("base_monthly_churn", 0.04))
+    min_tenure_months = int(lifecycle_cfg.get("min_tenure_months", 3))
 
     CustomerWeight = rng.lognormal(mean=0.0, sigma=0.6, size=N).astype("float64")
     CustomerTemperature = np.clip(rng.normal(loc=0.6, scale=0.25, size=N), 0.05, 1.0).astype("float64")

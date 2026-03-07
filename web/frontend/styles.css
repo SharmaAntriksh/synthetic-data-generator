@@ -1,0 +1,100 @@
+/* ═══ Base reset & variables ═══ */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f8f8fa;--surface:#fff;--alt:#f2f3f7;--border:#e2e4ec;
+  --focus:#5b6abf;--accent:#4f5bd5;--glow:rgba(79,91,213,.08);
+  --text:#1a1a2e;--dim:#5f6278;--muted:#9496a8;
+  --ok:#16a34a;--okBg:rgba(22,163,74,.07);
+  --warn:#ca8a04;--warnBg:rgba(202,138,4,.07);
+  --err:#dc2626;--errBg:rgba(220,38,38,.06);
+  --mono:'JetBrains Mono','Fira Code',monospace;
+  --sans:'DM Sans',system-ui,sans-serif;
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text)}
+
+/* ═══ Scrollbars ═══ */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* ═══ Number input spinner ═══ */
+input[type=number]::-webkit-inner-spin-button{opacity:1}
+
+/* ═══ Animations ═══ */
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes slideIn{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* ═══ CodeMirror theme — matches app palette ═══ */
+.cm-s-rdg.CodeMirror{
+  background:var(--surface);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:12.5px;
+  line-height:1.65;
+  height:auto;
+  padding:8px 0;
+  border:none;
+}
+.cm-s-rdg .CodeMirror-gutters{
+  background:var(--alt);
+  border-right:1px solid var(--border);
+  padding-right:4px;
+}
+.cm-s-rdg .CodeMirror-linenumber{
+  color:var(--muted);
+  font-size:11.5px;
+  padding:0 8px 0 6px;
+}
+.cm-s-rdg .CodeMirror-cursor{border-left:2px solid var(--accent)}
+.cm-s-rdg .CodeMirror-selected{background:rgba(79,91,213,.12)}
+.cm-s-rdg .CodeMirror-activeline-background{background:rgba(79,91,213,.04)}
+.cm-s-rdg .CodeMirror-matchingbracket{color:var(--accent)!important;font-weight:700}
+
+/* YAML tokens */
+.cm-s-rdg .cm-atom{color:#d97706}
+.cm-s-rdg .cm-number{color:#0d9488}
+.cm-s-rdg .cm-string{color:#16a34a}
+.cm-s-rdg .cm-comment{color:var(--muted);font-style:italic}
+.cm-s-rdg .cm-meta{color:var(--accent)}
+.cm-s-rdg .cm-keyword{color:#7c3aed}
+.cm-s-rdg .cm-def{color:#be185d}
+
+/* Fold gutter */
+.cm-s-rdg .CodeMirror-foldmarker{
+  color:var(--accent);text-shadow:none;
+  font-family:var(--mono);font-size:11px;
+  cursor:pointer;padding:0 2px;
+}
+.cm-s-rdg .CodeMirror-foldgutter{width:14px}
+.cm-s-rdg .CodeMirror-foldgutter-open,
+.cm-s-rdg .CodeMirror-foldgutter-folded{
+  cursor:pointer;color:var(--muted);font-size:10px;
+  line-height:1.65;
+}
+.cm-s-rdg .CodeMirror-foldgutter-open::after{content:"▾"}
+.cm-s-rdg .CodeMirror-foldgutter-folded::after{content:"▸"}
+
+/* Search dialog */
+.cm-s-rdg .CodeMirror-dialog{
+  background:var(--alt);
+  border-bottom:1px solid var(--border);
+  padding:6px 12px;
+  font-family:var(--sans);
+  font-size:12.5px;
+  color:var(--text);
+}
+.cm-s-rdg .CodeMirror-dialog input{
+  font-family:var(--mono);
+  font-size:12px;
+  border:1px solid var(--border);
+  border-radius:4px;
+  padding:3px 8px;
+  outline:none;
+  background:var(--surface);
+  color:var(--text);
+}
+.cm-s-rdg .CodeMirror-dialog input:focus{
+  border-color:var(--accent);
+  box-shadow:0 0 0 2px var(--glow);
+}
+.cm-s-rdg .CodeMirror-searching{background:rgba(202,138,4,.2)}

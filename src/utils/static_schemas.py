@@ -139,7 +139,7 @@ def _validate_schema_map(schema_map: Mapping[str, Schema]) -> None:
 # FACT BASE SCHEMAS (single source of truth for derivations)
 # ============================================================================
 _SALES_SCHEMA: Schema = (
-    ("SalesOrderNumber", BIGINT_NN),
+    ("SalesOrderNumber", INT_NN),
     ("SalesOrderLineNumber", INT_NN),
     ("CustomerKey", INT_NN),
     ("ProductKey", INT_NN),
@@ -348,11 +348,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
     ),
     "ProductProfile": (
         ("ProductKey", INT_NN),
-        ("LaunchDate", DATE_NN),
-        ("LaunchDateKey", INT_NN),
-        ("DiscontinuedDate", DATE_NULL),
-        ("DiscontinuedDateKey", INT_NULL),
-        ("IsDiscontinued", INT_NN),
         ("ColorFamily", VARCHAR(20, not_null=True)),
         ("Material", VARCHAR(30, not_null=True)),
         ("Style", VARCHAR(20, not_null=True)),
@@ -397,8 +392,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("IsEcoFriendly", VARCHAR(5, not_null=True)),
         ("TargetGender", VARCHAR(10, not_null=True)),
         ("SupplierKey", INT_NN),
-        ("IsNewArrival", VARCHAR(5, not_null=True)),
-        ("ProductLifecycleStage", VARCHAR(15, not_null=True)),
     ),
     "ProductCategory": (
         ("CategoryKey", INT_NN),
@@ -646,6 +639,11 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("PowerLevel", TINYINT(not_null=True)),
         ("IsPrimaryFlag", BIT(not_null=True)),
         ("AcquiredDate", DATETIME2(7, not_null=True)),
+        ("PowerRank", TINYINT(not_null=True)),
+        ("AcquisitionOrder", TINYINT(not_null=True)),
+        ("RarityWeight", REAL(not_null=True)),
+        ("DaysToAcquire", INT(not_null=True)),
+        ("IsLatestPower", BIT(not_null=True)),
     ),
     "LoyaltyTiers": (
         ("LoyaltyTierKey", INT_NN),
@@ -682,7 +680,7 @@ FACT_SCHEMAS: Dict[str, Schema] = {
     "SalesOrderHeader": _SALES_ORDER_HEADER_SCHEMA,
     "SalesOrderDetail": _SALES_ORDER_DETAIL_SCHEMA,
     "SalesReturn": (
-        ("SalesOrderNumber", BIGINT_NN),
+        ("SalesOrderNumber", INT_NN),
         ("SalesOrderLineNumber", INT_NN),
         ("ReturnDate", DATE_NN),
         ("ReturnReasonKey", INT_NN),
@@ -715,6 +713,18 @@ FACT_SCHEMAS: Dict[str, Schema] = {
         ("BudgetAmount", DECIMAL(19, 2, not_null=True)),
         ("BudgetQuantity", DECIMAL(19, 2, not_null=True)),
         ("BudgetMethod", VARCHAR(140, not_null=True)),
+    ),
+    "InventorySnapshot": (
+        ("ProductKey", INT_NN),
+        ("StoreKey", INT_NN),
+        ("SnapshotDate", DATE_NN),
+        ("QuantityOnHand", INT_NN),
+        ("QuantityOnOrder", INT_NN),
+        ("QuantitySold", INT_NN),
+        ("QuantityReceived", INT_NN),
+        ("ReorderFlag", TINYINT(not_null=True)),
+        ("StockoutFlag", TINYINT(not_null=True)),
+        ("DaysOutOfStock", TINYINT(not_null=True)),
     ),
 }
 

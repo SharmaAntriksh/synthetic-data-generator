@@ -63,6 +63,10 @@ _FOLDER_TABLE_ALIASES: dict[str, str] = {
     # budget (files live under facts/budget/ with individual filenames)
     "budget_yearly": "BudgetYearly",
     "budget_monthly": "BudgetMonthly",
+
+    # inventory (files live under facts/inventory/)
+    "inventory_snapshot": "InventorySnapshot",
+    "inventory": "InventorySnapshot",
 }
 
 def _infer_table_from_filename(csv_file: str) -> str:
@@ -107,45 +111,18 @@ def _pick_target_table(csv_path: Path, *, allowed_tables: Optional[Set[str]]) ->
 # -----------------------------
 
 def _returns_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
-    """
-    Returns True if returns are enabled. Supports:
-      - facts: ['sales','returns']
-      - facts: { enabled: ['sales','returns'] }
-      - facts: { returns: true/false }
-      - facts: { enabled: { returns: true/false } }
-    Default: True when unspecified.
-    """
+    """Return True if returns are effectively enabled (not disabled by config or skip_order_cols)."""
     if cfg is None:
         return True
-
-    facts_cfg = cfg.get("facts")
-
-    def _list_has_returns(v) -> bool:
-        norm = {str(x).strip().lower() for x in (v or [])}
-        return (
-            "returns" in norm
-            or "salesreturn" in norm
-            or "sales_return" in norm
-            or "salesreturns" in norm
-            or "sales_returns" in norm
-        )
-
-    if isinstance(facts_cfg, list):
-        return _list_has_returns(facts_cfg)
-
-    if facts_cfg is None or not isinstance(facts_cfg, Mapping):
-        return True
-
-    if isinstance(facts_cfg.get("returns"), (bool, int)):
-        return bool(facts_cfg.get("returns"))
-
-    enabled_cfg = facts_cfg.get("enabled")
-    if isinstance(enabled_cfg, list):
-        return _list_has_returns(enabled_cfg)
-
-    if isinstance(enabled_cfg, Mapping) and isinstance(enabled_cfg.get("returns"), (bool, int)):
-        return bool(enabled_cfg.get("returns"))
-
+    returns_cfg = cfg.get("returns")
+    if isinstance(returns_cfg, Mapping) and isinstance(returns_cfg.get("enabled"), (bool, int)):
+        if not bool(returns_cfg["enabled"]):
+            return False
+    sales_cfg = cfg.get("sales") or {}
+    skip_order = bool(sales_cfg.get("skip_order_cols", False))
+    sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+    if skip_order and sales_output == "sales":
+        return False
     return True
 
 
@@ -159,12 +136,23 @@ def _budget_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
     return bool(budget_cfg.get("enabled", False))
 
 
+def _inventory_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
+    """Return True if inventory snapshot generation is enabled in config."""
+    if cfg is None:
+        return False
+    inv_cfg = cfg.get("inventory")
+    if inv_cfg is None or not isinstance(inv_cfg, Mapping):
+        return False
+    return bool(inv_cfg.get("enabled", False))
+
+
 def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     """
     Allowed fact tables for facts bulk insert.
     - sales.sales_output drives Sales vs SalesOrderHeader/Detail
     - returns flags (above) controls SalesReturn
     - budget.enabled controls BudgetYearly/BudgetMonthly
+    - inventory.enabled controls InventorySnapshot
     """
     if cfg is None:
         return None
@@ -187,6 +175,9 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     if _budget_enabled_from_cfg(cfg):
         allowed.add("BudgetYearly")
         allowed.add("BudgetMonthly")
+
+    if _inventory_enabled_from_cfg(cfg):
+        allowed.add("InventorySnapshot")
 
     return allowed
 

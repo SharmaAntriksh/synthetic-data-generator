@@ -228,9 +228,11 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
 
     # --- Step 1: Generate sales
     budget_acc = None
+    inventory_acc = None
 
     def _do_generate():
         nonlocal budget_acc
+        nonlocal inventory_acc
         result = generate_sales_fact(
             ctx.cfg_for_run,
             parquet_folder=str(ctx.parquet_dims),
@@ -252,7 +254,9 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             skip_order_cols=ctx.skip_order_cols,
             return_manifest=True,
         )
-        if isinstance(result, tuple) and len(result) >= 3:
+        if isinstance(result, tuple) and len(result) >= 4:
+            _, _, budget_acc, inventory_acc = result
+        elif isinstance(result, tuple) and len(result) >= 3:
             _, _, budget_acc = result
 
     _run_step("Generating Sales", _do_generate)
@@ -271,6 +275,21 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             )
 
         _run_step("Generating Budget", _do_budget)
+
+    # --- Step 2b: Inventory snapshot generation (optional, must run before packaging)
+    if inventory_acc is not None and inventory_acc.has_data:
+        from src.facts.inventory.runner import run_inventory_pipeline
+
+        def _do_inventory():
+            run_inventory_pipeline(
+                accumulator=inventory_acc,
+                parquet_dims=ctx.parquet_dims,
+                fact_out=ctx.fact_out,
+                cfg=ctx.cfg,
+                file_format=ctx.fmt,
+            )
+
+        _run_step("Generating Inventory Snapshots", _do_inventory)
 
     # --- Step 3: Package output + PBIP
     def _do_package():

@@ -1,16 +1,11 @@
 """
-Sales pricing pipeline.
+Sales pricing pipeline (single-pass).
 
-Applies time drift (inflation) to UnitPrice, snaps prices/costs to
-realistic retail increments, and applies markdown discounts using a
-configurable ladder with caps.
+The sole pricing transform for Sales rows:
+  base price → inflation drift → appearance snap → markdown draw → round
 
 Config source: models.yaml -> models.pricing
 Runtime state:  State.models_cfg  (the inner "models" dict)
-
-Pipeline per row:
-  base_price  → inflation_factor  → snap_unit_price  → snap_cost
-              → markdown_ladder   → cap enforcement   → round to cents
 """
 from __future__ import annotations
 
@@ -137,11 +132,18 @@ _MD_CFG_CACHE = None
 
 def _load_markdown_cfg():
     """
-    Load markdown ladder + constraints from models.pricing.markdown.
+    Load markdown ladder config from models.pricing.markdown.
+
+    Parses the full ladder (none/pct/amt kinds with weights) for
+    direct discount drawing. This is the single source of truth
+    for all markdown/discount logic.
 
     Returns
     -------
-    tuple: (enabled, ladder_vals, rounding, max_pct, min_net, allow_neg_margin)
+    tuple: (enabled, kind_codes, values, probs, max_pct, min_net, allow_neg)
+      kind_codes : int8 array (0=none, 1=pct, 2=amt)
+      values     : float64 array (pct in [0,1], amt >= 0)
+      probs      : float64 array (normalized weights)
     """
     global _MD_CFG_VERSION, _MD_CFG_CACHE
 
@@ -155,89 +157,66 @@ def _load_markdown_cfg():
 
     enabled = bool(md.get("enabled", False))
 
-    # Max discount as fraction of price
-    max_pct = md.get("max_pct_of_price", None)
-    if max_pct is None:
-        max_pct = (p.get("discount", {}) or {}).get("max_pct_of_price", 0.50)
-    max_pct = float(max_pct)
+    max_pct = float(md.get("max_pct_of_price", 0.50))
     if not np.isfinite(max_pct) or max_pct <= 0.0:
         max_pct = 0.50
 
-    # Minimum net price after discount
-    min_net = md.get("min_net_price", None)
-    if min_net is None:
-        min_net = (p.get("floors", {}) or {}).get("min_net_price", 0.01)
-    min_net = float(min_net)
+    min_net = float(md.get("min_net_price", 0.01))
     if not np.isfinite(min_net) or min_net < 0.0:
         min_net = 0.01
 
     allow_neg = bool(md.get("allow_negative_margin", False))
 
-    # Rounding mode (from appearance.discount)
-    rounding = ((p.get("appearance", {}) or {}).get("discount", {}) or {}).get(
-        "rounding", "floor")
-    rounding = str(rounding).strip().lower()
-    if rounding not in ("nearest", "floor"):
-        rounding = "floor"
-
-    # Parse ladder values
+    # Parse full ladder: kind/value/weight triples
     ladder = md.get("ladder", []) or []
-    vals = {0.0}  # always include zero
+    kind_codes: list[int] = []
+    values: list[float] = []
+    weights: list[float] = []
+
     for item in ladder:
         if not isinstance(item, dict):
             continue
-        kind = str(item.get("kind", "")).strip().lower()
-        if kind == "none":
+        k = str(item.get("kind", "none")).strip().lower()
+        w = float(item.get("weight", 0.0) or 0.0)
+        if w <= 0:
             continue
-        if kind == "amt":
-            try:
-                v = float(item.get("value", 0.0))
-            except (TypeError, ValueError):
-                continue
-            if np.isfinite(v) and v >= 0.0:
-                vals.add(v)
+        v = float(item.get("value", 0.0) or 0.0)
 
-    ladder_arr = np.sort(np.asarray(list(vals), dtype=np.float64))
-    if ladder_arr.size == 0:
-        ladder_arr = np.asarray([0.0], dtype=np.float64)
+        if k == "none":
+            kind_codes.append(0)
+            values.append(0.0)
+            weights.append(w)
+        elif k == "pct":
+            kind_codes.append(1)
+            values.append(float(np.clip(v, 0.0, 1.0)))
+            weights.append(w)
+        elif k == "amt":
+            kind_codes.append(2)
+            values.append(max(0.0, v))
+            weights.append(w)
 
-    result = (enabled, ladder_arr, rounding, max_pct, min_net, allow_neg)
+    if not kind_codes:
+        kind_codes = [0]
+        values = [0.0]
+        weights = [1.0]
+
+    probs = np.asarray(weights, dtype=np.float64)
+    s = float(probs.sum())
+    probs = probs / s if s > 0 else np.ones(1, dtype=np.float64)
+
+    result = (
+        enabled,
+        np.asarray(kind_codes, dtype=np.int8),
+        np.asarray(values, dtype=np.float64),
+        probs,
+        max_pct,
+        min_net,
+        allow_neg,
+    )
     _MD_CFG_VERSION = version
     _MD_CFG_CACHE = result
     return result
 
-
-def _snap_to_ladder(disc: np.ndarray, cap: np.ndarray,
-                    ladder: np.ndarray, rounding: str) -> np.ndarray:
-    """
-    Snap discount values to the nearest ladder rung, respecting per-row caps.
-
-    - "floor":   always snap DOWN to ≤ min(disc, cap).
-    - "nearest": pick nearest rung, but if it exceeds cap, snap down.
-    """
-    disc = np.maximum(_as_f64(disc), 0.0)
-    cap = np.maximum(_as_f64(cap), 0.0)
-    target = np.minimum(disc, cap)
-
-    if ladder.size == 0:
-        return np.zeros_like(target)
-
-    def _floor(x):
-        idx = np.searchsorted(ladder, x, side="right") - 1
-        return ladder[np.clip(idx, 0, ladder.size - 1)]
-
-    if rounding == "floor":
-        return _floor(target)
-
-    # "nearest" mode: pick closest rung, then enforce cap
-    idx = np.searchsorted(ladder, target, side="left")
-    idx_hi = np.clip(idx, 0, ladder.size - 1)
-    idx_lo = np.clip(idx - 1, 0, ladder.size - 1)
-
-    lo, hi = ladder[idx_lo], ladder[idx_hi]
-    snapped = np.where(np.abs(hi - target) < np.abs(target - lo), hi, lo)
-    snapped = np.minimum(snapped, cap)
-    return _floor(snapped)
 
 
 # ===============================================================
@@ -475,26 +454,31 @@ def _global_start_month_int(order_dates: np.ndarray) -> int:
 
 def build_prices(rng, order_dates, qty, price):
     """
-    Apply inflation drift, appearance snapping, and markdown ladder to prices.
+    Single-pass sales pricing pipeline.
 
-    Called *after* compute_prices() (core.py) which sets base prices and
-    initial discount amounts.
+    Takes base product prices and applies:
+      1. Inflation drift (compound annual rate)
+      2. UnitPrice appearance snapping (retail grid)
+      3. UnitCost inflation + snapping
+      4. Markdown discount draw from ladder (none/pct/amt)
+      5. Discount constraint enforcement
+      6. Round to cents
 
     Parameters
     ----------
     rng : numpy.random.Generator
     order_dates : array-like of datetime64
-    qty : array-like of int (currently unused, reserved for future basket-size pricing)
+    qty : array-like of int (reserved for future basket-size pricing)
     price : dict with keys:
         final_unit_price, final_unit_cost, discount_amt, final_net_price
 
     Returns
     -------
-    dict — same structure as input, values updated in-place and returned.
+    dict — same structure, values updated.
     """
-    _ = qty  # reserved for future use
+    _ = qty
 
-    annual_rate, month_sigma, clip_lo, clip_hi, scale_discount, vol_seed = (
+    annual_rate, month_sigma, clip_lo, clip_hi, _scale_discount, vol_seed = (
         _load_inflation_cfg())
 
     order_dates = np.asarray(order_dates)
@@ -502,7 +486,7 @@ def build_prices(rng, order_dates, qty, price):
     if n <= 0:
         return price
 
-    # ---- Compute per-row inflation factor ----
+    # ---- 1. Compute per-row inflation factor ----
     order_month_i = order_dates.astype("datetime64[M]").astype("int64")
     uniq_months, inv = np.unique(order_month_i, return_inverse=True)
 
@@ -521,49 +505,52 @@ def build_prices(rng, order_dates, qty, price):
 
     factor = np.clip(infl * noises, clip_lo, clip_hi)[inv]
 
-    # ---- Apply inflation to base prices ----
+    # ---- 2. Inflate + snap UnitPrice ----
     base_up = _as_f64(price["final_unit_price"])
-    base_uc = _as_f64(price["final_unit_cost"])
-    base_disc = _as_f64(price["discount_amt"])
-
     up = np.maximum(base_up * factor, 0.0)
-    disc = np.maximum(base_disc * factor, 0.0) if scale_discount else np.maximum(base_disc, 0.0)
 
-    # ---- Appearance snapping ----
     appearance = _load_appearance_cfg()
-
     up = _snap_unit_price(rng, up, appearance)
 
-    uc = np.minimum(np.maximum(base_uc, 0.0), up)
+    # ---- 3. Inflate + snap UnitCost ----
+    base_uc = _as_f64(price["final_unit_cost"])
+    uc = np.minimum(np.maximum(base_uc * factor, 0.0), up)
     uc = _snap_cost(rng, uc, appearance)
     uc = np.minimum(uc, up)
 
-    # ---- Markdown ladder / discount enforcement ----
-    md_enabled, ladder, md_rounding, max_pct, min_net, allow_neg = _load_markdown_cfg()
+    # ---- 4. Draw markdown discount from ladder ----
+    (md_enabled, kind_codes, values, probs,
+     max_pct, min_net, allow_neg) = _load_markdown_cfg()
 
-    cap = np.minimum(up * max_pct, up)
+    disc = np.zeros(n, dtype=np.float64)
+
+    if md_enabled and kind_codes.size > 0:
+        idx = rng.choice(kind_codes.size, size=n, replace=True, p=probs)
+        kc = kind_codes[idx]
+        v = values[idx]
+
+        disc = np.where(kc == 1, up * v, disc)   # pct of snapped price
+        disc = np.where(kc == 2, v,      disc)   # flat amt
+
+    # ---- 5. Constraint enforcement ----
+    disc = np.maximum(disc, 0.0)
+    disc = np.minimum(disc, up * max_pct)
     if min_net > 0.0:
-        cap = np.minimum(cap, np.maximum(up - min_net, 0.0))
+        disc = np.minimum(disc, np.maximum(up - min_net, 0.0))
     if not allow_neg:
-        cap = np.minimum(cap, np.maximum(up - (uc + 0.01), 0.0))
-    cap = np.clip(cap, 0.0, up)
-
-    if md_enabled and ladder.size > 0:
-        disc = _snap_to_ladder(disc, cap, ladder, md_rounding)
-    else:
-        disc = np.minimum(disc, up)
-        disc = _snap_discount(disc, up, appearance)
-        disc = np.minimum(disc, cap)
-
+        disc = np.minimum(disc, np.maximum(up - (uc + 0.01), 0.0))
     disc = np.minimum(disc, up)
 
-    # ---- Final cleanup: NaN guard + round to cents ----
+    # Snap discount to appearance grid
+    disc = _snap_discount(disc, up, appearance)
+    disc = np.minimum(disc, up)
+
+    # ---- 6. Round to cents ----
     up = np.round(np.where(np.isfinite(up), up, 0.0), 2)
     uc = np.round(np.where(np.isfinite(uc), uc, 0.0), 2)
     disc = np.round(np.clip(np.where(np.isfinite(disc), disc, 0.0), 0.0, up), 2)
     net = np.round(np.maximum(up - disc, 0.0), 2)
 
-    # Enforce cost ≤ price, and margin if required
     uc = np.minimum(uc, up)
     if not allow_neg:
         uc = np.minimum(uc, np.maximum(net - 0.01, 0.0))

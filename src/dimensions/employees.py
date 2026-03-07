@@ -677,11 +677,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         iso_by_geo = dict(zip(gk, iso))
 
     with stage("Generating Employees"):
-        if "include_store_cols" in emp_cfg:
-            include_store_cols = bool_or(emp_cfg.get("include_store_cols"), False)
-        else:
-            include_store_cols = False
-            warn("employees.include_store_cols missing; defaulting to false")
+        include_store_cols = bool_or(emp_cfg.get("include_store_cols"), False)
 
         sa_cfg = as_dict(emp_cfg.get("store_assignments"))
         primary_sales_role = str(sa_cfg.get("primary_sales_role") or "Sales Associate")

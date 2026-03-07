@@ -76,14 +76,14 @@ def _cfg_for_dimension(cfg: Dict[str, Any], dim_key: str, force: bool) -> Dict[s
 
 def _returns_enabled(cfg: Dict[str, Any]) -> bool:
     returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
-    enabled = bool(returns_cfg.get("enabled", False))
-
-    facts = cfg.get("facts") if isinstance(cfg.get("facts"), dict) else {}
-    facts_enabled = facts.get("enabled", [])
-    if isinstance(facts_enabled, list) and facts_enabled:
-        enabled = enabled and ("returns" in {str(x).strip().lower() for x in facts_enabled})
-
-    return bool(enabled)
+    if not bool(returns_cfg.get("enabled", False)):
+        return False
+    sales_cfg = cfg.get("sales") if isinstance(cfg.get("sales"), dict) else {}
+    skip_order = bool(sales_cfg.get("skip_order_cols", False))
+    sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+    if skip_order and sales_output == "sales":
+        return False
+    return True
 
 
 def _customer_segments_enabled(cfg: Dict[str, Any]) -> bool:

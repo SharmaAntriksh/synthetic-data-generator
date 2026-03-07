@@ -18,6 +18,7 @@ TABLE_SALES_RETURN = "SalesReturn"
 # Budget fact table names
 TABLE_BUDGET_YEARLY = "BudgetYearly"
 TABLE_BUDGET_MONTHLY = "BudgetMonthly"
+TABLE_INVENTORY_SNAPSHOT = "InventorySnapshot"
 
 # Tables that should be emitted in the Facts script (not Dimensions),
 # even though they live inside STATIC_SCHEMAS.
@@ -28,6 +29,7 @@ _FACT_TABLE_NAMES = {
     TABLE_SALES_RETURN,
     TABLE_BUDGET_YEARLY,
     TABLE_BUDGET_MONTHLY,
+    TABLE_INVENTORY_SNAPSHOT,
 }
 
 
@@ -52,47 +54,16 @@ def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
 
 
 def _returns_enabled(cfg: Mapping) -> bool:
-    """
-    Determine whether SalesReturn should be emitted.
-
-    Supported config shapes (any one):
-      - facts: ['sales','returns', ...]
-      - facts.enabled: ['sales','returns', ...]
-      - facts.returns: true|false
-      - facts.enabled.returns: true|false
-
-    Semantics:
-      - If an explicit enabled LIST is provided, returns must be present to enable SalesReturn.
-      - If no explicit selection is provided, defaults to True.
-    """
-    facts_cfg = cfg.get("facts")
-
-    def _list_has_returns(v) -> bool:
-        norm = {str(x).strip().lower() for x in (v or [])}
-        return (
-            "returns" in norm
-            or "salesreturn" in norm
-            or "sales_return" in norm
-            or "salesreturns" in norm
-            or "sales_returns" in norm
-        )
-
-    if isinstance(facts_cfg, list):
-        return _list_has_returns(facts_cfg)
-
-    if facts_cfg is None or not isinstance(facts_cfg, Mapping):
-        return True
-
-    if isinstance(facts_cfg.get("returns"), (bool, int)):
-        return bool(facts_cfg.get("returns"))
-
-    enabled_cfg = facts_cfg.get("enabled")
-    if isinstance(enabled_cfg, list):
-        return _list_has_returns(enabled_cfg)
-
-    if isinstance(enabled_cfg, Mapping) and isinstance(enabled_cfg.get("returns"), (bool, int)):
-        return bool(enabled_cfg.get("returns"))
-
+    """Return True if returns are effectively enabled (not disabled by config or skip_order_cols)."""
+    returns_cfg = cfg.get("returns")
+    if isinstance(returns_cfg, Mapping) and isinstance(returns_cfg.get("enabled"), (bool, int)):
+        if not bool(returns_cfg["enabled"]):
+            return False
+    sales_cfg = cfg.get("sales") or {}
+    skip_order = bool(sales_cfg.get("skip_order_cols", False))
+    sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+    if skip_order and sales_output == "sales":
+        return False
     return True
 
 
@@ -102,6 +73,14 @@ def _budget_enabled(cfg: Mapping) -> bool:
     if budget_cfg is None or not isinstance(budget_cfg, Mapping):
         return False
     return bool(budget_cfg.get("enabled", False))
+
+
+def _inventory_enabled(cfg: Mapping) -> bool:
+    """Return True if inventory snapshot generation is enabled in config."""
+    inv_cfg = cfg.get("inventory")
+    if inv_cfg is None or not isinstance(inv_cfg, Mapping):
+        return False
+    return bool(inv_cfg.get("enabled", False))
 
 
 def _require_static_schema(table_name: str) -> ColumnSpec:
@@ -201,6 +180,9 @@ def generate_all_create_tables(
         elif not bool(sp_cfg.get("generate_bridge", True)):
             skip_tables.add("CustomerSuperpowers")
 
+    if not _returns_enabled(cfg):
+        skip_tables.add("ReturnReason")
+
     # Dimensions
     dim_scripts: list[str] = []
     for table_name in sorted(STATIC_SCHEMAS.keys()):
@@ -299,6 +281,18 @@ def generate_all_create_tables(
                     include_go=True,
                 )
             )
+
+    # Inventory snapshot (conditional on inventory.enabled)
+    if _inventory_enabled(cfg):
+        fact_scripts.append(
+            create_table_from_schema(
+                TABLE_INVENTORY_SNAPSHOT,
+                _require_static_schema(TABLE_INVENTORY_SNAPSHOT),
+                schema=schema,
+                drop_existing=drop_existing,
+                include_go=True,
+            )
+        )
 
     fact_out_path.write_text("\n".join(header) + "\n\n" + "\n\n".join(fact_scripts) + "\n", encoding="utf-8")
 

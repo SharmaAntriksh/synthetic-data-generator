@@ -97,17 +97,15 @@ def build_orders(
         raise RuntimeError("customers array is empty")
 
     # ------------------------------------------------------------
-    # Order count heuristic (avg lines/order)
+    # Order count: derived from the pre-sampled customers array.
+    # chunk_builder samples customers at order granularity so the
+    # array length IS the order count — no re-sampling needed.
     # ------------------------------------------------------------
-    avg_lines = 2.0
-    order_count = max(1, int(n / avg_lines))
+    order_count = int(customers.size)
 
     max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
     if max_lines < 1:
         raise RuntimeError(f"State.max_lines_per_order must be >= 1, got {max_lines}")
-
-    min_orders = (int(n) + max_lines - 1) // max_lines
-    order_count = max(int(order_count), int(min_orders))
 
     # ------------------------------------------------------------
     # Order-level date sampling
@@ -116,56 +114,31 @@ def build_orders(
     if demand is None:
         od_idx = rng.integers(0, _len_date_pool, size=order_count, dtype=np.int64)
     else:
-        # rng.choice returns int64 indices
         od_idx = rng.choice(_len_date_pool, size=order_count, p=demand)
 
     order_dates = date_pool[od_idx].astype("datetime64[D]", copy=False)
 
     # ------------------------------------------------------------
-    # Order IDs: (ExcelDayID * 1000 + RunID) * 1e9 + suffix
+    # Order IDs: simple sequential int32
     #
-    # ExcelDayID is an Excel-style day serial (1899-12-30 = 0):
-    #   2022-09-22 -> 44826
-    #
-    # RunID is 0..999 and must differ across dataset runs to make
-    # SalesOrderNumber globally unique across reruns.
-    #
-    # Suffix remains a 9-digit space allocated disjointly per chunk via order_id_start.
+    # Each chunk owns a disjoint range via order_id_start (assigned
+    # by chunk_builder from chunk_idx * chunk_capacity).  Values are
+    # 1-based so that order ID 0 is never emitted.
     # ------------------------------------------------------------
-    days = order_dates.astype("datetime64[D]").astype(np.int64, copy=False)
-
-    # Excel epoch offset: 1970-01-01 is day 25569 in Excel
-    excel_day_id = days + np.int64(25569)
-    if excel_day_id.size and excel_day_id.min() < 0:
-        raise RuntimeError("ExcelDayID underflow (dates before 1899-12-30)")
-
-    run_id = int(getattr(State, "order_id_run_id", 0) or 0)
-    if run_id < 0 or run_id > 999:
-        raise RuntimeError(f"State.order_id_run_id must be in [0,999], got {run_id}")
-
-    prefix = excel_day_id * np.int64(1000) + np.int64(run_id)
-
-    MOD = np.int64(1_000_000_000)  # 1e9 => 9-digit suffix
-
     if order_id_start is None:
         raise RuntimeError(
             "order_id_start is required to guarantee unique SalesOrderNumber "
             "(caller must assign a disjoint range per chunk)."
         )
 
-    start = np.int64(order_id_start)
-    suffix_int = start + np.arange(order_count, dtype=np.int64)
-
-    # Safety: suffix must fit in 9 digits
-    if suffix_int.size and suffix_int[-1] >= MOD:
-        raise RuntimeError("SalesOrderNumber suffix overflow; increase suffix width or capacity.")
-
-    order_ids_int = prefix * MOD + suffix_int
+    start = np.int32(order_id_start)
+    order_ids_int = (start + np.arange(order_count, dtype=np.int32) + np.int32(1))
 
     # ------------------------------------------------------------
-    # Assign a customer per order (preserve upstream distribution)
+    # Customers are pre-sampled at order level by chunk_builder
+    # (discovery + participation targets already applied).
     # ------------------------------------------------------------
-    order_customers = rng.choice(customers, size=order_count, replace=True)
+    order_customers = customers
 
     # ------------------------------------------------------------
     # Lines per order (vectorized)

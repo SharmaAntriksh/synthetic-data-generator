@@ -275,6 +275,45 @@ def _build_seen_mask(eligible_keys: np.ndarray, seen_set: set) -> np.ndarray:
 
 
 # ----------------------------------------------------------------
+# Urgency-based selection for discovery
+# ----------------------------------------------------------------
+
+def _urgency_pick(
+    rng: np.random.Generator,
+    keys: np.ndarray,
+    indices: np.ndarray,
+    end_month_norm: np.ndarray | None,
+    m_offset: int,
+    size: int,
+) -> np.ndarray:
+    """Pick `size` keys from undiscovered, prioritizing nearest expiry.
+
+    Customers with a finite end_month closest to the current month are
+    selected first so they aren't lost to churn before discovery.
+    Ties (including all open-ended customers) are broken randomly.
+    """
+    if size <= 0:
+        return np.empty(0, dtype=keys.dtype)
+    if size >= keys.size:
+        return keys.copy()
+
+    if end_month_norm is None:
+        return rng.choice(keys, size=size, replace=False)
+
+    # Remaining eligibility window for each undiscovered customer.
+    # end_month == -1 means open-ended → treat as infinite remaining.
+    em = end_month_norm[indices]
+    remaining_months = np.where(em < 0, np.int64(999_999), em - np.int64(m_offset))
+
+    # Add a tiny random jitter to break ties without full sort stability overhead
+    jitter = rng.random(keys.size) * 0.5
+    sort_key = remaining_months.astype(np.float64) + jitter
+
+    order = np.argsort(sort_key, kind="quicksort")
+    return keys[order[:size]]
+
+
+# ----------------------------------------------------------------
 # Main sampling entry point
 # ----------------------------------------------------------------
 
@@ -288,12 +327,16 @@ def _sample_customers(
     discovery_cfg: dict,
     base_weight: np.ndarray | None = None,
     target_distinct: int | None = None,
+    end_month_norm: np.ndarray | None = None,
+    m_offset: int = 0,
 ) -> np.ndarray:
     """
     Returns array of CustomerKeys of length n, sampled from eligible customers.
 
     - If use_discovery: forces a slice of newly-eligible-but-unseen customers to appear.
     - If target_distinct is provided: builds a distinct pool then repeats from it.
+    - If end_month_norm is provided: undiscovered customers closest to expiry are
+      discovered first so they are not lost to churn.
     """
     n = int(n)
     if n <= 0:
@@ -387,8 +430,10 @@ def _sample_customers(
 
         discover_n = max(0, min(discover_n, int(undiscovered.size)))
         if discover_n > 0:
-            # Keep forced uniform (fast and keeps "new customer" mix broad)
-            forced = rng.choice(undiscovered, size=discover_n, replace=False)
+            forced = _urgency_pick(
+                rng, undiscovered, undiscovered_idx,
+                end_month_norm, m_offset, discover_n,
+            )
 
     # ------------------------------------------------------------
     # Discovery without participation target
@@ -398,13 +443,11 @@ def _sample_customers(
         if remaining <= 0:
             return _concat_and_shuffle(rng, forced)
 
-        # Repeat from seen *eligible this month* (NOT global seen)
-        if seen_eligible.size > 0:
-            repeat_pool = seen_eligible
-            p_repeat = _weights_for_indices(seen_eligible_idx, base_weight)
-        else:
-            repeat_pool = eligible_keys
-            p_repeat = p_eligible
+        # Repeat from ALL eligible this month (seen + undiscovered),
+        # so undiscovered customers can appear organically beyond the
+        # forced set.
+        repeat_pool = eligible_keys
+        p_repeat = p_eligible
 
         repeat = _choice(rng, repeat_pool, remaining, replace=True, p=p_repeat)
         return _concat_and_shuffle(rng, forced, repeat)
@@ -413,28 +456,36 @@ def _sample_customers(
     # Participation-controlled discovery
     # ------------------------------------------------------------
     if forced.size > k:
-        forced = rng.choice(forced, size=k, replace=False)
+        # _urgency_pick returns in urgency order (nearest-expiry first),
+        # so taking the first k preserves the most urgent customers.
+        forced = forced[:k]
 
     distinct_pool = forced
     need = k - distinct_pool.size
 
     if need > 0:
-        # Fill with seen eligible first, then other undiscovered excluding already forced
         other = undiscovered
+        other_idx = undiscovered_idx
         if distinct_pool.size > 0 and other.size > 0:
-            other = other[~np.isin(other, distinct_pool, assume_unique=True)]
+            keep = ~np.isin(other, distinct_pool, assume_unique=True)
+            other = other[keep]
+            other_idx = other_idx[keep]
 
-        if seen_eligible.size > 0 and other.size > 0:
-            candidates = np.concatenate([seen_eligible, other])
-        elif seen_eligible.size > 0:
-            candidates = seen_eligible
-        else:
-            candidates = other
+        # Take as many undiscovered as we can, nearest-expiry first
+        if other.size > 0:
+            take_new = min(need, int(other.size))
+            new_extra = _urgency_pick(
+                rng, other, other_idx,
+                end_month_norm, m_offset, take_new,
+            )
+            distinct_pool = np.concatenate([distinct_pool, new_extra])
+            need = k - distinct_pool.size
 
-        if candidates.size > 0:
-            add_n = min(need, int(candidates.size))
-            extra = rng.choice(candidates, size=add_n, replace=False)
-            distinct_pool = np.concatenate([distinct_pool, extra])
+        # Fill remaining slots with seen eligible
+        if need > 0 and seen_eligible.size > 0:
+            take_seen = min(need, int(seen_eligible.size))
+            seen_extra = rng.choice(seen_eligible, size=take_seen, replace=False)
+            distinct_pool = np.concatenate([distinct_pool, seen_extra])
 
     if distinct_pool.size == 0:
         return _choice(rng, eligible_keys, n, replace=True, p=p_eligible)
