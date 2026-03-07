@@ -63,6 +63,10 @@ _FOLDER_TABLE_ALIASES: dict[str, str] = {
     # budget (files live under facts/budget/ with individual filenames)
     "budget_yearly": "BudgetYearly",
     "budget_monthly": "BudgetMonthly",
+
+    # inventory (files live under facts/inventory/)
+    "inventory_snapshot": "InventorySnapshot",
+    "inventory": "InventorySnapshot",
 }
 
 def _infer_table_from_filename(csv_file: str) -> str:
@@ -132,12 +136,23 @@ def _budget_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
     return bool(budget_cfg.get("enabled", False))
 
 
+def _inventory_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
+    """Return True if inventory snapshot generation is enabled in config."""
+    if cfg is None:
+        return False
+    inv_cfg = cfg.get("inventory")
+    if inv_cfg is None or not isinstance(inv_cfg, Mapping):
+        return False
+    return bool(inv_cfg.get("enabled", False))
+
+
 def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     """
     Allowed fact tables for facts bulk insert.
     - sales.sales_output drives Sales vs SalesOrderHeader/Detail
     - returns flags (above) controls SalesReturn
     - budget.enabled controls BudgetYearly/BudgetMonthly
+    - inventory.enabled controls InventorySnapshot
     """
     if cfg is None:
         return None
@@ -160,6 +175,9 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     if _budget_enabled_from_cfg(cfg):
         allowed.add("BudgetYearly")
         allowed.add("BudgetMonthly")
+
+    if _inventory_enabled_from_cfg(cfg):
+        allowed.add("InventorySnapshot")
 
     return allowed
 

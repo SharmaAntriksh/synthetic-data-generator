@@ -154,6 +154,7 @@ DECLARE @SalesSchema  sysname = NULL;
 DECLARE @HdrSchema    sysname = NULL;
 DECLARE @DtlSchema    sysname = NULL;
 DECLARE @ReturnSchema sysname = NULL;
+DECLARE @InvSchema    sysname = NULL;
 
 SELECT TOP (1) @SalesSchema = s.name
 FROM sys.tables t
@@ -174,6 +175,11 @@ SELECT TOP (1) @ReturnSchema = s.name
 FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id = t.schema_id
 WHERE t.name = N'SalesReturn';
+
+SELECT TOP (1) @InvSchema = s.name
+FROM sys.tables t
+JOIN sys.schemas s ON s.schema_id = t.schema_id
+WHERE t.name = N'InventorySnapshot';
 
 -----------------------------------------------------------------------
 -- vw_SalesOrderHeader (if present)
@@ -252,6 +258,23 @@ SELECT
 FROM ' + @ReturnFrom + N';';
 
     EXEC sys.sp_executesql @sql_ret;
+END;
+
+-----------------------------------------------------------------------
+-- vw_InventorySnapshot (if present)
+-----------------------------------------------------------------------
+IF @InvSchema IS NOT NULL
+BEGIN
+    DECLARE @InvFrom nvarchar(300) =
+        QUOTENAME(@InvSchema) + N'.' + QUOTENAME(N'InventorySnapshot');
+
+    DECLARE @sql_inv nvarchar(max) = N'
+CREATE OR ALTER VIEW [dbo].[vw_InventorySnapshot]
+AS
+SELECT *
+FROM ' + @InvFrom + N';';
+
+    EXEC sys.sp_executesql @sql_inv;
 END;
 
 -----------------------------------------------------------------------

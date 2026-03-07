@@ -6,10 +6,10 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1032850
+  sales_rows: 103285
   products: 2581
   customers: 48837
-  stores: 20
+  stores: 10
   geographies: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5 }
 
@@ -19,7 +19,7 @@ scale:
 defaults:
   seed: 42
   dates:
-    start: "2018-01-01"
+    start: "2020-01-01"
     end: "2025-12-31"
 
 paths:
@@ -34,10 +34,10 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "parquet"              # csv | parquet | deltaparquet
+  file_format: "csv"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   write_delta: true
-  skip_order_cols: false
+  skip_order_cols: true
 
   merge:
     enabled: true
@@ -60,7 +60,7 @@ sales:
 # ------------------------------------------------------------------
 returns:
   enabled: true
-  return_rate: 0.13
+  return_rate: 0.03
   min_days_after_sale: 1
   max_days_after_sale: 60
 
@@ -72,7 +72,7 @@ products:
   value_scale: 1                      # multiplier on all base prices
   price_range: [10, 3000]             # [min, max] UnitPrice
   margin_range: [0.20, 0.35]          # [min, max] cost margin pct
-  brand_normalize: true               # pull brand prices toward global median
+  brand_normalize: false               # pull brand prices toward global median
   brand_normalize_alpha: 0.35         # brands keep 65% of price identity
 
 
@@ -235,18 +235,19 @@ budget:
 inventory:
   enabled: true
   seed: 42
-  grain: monthly                       # monthly snapshot grain
+  grain: monthly
 
-  initial_stock_multiplier: 3.0        # initial QOH = avg monthly demand × this
-  reorder_compliance: 0.85             # probability replenishment triggers on schedule
-  lead_time_variance: 0.20             # ±jitter on ProductProfile.LeadTimeDays
-  overstock_bias: 1.15                 # slight tendency to over-order (realistic)
+  min_demand_months: 6
+  initial_stock_multiplier: 1.5        # was 3.0 — start with 1.5 months of avg demand, not 3
+  reorder_compliance: 0.65             # was 0.85 — 35% of reorders are late/missed (realistic)
+  lead_time_variance: 0.40             # was 0.20 — wider delivery jitter (±40%)
+  overstock_bias: 1.0                  # was 1.15 — no systematic over-ordering
 
-  abc_stock_multiplier:                # stock targets scaled by ABC class
-    A: 1.30
+  abc_stock_multiplier:
+    A: 1.20                            # was 1.30
     B: 1.00
-    C: 0.70
+    C: 0.60                            # was 0.70 — C-class products are more neglected
 
   shrinkage:
     enabled: true
-    rate: 0.02                         # 2% annual shrinkage
+    rate: 0.02
