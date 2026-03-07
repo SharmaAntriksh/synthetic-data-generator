@@ -55,6 +55,16 @@ def _budget_enabled(cfg: dict | None) -> bool:
     return bool(budget.get("enabled", False))
 
 
+def _inventory_enabled(cfg: dict | None) -> bool:
+    """Return True if inventory snapshot generation is enabled in the top-level config."""
+    if cfg is None:
+        return False
+    inv = cfg.get("inventory")
+    if not isinstance(inv, dict):
+        return False
+    return bool(inv.get("enabled", False))
+
+
 # ------------------------------------------------------------
 # Static SQL assets
 # ------------------------------------------------------------
@@ -161,6 +171,11 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict, cfg: dict | None
         budget_constraints = modular_dir / "30_budget.sql"
         if budget_constraints.exists() and _budget_enabled(cfg):
             parts.append(budget_constraints)
+
+        # Inventory constraints (conditional on inventory.enabled)
+        inventory_constraints = modular_dir / "40_inventory.sql"
+        if inventory_constraints.exists() and _inventory_enabled(cfg):
+            parts.append(inventory_constraints)
 
         existing = [p for p in parts if p.exists()]
         if not existing:

@@ -75,6 +75,14 @@ def _budget_enabled(cfg: Mapping) -> bool:
     return bool(budget_cfg.get("enabled", False))
 
 
+def _inventory_enabled(cfg: Mapping) -> bool:
+    """Return True if inventory snapshot generation is enabled in config."""
+    inv_cfg = cfg.get("inventory")
+    if inv_cfg is None or not isinstance(inv_cfg, Mapping):
+        return False
+    return bool(inv_cfg.get("enabled", False))
+
+
 def _require_static_schema(table_name: str) -> ColumnSpec:
     try:
         return STATIC_SCHEMAS[table_name]
@@ -273,6 +281,18 @@ def generate_all_create_tables(
                     include_go=True,
                 )
             )
+
+    # Inventory snapshot (conditional on inventory.enabled)
+    if _inventory_enabled(cfg):
+        fact_scripts.append(
+            create_table_from_schema(
+                TABLE_INVENTORY_SNAPSHOT,
+                _require_static_schema(TABLE_INVENTORY_SNAPSHOT),
+                schema=schema,
+                drop_existing=drop_existing,
+                include_go=True,
+            )
+        )
 
     fact_out_path.write_text("\n".join(header) + "\n\n" + "\n\n".join(fact_scripts) + "\n", encoding="utf-8")
 

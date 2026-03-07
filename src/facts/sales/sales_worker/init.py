@@ -410,16 +410,38 @@ def _build_brand_prob_by_month_rotate_winner(
     noise_sd: float = 0.15,
     min_share: float = 0.02,
     year_len_months: int = 12,
+    brand_product_counts: np.ndarray | None = None,
+    explicit_weights: np.ndarray | None = None,
 ) -> np.ndarray:
     if T <= 0 or B <= 0:
         raise RuntimeError(f"Invalid T/B for brand_prob_by_month: T={T}, B={B}")
 
     year_len = max(1, int(year_len_months))
-    base = np.ones(B, dtype=np.float64) / float(B)
+
+    if explicit_weights is not None and len(explicit_weights) == B and explicit_weights.sum() > 0:
+        base = explicit_weights.astype(np.float64).copy()
+        base = np.maximum(base, 0.0)
+        base = base / base.sum()
+    elif brand_product_counts is not None and len(brand_product_counts) == B:
+        counts = np.maximum(brand_product_counts.astype(np.float64), 1.0)
+        base = np.sqrt(counts)
+        base = base / base.sum()
+    else:
+        base = np.ones(B, dtype=np.float64) / float(B)
+
     out = np.empty((T, B), dtype=np.float64)
 
+    n_years = max(1, (T + year_len - 1) // year_len)
+    full_cycles = (n_years + B - 1) // B
+    winner_sequence = np.tile(np.arange(B, dtype=np.int64), full_cycles)
+    for c in range(full_cycles):
+        chunk = winner_sequence[c * B : (c + 1) * B]
+        rng.shuffle(chunk)
+    winner_sequence = winner_sequence[:n_years]
+
     for t in range(T):
-        winner = (t // year_len) % B
+        year_idx = t // year_len
+        winner = int(winner_sequence[min(year_idx, len(winner_sequence) - 1)])
         v = base.copy()
         v[winner] *= float(winner_boost)
         if noise_sd > 0:
@@ -655,6 +677,42 @@ def init_sales_worker(worker_cfg: dict) -> None:
             T = infer_T_from_date_pool(date_pool)
             B = int(product_brand_key.max()) + 1 if product_brand_key is not None and product_brand_key.size else 0
             rng_bp = np.random.default_rng(int(int_or(brand_cfg.get("seed"), 1234)))
+
+            bp_counts = None
+            if brand_to_row_idx is not None and len(brand_to_row_idx) == B:
+                bp_counts = np.array(
+                    [len(b) if b is not None else 0 for b in brand_to_row_idx],
+                    dtype=np.float64,
+                )
+
+            bp_explicit = None
+            cfg_weights = brand_cfg.get("brand_weights")
+            bp_brand_names = worker_cfg.get("brand_names")
+            if isinstance(cfg_weights, dict) and cfg_weights and bp_brand_names is not None and len(bp_brand_names) == B:
+                bp_explicit = np.zeros(B, dtype=np.float64)
+                name_to_idx = {str(n): i for i, n in enumerate(bp_brand_names)}
+                has_override = False
+                for bname, bw in cfg_weights.items():
+                    idx = name_to_idx.get(str(bname))
+                    if idx is not None:
+                        bp_explicit[idx] = float(bw)
+                        has_override = True
+                if has_override:
+                    unset = bp_explicit == 0.0
+                    if unset.any() and bp_counts is not None:
+                        fallback = np.sqrt(np.maximum(bp_counts, 1.0))
+                        leftover = max(0.0, 1.0 - bp_explicit.sum())
+                        fallback_sum = fallback[unset].sum()
+                        if fallback_sum > 0 and leftover > 0:
+                            bp_explicit[unset] = fallback[unset] / fallback_sum * leftover
+                        elif leftover > 0:
+                            bp_explicit[unset] = leftover / unset.sum()
+                    elif unset.any():
+                        leftover = max(0.0, 1.0 - bp_explicit.sum())
+                        bp_explicit[unset] = leftover / unset.sum() if unset.sum() > 0 else 0.0
+                else:
+                    bp_explicit = None
+
             brand_prob_by_month = _build_brand_prob_by_month_rotate_winner(
                 rng_bp,
                 T=T,
@@ -663,6 +721,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
                 noise_sd=float_or(brand_cfg.get("noise_sd"), 0.15),
                 min_share=float_or(brand_cfg.get("min_share"), 0.02),
                 year_len_months=int_or(brand_cfg.get("year_len_months"), 12),
+                brand_product_counts=bp_counts,
+                explicit_weights=bp_explicit,
             )
 
     store_to_geo_arr = dense_map(store_to_geo) if isinstance(store_to_geo, dict) else None

@@ -6,10 +6,10 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1_032_85
+  sales_rows: 103285
   products: 2581
-  customers: 837
-  stores: 20
+  customers: 48837
+  stores: 10
   geographies: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5 }
 
@@ -19,7 +19,7 @@ scale:
 defaults:
   seed: 42
   dates:
-    start: "2022-01-01"
+    start: "2020-01-01"
     end: "2025-12-31"
 
 paths:
@@ -34,10 +34,10 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "parquet"              # csv | parquet | deltaparquet
+  file_format: "csv"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   write_delta: true
-  skip_order_cols: false
+  skip_order_cols: true
 
   merge:
     enabled: true
@@ -60,7 +60,7 @@ sales:
 # ------------------------------------------------------------------
 returns:
   enabled: true
-  return_rate: 0.13
+  return_rate: 0.03
   min_days_after_sale: 1
   max_days_after_sale: 60
 
@@ -68,11 +68,13 @@ returns:
 # PRODUCTS
 # ------------------------------------------------------------------
 products:
-  active_ratio: 0.94
+  active_ratio: 0.98
   value_scale: 1                      # multiplier on all base prices
   price_range: [10, 3000]             # [min, max] UnitPrice
   margin_range: [0.20, 0.35]          # [min, max] cost margin pct
-  brand_normalize: true               # pull brand prices toward global median
+  brand_normalize: false               # pull brand prices toward global median
+  brand_normalize_alpha: 0.35         # brands keep 65% of price identity
+
 
 # ------------------------------------------------------------------
 # CUSTOMERS
@@ -83,16 +85,10 @@ customers:
   region_mix: { US: 51, EU: 39, India: 10 }
   org_pct: 1
 
-  lifecycle:
-    enable_churn: true              # true = customers can leave over time, false = once acquired they stay forever
-    base_monthly_churn: 0.055       # ↑ = customers leave faster (more turnover, pool shrinks), ↓ = stickier customers (pool only grows)
-    min_tenure_months: 4            # ↑ = longer grace period before any customer can churn (delays first dip), ↓ = churn starts almost immediately
-    initial_active_customers: 0.40  # ↑ = more customers from month 0 (no sales dip, but spikes new-customer chart), ↓ = slower ramp-up
-    initial_spread_months: 36     # ↑ = spreads initial customers across months (smooth new-cust curve, starves early sales), 0 = all available day one
-    acquisition_curve: "logistic"
-    acquisition_params:
-      midpoint: 0.30
-      steepness: 8.0
+  profile: steady                   # gradual | steady | aggressive | instant
+  first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
+
+
 # ------------------------------------------------------------------
 # CUSTOMER SEGMENTS (disabled by default)
 # ------------------------------------------------------------------
