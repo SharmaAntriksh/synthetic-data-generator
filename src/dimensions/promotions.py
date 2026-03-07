@@ -228,7 +228,8 @@ def generate_promotions_catalog(
     """
     Returns columns:
       PromotionKey, PromotionLabel, PromotionName, PromotionDescription,
-      DiscountPct, PromotionType, PromotionCategory, StartDate, EndDate
+      DiscountPct, PromotionType, PromotionCategory, PromotionYear,
+      PromotionSequence, StartDate, EndDate
 
     PromotionKey=1 is always the "No Discount" sentinel row.
     """
@@ -262,8 +263,6 @@ def generate_promotions_catalog(
                     "TypeGroup": "Holiday",
                     "SeasonType": name,
                     "Year": y,
-                    "PromotionName": f"{name} {y}",
-                    "PromotionDescription": f"{name} {y} Promotion",
                     "DiscountPct": _discount(rng, dmin, dmax),
                     "PromotionType": PROMO_TYPES["Holiday"],
                     "PromotionCategory": _category(rng),
@@ -293,8 +292,6 @@ def generate_promotions_catalog(
                 "TypeGroup": "Seasonal",
                 "SeasonType": season_name,
                 "Year": y,
-                "PromotionName": None,
-                "PromotionDescription": None,
                 "DiscountPct": _discount(rng, 0.05, 0.30),
                 "PromotionType": PROMO_TYPES["Seasonal"],
                 "PromotionCategory": _category(rng),
@@ -321,8 +318,6 @@ def generate_promotions_catalog(
                 "TypeGroup": "Clearance",
                 "SeasonType": "Clearance",
                 "Year": y,
-                "PromotionName": None,
-                "PromotionDescription": None,
                 "DiscountPct": _discount(rng, 0.30, 0.70),
                 "PromotionType": PROMO_TYPES["Clearance"],
                 "PromotionCategory": _category(rng),
@@ -349,8 +344,6 @@ def generate_promotions_catalog(
                 "TypeGroup": "Limited",
                 "SeasonType": "Limited Time",
                 "Year": y,
-                "PromotionName": None,
-                "PromotionDescription": None,
                 "DiscountPct": _discount(rng, 0.05, 0.35),
                 "PromotionType": PROMO_TYPES["Limited"],
                 "PromotionCategory": _category(rng),
@@ -374,25 +367,21 @@ def generate_promotions_catalog(
     # Stable ordering
     df = df.sort_values(["TypeGroup", "Year", "SeasonType", "StartDate"]).reset_index(drop=True)
 
-    # Name non-holiday promos
-    mask_non_holiday = df["TypeGroup"] != "Holiday"
-    if mask_non_holiday.any():
-        grp = df.loc[mask_non_holiday].groupby(["Year", "TypeGroup", "SeasonType"], sort=False)
-        local_index = grp.cumcount() + 1
-        df.loc[mask_non_holiday, "LocalIndex"] = local_index.to_numpy()
+    # PromotionName = base name (SeasonType), PromotionYear, PromotionSequence
+    df["PromotionName"] = df["SeasonType"]
+    df["PromotionYear"] = df["Year"].astype(np.int32)
 
-        df.loc[mask_non_holiday, "PromotionName"] = (
-            df.loc[mask_non_holiday, "SeasonType"].astype(str)
-            + " "
-            + df.loc[mask_non_holiday, "Year"].astype(int).astype(str)
-            + " #"
-            + df.loc[mask_non_holiday, "LocalIndex"].astype(int).astype(str)
-        )
-        df.loc[mask_non_holiday, "PromotionDescription"] = (
-            df.loc[mask_non_holiday, "SeasonType"].astype(str)
-            + " for "
-            + df.loc[mask_non_holiday, "Year"].astype(int).astype(str)
-        )
+    grp = df.groupby(["Year", "TypeGroup", "SeasonType"], sort=False)
+    df["PromotionSequence"] = (grp.cumcount() + 1).astype(np.int32)
+
+    # PromotionDescription — display-friendly composite
+    df["PromotionDescription"] = (
+        df["PromotionName"].astype(str)
+        + " "
+        + df["PromotionYear"].astype(str)
+        + " #"
+        + df["PromotionSequence"].astype(str)
+    )
 
     # Sort promos by StartDate; keys start at 2 (key 1 reserved for No Discount)
     df = df.sort_values("StartDate").reset_index(drop=True)
@@ -410,6 +399,8 @@ def generate_promotions_catalog(
                 "DiscountPct": 0.0,
                 "PromotionType": PROMO_TYPES["NoDiscount"],
                 "PromotionCategory": "No Discount",
+                "PromotionYear": np.int32(min_year),
+                "PromotionSequence": np.int32(1),
                 "StartDate": pd.Timestamp(year_windows[min_year][0]),
                 "EndDate": pd.Timestamp(year_windows[max_year][1]),
             }
@@ -436,6 +427,8 @@ def generate_promotions_catalog(
             "DiscountPct",
             "PromotionType",
             "PromotionCategory",
+            "PromotionYear",
+            "PromotionSequence",
             "StartDate",
             "EndDate",
         ]

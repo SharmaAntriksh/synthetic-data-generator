@@ -412,6 +412,8 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("DiscountPct", DECIMAL(6, 2, not_null=False)),
         ("PromotionType", VARCHAR(20, not_null=True)),
         ("PromotionCategory", VARCHAR(20, not_null=True)),
+        ("PromotionYear", INT_NN),
+        ("PromotionSequence", INT_NN),
         ("StartDate", DATE_NULL),
         ("EndDate", DATE_NULL),
     ),
