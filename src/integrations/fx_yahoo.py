@@ -121,9 +121,72 @@ def fill_missing_days(df, start_date, end_date):
 
 
 # ---------------------------------------------------------
+# Refresh master FX store to today
+# ---------------------------------------------------------
+def refresh_fx_master(out_path):
+    """
+    Top up the master FX file to today's date.
+
+    Reads whatever currencies are already stored in the master and downloads
+    only the gap from each currency's last recorded date to today.  No config
+    or date-range arguments needed — the master is self-describing.
+
+    Intended to be run on-demand (e.g. via --refresh-fx-master CLI flag) so
+    the bundled file stays current without triggering a full pipeline run.
+    """
+    out_path = Path(out_path)
+    if not out_path.exists():
+        raise FileNotFoundError(f"FX master file not found: {out_path}")
+
+    master = pd.read_parquet(out_path)
+    if master.empty:
+        raise ValueError("FX master file is empty — nothing to refresh.")
+
+    master["Date"] = pd.to_datetime(master["Date"]).dt.normalize()
+    today = pd.Timestamp.now().normalize()
+
+    currencies_in_master = master["ToCurrency"].unique().tolist()
+    updates = []
+
+    for cur in currencies_in_master:
+        df_cur = master[master["ToCurrency"] == cur]
+        last_date = pd.to_datetime(df_cur["Date"].max()).normalize()
+
+        if last_date >= today:
+            info(f"FX for {cur} already up to date ({last_date.date()}); skipping.")
+            continue
+
+        gap_start = last_date + pd.Timedelta(days=1)
+        info(f"Refreshing FX for {cur}: {gap_start.date()} → {today.date()}")
+        df_gap = download_history(cur, gap_start, today)
+        df_gap = fill_missing_days(df_gap, gap_start, today)
+        df_gap["FromCurrency"] = BASE
+        df_gap["ToCurrency"] = cur
+        updates.append(df_gap)
+
+    if not updates:
+        info("FX master already up to date — nothing downloaded.")
+        return master
+
+    updates_df = pd.concat(updates, ignore_index=True)
+    master_updated = pd.concat([master, updates_df], ignore_index=True)
+    master_updated["Date"] = pd.to_datetime(master_updated["Date"]).dt.normalize()
+    master_updated = (
+        master_updated
+        .drop_duplicates(subset=["Date", "FromCurrency", "ToCurrency"], keep="last")
+        .sort_values(["Date", "FromCurrency", "ToCurrency"])
+        .reset_index(drop=True)
+    )
+
+    master_updated.to_parquet(out_path, index=False)
+    info(f"FX master refreshed → {out_path}  ({len(master_updated)} rows)")
+    return master_updated
+
+
+# ---------------------------------------------------------
 # Build or update master FX store
 # ---------------------------------------------------------
-def build_or_update_fx(start_date, end_date, out_path, currencies=None):
+def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_drift=0.02):
     """
     Build or update a master FX file covering the date range.
 
@@ -133,6 +196,12 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None):
       Rate         = CUR per 1 USD (USD -> CUR)
 
     Date is kept as datetime64[ns] throughout.
+
+    For dates beyond the last real data point (i.e. future dates), rates are
+    projected using daily compounding:
+      projected_rate = anchor_rate * (1 + annual_drift) ^ (days_ahead / 365.25)
+    where anchor_rate is the last known real rate.  These projected values are
+    NOT written back to the master file.
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,11 +219,10 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None):
     else:
         master = pd.DataFrame(columns=["Date", "FromCurrency", "ToCurrency", "Rate"])
 
+    today = pd.Timestamp.now().normalize()
     updates = []
 
     for cur in curr_list:
-        info(f"Updating FX for {cur}...")
-
         if master.empty:
             cur_existing_start = None
             cur_existing_end = None
@@ -167,24 +235,34 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None):
                 cur_existing_start = pd.to_datetime(df_cur["Date"].min()).normalize()
                 cur_existing_end = pd.to_datetime(df_cur["Date"].max()).normalize()
 
-        # Keep your original “download range” behavior (safe, not optimized)
-        dl_start = start_ts if (cur_existing_start is None or start_ts < cur_existing_start) else cur_existing_start
-        dl_end = end_ts if (cur_existing_end is None or end_ts > cur_existing_end) else cur_existing_end
+        # Determine which gaps need downloading (only fetch what isn't already in the master)
+        gaps = []
+        if cur_existing_start is None:
+            # No existing data — download the full requested range (capped at today for real rates)
+            gaps.append((start_ts, min(end_ts, today)))
+        else:
+            if start_ts < cur_existing_start:
+                gaps.append((start_ts, cur_existing_start - pd.Timedelta(days=1)))
+            if end_ts > cur_existing_end:
+                gaps.append((cur_existing_end + pd.Timedelta(days=1), min(end_ts, today)))
 
-        df_dl = download_history(cur, dl_start, dl_end)
-        df_dl = fill_missing_days(df_dl, dl_start, dl_end)
+        if not gaps:
+            info(f"FX for {cur} already covered; skipping download.")
+        else:
+            for gap_start, gap_end in gaps:
+                if gap_start > gap_end:
+                    continue
+                info(f"Downloading FX for {cur}: {gap_start.date()} → {gap_end.date()}")
+                df_gap = download_history(cur, gap_start, gap_end)
+                df_gap = fill_missing_days(df_gap, gap_start, gap_end)
+                df_gap["FromCurrency"] = BASE
+                df_gap["ToCurrency"] = cur
+                updates.append(df_gap)
 
-        df_dl["FromCurrency"] = BASE
-        df_dl["ToCurrency"] = cur
-
-        updates.append(df_dl)
-
-    updates_df = pd.concat(updates, ignore_index=True)
-
-    if master.empty:
-        master_updated = updates_df
-    else:
-        master_updated = pd.concat([master, updates_df], ignore_index=True)
+    # Merge any new downloads into master and persist (only real data goes into the file)
+    if updates:
+        updates_df = pd.concat(updates, ignore_index=True)
+        master_updated = pd.concat([master, updates_df], ignore_index=True) if not master.empty else updates_df
         master_updated["Date"] = pd.to_datetime(master_updated["Date"]).dt.normalize()
         master_updated = (
             master_updated
@@ -192,6 +270,40 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None):
             .sort_values(["Date", "FromCurrency", "ToCurrency"])
             .reset_index(drop=True)
         )
+        master_updated.to_parquet(out_path, index=False)
+    else:
+        master_updated = master.copy()
 
-    master_updated.to_parquet(out_path, index=False)
-    return master_updated
+    # Build the return DataFrame for the full requested range.
+    # Historical gaps (weekends/holidays) are filled via ffill.
+    # Future dates (beyond the last real rate) are projected with daily compounding.
+    # Neither projected values nor gap-fills are written back to the master file.
+    full_range = pd.date_range(start=start_ts, end=end_ts, freq="D")
+    parts = []
+    for cur in curr_list:
+        df_cur = master_updated[master_updated["ToCurrency"] == cur].copy()
+        if df_cur.empty:
+            continue
+
+        full = pd.DataFrame({"Date": full_range})
+        merged = full.merge(df_cur, on="Date", how="left")
+
+        # Fill weekends/holidays within the real data range
+        merged["Rate"] = merged["Rate"].ffill().bfill()
+
+        # Project future dates beyond the last real anchor
+        anchor_date = df_cur["Date"].max()
+        future_mask = merged["Date"] > anchor_date
+        if future_mask.any():
+            # Derive anchor_rate from the ffill'd merged frame (works even when
+            # anchor_date falls outside full_range, e.g. end_ts < master max date)
+            historical = merged.loc[~future_mask, "Rate"]
+            anchor_rate = historical.iloc[-1] if not historical.empty else merged["Rate"].bfill().iloc[0]
+            days_ahead = (merged.loc[future_mask, "Date"] - anchor_date).dt.days
+            merged.loc[future_mask, "Rate"] = anchor_rate * (1 + annual_drift) ** (days_ahead / 365.25)
+
+        merged["FromCurrency"] = BASE
+        merged["ToCurrency"] = cur
+        parts.append(merged[["Date", "FromCurrency", "ToCurrency", "Rate"]])
+
+    return pd.concat(parts, ignore_index=True) if parts else master_updated

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
-from src.integrations.fx_yahoo import build_or_update_fx
+from src.integrations.fx_yahoo import build_or_update_fx, refresh_fx_master
 
 
 # ---------------------------------------------------------
@@ -67,6 +67,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
     currencies = fx_cfg["currencies"]
     base = fx_cfg["base_currency"]
     master = fx_cfg["master_file"]
+    annual_drift = fx_cfg.get("future_annual_drift", 0.02)
 
     # Enforce current supported invariant
     if base != "USD":
@@ -83,7 +84,12 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         "use_global_dates": fx_cfg.get("use_global_dates", False),
         "start": start_str,
         "end": end_str,
+        "future_annual_drift": annual_drift,
     }
+
+    if fx_cfg.get("refresh_fx_master", False):
+        with stage("Refreshing FX Master"):
+            refresh_fx_master(str(Path(master).expanduser()))
 
     force = fx_cfg.get("_force_regenerate", False)
 
@@ -97,7 +103,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
 
     # Step 1: Update/build FX master (USD -> Curr, missing days filled)
     with stage("Updating FX Master"):
-        master_fx = build_or_update_fx(start, end, str(master_path), currencies=currencies)
+        master_fx = build_or_update_fx(start, end, str(master_path), currencies=currencies, annual_drift=annual_drift)
 
     # Normalize Date once
     master_fx = master_fx.copy()
