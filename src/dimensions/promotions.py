@@ -21,6 +21,11 @@ PROMO_TYPES = {
     "Seasonal": "Seasonal Discount",
     "Clearance": "Clearance",
     "Limited": "Limited Time",
+    "Flash": "Flash Sale",
+    "Volume": "Volume Discount",
+    "Loyalty": "Loyalty Exclusive",
+    "Bundle": "Bundle Deal",
+    "NewCustomer": "New Customer",
     "NoDiscount": "No Discount",
 }
 
@@ -39,11 +44,11 @@ HOLIDAYS: List[Tuple[str, str, str, float, float]] = [
 
 # Seasonal name -> (start_month, end_month) (end may wrap to next year)
 SEASON_WINDOWS: Dict[str, Tuple[int, int]] = {
-    "Spring Clearance": (2, 4),
-    "Summer Sale": (5, 8),
-    "Autumn Sale": (9, 10),
-    "Winter Sale": (11, 1),           # wraps year
-    "Mid-Season Discount": (3, 9),
+    "Spring Event": (2, 4),
+    "Summer Event": (5, 8),
+    "Autumn Event": (9, 10),
+    "Winter Event": (11, 1),           # wraps year
+    "Mid-Season Event": (3, 9),
 }
 
 
@@ -223,6 +228,11 @@ def generate_promotions_catalog(
     num_seasonal: int = 20,
     num_clearance: int = 8,
     num_limited: int = 12,
+    num_flash: int = 6,
+    num_volume: int = 4,
+    num_loyalty: int = 3,
+    num_bundle: int = 3,
+    num_new_customer: int = 3,
     seed: int = 42,
 ) -> pd.DataFrame:
     """
@@ -240,10 +250,19 @@ def generate_promotions_catalog(
 
     rng = np.random.default_rng(int(seed))
     rows: List[Dict] = []
-    requested = {"Seasonal": int(num_seasonal), "Clearance": int(num_clearance), "Limited": int(num_limited)}
-    generated = {"Seasonal": 0, "Clearance": 0, "Limited": 0}
+    requested = {
+        "Seasonal": int(num_seasonal),
+        "Clearance": int(num_clearance),
+        "Limited": int(num_limited),
+        "Flash": int(num_flash),
+        "Volume": int(num_volume),
+        "Loyalty": int(num_loyalty),
+        "Bundle": int(num_bundle),
+        "NewCustomer": int(num_new_customer),
+    }
+    generated = {k: 0 for k in requested}
 
-    # Holidays
+    # Holidays (one per holiday per year — not configurable count)
     for y in years:
         for name, s_mmdd, e_mmdd, dmin, dmax in HOLIDAYS:
             s = _mmdd(s_mmdd, y)
@@ -271,7 +290,7 @@ def generate_promotions_catalog(
                 }
             )
 
-    # Seasonal
+    # Seasonal (10–60 day windows within season months)
     for _ in range(int(num_seasonal)):
         y = int(rng.choice(years))
         season_name = str(rng.choice(list(SEASON_WINDOWS.keys())))
@@ -300,7 +319,7 @@ def generate_promotions_catalog(
             }
         )
 
-    # Clearance
+    # Clearance (3–25 day windows, steep discounts)
     for _ in range(int(num_clearance)):
         y = int(rng.choice(years))
         start = _random_start_date(rng, y)
@@ -326,7 +345,7 @@ def generate_promotions_catalog(
             }
         )
 
-    # Limited
+    # Limited (1–15 day windows, moderate discounts)
     for _ in range(int(num_limited)):
         y = int(rng.choice(years))
         start = _random_start_date(rng, y)
@@ -347,6 +366,135 @@ def generate_promotions_catalog(
                 "DiscountPct": _discount(rng, 0.05, 0.35),
                 "PromotionType": PROMO_TYPES["Limited"],
                 "PromotionCategory": _category(rng),
+                "StartDate": pd.Timestamp(start),
+                "EndDate": pd.Timestamp(end),
+            }
+        )
+
+    # Flash Sale (1–2 day windows, steep discounts)
+    for _ in range(int(num_flash)):
+        y = int(rng.choice(years))
+        start = _random_start_date(rng, y)
+        end = start + timedelta(days=int(rng.integers(1, 3)))
+
+        start = _clamp_to_year_window(start, year_windows)
+        end = _clamp_to_year_window(end, year_windows)
+
+        if not _valid_window(start, end):
+            continue
+
+        generated["Flash"] += 1
+        rows.append(
+            {
+                "TypeGroup": "Flash",
+                "SeasonType": "Flash Sale",
+                "Year": y,
+                "DiscountPct": _discount(rng, 0.25, 0.60),
+                "PromotionType": PROMO_TYPES["Flash"],
+                "PromotionCategory": str(rng.choice(["Store", "Online"])),
+                "StartDate": pd.Timestamp(start),
+                "EndDate": pd.Timestamp(end),
+            }
+        )
+
+    # Volume Discount (full-quarter windows, modest discounts)
+    for _ in range(int(num_volume)):
+        y = int(rng.choice(years))
+        q_start_month = int(rng.choice([1, 4, 7, 10]))
+        start = pd.Timestamp(year=y, month=q_start_month, day=1)
+        end = start + timedelta(days=89)
+
+        start = _clamp_to_year_window(start, year_windows)
+        end = _clamp_to_year_window(end, year_windows)
+
+        if not _valid_window(start, end):
+            continue
+
+        generated["Volume"] += 1
+        rows.append(
+            {
+                "TypeGroup": "Volume",
+                "SeasonType": "Volume Discount",
+                "Year": y,
+                "DiscountPct": _discount(rng, 0.05, 0.15),
+                "PromotionType": PROMO_TYPES["Volume"],
+                "PromotionCategory": _category(rng),
+                "StartDate": pd.Timestamp(start),
+                "EndDate": pd.Timestamp(end),
+            }
+        )
+
+    # Loyalty Exclusive (month-long windows, targeted discounts)
+    for _ in range(int(num_loyalty)):
+        y = int(rng.choice(years))
+        start = _random_start_date(rng, y)
+        end = start + timedelta(days=int(rng.integers(20, 45)))
+
+        start = _clamp_to_year_window(start, year_windows)
+        end = _clamp_to_year_window(end, year_windows)
+
+        if not _valid_window(start, end):
+            continue
+
+        generated["Loyalty"] += 1
+        rows.append(
+            {
+                "TypeGroup": "Loyalty",
+                "SeasonType": "Loyalty Exclusive",
+                "Year": y,
+                "DiscountPct": _discount(rng, 0.10, 0.25),
+                "PromotionType": PROMO_TYPES["Loyalty"],
+                "PromotionCategory": str(rng.choice(["Store", "Online"])),
+                "StartDate": pd.Timestamp(start),
+                "EndDate": pd.Timestamp(end),
+            }
+        )
+
+    # Bundle Deal (2–6 week windows, moderate discounts)
+    for _ in range(int(num_bundle)):
+        y = int(rng.choice(years))
+        start = _random_start_date(rng, y)
+        end = start + timedelta(days=int(rng.integers(14, 42)))
+
+        start = _clamp_to_year_window(start, year_windows)
+        end = _clamp_to_year_window(end, year_windows)
+
+        if not _valid_window(start, end):
+            continue
+
+        generated["Bundle"] += 1
+        rows.append(
+            {
+                "TypeGroup": "Bundle",
+                "SeasonType": "Bundle Deal",
+                "Year": y,
+                "DiscountPct": _discount(rng, 0.10, 0.20),
+                "PromotionType": PROMO_TYPES["Bundle"],
+                "PromotionCategory": _category(rng),
+                "StartDate": pd.Timestamp(start),
+                "EndDate": pd.Timestamp(end),
+            }
+        )
+
+    # New Customer (runs continuously per year, flat 10–20% discount)
+    for _ in range(int(num_new_customer)):
+        y = int(rng.choice(years))
+        ws, we = year_windows[y]
+        start = pd.Timestamp(ws)
+        end = pd.Timestamp(we)
+
+        if not _valid_window(start, end):
+            continue
+
+        generated["NewCustomer"] += 1
+        rows.append(
+            {
+                "TypeGroup": "NewCustomer",
+                "SeasonType": "New Customer",
+                "Year": y,
+                "DiscountPct": _discount(rng, 0.10, 0.20),
+                "PromotionType": PROMO_TYPES["NewCustomer"],
+                "PromotionCategory": str(rng.choice(["Store", "Online"])),
                 "StartDate": pd.Timestamp(start),
                 "EndDate": pd.Timestamp(end),
             }
@@ -481,6 +629,11 @@ def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
             num_seasonal=int(promo_cfg.get("num_seasonal", 20)),
             num_clearance=int(promo_cfg.get("num_clearance", 8)),
             num_limited=int(promo_cfg.get("num_limited", 12)),
+            num_flash=int(promo_cfg.get("num_flash", 6)),
+            num_volume=int(promo_cfg.get("num_volume", 4)),
+            num_loyalty=int(promo_cfg.get("num_loyalty", 3)),
+            num_bundle=int(promo_cfg.get("num_bundle", 3)),
+            num_new_customer=int(promo_cfg.get("num_new_customer", 3)),
             seed=seed,
         )
 

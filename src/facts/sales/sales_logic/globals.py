@@ -121,6 +121,8 @@ class State:
     promo_keys_all = None
     promo_start_all = None
     promo_end_all = None
+    new_customer_promo_keys = None
+    new_customer_window_months = 3
 
     # --------------------------------------------------------------
     # Mappings

@@ -230,9 +230,20 @@ def _distribute_scale(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(promos, dict):
         sec = cfg.setdefault("promotions", {})
         if isinstance(sec, dict):
-            sec.setdefault("num_seasonal", promos.get("seasonal"))
-            sec.setdefault("num_clearance", promos.get("clearance"))
-            sec.setdefault("num_limited", promos.get("limited"))
+            _promo_map = {
+                "seasonal": "num_seasonal",
+                "clearance": "num_clearance",
+                "limited": "num_limited",
+                "flash": "num_flash",
+                "volume": "num_volume",
+                "loyalty": "num_loyalty",
+                "bundle": "num_bundle",
+                "new_customer": "num_new_customer",
+            }
+            for scale_key, cfg_key in _promo_map.items():
+                v = promos.get(scale_key)
+                if v is not None:
+                    sec.setdefault(cfg_key, v)
 
     return cfg
 

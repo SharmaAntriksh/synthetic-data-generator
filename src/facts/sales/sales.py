@@ -707,6 +707,7 @@ def generate_sales_fact(
         promo_keys_all = np.array([], dtype=np.int64)
         promo_start_all = np.array([], dtype="datetime64[D]")
         promo_end_all = np.array([], dtype="datetime64[D]")
+        new_customer_promo_keys = np.array([], dtype=np.int64)
     else:
         promo_start = _normalize_dt_any(promo_df["StartDate"])
         promo_end = _normalize_dt_any(promo_df["EndDate"])
@@ -714,6 +715,12 @@ def generate_sales_fact(
         promo_keys_all = _as_np(promo_df["PromotionKey"], np.int64)
         promo_start_all = _as_np(promo_start, "datetime64[D]")
         promo_end_all = _as_np(promo_end, "datetime64[D]")
+
+        if "PromotionType" in promo_df.columns:
+            nc_mask = promo_df["PromotionType"].astype(str) == "New Customer"
+            new_customer_promo_keys = _as_np(promo_df.loc[nc_mask, "PromotionKey"], np.int64)
+        else:
+            new_customer_promo_keys = np.array([], dtype=np.int64)
 
     # ------------------------------------------------------------
     # Employees / store assignments -> SalesPersonEmployeeKey
@@ -897,6 +904,8 @@ def generate_sales_fact(
         promo_keys_all=promo_keys_all,
         promo_start_all=promo_start_all,
         promo_end_all=promo_end_all,
+        new_customer_promo_keys=new_customer_promo_keys,
+        new_customer_window_months=int((cfg.get("promotions") or {}).get("new_customer_window_months", 3)),
 
         # Backward compat: keep 'customers' as keys array (no duplication)
         customers=customer_keys,
