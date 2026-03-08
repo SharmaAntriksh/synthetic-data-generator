@@ -3,7 +3,7 @@ from pathlib import Path
 import yfinance as yf
 from datetime import timedelta
 
-from src.utils.logging_utils import info
+from src.utils.logging_utils import info, warn
 
 # ---------------------------------------------------------
 # DEFAULT CURRENCY LIST
@@ -115,7 +115,12 @@ def fill_missing_days(df, start_date, end_date):
 
     # Your requirement: missing days filled from previous day
     merged["Rate"] = merged["Rate"].ffill()
-    merged["Rate"] = merged["Rate"].bfill().fillna(1.0)
+    merged["Rate"] = merged["Rate"].bfill()
+
+    n_missing = merged["Rate"].isna().sum()
+    if n_missing:
+        warn(f"fill_missing_days: {n_missing} day(s) have no rate data and no neighbours to fill from; using 1.0 as fallback.")
+        merged["Rate"] = merged["Rate"].fillna(1.0)
 
     return merged
 
@@ -203,6 +208,12 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
     where anchor_rate is the last known real rate.  These projected values are
     NOT written back to the master file.
     """
+    if annual_drift <= -1.0:
+        raise ValueError(
+            f"annual_drift must be > -1.0 (got {annual_drift}); "
+            "values <= -1 produce zero or negative projected rates."
+        )
+
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 

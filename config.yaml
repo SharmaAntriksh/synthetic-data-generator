@@ -211,7 +211,7 @@ exchange_rates:
 
   volatility: 0.02
   future_annual_drift: 0.02   # annual compounding rate applied to project rates beyond today
-  refresh_fx_master: false    # set true to top up fx_master.parquet to today, then reset to false
+  # refresh_fx_master is CLI-only: use --refresh-fx-master flag
 
 # ------------------------------------------------------------------
 # BUDGET

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
-from src.integrations.fx_yahoo import build_or_update_fx, refresh_fx_master
+from src.integrations.fx_yahoo import build_or_update_fx
 
 
 # ---------------------------------------------------------
@@ -86,10 +86,6 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         "end": end_str,
         "future_annual_drift": annual_drift,
     }
-
-    if fx_cfg.get("refresh_fx_master", False):
-        with stage("Refreshing FX Master"):
-            refresh_fx_master(str(Path(master).expanduser()))
 
     force = fx_cfg.get("_force_regenerate", False)
 

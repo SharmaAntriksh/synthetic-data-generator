@@ -177,7 +177,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from src.integrations.fx_yahoo import refresh_fx_master
             with open(args.config) as f:
                 cfg = yaml.safe_load(f)
-            master_path = cfg.get("exchange_rates", {}).get("master_file", "./data/exchange_rates_master/fx_master.parquet")
+            master_path = (
+                cfg.get("paths", {}).get("fx_master")
+                or cfg.get("exchange_rates", {}).get("master_file")
+                or "./data/exchange_rates_master/fx_master.parquet"
+            )
             refresh_fx_master(master_path)
             return 0
         except Exception as ex:
