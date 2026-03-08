@@ -4,5 +4,4 @@ generated_datasets/
 data/fact_out
 data/versioning/*
 data/parquet_dims/*
-data/exchange_rates_master/
 cache.abf

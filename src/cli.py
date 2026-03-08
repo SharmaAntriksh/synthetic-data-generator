@@ -6,7 +6,7 @@ import sys
 from typing import Optional, Sequence
 
 from src.engine.runners.pipeline_runner import PipelineOverrides, run_pipeline
-from src.utils.logging_utils import fail
+from src.utils.logging_utils import fail, info
 
 
 def str2bool(v):
@@ -117,6 +117,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Force regeneration of selected dimensions (e.g. customers products stores or 'all')",
     )
 
+    parser.add_argument(
+        "--refresh-fx-master",
+        action="store_true",
+        help="Top up the FX master file to today's date and exit (no full pipeline run)",
+    )
+
     # ----------------- DIMENSION SIZE OVERRIDES -----------------
 
     parser.add_argument(
@@ -164,6 +170,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         products=args.products,
         promotions=args.promotions,
     )
+
+    if args.refresh_fx_master:
+        try:
+            import yaml
+            from src.integrations.fx_yahoo import refresh_fx_master
+            with open(args.config) as f:
+                cfg = yaml.safe_load(f)
+            master_path = cfg.get("exchange_rates", {}).get("master_file", "./data/exchange_rates_master/fx_master.parquet")
+            refresh_fx_master(master_path)
+            return 0
+        except Exception as ex:
+            fail(str(ex))
+            return 1
 
     try:
         run_pipeline(
