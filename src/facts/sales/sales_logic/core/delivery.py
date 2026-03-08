@@ -116,8 +116,9 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
         # Map rows → order index (order-level coherence)
         unique_orders, inv_idx = np.unique(order_ids_int, return_inverse=True)
 
-        # Order-level hash expanded to rows
-        hash_vals = unique_orders.astype(np.int64, copy=False)[inv_idx]
+        # Mix sequential order IDs to break visible due-date patterns
+        mixed = _mix_u64(unique_orders.astype(np.uint64).copy())
+        hash_vals = (mixed & _MASK63).astype(np.int64)[inv_idx]
     else:
         # Deterministic per-row hash without consuming RNG
         hash_vals = _stable_row_hash(order_dates, product_keys)

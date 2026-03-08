@@ -281,7 +281,7 @@ def _eligible_counts_fast(
 
     counts = np.cumsum(delta[:-1])
     counts = np.maximum(counts, 0)
-    return counts.astype("float64", copy=False)
+    return counts.astype("int64", copy=False)
 
 
 def _to_pa_array(name: str, data: object, n_rows: int, schema_types: dict) -> pa.array:
@@ -658,6 +658,12 @@ def build_chunk_table(
     eff = getattr(State, "salesperson_effective_by_store", None)
     sp_map_fallback = getattr(State, 'salesperson_by_store_month', None)
 
+    # Expected average lines per order — used to estimate order count from row target.
+    # When max_lines > 1, build_orders expands each order into 1..max_lines line rows,
+    # so we sample fewer customers (≈ m_rows / avg_lines) and let build_orders expand.
+    max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
+    avg_lines_est = 1.0 if max_lines == 1 else 1.8
+
     for m_offset in range(T):
         m_rows = int(rows_per_month[m_offset])
         if m_rows <= 0:
@@ -708,6 +714,17 @@ def build_chunk_table(
             disc_cfg_local["max_fraction_per_month"] = _MAX_FRAC_PER_MONTH
 
         # --------------------------------------------------------
+        # DETERMINE SAMPLING COUNT
+        # --------------------------------------------------------
+        # In order mode (skip_cols=False, max_lines > 1): sample fewer
+        # customers (one per order), then let build_orders expand each
+        # order into 1..max_lines line rows to reach m_rows total.
+        if not skip_cols and max_lines > 1:
+            n_sample = max(1, int(round(m_rows / avg_lines_est)))
+        else:
+            n_sample = m_rows
+
+        # --------------------------------------------------------
         # PARTICIPATION DISTINCT TARGET
         # --------------------------------------------------------
         target_distinct = None
@@ -728,7 +745,7 @@ def build_chunk_table(
 
             k = max(k, float(_MIN_DISTINCT_CUSTOMERS))
             k = min(k, eligible_count * _MAX_DISTINCT_RATIO,
-                    float(eligible_count), float(m_rows))
+                    float(eligible_count), float(n_sample))
             target_distinct = max(1, int(round(k)))
 
         # --------------------------------------------------------
@@ -739,7 +756,7 @@ def build_chunk_table(
             customer_keys=customer_keys,
             eligible_mask=eligible_mask,
             seen_set=seen_customers,
-            n=int(m_rows),
+            n=int(n_sample),
             use_discovery=use_discovery,
             discovery_cfg=disc_cfg_local,
             base_weight=base_weight,
@@ -752,7 +769,8 @@ def build_chunk_table(
         n_orders = int(customer_keys_for_orders.size)
 
         # --------------------------------------------------------
-        # PRODUCTS (PER ORDER) - avoid temporary prods array
+        # PRODUCTS (PER ORDER) - one product per order; expanded
+        # to line level after build_orders when multi-line is active
         # --------------------------------------------------------
         prod_idx = _sample_product_row_indices(
             rng=rng,
@@ -762,58 +780,66 @@ def build_chunk_table(
             enabled=use_brand_popularity,
         )
 
-        product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
-        unit_price  = product_np[prod_idx, 1].astype(np.float64, copy=False)
-        unit_cost   = product_np[prod_idx, 2].astype(np.float64, copy=False)
+        product_keys_order = product_np[prod_idx, 0].astype(np.int64, copy=False)
+        unit_price_order   = product_np[prod_idx, 1].astype(np.float64, copy=False)
+        unit_cost_order    = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
         # --------------------------------------------------------
         # ORDERS (use month-specific date pool so month loop is real)
         # --------------------------------------------------------
         if not skip_cols:
-            # build_orders allocates suffixes per *order* (avg ~2 lines/order)
-            order_count = max(1, int(n_orders / 2.0))
-
-            # Each chunk owns suffix range [base, base + cap)
-            if order_cursor + np.int64(order_count) > np.int64(cap):
+            # Capacity check uses actual order count
+            if order_cursor + np.int64(n_orders) > np.int64(cap):
                 raise RuntimeError(
-                    f"chunk_capacity_orders too small: need {int(order_cursor) + order_count} orders in chunk "
+                    f"chunk_capacity_orders too small: need {int(order_cursor) + n_orders} orders in chunk "
                     f"(cap={cap}). Increase chunk_capacity_orders (or reduce chunk sizing)."
                 )
 
             order_id_start = base + order_cursor
-            if order_id_start + np.int64(order_count) + 1 >= INT32_MAX:
+            if order_id_start + np.int64(n_orders) + 1 >= INT32_MAX:
                 raise RuntimeError(
                     f"SalesOrderNumber would exceed int32 range "
-                    f"(order_id_start={int(order_id_start)}, order_count={order_count}, "
+                    f"(order_id_start={int(order_id_start)}, n_orders={n_orders}, "
                     f"int32_max={int(INT32_MAX)}). Reduce total rows or increase chunk count."
                 )
 
             orders = build_orders(
                 rng=rng,
-                n=n_orders,
+                n=m_rows,
                 skip_cols=False,
                 date_pool=month_date_pool,
                 date_prob=month_date_prob,
                 customers=customer_keys_for_orders,
-                product_keys=product_keys,
+                product_keys=product_keys_order,
                 _len_date_pool=len(month_date_pool),
                 _len_customers=n_orders,
                 order_id_start=int(order_id_start),
             )
 
             # Advance by allocated orders (robust to future build_orders heuristic changes)
-            order_cursor += np.int64(orders.get("_order_count", order_count))
+            order_cursor += np.int64(orders.get("_order_count", n_orders))
 
             customer_keys_out = orders["customer_keys"]
             order_dates = orders["order_dates"]
             order_ids_int = orders["order_ids_int"]
             line_num = orders["line_num"]
 
+            # Expand products from order level to line level (preserves brand coherence)
+            repeats = orders["_repeats"]
+            product_keys = np.repeat(product_keys_order, repeats)
+            unit_price  = np.repeat(unit_price_order, repeats)
+            unit_cost   = np.repeat(unit_cost_order, repeats)
+
         else:
             customer_keys_out = customer_keys_for_orders
             order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=n_orders)]
             order_ids_int = None
             line_num = None
+            product_keys = product_keys_order
+            unit_price  = unit_price_order
+            unit_cost   = unit_cost_order
+
+        n_lines = int(np.asarray(customer_keys_out).shape[0])
 
         # --------------------------------------------------------
         # STORE → GEO → CURRENCY (guard missing mappings)
@@ -834,7 +860,7 @@ def build_chunk_table(
             store_key_arr = order_store[order_idx]
         else:
             # no order concept -> sample per line
-            store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n_orders)]
+            store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n_lines)]
 
         geo_arr = st2g_arr[store_key_arr]
         if np.any(geo_arr < 0):
@@ -851,7 +877,7 @@ def build_chunk_table(
         # --------------------------------------------------------
         dates = compute_dates(
             rng=rng,
-            n=n_orders,
+            n=n_lines,
             product_keys=product_keys,
             order_ids_int=order_ids_int,
             order_dates=order_dates,
@@ -878,7 +904,7 @@ def build_chunk_table(
         else:
             promo_keys = apply_promotions(
                 rng=rng,
-                n=n_orders,
+                n=n_lines,
                 order_dates=order_dates,
                 promo_keys_all=promo_keys_all,
                 promo_start_all=promo_start_all,

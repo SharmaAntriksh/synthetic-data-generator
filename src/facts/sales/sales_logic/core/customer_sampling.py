@@ -29,6 +29,18 @@ def _normalize_end_month(end_month_arr, n_customers: int) -> np.ndarray:
             f"Excess elements will be ignored; missing entries default to -1 (no end).",
             stacklevel=2,
         )
+        # Truncate or pad to match expected length
+        if a.shape[0] > n_customers:
+            a = a[:n_customers]
+        else:
+            deficit = n_customers - a.shape[0]
+            if a.dtype == object:
+                pad = np.array([None] * deficit, dtype=object)
+            elif np.issubdtype(a.dtype, np.floating):
+                pad = np.full(deficit, np.nan, dtype=a.dtype)
+            else:
+                pad = np.full(deficit, -1, dtype=a.dtype)
+            a = np.concatenate([a, pad])
 
     if np.issubdtype(a.dtype, np.integer):
         out = a.astype("int64", copy=False)

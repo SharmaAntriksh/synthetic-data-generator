@@ -14,6 +14,11 @@ except Exception:  # pragma: no cover
     pq = None  # type: ignore
 
 from ..sales_logic import State, build_chunk_table
+from ..sales_logic.columns import (
+    RETAIL_HOUR_W, DIGITAL_HOUR_W, BUSINESS_HOUR_W, ASSISTED_HOUR_W,
+    _normalize_prob as _normalize_hour_prob,
+    _PROFILE_FROM_GROUP,
+)
 from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
 
 try:
@@ -332,54 +337,12 @@ def _ensure_sales_channel_key_on_lines(
     return table.append_column("SalesChannelKey", col)
 
 
-# Hour weights per channel group profile (Retail/Digital/Business/Assisted).
-# Pre-normalized at module load time to avoid repeated normalization per chunk.
-_RETAIL_HOUR_W = np.array(
-    [0.002, 0.001, 0.001, 0.001, 0.002, 0.004,
-     0.010, 0.020, 0.050, 0.080, 0.100, 0.110,
-     0.110, 0.105, 0.095, 0.090, 0.085, 0.090,
-     0.100, 0.095, 0.070, 0.040, 0.015, 0.006],
-    dtype=np.float64,
-)
-_DIGITAL_HOUR_W = np.array(
-    [0.030, 0.025, 0.020, 0.020, 0.022, 0.026,
-     0.030, 0.040, 0.050, 0.055, 0.060, 0.065,
-     0.070, 0.070, 0.065, 0.060, 0.060, 0.065,
-     0.080, 0.090, 0.090, 0.070, 0.050, 0.040],
-    dtype=np.float64,
-)
-_BUSINESS_HOUR_W = np.array(
-    [0.001, 0.001, 0.001, 0.001, 0.001, 0.002,
-     0.006, 0.020, 0.060, 0.090, 0.110, 0.120,
-     0.120, 0.110, 0.100, 0.090, 0.070, 0.040,
-     0.020, 0.010, 0.006, 0.003, 0.002, 0.001],
-    dtype=np.float64,
-)
-_ASSISTED_HOUR_W = np.array(
-    [0.002, 0.001, 0.001, 0.001, 0.001, 0.003,
-     0.010, 0.030, 0.060, 0.090, 0.110, 0.120,
-     0.120, 0.110, 0.100, 0.090, 0.070, 0.040,
-     0.020, 0.010, 0.006, 0.004, 0.003, 0.002],
-    dtype=np.float64,
-)
-
-
-def _pre_normalize(w: np.ndarray) -> np.ndarray:
-    """Normalize probability weights (safe against negatives/NaN/zeros)."""
-    w = np.asarray(w, dtype=np.float64)
-    w = np.where(np.isfinite(w) & (w > 0), w, 0.0)
-    s = w.sum()
-    if s <= 1e-12:
-        return np.full(w.shape[0], 1.0 / w.shape[0], dtype=np.float64)
-    return w / s
-
-
-# Pre-normalized hour weight arrays — avoids _normalize_prob call per chunk per profile.
+# Pre-normalized hour weight arrays (sourced from columns.py — single source of truth).
 _HOUR_WEIGHTS_NORM: list[np.ndarray] = [
-    _pre_normalize(_RETAIL_HOUR_W),
-    _pre_normalize(_DIGITAL_HOUR_W),
-    _pre_normalize(_BUSINESS_HOUR_W),
-    _pre_normalize(_ASSISTED_HOUR_W),
+    _normalize_hour_prob(RETAIL_HOUR_W),
+    _normalize_hour_prob(DIGITAL_HOUR_W),
+    _normalize_hour_prob(BUSINESS_HOUR_W),
+    _normalize_hour_prob(ASSISTED_HOUR_W),
 ]
 
 
@@ -435,11 +398,10 @@ def _profile_lut_from_dim() -> Optional[np.ndarray]:
     maxk = int(keys.max())
     lut = np.full(maxk + 1, 1, dtype=np.int8)  # default Digital
 
-    _GROUP_MAP = {"physical": 0, "digital": 1, "business": 2, "assisted": 3}
     for k, g in zip(keys, groups):
         if k < 0:
             continue
-        lut[int(k)] = np.int8(_GROUP_MAP.get((g or "").strip().lower(), 1))
+        lut[int(k)] = np.int8(_PROFILE_FROM_GROUP.get((g or "").strip().lower(), 1))
 
     State._sales_channel_profile_lut = lut
     return lut

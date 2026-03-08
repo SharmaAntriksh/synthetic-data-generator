@@ -105,7 +105,7 @@ def _load_sales_channels(State: Any) -> Optional[Tuple[np.ndarray, np.ndarray, n
         return None
 
     cols = ["SalesChannelKey", "ChannelGroup"]
-    tab = pq.read_table(pth, columns=[c for c in cols if True])
+    tab = pq.read_table(pth, columns=cols)
     keys = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int16)
     grp = np.asarray(tab["ChannelGroup"].to_numpy(), dtype=object)
 
@@ -241,7 +241,7 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
         if "TimeKey720" in schema_types:
             out["TimeKey720"] = (timekey.astype(np.int32) // 720).astype(np.int16)
         if "TimeBucketKey4" in schema_types:
-            out["TimeBucketKey4"] = (timekey.astype(np.int32) // 360).astype(np.int16)
+            out["TimeBucketKey4"] = (timekey.astype(np.int32) // 240).astype(np.int16)
 
     return out
 

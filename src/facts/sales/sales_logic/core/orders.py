@@ -30,8 +30,32 @@ def build_month_demand(
     return seasonal.astype(np.float64, copy=False)
 
 
-# Precomputed once at import time; build_orders uses this directly.
-_MONTH_DEMAND: np.ndarray = build_month_demand()
+# Lazy-loaded on first use; configurable via models.yaml -> models.lines_per_order
+_MONTH_DEMAND: np.ndarray | None = None
+
+
+def _get_month_demand() -> np.ndarray:
+    """Return month demand multipliers, loading from config on first call."""
+    global _MONTH_DEMAND
+    if _MONTH_DEMAND is not None:
+        return _MONTH_DEMAND
+
+    models = getattr(State, "models_cfg", None) or {}
+    cfg = models.get("lines_per_order", {}) or {}
+
+    _MONTH_DEMAND = build_month_demand(
+        base=float(cfg.get("base", 1.0)),
+        amplitude=float(cfg.get("amplitude", 0.55)),
+        q4_boost=float(cfg.get("q4_boost", 0.60)),
+        phase_shift=float(cfg.get("phase_shift", -2)),
+    )
+    return _MONTH_DEMAND
+
+
+def _reset_month_demand() -> None:
+    """Reset cached demand array. Call from State.reset() or tests."""
+    global _MONTH_DEMAND
+    _MONTH_DEMAND = None
 
 
 def _safe_normalized_prob(p):
@@ -146,7 +170,7 @@ def build_orders(
 
     # month-of-year (0-11)
     months = (order_dates.astype("datetime64[M]").astype(np.int64) % 12).astype(np.int64, copy=False)
-    month_factor = _MONTH_DEMAND[months]
+    month_factor = _get_month_demand()[months]
     holiday_boost = month_factor > 1.10
 
     # Discrete outcomes (respect max_lines_per_order)
@@ -324,5 +348,6 @@ def build_orders(
         result["order_ids_int"] = sales_order_num_int
         result["line_num"] = line_num
         result["_order_count"] = int(order_count)
+        result["_repeats"] = repeats.astype(np.int64, copy=False)
 
     return result

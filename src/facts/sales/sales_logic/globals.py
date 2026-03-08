@@ -147,13 +147,14 @@ class State:
     # --------------------------------------------------------------
     file_format = None
     out_folder = None
-    chunk_size = None
-    row_group_size = None
-    compression = None
-    
-    # CRITICAL: constant per-run stride for chunk order-id ranges
+
+    # CRITICAL: constant per-run stride for chunk order-id ranges.
+    # Also controls output chunking (row count per chunk file).
     # (task.py validates this; chunk_builder uses it to avoid overlaps)
     chunk_size = None
+
+    row_group_size = None
+    compression = None
 
     # Forward-compat aliases for SalesOrderNumber generation
     order_id_stride_orders = None      # usually == chunk_size

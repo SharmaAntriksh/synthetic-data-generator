@@ -553,7 +553,13 @@ def build_prices(rng, order_dates, qty, price):
 
     uc = np.minimum(uc, up)
     if not allow_neg:
-        uc = np.minimum(uc, np.maximum(net - 0.01, 0.0))
+        # Protect positive margin by reducing discount (not distorting cost)
+        margin_violated = net < uc + 0.01
+        if margin_violated.any():
+            disc[margin_violated] = np.round(
+                np.maximum(up[margin_violated] - uc[margin_violated] - 0.01, 0.0), 2)
+            net[margin_violated] = np.round(
+                np.maximum(up[margin_violated] - disc[margin_violated], 0.0), 2)
     uc = np.round(uc, 2)
 
     price["final_unit_price"] = up
