@@ -326,7 +326,7 @@ def _sample_salesperson_vectorized(
     If no eligible salesperson exists for a given (StoreKey, Date), emits -1.
     """
     n = store_ids.shape[0]
-    out = np.full(n, -1, dtype=np.int64)
+    out = np.full(n, -1, dtype=np.int32)
 
     if not isinstance(eff, dict) or not eff:
         return out
@@ -363,7 +363,7 @@ def _sample_salesperson_vectorized(
                 _eff_cache[sk] = None
             else:
                 emp_keys, start_d, end_d, weights = entry
-                emp_keys = np.asarray(emp_keys, dtype=np.int64)
+                emp_keys = np.asarray(emp_keys, dtype=np.int32)
                 start_d = np.asarray(start_d, dtype="datetime64[D]")
                 end_d = np.asarray(end_d, dtype="datetime64[D]")
                 weights = np.asarray(weights, dtype=np.float64)
@@ -867,7 +867,7 @@ def build_chunk_table(
         #       still respecting effective-dated store assignments by (StoreKey, OrderDate).
         #     - If order identifiers do not exist: keep line-level sampling (old behavior).
         # - Prefer DAY-accurate effective-dated bridge:
-        #     State.salesperson_effective_by_store[store] = (emp_keys[int64], start_dates[D], end_dates[D], weights[f64])
+        #     State.salesperson_effective_by_store[store] = (emp_keys[int32], start_dates[D], end_dates[D], weights[f64])
         # - Fallback: State.salesperson_by_store_month (values may be -1)
         # IMPORTANT: Never emit Store Manager keys (30_000_000 + StoreKey).
         # --------------------------------------------------------
@@ -888,9 +888,9 @@ def build_chunk_table(
                 # Fallback: month map
                 sp_map = sp_map_fallback
                 if sp_map is not None:
-                    salesperson_order = sp_map[order_store_sp, int(m_offset)].astype(np.int64, copy=False)
+                    salesperson_order = sp_map[order_store_sp, int(m_offset)].astype(np.int32, copy=False)
                 else:
-                    salesperson_order = np.full(uniq_orders.size, -1, dtype=np.int64)
+                    salesperson_order = np.full(uniq_orders.size, -1, dtype=np.int32)
 
             salesperson_key_arr = salesperson_order[inv_idx]
         else:
@@ -902,9 +902,9 @@ def build_chunk_table(
             else:
                 sp_map = sp_map_fallback
                 if sp_map is not None:
-                    salesperson_key_arr = sp_map[s_ids, int(m_offset)].astype(np.int64, copy=False)
+                    salesperson_key_arr = sp_map[s_ids, int(m_offset)].astype(np.int32, copy=False)
                 else:
-                    salesperson_key_arr = np.full(s_ids.size, -1, dtype=np.int64)
+                    salesperson_key_arr = np.full(s_ids.size, -1, dtype=np.int32)
 
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------

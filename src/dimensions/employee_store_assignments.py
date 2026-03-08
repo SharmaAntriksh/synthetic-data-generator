@@ -12,7 +12,7 @@ from src.dimensions.employees import (
     STAFF_KEY_STORE_MULT,
 )
 
-from src.utils.logging_utils import info, skip, stage
+from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 from src.utils.config_helpers import (
@@ -22,7 +22,6 @@ from src.utils.config_helpers import (
     str_or,
     pick_seed_nested,
     parse_global_dates,
-    rand_dates_between,
     rand_single_date,
 )
 
@@ -42,6 +41,12 @@ def _store_assignments_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     emp_cfg = as_dict(cfg.get("employees"))
     nested = as_dict(emp_cfg.get("store_assignments"))
     legacy = as_dict(cfg.get("employee_store_assignments"))
+    if legacy:
+        warn(
+            "Top-level 'employee_store_assignments' config is deprecated. "
+            "Move settings under 'employees.store_assignments'. "
+            "Nested keys take precedence over legacy keys."
+        )
     out = dict(legacy)
     out.update(nested)
     return out
@@ -53,20 +58,20 @@ def _infer_home_store_key(employees: pd.DataFrame) -> pd.Series:
     is not already present.
     """
     if "StoreKey" in employees.columns:
-        return employees["StoreKey"].astype("Int64")
+        return employees["StoreKey"].astype("Int32")
 
-    ek = employees["EmployeeKey"].astype(np.int64)
-    out = pd.Series([pd.NA] * len(employees), dtype="Int64")
+    ek = employees["EmployeeKey"].astype(np.int32)
+    out = pd.Series([pd.NA] * len(employees), dtype="Int32")
 
     mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE)
     if mgr_mask.any():
-        out.loc[mgr_mask] = (ek.loc[mgr_mask] - STORE_MGR_KEY_BASE).astype("Int64")
+        out.loc[mgr_mask] = (ek.loc[mgr_mask] - STORE_MGR_KEY_BASE).astype("Int32")
 
     staff_mask = ek >= STAFF_KEY_BASE
     if staff_mask.any():
         out.loc[staff_mask] = (
             (ek.loc[staff_mask] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
-        ).astype("Int64")
+        ).astype("Int32")
 
     return out
 
@@ -79,7 +84,15 @@ def _build_store_by_district(emp: pd.DataFrame) -> Dict[Any, List[int]]:
 
     is_mgr = emp2["Title"].astype(str) == "Store Manager"
     mgrs = emp2[is_mgr]
-    src = mgrs if not mgrs.empty else emp2
+    if not mgrs.empty:
+        src = mgrs
+    else:
+        warn(
+            "No Store Managers found when building district→store mapping; "
+            "falling back to all store-attached employees. "
+            "District store pools may be inaccurate."
+        )
+        src = emp2
 
     pairs = src[["DistrictId", "HomeStoreKey"]].dropna().drop_duplicates()
     if pairs.empty:
@@ -168,6 +181,10 @@ def generate_employee_store_assignments(
         return pd.DataFrame(columns=out_cols + ["AssignmentSequence"])
 
     if multi_store_share is not None:
+        warn(
+            "'multi_store_share' is deprecated; use 'mover_share' instead. "
+            "Remove 'multi_store_share' from config.yaml to silence this warning."
+        )
         mover_share = float(multi_store_share)
 
     rng = np.random.default_rng(int(seed))
@@ -178,7 +195,7 @@ def generate_employee_store_assignments(
         raise ValueError(f"employees missing required columns: {missing}")
 
     emp = employees.copy()
-    emp["EmployeeKey"] = emp["EmployeeKey"].astype(np.int64)
+    emp["EmployeeKey"] = emp["EmployeeKey"].astype(np.int32)
     emp["DistrictId"] = emp["DistrictId"].astype("Int16")
     emp["HomeStoreKey"] = _infer_home_store_key(emp)
 
@@ -219,9 +236,9 @@ def generate_employee_store_assignments(
     # -----------------------------------------------------------------
     # Pre-extract all per-employee arrays (avoid .iloc inside the loop)
     # -----------------------------------------------------------------
-    ek_arr = emp["EmployeeKey"].astype(np.int64).to_numpy()
+    ek_arr = emp["EmployeeKey"].astype(np.int32).to_numpy()
     did_arr = emp["DistrictId"].to_numpy()
-    home_arr = emp["HomeStoreKey"].fillna(-1).astype(np.int64).to_numpy()
+    home_arr = emp["HomeStoreKey"].fillna(-1).astype(np.int32).to_numpy()
     role_arr = title_arr
     hire_arr = hire.to_numpy()
     term_arr = term.to_numpy()
@@ -235,7 +252,7 @@ def generate_employee_store_assignments(
     anchor_by_store: Dict[int, int] = {}
 
     if bool(ensure_store_sales_coverage):
-        staff_idx = np.full(len(emp), -1, dtype=np.int64)
+        staff_idx = np.full(len(emp), -1, dtype=np.int32)
         staff_mask = ek_arr >= STAFF_KEY_BASE
         if bool(np.any(staff_mask)):
             staff_idx[staff_mask] = (ek_arr[staff_mask] - STAFF_KEY_BASE) % STAFF_KEY_STORE_MULT
@@ -359,14 +376,15 @@ def generate_employee_store_assignments(
     # -----------------------------------------------------------------
     # Emit assignment rows
     # -----------------------------------------------------------------
-    rows: List[Dict[str, Any]] = []
+    batch_dfs: List[pd.DataFrame] = []
+    mover_rows: List[Dict[str, Any]] = []
 
-    def _emit(
+    def _emit_mover(
         ek: int, role: str, store_key: int,
         seg_start: pd.Timestamp, seg_end: Any,
         is_primary: bool, fte_val: float,
     ) -> None:
-        rows.append(dict(
+        mover_rows.append(dict(
             EmployeeKey=int(ek),
             StoreKey=int(store_key),
             StartDate=pd.to_datetime(seg_start).normalize(),
@@ -376,63 +394,57 @@ def generate_employee_store_assignments(
             IsPrimary=bool(is_primary),
         ))
 
-    # Vectorized emission: anchors get a single full-window row
+    # -----------------------------------------------------------------
+    # Vectorized: anchors get a single full-window row
+    # -----------------------------------------------------------------
     if bool(ensure_store_sales_coverage) and anchor_keys:
-        anchor_mask = np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int64))
-        n_anc = int(anchor_mask.sum())
-        if n_anc > 0:
-            for idx in np.where(anchor_mask)[0]:
-                _emit(
-                    int(ek_arr[idx]), ps_role, int(home_arr[idx]),
-                    window_start, window_end, True, float(target_fte[idx]),
-                )
+        anchor_mask = np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int32))
+        anc_idx = np.where(anchor_mask)[0]
+        if anc_idx.size > 0:
+            batch_dfs.append(pd.DataFrame({
+                "EmployeeKey": ek_arr[anc_idx],
+                "StoreKey": home_arr[anc_idx],
+                "StartDate": window_start,
+                "EndDate": window_end,
+                "FTE": target_fte[anc_idx],
+                "RoleAtStore": ps_role,
+                "IsPrimary": True,
+            }))
 
-    for i in range(len(emp)):
-        ek = int(ek_arr[i])
-        did = did_arr[i]
-        home_store = int(home_arr[i])
-        role = str(role_arr[i])
-        tgt = float(target_fte[i])
+    # -----------------------------------------------------------------
+    # Vectorized: pre-compute per-employee validity and movement
+    # -----------------------------------------------------------------
+    hire_ns = np.asarray(hire_arr, dtype="datetime64[ns]")
+    term_ns = np.asarray(term_arr, dtype="datetime64[ns]")
+    term_filled_ns = np.asarray(term_filled_arr, dtype="datetime64[ns]")
 
-        emp_hire = hire_arr[i]
-        emp_term = term_arr[i]
-        plan_end_raw = term_filled_arr[i]
+    valid = ~np.isnat(hire_ns) & ~np.isnat(term_filled_ns) & (term_filled_ns >= hire_ns)
 
-        if pd.isna(emp_hire) or pd.isna(plan_end_raw):
-            continue
-        emp_hire_ts = pd.Timestamp(emp_hire)
-        plan_end_raw_ts = pd.Timestamp(plan_end_raw)
-        if plan_end_raw_ts < emp_hire_ts:
-            continue
+    # Exclude anchors from further processing
+    if bool(ensure_store_sales_coverage) and anchor_keys:
+        valid &= ~np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int32))
 
-        # Anchors already emitted above
-        if bool(ensure_store_sales_coverage) and (ek in anchor_keys):
-            continue
+    ws_np = np.datetime64(window_start, "ns")
+    we_np = np.datetime64(window_end, "ns")
+    gen_start_all = np.maximum(hire_ns, ws_np)
+    plan_end_all = np.minimum(term_filled_ns, we_np)
 
-        open_ended = pd.isna(emp_term) or (
-            pd.notna(emp_term) and pd.Timestamp(emp_term).normalize() > window_end
-        )
+    valid &= (plan_end_all >= gen_start_all) & (gen_start_all <= we_np)
 
-        plan_end = plan_end_raw_ts.normalize()
-        if plan_end > window_end:
-            plan_end = window_end
+    open_ended_all = np.isnat(term_ns) | (term_ns > we_np)
+    end_date_all = np.where(open_ended_all, we_np, np.minimum(term_ns, we_np))
 
-        gen_start = emp_hire_ts.normalize()
-        if gen_start < window_start:
-            gen_start = window_start
-
-        if plan_end < gen_start or gen_start > window_end:
-            continue
-
-        # Store Managers: home store only, no movement
-        if role == "Store Manager":
-            prof = dict(default_profile)
-            prof["role_multiplier"] = 0.0
-            prof["episodes_min"] = 0
-            prof["episodes_max"] = 0
+    # Build per-role profile lookup (few unique roles, so dict lookup is fine)
+    _role_cache: Dict[str, Dict[str, Any]] = {}
+    unique_roles = set(role_arr[valid])
+    for r in unique_roles:
+        if r == "Store Manager":
+            _role_cache[r] = {"role_multiplier": 0.0, "episodes_min": 0,
+                              "episodes_max": 0, "duration_days_min": 30,
+                              "duration_days_max": 180}
         else:
             prof = _get_profile(
-                role,
+                r,
                 primary_sales_role=primary_sales_role,
                 default_profile=default_profile,
                 per_role_profile=per_role_profile,
@@ -440,34 +452,102 @@ def generate_employee_store_assignments(
                 max_non_sales_multiplier_frac=clamped_mult_frac,
                 max_non_sales_episodes_frac=clamped_ep_frac,
             )
+            _role_cache[r] = {
+                "role_multiplier": float(max(0.0, float_or(prof.get("role_multiplier"), 1.0))),
+                "episodes_min": max(0, int_or(prof.get("episodes_min"), 0)),
+                "episodes_max": max(
+                    max(0, int_or(prof.get("episodes_min"), 0)),
+                    int_or(prof.get("episodes_max"), 0),
+                ),
+                "duration_days_min": max(1, int_or(prof.get("duration_days_min"), 30)),
+                "duration_days_max": max(
+                    max(1, int_or(prof.get("duration_days_min"), 30)),
+                    int_or(prof.get("duration_days_max"), 180),
+                ),
+            }
 
-        role_mult = float(max(0.0, float_or(prof.get("role_multiplier"), 1.0)))
-        p_move = base * role_mult * (pt_mult if tgt < 1.0 else 1.0)
-        p_move = float(np.clip(p_move, 0.0, 0.90))
+    # Vectorized per-employee movement probability
+    role_mult_arr = np.array(
+        [_role_cache.get(r, {"role_multiplier": 1.0})["role_multiplier"] for r in role_arr],
+        dtype=np.float64,
+    )
+    emax_arr = np.array(
+        [_role_cache.get(r, {"episodes_max": 0})["episodes_max"] for r in role_arr],
+        dtype=np.int32,
+    )
 
-        e_min = max(0, int_or(prof.get("episodes_min"), 0))
-        e_max = max(e_min, int_or(prof.get("episodes_max"), 0))
+    pt_factor = np.where(target_fte < 1.0, pt_mult, 1.0)
+    p_move_all = np.clip(base * role_mult_arr * pt_factor, 0.0, 0.90)
 
-        dmin = max(1, int_or(prof.get("duration_days_min"), 30))
-        dmax = max(dmin, int_or(prof.get("duration_days_max"), 180))
+    move_draws = rng.random(len(emp))
 
-        is_mover = bool(ensure_store_sales_coverage) and (ek in mover_keys)
+    if bool(ensure_store_sales_coverage) and mover_keys:
+        forced_mover = np.isin(ek_arr, np.array(sorted(mover_keys), dtype=np.int32))
+    else:
+        forced_mover = np.zeros(len(emp), dtype=bool)
+
+    will_move = valid & (emax_arr > 0) & (forced_mover | (move_draws < p_move_all))
+    non_mover = valid & ~will_move
+
+    # -----------------------------------------------------------------
+    # Vectorized: batch-emit all non-movers as single-assignment rows
+    # -----------------------------------------------------------------
+    nm_idx = np.where(non_mover)[0]
+    if nm_idx.size > 0:
+        nm_start = gen_start_all[nm_idx]
+        nm_end = end_date_all[nm_idx]
+        ok = nm_end >= nm_start
+        nm_idx = nm_idx[ok]
+        if nm_idx.size > 0:
+            batch_dfs.append(pd.DataFrame({
+                "EmployeeKey": ek_arr[nm_idx],
+                "StoreKey": home_arr[nm_idx],
+                "StartDate": gen_start_all[nm_idx],
+                "EndDate": end_date_all[nm_idx],
+                "FTE": target_fte[nm_idx],
+                "RoleAtStore": role_arr[nm_idx],
+                "IsPrimary": True,
+            }))
+
+    # -----------------------------------------------------------------
+    # Loop only over movers (small fraction of employees)
+    # -----------------------------------------------------------------
+    mover_indices = np.where(will_move)[0]
+    for i in mover_indices:
+        ek = int(ek_arr[i])
+        did = did_arr[i]
+        home_store = int(home_arr[i])
+        role = str(role_arr[i])
+        tgt = float(target_fte[i])
+
+        emp_term = term_arr[i]
+
+        gen_start = pd.Timestamp(gen_start_all[i])
+        plan_end = pd.Timestamp(plan_end_all[i])
+        open_ended = bool(open_ended_all[i])
+
+        rp_cached = _role_cache.get(role, {})
+        e_min = int(rp_cached.get("episodes_min", 0))
+        e_max = int(rp_cached.get("episodes_max", 0))
+        dmin = int(rp_cached.get("duration_days_min", 30))
+        dmax = int(rp_cached.get("duration_days_max", 180))
+
+        is_mover = bool(forced_mover[i])
 
         episodes: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = []
-        if e_max > 0 and (is_mover or rng.random() < p_move):
-            other = _candidate_stores(did, home_store)
-            if other:
-                k = (
-                    int(rng.integers(e_min, e_max + 1))
-                    if e_max >= e_min
-                    else int(e_min)
+        other = _candidate_stores(did, home_store)
+        if other and e_max > 0:
+            k = (
+                int(rng.integers(e_min, e_max + 1))
+                if e_max >= e_min
+                else int(e_min)
+            )
+            if is_mover and k < 1:
+                k = 1
+            if k > 0:
+                episodes = _sample_non_overlapping_episodes(
+                    gen_start, plan_end, other, k, tgt, dmin, dmax,
                 )
-                if is_mover and k < 1:
-                    k = 1
-                if k > 0:
-                    episodes = _sample_non_overlapping_episodes(
-                        gen_start, plan_end, other, k, tgt, dmin, dmax,
-                    )
 
         cur = pd.to_datetime(gen_start).normalize()
 
@@ -477,29 +557,36 @@ def generate_employee_store_assignments(
 
             before_end = (s - pd.Timedelta(days=1)).normalize()
             if cur <= before_end:
-                _emit(ek, role, home_store, cur, before_end, True, tgt)
+                _emit_mover(ek, role, home_store, cur, before_end, True, tgt)
 
-            _emit(ek, role, store, s, e, False, sec_fte)
+            _emit_mover(ek, role, store, s, e, False, sec_fte)
             cur = (e + pd.Timedelta(days=1)).normalize()
 
         # Final home segment
         if cur <= plan_end:
             if open_ended:
-                _emit(ek, role, home_store, cur, window_end, True, tgt)
+                _emit_mover(ek, role, home_store, cur, window_end, True, tgt)
             else:
                 final_end = pd.to_datetime(emp_term).normalize()
                 if final_end > window_end:
                     final_end = window_end
                 if final_end >= cur:
-                    _emit(ek, role, home_store, cur, final_end, True, tgt)
+                    _emit_mover(ek, role, home_store, cur, final_end, True, tgt)
 
-    out = pd.DataFrame(rows, columns=out_cols)
+    # -----------------------------------------------------------------
+    # Assemble output from batched DataFrames + mover rows
+    # -----------------------------------------------------------------
+    parts = list(batch_dfs)
+    if mover_rows:
+        parts.append(pd.DataFrame(mover_rows, columns=out_cols))
+    out = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=out_cols)
+
     if out.empty:
         out["AssignmentSequence"] = pd.Series(dtype=np.int32)
         return out
 
-    out["EmployeeKey"] = out["EmployeeKey"].astype(np.int64)
-    out["StoreKey"] = out["StoreKey"].astype(np.int64)
+    out["EmployeeKey"] = out["EmployeeKey"].astype(np.int32)
+    out["StoreKey"] = out["StoreKey"].astype(np.int32)
     out["FTE"] = out["FTE"].astype(np.float64)
     out["IsPrimary"] = out["IsPrimary"].astype(bool)
     out["RoleAtStore"] = out["RoleAtStore"].astype(str)
@@ -537,37 +624,77 @@ def _validate_store_coverage(
 ) -> None:
     """Raise if any store has a coverage gap for the sales-eligible role."""
     df_cov = out[out["RoleAtStore"].astype(str) == ps_role].copy()
+
+    if df_cov.empty:
+        if all_stores:
+            sample = "\n".join(
+                f"StoreKey={s}: no '{ps_role}' assignments" for s in all_stores[:10]
+            )
+            raise RuntimeError(
+                "EmployeeStoreAssignments coverage gaps detected (sales-eligible role). "
+                "Sample:\n" + sample
+            )
+        return
+
     df_cov["StartDate"] = pd.to_datetime(df_cov["StartDate"]).dt.normalize()
     df_cov["EndDate"] = pd.to_datetime(df_cov["EndDate"]).dt.normalize()
 
-    gaps: list[str] = []
-    for store in all_stores:
-        segs = (
-            df_cov[df_cov["StoreKey"] == int(store)][["StartDate", "EndDate"]]
-            .sort_values("StartDate")
-        )
-        if segs.empty:
-            gaps.append(f"StoreKey={int(store)}: no '{ps_role}' assignments")
-            continue
+    covered = set(df_cov["StoreKey"].unique())
+    gaps: list[str] = [
+        f"StoreKey={s}: no '{ps_role}' assignments"
+        for s in all_stores if s not in covered
+    ]
 
-        cur = window_start
-        for s, e in segs.itertuples(index=False, name=None):
-            s = pd.to_datetime(s).normalize()
-            e = pd.to_datetime(e).normalize()
-            if e < cur:
+    # Sort once, then walk through pre-grouped segments
+    df_cov = df_cov.sort_values(["StoreKey", "StartDate", "EndDate"]).reset_index(drop=True)
+    sk = df_cov["StoreKey"].to_numpy()
+    starts = df_cov["StartDate"].to_numpy().astype("datetime64[D]")
+    ends = df_cov["EndDate"].to_numpy().astype("datetime64[D]")
+
+    ws = np.datetime64(window_start, "D")
+    we = np.datetime64(window_end, "D")
+    one_day = np.timedelta64(1, "D")
+
+    store_breaks = np.flatnonzero(np.r_[True, sk[1:] != sk[:-1]])
+    group_ends = np.r_[store_breaks[1:], len(sk)]
+
+    for gs, ge in zip(store_breaks, group_ends):
+        store = int(sk[gs])
+        seg_s = starts[gs:ge]
+        seg_e = ends[gs:ge]
+
+        # Merge overlapping/adjacent, then check coverage
+        cur_ms, cur_me = seg_s[0], seg_e[0]
+        cur = ws
+        gap_found = False
+        for j in range(1, ge - gs):
+            if seg_s[j] <= cur_me + one_day:
+                cur_me = max(cur_me, seg_e[j])
+            else:
+                # Flush merged segment
+                if cur_me < cur:
+                    pass
+                elif cur_ms > cur:
+                    gaps.append(
+                        f"StoreKey={store} gap "
+                        f"{cur}..{min(cur_ms - one_day, we)}"
+                    )
+                    gap_found = True
+                    break
+                else:
+                    cur = cur_me + one_day
+                cur_ms, cur_me = seg_s[j], seg_e[j]
+
+        if not gap_found:
+            # Check final merged segment
+            if cur_me >= cur and cur_ms <= cur:
+                cur = cur_me + one_day
+            elif cur_ms > cur:
+                gaps.append(f"StoreKey={store} gap {cur}..{min(cur_ms - one_day, we)}")
                 continue
-            if s > cur:
-                gaps.append(
-                    f"StoreKey={int(store)} gap "
-                    f"{cur.date()}..{(s - pd.Timedelta(days=1)).date()}"
-                )
-                break
-            cur = (max(cur, e) + pd.Timedelta(days=1)).normalize()
-            if cur > window_end:
-                break
 
-        if cur <= window_end:
-            gaps.append(f"StoreKey={int(store)} gap {cur.date()}..{window_end.date()}")
+            if cur <= we:
+                gaps.append(f"StoreKey={store} gap {cur}..{we}")
 
     if gaps:
         sample = "\n".join(gaps[:10])
@@ -612,7 +739,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     version_cfg["schema_version"] = 9
     version_cfg["_rows_employees"] = int(len(employees))
     if "EmployeeKey" in employees.columns and len(employees) > 0:
-        ek = pd.to_numeric(employees["EmployeeKey"], errors="coerce").dropna().astype(np.int64)
+        ek = pd.to_numeric(employees["EmployeeKey"], errors="coerce").dropna().astype(np.int32)
         if len(ek) > 0:
             version_cfg["_emp_key_min"] = int(ek.min())
             version_cfg["_emp_key_max"] = int(ek.max())

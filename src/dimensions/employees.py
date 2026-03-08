@@ -101,7 +101,7 @@ def _apply_deterministic_names(
             "Ensure name pool CSV files exist under the configured people folder."
         )
 
-    ek = df["EmployeeKey"].astype(np.int64).to_numpy()
+    ek = df["EmployeeKey"].astype(np.int32).to_numpy()
     ek_u64 = ek.astype(np.uint64)
 
     # Deterministic Gender distribution ~ 49/49/2 (M/F/O) based on hash
@@ -112,7 +112,7 @@ def _apply_deterministic_names(
 
     # Region per row from GeographyKey → ISOCode → region code
     if "GeographyKey" in df.columns and iso_by_geo:
-        gk = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(-1).astype(np.int64).to_numpy()
+        gk = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(-1).astype(np.int32).to_numpy()
         iso = np.array(
             [iso_by_geo.get(int(k), "") if k >= 0 else "" for k in gk],
             dtype=object,
@@ -166,11 +166,6 @@ def _enrich_employee_hr_columns(
     org_level = df["OrgLevel"].astype(int).to_numpy()
     title = df["Title"].astype(str)
 
-    if "Gender" not in df.columns or df["Gender"].isna().all():
-        df["Gender"] = rng.choice(
-            ["M", "F", "O"], size=n, p=[0.49, 0.49, 0.02],
-        ).astype(object)
-
     # BirthDate: age-at-hire varies by level (staff younger, management older)
     age_mean = np.where(org_level >= 6, 27, np.where(org_level >= 5, 34, 42))
     ages = np.clip(rng.normal(loc=age_mean, scale=6.0, size=n), 18, 62).astype(int)
@@ -194,14 +189,12 @@ def _enrich_employee_hr_columns(
         + "."
         + df["LastName"].str.lower().str.replace(" ", "", regex=False)
         + "."
-        + df["EmployeeKey"].astype("Int64").astype(str)
+        + df["EmployeeKey"].astype("Int32").astype(str)
     )
     df["EmailAddress"] = (email_local + "@" + str(email_domain)).astype(str)
 
-    phone_digits = rng.integers(0, 10, size=(n, 10))
-    df["Phone"] = pd.Series(
-        ["".join(map(str, row)) for row in phone_digits], dtype="object",
-    )
+    phone_raw = rng.integers(0, 10, size=n * 10, dtype=np.uint8) + np.uint8(48)
+    df["Phone"] = pd.Series(phone_raw.view("S10").astype("U10"), dtype="object")
 
     # Emergency contacts: pick a plausible name from the employee population
     if n > 1:
@@ -214,13 +207,9 @@ def _enrich_employee_hr_columns(
             + df["LastName"].iloc[pick].to_numpy(dtype=object)
         )
     else:
-        df["EmergencyContactName"] = (
-            df["FirstName"].astype(str) + " " + df["LastName"].astype(str)
-        ).astype(object)
-    ec_digits = rng.integers(0, 10, size=(n, 10))
-    df["EmergencyContactPhone"] = pd.Series(
-        ["".join(map(str, row)) for row in ec_digits], dtype="object",
-    )
+        df["EmergencyContactName"] = pd.Series(["Jane Doe"], dtype="object")
+    ec_raw = rng.integers(0, 10, size=n * 10, dtype=np.uint8) + np.uint8(48)
+    df["EmergencyContactPhone"] = pd.Series(ec_raw.view("S10").astype("U10"), dtype="object")
 
     # Compensation
     salaried = (df["OrgLevel"].astype(int) <= 5).to_numpy()
@@ -249,7 +238,6 @@ def _enrich_employee_hr_columns(
 
     # SalesPersonFlag
     df["SalesPersonFlag"] = title.isin(["Sales Associate"]).astype(np.int8)
-    df["IsSalesPerson"] = df["SalesPersonFlag"].astype(np.int8)
 
     # DepartmentName
     dept = np.where(
@@ -290,21 +278,20 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
         s = pd.to_numeric(s, errors="coerce")
         df[col] = s.fillna(0).astype(dtype)
 
-    _to_int("EmployeeKey", np.int64)
+    _to_int("EmployeeKey", np.int32)
     if "ParentEmployeeKey" in df.columns:
         df["ParentEmployeeKey"] = pd.to_numeric(
             df["ParentEmployeeKey"], errors="coerce",
-        ).astype("Int64")
+        ).astype("Int32")
     _to_int("OrgLevel", np.int16)
     _to_int("SalesPersonFlag", np.int8)
-    _to_int("IsSalesPerson", np.int8)
     _to_int("SalariedFlag", np.int8)
     _to_int("CurrentFlag", np.int8)
     _to_int("IsActive", np.int8)
     _to_int("RegionId", np.int16)
     _to_int("DistrictId", np.int16)
-    _to_int("StoreKey", np.int64)
-    _to_int("GeographyKey", np.int64)
+    _to_int("StoreKey", np.int32)
+    _to_int("GeographyKey", np.int32)
     _to_int("PayFrequency", np.int16)
 
     return df
@@ -353,7 +340,7 @@ def generate_employee_dimension(
         raise ValueError(f"stores.parquet missing required columns: {missing}")
 
     stores = stores.copy()
-    stores["StoreKey"] = stores["StoreKey"].astype(np.int64)
+    stores["StoreKey"] = stores["StoreKey"].astype(np.int32)
     stores = stores.sort_values("StoreKey").reset_index(drop=True)
 
     district_size = max(1, int_or(district_size, 15))
@@ -379,14 +366,14 @@ def generate_employee_dimension(
     stores["RegionId"] = region_id
 
     # --- Key-encoding helpers using module constants ---
-    CEO_KEY = np.int64(1)
-    VP_OPS_KEY = np.int64(2)
+    CEO_KEY = np.int32(1)
+    VP_OPS_KEY = np.int32(2)
 
-    def _region_mgr_key(rid: int) -> np.int64:
-        return np.int64(10_000 + int(rid))
+    def _region_mgr_key(rid: int) -> np.int32:
+        return np.int32(10_000 + int(rid))
 
-    def _district_mgr_key(did: int) -> np.int64:
-        return np.int64(20_000 + int(did))
+    def _district_mgr_key(did: int) -> np.int32:
+        return np.int32(20_000 + int(did))
 
     # ---------------------------------------------------------------
     # Build corporate / region / district tiers (small — loop is fine)
@@ -448,17 +435,17 @@ def generate_employee_dimension(
     # ---------------------------------------------------------------
     # Store managers — vectorized
     # ---------------------------------------------------------------
-    sk_arr = stores["StoreKey"].to_numpy(dtype=np.int64)
+    sk_arr = stores["StoreKey"].to_numpy(dtype=np.int32)
     did_arr = stores["DistrictId"].to_numpy(dtype=np.int16)
     rid_arr = stores["RegionId"].to_numpy(dtype=np.int16)
-    gk_arr = stores["GeographyKey"].to_numpy(dtype=np.int64)
+    gk_arr = stores["GeographyKey"].to_numpy(dtype=np.int32)
 
     mgr_parent_keys = np.array(
-        [_district_mgr_key(int(d)) for d in did_arr], dtype=np.int64,
+        [_district_mgr_key(int(d)) for d in did_arr], dtype=np.int32,
     )
 
     mgr_df = pd.DataFrame({
-        "EmployeeKey": (STORE_MGR_KEY_BASE + sk_arr).astype(np.int64),
+        "EmployeeKey": (STORE_MGR_KEY_BASE + sk_arr).astype(np.int32),
         "ParentEmployeeKey": mgr_parent_keys,
         "EmployeeName": "",
         "Title": "Store Manager",
@@ -503,14 +490,14 @@ def generate_employee_dimension(
         staff_gk = gk_arr[store_indices]
 
         # Per-employee index within each store (1-based)
-        within_store_idx = np.ones(total_staff, dtype=np.int64)
+        within_store_idx = np.ones(total_staff, dtype=np.int32)
         offsets = np.cumsum(staff_counts)[:-1]
         if offsets.size > 0:
             np.subtract.at(within_store_idx, offsets, staff_counts[:-1] - 1)
         within_store_idx = np.cumsum(within_store_idx)
 
-        staff_ek = (STAFF_KEY_BASE + staff_sk * STAFF_KEY_STORE_MULT + within_store_idx).astype(np.int64)
-        staff_parent = (STORE_MGR_KEY_BASE + staff_sk).astype(np.int64)
+        staff_ek = (STAFF_KEY_BASE + staff_sk * STAFF_KEY_STORE_MULT + within_store_idx).astype(np.int32)
+        staff_parent = (STORE_MGR_KEY_BASE + staff_sk).astype(np.int32)
 
         # Sample titles in bulk, then overwrite first k per store with primary sales role
         all_titles = rng.choice(_STAFF_TITLES, size=total_staff, p=_STAFF_TITLES_P).astype(object)
@@ -557,7 +544,7 @@ def generate_employee_dimension(
     n = len(df)
     ps_role_str = str(primary_sales_role or "Sales Associate")
 
-    ek_all = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
+    ek_all = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int32)
     is_sales_associate = (ek_all >= STAFF_KEY_BASE) & (df["Title"].astype(str) == ps_role_str)
     sa_mask_np = is_sales_associate.to_numpy()
 
@@ -603,13 +590,13 @@ def generate_employee_dimension(
     )
 
     # Final integer casts (single consolidated pass)
-    df["EmployeeKey"] = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
-    df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").astype("Int64")
+    df["EmployeeKey"] = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int32)
+    df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").astype("Int32")
     df["OrgLevel"] = pd.to_numeric(df["OrgLevel"], errors="coerce").fillna(0).astype(np.int16)
     df["RegionId"] = pd.to_numeric(df["RegionId"], errors="coerce").fillna(0).astype(np.int16)
     df["DistrictId"] = pd.to_numeric(df["DistrictId"], errors="coerce").fillna(0).astype(np.int16)
-    df["StoreKey"] = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int64)
-    df["GeographyKey"] = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(0).astype(np.int64)
+    df["StoreKey"] = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int32)
+    df["GeographyKey"] = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(0).astype(np.int32)
 
     if not include_store_cols:
         df = df.drop(columns=["StoreKey", "GeographyKey"], errors="ignore")
@@ -672,7 +659,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     geo_path = parquet_folder / "geography.parquet"
     if geo_path.exists():
         geo_df = pd.read_parquet(geo_path, columns=["GeographyKey", "ISOCode"])
-        gk = pd.to_numeric(geo_df["GeographyKey"], errors="coerce").dropna().astype(np.int64).to_numpy()
+        gk = pd.to_numeric(geo_df["GeographyKey"], errors="coerce").dropna().astype(np.int32).to_numpy()
         iso = geo_df.loc[geo_df["GeographyKey"].notna(), "ISOCode"].astype(str).to_numpy()
         iso_by_geo = dict(zip(gk, iso))
 
