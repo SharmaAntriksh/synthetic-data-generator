@@ -345,7 +345,8 @@ def generate_employee_dimension(
     # Sort stores by geography so districts contain geographically nearby stores.
     # Falls back to StoreKey-only ordering when geography columns are absent.
     sort_cols = []
-    if "Continent" in stores.columns:
+    has_continent = "Continent" in stores.columns
+    if has_continent:
         sort_cols.append("Continent")
     if "Country" in stores.columns:
         sort_cols.append("Country")
@@ -366,9 +367,24 @@ def generate_employee_dimension(
 
     rng = np.random.default_rng(int(seed))
 
-    # Partition stores into districts and regions (deterministic by StoreKey order)
+    # Partition stores into districts that never cross continent boundaries.
+    # Within each continent group, stores are subdivided into chunks of
+    # district_size.  Districts are numbered sequentially across all groups,
+    # then grouped into regions using districts_per_region.
     n_stores = len(stores)
-    district_id = (np.arange(n_stores) // district_size + 1).astype(np.int16)
+
+    if has_continent:
+        district_id = np.zeros(n_stores, dtype=np.int16)
+        next_did = 1
+        for _, grp_idx in stores.groupby("Continent", sort=False):
+            idx = grp_idx.index.to_numpy()
+            n_grp = len(idx)
+            local_did = np.arange(n_grp) // district_size
+            district_id[idx] = (local_did + next_did).astype(np.int16)
+            next_did += int(local_did.max()) + 1
+    else:
+        district_id = (np.arange(n_stores) // district_size + 1).astype(np.int16)
+
     region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int16)
 
     stores["DistrictId"] = district_id

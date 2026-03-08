@@ -9,9 +9,9 @@ scale:
   sales_rows: 103285
   products: 2581
   customers: 48837
-  stores: 30
+  stores: 40
   geographies: 200
-  promotions: { seasonal: 11, clearance: 4, limited: 5 }
+  promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
 # GLOBAL DEFAULTS
@@ -137,7 +137,8 @@ geography: {}
 # ------------------------------------------------------------------
 # PROMOTIONS
 # ------------------------------------------------------------------
-promotions: {}
+promotions:
+  new_customer_window_months: 3    # months after CustomerStartDate where New Customer promo applies (0 = same month only)
 
 # ------------------------------------------------------------------
 # STORES
@@ -173,7 +174,7 @@ employees:
 
     mover_share: 0.36
     pool_scope: district
-    allow_store_revisit: false
+    allow_store_revisit: true
 
     role_profiles:
       default:                 { mult: 0.25, episodes: [0, 1], duration: [60, 180]  }
