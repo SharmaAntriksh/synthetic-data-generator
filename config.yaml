@@ -9,9 +9,9 @@ scale:
   sales_rows: 103285
   products: 2581
   customers: 48837
-  stores: 10
+  stores: 40
   geographies: 200
-  promotions: { seasonal: 11, clearance: 4, limited: 5 }
+  promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
 # GLOBAL DEFAULTS
@@ -130,22 +130,15 @@ superpowers:
   seed: 123
 
 # ------------------------------------------------------------------
-# GEOGRAPHY
+# GEOGRAPHY (static — derived from CURATED_ROWS in geography.py)
 # ------------------------------------------------------------------
-geography:
-  country_weights:
-    United States: 0.35
-    India: 0.20
-    United Kingdom: 0.10
-    Germany: 0.10
-    France: 0.10
-    Australia: 0.07
-    Canada: 0.08
+geography: {}
 
 # ------------------------------------------------------------------
 # PROMOTIONS
 # ------------------------------------------------------------------
-promotions: {}
+promotions:
+  new_customer_window_months: 3    # months after CustomerStartDate where New Customer promo applies (0 = same month only)
 
 # ------------------------------------------------------------------
 # STORES
@@ -162,6 +155,8 @@ stores:
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:
+  district_size: 10              # stores per district (default: 15)
+  districts_per_region: 8        # districts per region (default: 8)
   use_store_employee_count: false
   include_store_cols: false
   min_staff_per_store: 3
@@ -175,15 +170,15 @@ employees:
     ensure_store_sales_coverage: true
     min_primary_sales_per_store: 2
     primary_sales_role: "Sales Associate"
+    movable_sales_per_store: 4
 
-    mover_share: 0.25
+    mover_share: 0.36
     pool_scope: district
-    allow_store_revisit: false
+    allow_store_revisit: true
 
     role_profiles:
-      #                          mult  episodes    duration_days
       default:                 { mult: 0.25, episodes: [0, 1], duration: [60, 180]  }
-      Sales Associate:         { mult: 2.50, episodes: [1, 4], duration: [60, 240]  }
+      Sales Associate:         { mult: 2.50, episodes: [2, 6], duration: [60, 240]  }
       Cashier:                 { mult: 1.10, episodes: [0, 3], duration: [14, 120]  }
       Fulfillment Associate:   { mult: 0.40, episodes: [0, 2], duration: [45, 180]  }
 
@@ -213,7 +208,7 @@ dates:
 exchange_rates:
   use_global_dates: true
 
-  currencies: ["USD", "EUR", "INR", "GBP", "AUD", "CAD"]
+  currencies: ["USD", "EUR", "INR", "GBP", "AUD", "CAD", "CNY"]
   base_currency: "USD"
   volatility: 0.02
 

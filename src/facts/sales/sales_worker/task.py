@@ -585,7 +585,7 @@ def _ensure_salesperson_employee_key_effective(
 
     rng = np.random.default_rng(seed)
 
-    out_emp = table.column("SalesPersonEmployeeKey").to_numpy(zero_copy_only=False).astype("int64", copy=True)
+    out_emp = table.column("SalesPersonEmployeeKey").to_numpy(zero_copy_only=False).astype("int32", copy=True)
 
     has_orders = order_enc is not None or "SalesOrderNumber" in col_names
 
@@ -696,7 +696,7 @@ def _ensure_salesperson_employee_key_effective(
         out_emp[valid] = ord_emp[valid]
 
     idx = table.schema.get_field_index("SalesPersonEmployeeKey")
-    return table.set_column(idx, "SalesPersonEmployeeKey", pa.array(out_emp, type=pa.int64()))
+    return table.set_column(idx, "SalesPersonEmployeeKey", pa.array(out_emp, type=pa.int32()))
 
 
 def build_header_from_detail(detail: pa.Table, *, validate_invariants: bool = True) -> pa.Table:

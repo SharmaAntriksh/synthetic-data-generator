@@ -217,7 +217,6 @@ def _distribute_scale(cfg: Dict[str, Any]) -> Dict[str, Any]:
         ("products",    "products",   "num_products"),
         ("customers",   "customers",  "total_customers"),
         ("stores",      "stores",     "num_stores"),
-        ("geographies", "geography",  "target_rows"),
     ]
     for scale_key, section, target_key in _map:
         v = scale.get(scale_key)

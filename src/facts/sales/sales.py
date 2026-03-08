@@ -764,8 +764,8 @@ def generate_sales_fact(
     end_dt_col = pd.to_datetime(emp_assign_df["EndDate"], errors="coerce").dt.normalize()
     end_dt_col = end_dt_col.fillna(end_dt)
 
-    employee_assign_store_key = _as_np(emp_assign_df["StoreKey"], np.int64)
-    employee_assign_employee_key = _as_np(emp_assign_df["EmployeeKey"], np.int64)
+    employee_assign_store_key = _as_np(emp_assign_df["StoreKey"], np.int32)
+    employee_assign_employee_key = _as_np(emp_assign_df["EmployeeKey"], np.int32)
     employee_assign_start_date = _as_np(start_dt, "datetime64[D]")
     employee_assign_end_date = _as_np(end_dt_col, "datetime64[D]")
     employee_assign_role = _as_np(emp_assign_df["RoleAtStore"].astype(str))

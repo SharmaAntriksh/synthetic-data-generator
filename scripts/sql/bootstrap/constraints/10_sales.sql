@@ -19,9 +19,9 @@
     silently skipped when skip_order_cols is true.
 
   • The Employees FK uses a full type-compatibility check (system_type_id,
-    user_type_id, max_length, precision, scale) because the Sales fact
-    stores SalesPersonEmployeeKey as BIGINT while Employees.EmployeeKey
-    may be INT in older configs.  This matches the pattern in
+    user_type_id, max_length, precision, scale) because older configs
+    may still have SalesPersonEmployeeKey as BIGINT while
+    Employees.EmployeeKey is INT.  This matches the pattern in
     20_sales_order_header.sql.
 
   • SalesReturn is linked back to Sales via the composite natural key

@@ -147,7 +147,7 @@ def _normalize_assignment_arrays(
     Normalize and validate employee assignment arrays.
 
     Returns:
-      (assign_store_i64, assign_emp_i64, start_D, end_D, fte_f64, is_primary_bool, max_store_key)
+      (assign_store_i64, assign_emp_i32, start_D, end_D, fte_f64, is_primary_bool, max_store_key)
 
     Notes:
       - NaT start -> FAR_PAST
@@ -165,7 +165,7 @@ def _normalize_assignment_arrays(
     max_store_key = int(store_keys.max())
 
     a_store = np.asarray(assign_store, dtype=np.int64)
-    a_emp = np.asarray(assign_emp, dtype=np.int64)
+    a_emp = np.asarray(assign_emp, dtype=np.int32)
     if a_store.size == 0 or a_emp.size == 0:
         return None
     if a_store.shape[0] != a_emp.shape[0]:
@@ -279,7 +279,7 @@ def _build_salesperson_effective_by_store(
         if store < 0 or store > max_store_key:
             continue
         out[store] = (
-            a_emp[idx].astype(np.int64, copy=False),
+            a_emp[idx].astype(np.int32, copy=False),
             start_fixed[idx].astype("datetime64[D]", copy=False),
             end_fixed[idx].astype("datetime64[D]", copy=False),
             weights[idx].astype(np.float64, copy=False),
@@ -348,7 +348,7 @@ def _build_salesperson_by_store_month(
     start_off = np.clip(start_off, 0, T - 1).astype(np.int64, copy=False)
     end_off = np.clip(end_off, 0, T - 1).astype(np.int64, copy=False)
 
-    out = np.full((max_store_key + 1, T), -1, dtype=np.int64)
+    out = np.full((max_store_key + 1, T), -1, dtype=np.int32)
 
     order = np.argsort(a_store, kind="mergesort")
     store_sorted = a_store[order]
@@ -584,7 +584,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
     # Filter employee assignment rows to sales-eligible roles
     # ------------------------------------------------------------
     if employee_assign_employee_key is not None and employee_assign_store_key is not None:
-        emp_key = np.asarray(employee_assign_employee_key, dtype=np.int64)
+        emp_key = np.asarray(employee_assign_employee_key, dtype=np.int32)
 
         if employee_assign_role is None:
             raise RuntimeError(
@@ -611,7 +611,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         if employee_assign_is_primary is not None:
             employee_assign_is_primary = np.asarray(employee_assign_is_primary, dtype=bool)[mask]
 
-        salesperson_global_pool = np.unique(employee_assign_employee_key).astype(np.int64, copy=False)
+        salesperson_global_pool = np.unique(employee_assign_employee_key).astype(np.int32, copy=False)
     else:
         salesperson_global_pool = None
 
