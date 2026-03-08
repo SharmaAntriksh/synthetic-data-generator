@@ -299,13 +299,31 @@ def _load_appearance_cfg() -> dict:
 # ===============================================================
 
 def _snap_unit_price(rng, up: np.ndarray, acfg: dict) -> np.ndarray:
-    """Snap unit prices to banded increments with configurable endings."""
+    """Snap unit prices to banded increments with configurable endings.
+
+    Uses stochastic rounding when mode is 'floor': the probability of
+    rounding up equals the fractional position within the step, so prices
+    transition gradually as inflation pushes them through a band rather
+    than jumping all at once after a multi-year plateau.
+    """
     if not acfg.get("enabled", False):
         return up
 
     up = np.maximum(_as_f64(up), 0.0)
     step = np.maximum(_choose_step(up, acfg["up_band_max"], acfg["up_band_step"]), 1.0)
-    anchor = _quantize(up, step, acfg["up_round"])
+
+    if acfg["up_round"] == "floor":
+        # Stochastic rounding: round up with probability = fractional part
+        ratio = up / step
+        floor_val = np.floor(ratio)
+        frac = ratio - floor_val
+        anchor = np.where(
+            rng.random(up.shape[0]) < frac,
+            (floor_val + 1) * step,
+            floor_val * step,
+        )
+    else:
+        anchor = _quantize(up, step, acfg["up_round"])
 
     idx = rng.choice(acfg["up_end_vals"].size, size=up.shape[0], p=acfg["up_end_w"])
     ending = acfg["up_end_vals"][idx]

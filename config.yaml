@@ -18,8 +18,8 @@ scale:
 defaults:
   seed: 42
   dates:
-    start: "2021-01-01"
-    end: "2024-02-15"
+    start: "2020-01-01"
+    end: "2025-02-15"
 
 paths:
   geography: "./data/parquet_dims/geography.parquet"

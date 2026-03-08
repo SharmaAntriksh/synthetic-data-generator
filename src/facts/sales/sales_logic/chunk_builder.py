@@ -769,22 +769,6 @@ def build_chunk_table(
         n_orders = int(customer_keys_for_orders.size)
 
         # --------------------------------------------------------
-        # PRODUCTS (PER ORDER) - one product per order; expanded
-        # to line level after build_orders when multi-line is active
-        # --------------------------------------------------------
-        prod_idx = _sample_product_row_indices(
-            rng=rng,
-            n=n_orders,
-            product_np=product_np,
-            m_offset=int(m_offset),
-            enabled=use_brand_popularity,
-        )
-
-        product_keys_order = product_np[prod_idx, 0].astype(np.int64, copy=False)
-        unit_price_order   = product_np[prod_idx, 1].astype(np.float64, copy=False)
-        unit_cost_order    = product_np[prod_idx, 2].astype(np.float64, copy=False)
-
-        # --------------------------------------------------------
         # ORDERS (use month-specific date pool so month loop is real)
         # --------------------------------------------------------
         if not skip_cols:
@@ -810,7 +794,6 @@ def build_chunk_table(
                 date_pool=month_date_pool,
                 date_prob=month_date_prob,
                 customers=customer_keys_for_orders,
-                product_keys=product_keys_order,
                 _len_date_pool=len(month_date_pool),
                 _len_customers=n_orders,
                 order_id_start=int(order_id_start),
@@ -824,22 +807,29 @@ def build_chunk_table(
             order_ids_int = orders["order_ids_int"]
             line_num = orders["line_num"]
 
-            # Expand products from order level to line level (preserves brand coherence)
-            repeats = orders["_repeats"]
-            product_keys = np.repeat(product_keys_order, repeats)
-            unit_price  = np.repeat(unit_price_order, repeats)
-            unit_cost   = np.repeat(unit_cost_order, repeats)
-
         else:
             customer_keys_out = customer_keys_for_orders
             order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=n_orders)]
             order_ids_int = None
             line_num = None
-            product_keys = product_keys_order
-            unit_price  = unit_price_order
-            unit_cost   = unit_cost_order
 
         n_lines = int(np.asarray(customer_keys_out).shape[0])
+
+        # --------------------------------------------------------
+        # PRODUCTS (PER LINE) — each line gets its own product
+        # so multi-line orders contain distinct items, not repeats
+        # --------------------------------------------------------
+        prod_idx = _sample_product_row_indices(
+            rng=rng,
+            n=n_lines,
+            product_np=product_np,
+            m_offset=int(m_offset),
+            enabled=use_brand_popularity,
+        )
+
+        product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
+        unit_price   = product_np[prod_idx, 1].astype(np.float64, copy=False)
+        unit_cost    = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
         # --------------------------------------------------------
         # STORE → GEO → CURRENCY (guard missing mappings)

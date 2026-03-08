@@ -82,7 +82,6 @@ def build_orders(
     date_pool,
     date_prob,
     customers,
-    product_keys,
     _len_date_pool: int,
     _len_customers: int,
     *,

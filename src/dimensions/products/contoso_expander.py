@@ -136,13 +136,12 @@ def expand_contoso_products(
                 sel = np.random.default_rng(seed).permutation(base_count)[:num_products]
             trimmed = base.iloc[sel].reset_index(drop=True).copy()
 
-        # Preserve original Contoso ProductKey as lineage
-        trimmed["BaseProductKey"] = pd.to_numeric(trimmed["ProductKey"], errors="coerce").fillna(0).astype("int64")
-
         # New dense surrogate key
         trimmed["ProductKey"] = np.arange(1, num_products + 1, dtype=np.int64)
 
-        # No variants when trimmed without replacement
+        # No variants when trimmed: each product IS its own base
+        trimmed["BaseProductKey"] = trimmed["ProductKey"].copy()
+
         trimmed["VariantIndex"] = np.zeros(num_products, dtype=np.int64)
 
         # Business-friendly code
@@ -159,14 +158,18 @@ def expand_contoso_products(
     repeat_factor = int(np.ceil(num_products / base_count))
     expanded = pd.concat([base_shuf] * repeat_factor, ignore_index=True).iloc[:num_products].copy()
 
-    # Preserve lineage
-    expanded["BaseProductKey"] = pd.to_numeric(expanded["ProductKey"], errors="coerce").fillna(0).astype("int64")
-
-    # New surrogate key
+    # Save original Contoso key for grouping, then assign dense surrogate
+    original_key = pd.to_numeric(expanded["ProductKey"], errors="coerce").fillna(0).astype("int64")
     expanded["ProductKey"] = np.arange(1, num_products + 1, dtype=np.int64)
 
-    # Variant index per base product
-    expanded["VariantIndex"] = expanded.groupby("BaseProductKey").cumcount().astype("int64")
+    # Variant index per original Contoso product
+    expanded["VariantIndex"] = original_key.groupby(original_key).cumcount().astype("int64")
+
+    # Map BaseProductKey to the NEW ProductKey of each group's first variant (VariantIndex=0)
+    base_map = expanded.loc[expanded["VariantIndex"] == 0, ["ProductKey"]].copy()
+    base_map["_orig"] = original_key[expanded["VariantIndex"] == 0].values
+    orig_to_new = base_map.set_index("_orig")["ProductKey"]
+    expanded["BaseProductKey"] = original_key.map(orig_to_new).astype("int64")
 
     # ProductCode
     expanded["ProductCode"] = expanded["ProductKey"].astype(str).str.zfill(7)
