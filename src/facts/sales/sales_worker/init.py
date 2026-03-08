@@ -18,6 +18,80 @@ from .schemas import build_worker_schemas
 
 EMPLOYEE_KEY_MIN_NON_MANAGER = 40_000_000
 
+# Default assortment coverage ratios by StoreType
+_DEFAULT_ASSORTMENT_COVERAGE = {
+    "Online": 1.0,
+    "Hypermarket": 0.85,
+    "Supermarket": 0.50,
+    "Convenience": 0.25,
+}
+
+# Knuth multiplicative hash constant (2^32 * phi)
+_HASH_MULT = np.int64(2654435761)
+
+
+def _build_store_assortment(
+    store_keys: np.ndarray,
+    store_type_arr: np.ndarray,
+    product_np: np.ndarray,
+    product_subcat_key: np.ndarray,
+    coverage_cfg: dict,
+    seed: int = 42,
+) -> list:
+    """
+    Build per-store product row index arrays for assortment filtering.
+
+    Uses subcategory-level deterministic hashing: for each (StoreKey, SubcategoryKey)
+    pair, a hash decides whether that subcategory is stocked at that store. All
+    products within a stocked subcategory are available.
+
+    Returns:
+        List indexed by StoreKey (dense). Each entry is a np.ndarray of row indices
+        into product_np, or None for missing store keys.
+    """
+    n_products = len(product_np)
+    unique_subcats = np.unique(product_subcat_key)
+    n_subcats = len(unique_subcats)
+
+    # Pre-build subcategory → product row indices
+    subcat_to_rows: dict[int, np.ndarray] = {}
+    for sc in unique_subcats:
+        subcat_to_rows[int(sc)] = np.flatnonzero(product_subcat_key == sc)
+
+    max_sk = int(store_keys.max()) + 1
+    result: list = [None] * max_sk
+
+    # Build a hash seed offset from the config seed for reproducibility
+    seed_offset = np.int64(seed * 31 + 7)
+
+    for sk, st in zip(store_keys, store_type_arr):
+        sk_int = int(sk)
+        coverage = float(coverage_cfg.get(str(st), coverage_cfg.get("default", 0.50)))
+
+        if coverage >= 1.0:
+            result[sk_int] = np.arange(n_products, dtype=np.int64)
+            continue
+
+        # Deterministic hash per (store, subcategory) to decide inclusion
+        threshold = int(coverage * 10000)
+        included_rows = []
+        for sc in unique_subcats:
+            sc_int = int(sc)
+            # Simple deterministic hash
+            h = abs(int((np.int64(sk_int) * _HASH_MULT + np.int64(sc_int) * np.int64(40503) + seed_offset) % np.int64(10000)))
+            if h < threshold:
+                included_rows.append(subcat_to_rows[sc_int])
+
+        if included_rows:
+            result[sk_int] = np.concatenate(included_rows)
+        else:
+            # Ensure at least 1 subcategory (pick the one with lowest hash)
+            best_sc = min(unique_subcats, key=lambda sc: abs(int((np.int64(sk_int) * _HASH_MULT + np.int64(int(sc)) * np.int64(40503) + seed_offset) % np.int64(10000))))
+            result[sk_int] = subcat_to_rows[int(best_sc)]
+
+    return result
+
+
 # ---------------------------------------------------------------------
 # Small helpers (kept close to monolith behavior for compatibility)
 # ---------------------------------------------------------------------
@@ -583,6 +657,31 @@ def init_sales_worker(worker_cfg: dict) -> None:
     store_keys = as_int64(store_keys)
 
     # ------------------------------------------------------------
+    # Store-product assortment (optional)
+    # ------------------------------------------------------------
+    store_to_product_rows = None
+    assortment_cfg = worker_cfg.get("assortment")
+    if isinstance(assortment_cfg, dict) and assortment_cfg.get("enabled"):
+        product_subcat_key = worker_cfg.get("product_subcat_key")
+        store_type_map = worker_cfg.get("store_type_map")
+        if product_subcat_key is not None and store_type_map is not None:
+            product_subcat_key = np.asarray(product_subcat_key, dtype=np.int64)
+            store_type_arr = np.array(
+                [str(store_type_map.get(int(sk), "Supermarket")) for sk in store_keys],
+                dtype=object,
+            )
+            coverage = assortment_cfg.get("coverage", _DEFAULT_ASSORTMENT_COVERAGE)
+            assort_seed = int(assortment_cfg.get("seed", worker_cfg.get("seed_master", 42)))
+            store_to_product_rows = _build_store_assortment(
+                store_keys=store_keys,
+                store_type_arr=store_type_arr,
+                product_np=product_np,
+                product_subcat_key=product_subcat_key,
+                coverage_cfg=coverage,
+                seed=assort_seed,
+            )
+
+    # ------------------------------------------------------------
     # Filter employee assignment rows to sales-eligible roles
     # ------------------------------------------------------------
     if employee_assign_employee_key is not None and employee_assign_store_key is not None:
@@ -833,5 +932,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
 
             "inventory_enabled": bool(worker_cfg.get("inventory_enabled", False)),
 
+            "store_to_product_rows": store_to_product_rows,
         }
     )

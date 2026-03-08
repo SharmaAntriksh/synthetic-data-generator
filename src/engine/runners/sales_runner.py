@@ -287,6 +287,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
                 fact_out=ctx.fact_out,
                 cfg=ctx.cfg,
                 file_format=ctx.fmt,
+                workers=ctx.sales_cfg.get("workers"),
             )
 
         _run_step("Generating Inventory Snapshots", _do_inventory)

@@ -175,6 +175,41 @@ def _sample_product_row_indices(
     return out
 
 
+def _sample_products_per_store(
+    rng: np.random.Generator,
+    store_key_arr: np.ndarray,
+    store_to_product_rows: list,
+    product_np: np.ndarray,
+) -> np.ndarray:
+    """
+    Sample product row indices from each store's assortment pool.
+
+    For each line, picks a uniform random product from the store's
+    available product rows. Falls back to full catalog for any store
+    without an assortment entry.
+    """
+    n = len(store_key_arr)
+    n_products = len(product_np)
+    max_sk = len(store_to_product_rows)
+    out = np.empty(n, dtype=np.int64)
+
+    # Group lines by store for vectorized sampling per store
+    unique_stores, inverse = np.unique(store_key_arr, return_inverse=True)
+
+    for i, sk in enumerate(unique_stores):
+        mask = inverse == i
+        count = int(mask.sum())
+        sk_int = int(sk)
+
+        if sk_int < max_sk and store_to_product_rows[sk_int] is not None:
+            pool = store_to_product_rows[sk_int]
+            out[mask] = pool[rng.integers(0, len(pool), size=count)]
+        else:
+            out[mask] = rng.integers(0, n_products, size=count)
+
+    return out
+
+
 def _get_state_attr(*names, default=None):
     """Return the first non-None attribute from State among names."""
     for n in names:
@@ -816,26 +851,9 @@ def build_chunk_table(
         n_lines = int(np.asarray(customer_keys_out).shape[0])
 
         # --------------------------------------------------------
-        # PRODUCTS (PER LINE) — each line gets its own product
-        # so multi-line orders contain distinct items, not repeats
-        # --------------------------------------------------------
-        prod_idx = _sample_product_row_indices(
-            rng=rng,
-            n=n_lines,
-            product_np=product_np,
-            m_offset=int(m_offset),
-            enabled=use_brand_popularity,
-        )
-
-        product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
-        unit_price   = product_np[prod_idx, 1].astype(np.float64, copy=False)
-        unit_cost    = product_np[prod_idx, 2].astype(np.float64, copy=False)
-
-        # --------------------------------------------------------
-        # STORE → GEO → CURRENCY (guard missing mappings)
+        # STORE (sampled first — needed for assortment filtering)
         #   Agreement: 1 Store per Order (when order ids exist)
         # --------------------------------------------------------
-        # Compute order_starts/order_idx ONCE — reused by store assignment and promotions
         if not skip_cols and line_num is not None:
             order_starts = (np.asarray(line_num) == 1)
             order_idx = np.cumsum(order_starts.astype(np.int64)) - 1
@@ -849,8 +867,34 @@ def build_chunk_table(
             order_store = store_keys[rng.integers(0, len(store_keys), size=n_unique_orders)]
             store_key_arr = order_store[order_idx]
         else:
-            # no order concept -> sample per line
             store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n_lines)]
+
+        # --------------------------------------------------------
+        # PRODUCTS (PER LINE) — each line gets its own product
+        # so multi-line orders contain distinct items, not repeats.
+        # When assortment is active, products are sampled from
+        # the store's available pool instead of the full catalog.
+        # --------------------------------------------------------
+        _store_product_rows = getattr(State, "store_to_product_rows", None)
+        if _store_product_rows is not None:
+            prod_idx = _sample_products_per_store(
+                rng=rng,
+                store_key_arr=store_key_arr,
+                store_to_product_rows=_store_product_rows,
+                product_np=product_np,
+            )
+        else:
+            prod_idx = _sample_product_row_indices(
+                rng=rng,
+                n=n_lines,
+                product_np=product_np,
+                m_offset=int(m_offset),
+                enabled=use_brand_popularity,
+            )
+
+        product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
+        unit_price   = product_np[prod_idx, 1].astype(np.float64, copy=False)
+        unit_cost    = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
         geo_arr = st2g_arr[store_key_arr]
         if np.any(geo_arr < 0):

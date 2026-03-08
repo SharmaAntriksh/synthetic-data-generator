@@ -679,11 +679,43 @@ def generate_sales_fact(
             )
             product_brand_key = None
 
+    # SubcategoryKey for assortment (aligned to product_np row order)
+    product_subcat_key = None
+    assortment_cfg = (cfg.get("stores") or {}).get("assortment") or {}
+    if assortment_cfg.get("enabled"):
+        try:
+            _subcat_df = load_parquet_df(products_path, ["ProductKey", "SubcategoryKey"])
+            _subcat_df = _subcat_df.drop_duplicates("ProductKey", keep="first")
+            _subcat_df["ProductKey"] = _subcat_df["ProductKey"].astype("int64")
+            _subcat_map = pd.Series(
+                _subcat_df["SubcategoryKey"].to_numpy(dtype=np.int64),
+                index=_subcat_df["ProductKey"].to_numpy(dtype=np.int64),
+            )
+            active_keys = np.asarray(product_np[:, 0], dtype=np.int64)
+            product_subcat_key = _subcat_map.reindex(active_keys).fillna(0).to_numpy(dtype=np.int64)
+        except Exception as exc:
+            info(f"Could not load SubcategoryKey ({type(exc).__name__}: {exc}); assortment disabled.")
+            assortment_cfg = {}
 
-    # Stores: read ONCE (keys + geography)
-    store_df = load_parquet_df(parquet_folder_p / "stores.parquet", ["StoreKey", "GeographyKey"])
+    # Stores: read ONCE (keys + geography + StoreType for assortment)
+    _store_cols = ["StoreKey", "GeographyKey"]
+    _store_path = parquet_folder_p / "stores.parquet"
+    if _store_path.exists():
+        import pyarrow.parquet as _pq
+        _store_schema_names = set(_pq.read_schema(str(_store_path)).names)
+        if "StoreType" in _store_schema_names:
+            _store_cols.append("StoreType")
+    store_df = load_parquet_df(_store_path, _store_cols)
     store_keys = _as_np(store_df["StoreKey"], np.int64)
     store_to_geo = dict(zip(_as_np(store_df["StoreKey"], np.int64), _as_np(store_df["GeographyKey"], np.int64)))
+
+    # StoreType map for assortment (StoreKey -> "Supermarket" etc.)
+    store_type_map = None
+    if "StoreType" in store_df.columns:
+        store_type_map = dict(zip(
+            store_df["StoreKey"].astype(int).tolist(),
+            store_df["StoreType"].astype(str).tolist(),
+        ))
 
     # Geography + currency mapping
     geo_df = load_parquet_df(parquet_folder_p / "geography.parquet", ["GeographyKey", "ISOCode"])
@@ -982,6 +1014,15 @@ def generate_sales_fact(
         employee_assign_role=employee_assign_role,
         salesperson_roles=salesperson_roles,
     )
+
+    # ------------------------------------------------------------
+    # Store-product assortment (optional)
+    # ------------------------------------------------------------
+    if assortment_cfg.get("enabled") and product_subcat_key is not None and store_type_map is not None:
+        worker_cfg["assortment"] = dict(assortment_cfg)
+        worker_cfg["product_subcat_key"] = product_subcat_key
+        worker_cfg["store_type_map"] = store_type_map
+        info(f"Store-product assortment: enabled (coverage: {assortment_cfg.get('coverage', {})})")
 
     # ------------------------------------------------------------
     # Budget streaming aggregation (optional)

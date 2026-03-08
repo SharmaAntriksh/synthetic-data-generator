@@ -127,6 +127,7 @@ class State:
     # --------------------------------------------------------------
     # Mappings
     # --------------------------------------------------------------
+    store_to_product_rows = None  # assortment: list[StoreKey] -> np.ndarray of product row indices
 
     # --------------------------------------------------------------
     # Budget streaming aggregation (worker-side lookups)
