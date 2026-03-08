@@ -845,6 +845,19 @@ _DATES_FISCAL_INTERNAL = [
 ]
 
 
+def _wf_is_enabled(wf_cfg) -> bool:
+    """Return True if the weekly_fiscal config block is present and enabled.
+
+    Accepts both the new dict form (``{enabled: true, ...}``) and the legacy
+    bare bool (``weekly_fiscal: true``).
+    """
+    if isinstance(wf_cfg, bool):
+        return wf_cfg
+    if isinstance(wf_cfg, dict):
+        return bool(wf_cfg.get("enabled", True))
+    return False
+
+
 def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
     """Resolve internal output column list for SQL CREATE TABLE generation.
 
@@ -856,15 +869,16 @@ def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
         (IsYearStart, IsMonthEnd, IsToday, CurrentDayOffset, etc.).
       - include.iso (default True) adds ISO week columns.
       - include.fiscal (default True) adds monthly fiscal columns.
-      - include.weekly_fiscal (default True) + weekly_calendar.enabled adds
-        weekly fiscal (4-4-5) columns.
+      - include.weekly_fiscal.enabled adds weekly fiscal (4-4-5) columns;
+        the same block holds the algorithm parameters (first_day_of_week,
+        weekly_type, quarter_week_type, type_start_fiscal_year).
 
     NOTE: dates.py resolve_date_columns must be updated to match this split
     so that the parquet output and SQL schema stay in sync.
     """
     dates_cfg = dates_cfg or {}
     include = (dates_cfg.get("include", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
-    weekly_cfg = (dates_cfg.get("weekly_calendar", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
+    wf_cfg = include.get("weekly_fiscal", {}) or {}
 
     cols: list[str] = list(_DATES_BASE_INTERNAL)
 
@@ -875,7 +889,7 @@ def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
     if include.get("fiscal", True):
         cols += _DATES_FISCAL_INTERNAL
 
-    if include.get("weekly_fiscal", True) and bool(weekly_cfg.get("enabled", True)):
+    if _wf_is_enabled(wf_cfg):
         # Keep weekly columns in a stable order matching dates.py resolve_date_columns.
         cols += [
             "FWYearNumber",
@@ -966,8 +980,7 @@ def get_dates_schema(dates_cfg: Mapping) -> list[SchemaCol]:
       - include.calendar (default True) adds calendar flags/offsets.
       - include.iso (default True) adds ISO week columns.
       - include.fiscal (default True) adds monthly fiscal columns.
-      - include.weekly_fiscal (default True) + weekly_calendar.enabled adds
-        weekly fiscal (4-4-5) columns.
+      - include.weekly_fiscal.enabled adds weekly fiscal (4-4-5) columns.
     """
     dates_cfg = dates_cfg or {}
     internal_cols = _dates_internal_columns(dates_cfg)

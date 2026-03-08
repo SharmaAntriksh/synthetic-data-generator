@@ -359,6 +359,19 @@ def _compute_weekly_fiscal_columns(
     return pd.concat([df, new_cols], axis=1)
 
 
+def _wf_is_enabled(wf_cfg) -> bool:
+    """Return True if the weekly_fiscal config block is present and enabled.
+
+    Accepts both the new dict form (``{enabled: true, ...}``) and the legacy
+    bare bool (``weekly_fiscal: true``).
+    """
+    if isinstance(wf_cfg, bool):
+        return wf_cfg
+    if isinstance(wf_cfg, dict):
+        return bool(wf_cfg.get("enabled", True))
+    return False
+
+
 # ---------------------------------------------------------------------
 # Column resolver
 # ---------------------------------------------------------------------
@@ -386,7 +399,7 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
     specific flags and offsets (IsYearStart, IsToday, CurrentDayOffset, etc.).
     """
     include = (dates_cfg or {}).get("include", {}) or {}
-    weekly_cfg = (dates_cfg or {}).get("weekly_calendar", {}) or {}
+    wf_cfg = include.get("weekly_fiscal", {}) or {}
 
     # Always present: primary keys + fundamental date-part attributes.
     base_cols = [
@@ -479,7 +492,7 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
     if include.get("fiscal", True):
         cols += fiscal_cols
 
-    if include.get("weekly_fiscal", True) and _bool_or(weekly_cfg.get("enabled", True), True):
+    if _wf_is_enabled(wf_cfg):
         cols += weekly_cols
 
     return _dedupe_preserve_order(cols)
@@ -780,13 +793,16 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
     compression_level = dates_cfg.get("parquet_compression_level", None)
     force_date32 = _bool_or(dates_cfg.get("force_date32", True), True)
 
-    weekly_calendar = dates_cfg.get("weekly_calendar", {}) or {}
+    include = dates_cfg.get("include", {}) or {}
+    wf_block = include.get("weekly_fiscal", {}) or {}
+    if isinstance(wf_block, bool):
+        wf_block = {"enabled": wf_block}
     wf_cfg = WeeklyFiscalConfig(
-        enabled=_bool_or(weekly_calendar.get("enabled", True), True),
-        first_day_of_week=_int_or(weekly_calendar.get("first_day_of_week", 0), 0),
-        weekly_type=str(weekly_calendar.get("weekly_type", "Last")),
-        quarter_week_type=str(weekly_calendar.get("quarter_week_type", "445")),
-        type_start_fiscal_year=_int_or(weekly_calendar.get("type_start_fiscal_year", 1), 1),
+        enabled=_bool_or(wf_block.get("enabled", True), True),
+        first_day_of_week=_int_or(wf_block.get("first_day_of_week", 0), 0),
+        weekly_type=str(wf_block.get("weekly_type", "Last")),
+        quarter_week_type=str(wf_block.get("quarter_week_type", "445")),
+        type_start_fiscal_year=_int_or(wf_block.get("type_start_fiscal_year", 1), 1),
     )
 
     with stage("Generating Dates"):

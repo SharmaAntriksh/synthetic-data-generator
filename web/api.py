@@ -186,7 +186,9 @@ def get_config():
     geo = _g(_cfg, "geography", default={})
     dates_cfg = _g(_cfg, "dates", default={})
     include = _g(dates_cfg, "include", default={})
-    wc = _g(dates_cfg, "weekly_calendar", default={})
+    wf = _g(include, "weekly_fiscal", default={})
+    if isinstance(wf, bool):
+        wf = {"enabled": wf}
 
     return {
         # Output
@@ -204,10 +206,10 @@ def get_config():
         "includeCalendar": True,
         "includeIso": bool(include.get("iso", False)),
         "includeFiscal": bool(include.get("fiscal", True)),
-        "includeWeeklyFiscal": bool(include.get("weekly_fiscal", False)),
-        "wfFirstDay": int(wc.get("first_day_of_week", 0)),
-        "wfWeeklyType": str(wc.get("weekly_type", "Last")),
-        "wfQuarterType": str(wc.get("quarter_week_type", "445")),
+        "includeWeeklyFiscal": bool(wf.get("enabled", False)),
+        "wfFirstDay": int(wf.get("first_day_of_week", 0)),
+        "wfWeeklyType": str(wf.get("weekly_type", "Last")),
+        "wfQuarterType": str(wf.get("quarter_week_type", "445")),
         # Volume
         "salesRows": int(sales.get("total_rows", 100000)),
         "chunkSize": int(sales.get("chunk_size", 200000)),
@@ -259,8 +261,7 @@ def update_config(body: ConfigUpdate):
     _cfg.setdefault("promotions", {})
     _cfg.setdefault("returns", {})
     _cfg.setdefault("geography", {}).setdefault("country_weights", {})
-    _cfg.setdefault("dates", {}).setdefault("include", {})
-    _cfg["dates"].setdefault("weekly_calendar", {})
+    _cfg.setdefault("dates", {}).setdefault("include", {}).setdefault("weekly_fiscal", {})
 
     # Output
     if "format" in v: _cfg["sales"]["file_format"] = v["format"]
@@ -277,10 +278,10 @@ def update_config(body: ConfigUpdate):
     if "fiscalMonthOffset" in v: _cfg["dates"]["fiscal_month_offset"] = int(v["fiscalMonthOffset"])
     if "includeIso" in v: _cfg["dates"]["include"]["iso"] = bool(v["includeIso"])
     if "includeFiscal" in v: _cfg["dates"]["include"]["fiscal"] = bool(v["includeFiscal"])
-    if "includeWeeklyFiscal" in v: _cfg["dates"]["include"]["weekly_fiscal"] = bool(v["includeWeeklyFiscal"])
-    if "wfFirstDay" in v: _cfg["dates"]["weekly_calendar"]["first_day_of_week"] = int(v["wfFirstDay"])
-    if "wfWeeklyType" in v: _cfg["dates"]["weekly_calendar"]["weekly_type"] = v["wfWeeklyType"]
-    if "wfQuarterType" in v: _cfg["dates"]["weekly_calendar"]["quarter_week_type"] = v["wfQuarterType"]
+    if "includeWeeklyFiscal" in v: _cfg["dates"]["include"]["weekly_fiscal"]["enabled"] = bool(v["includeWeeklyFiscal"])
+    if "wfFirstDay" in v: _cfg["dates"]["include"]["weekly_fiscal"]["first_day_of_week"] = int(v["wfFirstDay"])
+    if "wfWeeklyType" in v: _cfg["dates"]["include"]["weekly_fiscal"]["weekly_type"] = v["wfWeeklyType"]
+    if "wfQuarterType" in v: _cfg["dates"]["include"]["weekly_fiscal"]["quarter_week_type"] = v["wfQuarterType"]
 
     # Volume
     if "salesRows" in v: _cfg["sales"]["total_rows"] = int(v["salesRows"])

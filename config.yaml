@@ -7,8 +7,8 @@
 # ------------------------------------------------------------------
 scale:
   sales_rows: 103285
-  products: 2581
-  customers: 48837
+  products: 4258
+  customers: 14883
   stores: 40
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
@@ -114,8 +114,8 @@ customer_segments:
 # SUPERPOWERS (disabled by default)
 # ------------------------------------------------------------------
 superpowers:
-  enabled: false
-  generate_bridge: false
+  enabled: true
+  generate_bridge: true
 
   powers_count: 20
   powers_per_customer_min: 1
@@ -189,17 +189,16 @@ dates:
   as_of_date: null
 
   include:
-    calendar: false
+    calendar: true
     iso: false
     fiscal: true
-    weekly_fiscal: false
 
-  weekly_calendar:
-    enabled: true
-    first_day_of_week: 0
-    weekly_type: "Last"
-    quarter_week_type: "445"
-    type_start_fiscal_year: 1
+    weekly_fiscal:
+      enabled: true
+      first_day_of_week: 0
+      weekly_type: "Last"
+      quarter_week_type: "445"
+      type_start_fiscal_year: 1
 
 # ------------------------------------------------------------------
 # EXCHANGE RATES
