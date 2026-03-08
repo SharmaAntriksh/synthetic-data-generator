@@ -41,7 +41,13 @@ def _store_assignments_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     emp_cfg = as_dict(cfg.get("employees"))
     nested = as_dict(emp_cfg.get("store_assignments"))
     legacy = as_dict(cfg.get("employee_store_assignments"))
-    if legacy:
+
+    # The dimensions runner injects internal keys (global_dates, _force_regenerate)
+    # into cfg["employee_store_assignments"]; exclude those when checking for
+    # actual user-supplied legacy config.
+    _RUNNER_KEYS = {"global_dates", "_force_regenerate"}
+    user_legacy = {k: v for k, v in legacy.items() if k not in _RUNNER_KEYS}
+    if user_legacy:
         warn(
             "Top-level 'employee_store_assignments' config is deprecated. "
             "Move settings under 'employees.store_assignments'. "
@@ -107,6 +113,53 @@ def _build_store_by_district(emp: pd.DataFrame) -> Dict[Any, List[int]]:
 # -----------------------------------------------------------------------------
 # Movement-profile helpers
 # -----------------------------------------------------------------------------
+
+def _normalize_profile_keys(prof: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map shorthand config keys to the long-form keys consumed by the generator.
+
+    Shorthand → long-form:
+      mult             → role_multiplier
+      episodes: [a, b] → episodes_min, episodes_max
+      duration: [a, b] → duration_days_min, duration_days_max
+
+    Long-form keys take precedence when both are present.
+    """
+    out = dict(prof)
+
+    if "mult" in out and "role_multiplier" not in out:
+        out["role_multiplier"] = out.pop("mult")
+    else:
+        out.pop("mult", None)
+
+    if "episodes" in out:
+        ep = out.pop("episodes")
+        if isinstance(ep, (list, tuple)) and len(ep) >= 2:
+            if "episodes_min" not in out:
+                out["episodes_min"] = int(ep[0])
+            if "episodes_max" not in out:
+                out["episodes_max"] = int(ep[1])
+        elif isinstance(ep, (int, float)):
+            if "episodes_min" not in out:
+                out["episodes_min"] = int(ep)
+            if "episodes_max" not in out:
+                out["episodes_max"] = int(ep)
+
+    if "duration" in out:
+        dur = out.pop("duration")
+        if isinstance(dur, (list, tuple)) and len(dur) >= 2:
+            if "duration_days_min" not in out:
+                out["duration_days_min"] = int(dur[0])
+            if "duration_days_max" not in out:
+                out["duration_days_max"] = int(dur[1])
+        elif isinstance(dur, (int, float)):
+            if "duration_days_min" not in out:
+                out["duration_days_min"] = int(dur)
+            if "duration_days_max" not in out:
+                out["duration_days_max"] = int(dur)
+
+    return out
+
 
 def _get_profile(
     role: str,
@@ -296,9 +349,10 @@ def generate_employee_store_assignments(
     # Parse role profiles
     # -----------------------------------------------------------------
     rp = as_dict(role_profiles) if role_profiles is not None else {}
-    default_profile = as_dict(rp.get("default"))
+    default_profile = _normalize_profile_keys(as_dict(rp.get("default")))
     per_role_profile = {
-        k: dict(v) for k, v in rp.items() if k != "default" and isinstance(v, dict)
+        k: _normalize_profile_keys(dict(v))
+        for k, v in rp.items() if k != "default" and isinstance(v, dict)
     }
 
     sales_profile = dict(default_profile)

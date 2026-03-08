@@ -341,7 +341,16 @@ def generate_employee_dimension(
 
     stores = stores.copy()
     stores["StoreKey"] = stores["StoreKey"].astype(np.int32)
-    stores = stores.sort_values("StoreKey").reset_index(drop=True)
+
+    # Sort stores by geography so districts contain geographically nearby stores.
+    # Falls back to StoreKey-only ordering when geography columns are absent.
+    sort_cols = []
+    if "Continent" in stores.columns:
+        sort_cols.append("Continent")
+    if "Country" in stores.columns:
+        sort_cols.append("Country")
+    sort_cols.append("StoreKey")
+    stores = stores.sort_values(sort_cols).reset_index(drop=True)
 
     district_size = max(1, int_or(district_size, 15))
     districts_per_region = max(1, int_or(districts_per_region, 8))
@@ -364,6 +373,7 @@ def generate_employee_dimension(
 
     stores["DistrictId"] = district_id
     stores["RegionId"] = region_id
+    stores = stores.drop(columns=["Continent", "Country"], errors="ignore")
 
     # --- Key-encoding helpers using module constants ---
     CEO_KEY = np.int32(1)
@@ -658,10 +668,17 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     iso_by_geo: dict[int, str] = {}
     geo_path = parquet_folder / "geography.parquet"
     if geo_path.exists():
-        geo_df = pd.read_parquet(geo_path, columns=["GeographyKey", "ISOCode"])
+        geo_df = pd.read_parquet(geo_path)
         gk = pd.to_numeric(geo_df["GeographyKey"], errors="coerce").dropna().astype(np.int32).to_numpy()
         iso = geo_df.loc[geo_df["GeographyKey"].notna(), "ISOCode"].astype(str).to_numpy()
         iso_by_geo = dict(zip(gk, iso))
+
+        if "Continent" in geo_df.columns and "Country" in geo_df.columns:
+            geo_sort = geo_df[["GeographyKey", "Continent", "Country"]].drop_duplicates("GeographyKey").copy()
+            geo_sort["GeographyKey"] = pd.to_numeric(geo_sort["GeographyKey"], errors="coerce").astype(np.int32)
+            stores = stores.merge(
+                geo_sort, on="GeographyKey", how="left",
+            )
 
     with stage("Generating Employees"):
         include_store_cols = bool_or(emp_cfg.get("include_store_cols"), False)
