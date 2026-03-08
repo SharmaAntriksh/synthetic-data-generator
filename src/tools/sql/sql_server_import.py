@@ -24,7 +24,7 @@ def _ts() -> str:
 
 def _log(level: str, msg: str) -> None:
     # level: INFO/WARN/ERROR
-    print(f"{_ts()} | {level:<5} | {msg}")
+    print(f"{_ts()} | {level:<4} | {msg}")
 
 
 def _extract_tables_from_create_sql(sql_file: "Path") -> list[str]:

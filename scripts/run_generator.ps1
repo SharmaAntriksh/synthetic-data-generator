@@ -137,11 +137,22 @@ try {
     }
 
     $VenvFullPath = Join-Path $Root $VenvDir
-    $Py = Get-PythonRunner -MinVersion "3.10" -VenvPath $VenvFullPath
+    $MinPyVer = [version]"3.10"
+    $Py = Get-PythonRunner -MinVersion $MinPyVer -VenvPath $VenvFullPath
     if (-not $Py) { throw "Python not found. Create the venv or install Python (py/python)." }
 
     Assert-IsoDate -Value $StartDate -Name "StartDate"
     Assert-IsoDate -Value $EndDate   -Name "EndDate"
+
+    # Validate numeric overrides are positive
+    foreach ($numParam in @("SalesRows", "Workers", "ChunkSize", "RowGroupSize", "Customers", "Stores", "Products", "Promotions")) {
+        if ($PSBoundParameters.ContainsKey($numParam)) {
+            $val = $PSBoundParameters[$numParam]
+            if ($null -ne $val -and $val -le 0) {
+                throw "$numParam must be a positive integer. Got: $val"
+            }
+        }
+    }
 
     if (-not $NoConfigSummary) {
         Try-PrintConfigSummary -Py $Py -CfgFile $CfgFile

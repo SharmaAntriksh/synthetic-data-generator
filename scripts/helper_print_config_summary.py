@@ -12,6 +12,10 @@ try:
 except Exception:
     sys.exit(2)
 
+if len(sys.argv) < 2:
+    print("Usage: python helper_print_config_summary.py <config.yaml>", file=sys.stderr)
+    sys.exit(1)
+
 path = sys.argv[1]
 with open(path, "r", encoding="utf-8") as f:
     cfg = yaml.safe_load(f) or {}
@@ -55,7 +59,7 @@ summary = {
         "stores": g("stores.num_stores"),
         "products": g("products.num_products"),
     },
-    "promotions_total": int(p_seasonal) + int(p_clearance) + int(p_limited),
+    "promotions_total": sum(int(v) for v in (p_seasonal, p_clearance, p_limited) if str(v).strip().lstrip('-').isdigit()),
 }
 
 print(json.dumps(summary))

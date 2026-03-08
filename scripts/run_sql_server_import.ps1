@@ -53,9 +53,16 @@ try {
     $ResolvedRunPath = (Resolve-Path $RunPath).Path
 
     # CSV-only guard
-    if (-not (Test-Path (Join-Path $ResolvedRunPath "sql\schema")) -or
-        -not (Test-Path (Join-Path $ResolvedRunPath "sql\load"))) {
+    $schemaDir = Join-Path $ResolvedRunPath "sql\schema"
+    $loadDir   = Join-Path $ResolvedRunPath "sql\load"
+    if (-not (Test-Path $schemaDir) -or -not (Test-Path $loadDir)) {
         throw "CSV run required. Expected sql/schema/ and sql/load/ folders in: $ResolvedRunPath"
+    }
+    if ((Get-ChildItem -Path $schemaDir -File | Measure-Object).Count -eq 0) {
+        throw "sql/schema/ folder is empty - no SQL scripts to execute in: $schemaDir"
+    }
+    if ((Get-ChildItem -Path $loadDir -File | Measure-Object).Count -eq 0) {
+        throw "sql/load/ folder is empty - no data files to load in: $loadDir"
     }
 
     # Log the resolved python interpreter and version
@@ -85,16 +92,25 @@ try {
     if ($OdbcDriver) { $argsList += @("--odbc-driver", $OdbcDriver) }
 
     # Log the command
+    # Mask password in logged output
+    $logArgsList = @($argsList)
+    for ($i = 0; $i -lt $logArgsList.Count; $i++) {
+        if ($logArgsList[$i] -eq "--password" -and ($i + 1) -lt $logArgsList.Count) {
+            $logArgsList[$i + 1] = "********"
+        }
+    }
+
     if ($ShowFullPaths) {
-        Write-Step ("Running: {0} {1}" -f $PythonExe, ($argsList -join " ")) -Level cmd
+        Write-Step ("Running: {0} {1}" -f $PythonExe, ($logArgsList -join " ")) -Level cmd
     } else {
         $pyName    = Split-Path -Leaf $PythonExe
         $entryName = Split-Path -Leaf $PyEntrypoint
 
         $runDisplay = $ResolvedRunPath
-        if ($ResolvedRunPath.StartsWith($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($ResolvedRunPath.Length -gt $RepoRoot.Length -and
+            $ResolvedRunPath.StartsWith($RepoRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
             $runDisplay = $ResolvedRunPath.Substring($RepoRoot.Length).TrimStart('\')
-        } else {
+        } elseif ($ResolvedRunPath -ne $RepoRoot) {
             $runDisplay = Split-Path -Leaf $ResolvedRunPath
         }
 

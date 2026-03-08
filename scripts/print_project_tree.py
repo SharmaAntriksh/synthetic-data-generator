@@ -1,4 +1,5 @@
 import os
+import sys
 
 EXCLUDE_DIRS = {
     "__pycache__", ".git", ".venv", "venv",
@@ -14,10 +15,16 @@ EXCLUDE_EXT = {".pyc", ".pyo", ".pyd", ".so"}
 # file types to display
 INCLUDE_EXT = {".py", ".ps1", ".pbix", ".pbit", '.png', ".parquet", ".sql", ".pbip", ".yaml", ".csv"}
 
-def print_tree(root=".", prefix=""):
+MAX_DEPTH = 20
+
+def print_tree(root=".", prefix="", depth=0):
+    if depth >= MAX_DEPTH:
+        print(prefix + "... (max depth reached)")
+        return
     try:
         entries = sorted(os.listdir(root))
     except PermissionError:
+        print(f"{prefix}... (permission denied: {root})", file=sys.stderr)
         return
 
     for i, entry in enumerate(entries):
@@ -36,7 +43,7 @@ def print_tree(root=".", prefix=""):
         if os.path.isdir(path):
             print(prefix + connector + entry + "/")
             new_prefix = prefix + ("    " if i == len(entries) - 1 else "│   ")
-            print_tree(path, new_prefix)
+            print_tree(path, new_prefix, depth + 1)
         else:
             ext = os.path.splitext(entry)[1]
             if ext in INCLUDE_EXT:
@@ -44,8 +51,6 @@ def print_tree(root=".", prefix=""):
 
 
 if __name__ == "__main__":
-    import sys
-
     root_path = (
         sys.argv[1]
         if len(sys.argv) > 1

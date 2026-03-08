@@ -6,16 +6,10 @@ BEGIN
     SET NOCOUNT ON;
 
     IF @Action NOT IN ('CREATE', 'DROP')
-    BEGIN
         THROW 50000, 'Invalid @Action. Use CREATE or DROP.', 1;
-        RETURN;
-    END;
 
     IF NOT EXISTS (SELECT 1 FROM @Tables)
-    BEGIN
         THROW 50001, 'No tables provided.', 1;
-        RETURN;
-    END;
 
     -- Guard: if any target table has a CLUSTERED PRIMARY KEY, CCI will clash.
     IF EXISTS (
@@ -29,10 +23,7 @@ BEGIN
               AND i.is_primary_key = 1
         )
     )
-    BEGIN
         THROW 50002, 'One or more target tables have a CLUSTERED PRIMARY KEY. Make PK NONCLUSTERED before applying CCI.', 1;
-        RETURN;
-    END;
 
     DECLARE @sql nvarchar(max);
 

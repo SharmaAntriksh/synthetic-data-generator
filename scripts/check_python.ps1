@@ -52,7 +52,9 @@ try {
 }
 catch {
     if (-not $Quiet) {
-        Write-Step "Python check failed: $($_.Exception.Message)" -Level err
+        $errMsg = if ($_.Exception.Message) { $_.Exception.Message } else { $_.ToString() }
+        Write-Step "Python check failed: $errMsg" -Level err
+        if ($_.ScriptStackTrace) { Write-Step "  Stack: $($_.ScriptStackTrace)" -Level info }
     }
     exit 1
 }

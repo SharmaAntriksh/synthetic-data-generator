@@ -76,7 +76,8 @@ function Get-PythonRunner {
         foreach ($cand in $candidates) {
             try {
                 $null = & $cand.Cmd @($cand.Args) -c "import sys" 2>$null
-                if ($LASTEXITCODE -eq 0) { return $cand }
+                $ec = $LASTEXITCODE
+                if ($ec -eq 0) { return $cand }
             } catch { }
         }
     }
@@ -100,12 +101,18 @@ function Get-PythonVersion {
 
     $code = 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")'
     $out = & $Runner.Cmd @($Runner.Args) -c $code 2>$null
+    $ec = $LASTEXITCODE
 
-    if ($LASTEXITCODE -ne 0 -or -not $out) {
+    if ($ec -ne 0 -or -not $out) {
         throw "Python was found ($($Runner.Cmd)) but could not report its version."
     }
 
-    return [version]$out.Trim()
+    $trimmed = $out.Trim()
+    try {
+        return [version]$trimmed
+    } catch {
+        throw "Python reported an unparseable version string: '$trimmed'."
+    }
 }
 
 function Assert-IsoDate {

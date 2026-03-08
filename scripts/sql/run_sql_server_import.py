@@ -18,6 +18,10 @@ def build_connection_string(args) -> str:
     """
     driver = args.odbc_driver or "ODBC Driver 17 for SQL Server"
 
+    # Sanitize driver name to prevent connection string injection
+    if ";" in driver or "{" in driver or "}" in driver:
+        raise ValueError(f"Invalid ODBC driver name (contains illegal characters): {driver}")
+
     if args.trusted:
         return (
             f"DRIVER={{{driver}}};"
@@ -25,8 +29,10 @@ def build_connection_string(args) -> str:
             "Trusted_Connection=yes;"
         )
 
-    if not args.user or not args.password:
-        raise ValueError("Username and password must be provided when not using --trusted")
+    if not args.user or not args.user.strip():
+        raise ValueError("Username must be a non-empty string when not using --trusted")
+    if not args.password:
+        raise ValueError("Password must be provided when not using --trusted")
 
     return (
         f"DRIVER={{{driver}}};"
@@ -113,9 +119,15 @@ def main() -> int:
             apply_cci=bool(args.apply_cci),
         )
 
-    except (SqlServerImportError, ValueError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+    except ValueError as exc:
+        print(f"VALIDATION ERROR: {exc}", file=sys.stderr)
+        return 2
+    except SqlServerImportError as exc:
+        print(f"IMPORT ERROR: {exc}", file=sys.stderr)
         return 1
+    except ConnectionError as exc:
+        print(f"CONNECTION ERROR: {exc}", file=sys.stderr)
+        return 3
 
     return 0
 

@@ -99,8 +99,12 @@ try {
     }
     if ($AppArgs -and $AppArgs.Count -gt 0) { $scriptArgs += $AppArgs }
 
+    # Use the detected Python runner (not bare 'python') to ensure correct executable
+    $pyCmd = $pyCheck.Cmd
+    $pyArgs = @($pyCheck.Args)
+
     Write-Step "Launching Streamlit..." -Level ok
-    python -m streamlit @stFlags -- @scriptArgs
+    & $pyCmd @pyArgs -m streamlit @stFlags -- @scriptArgs
     $ec = $LASTEXITCODE
     if ($ec -ne 0) { Write-Step "Streamlit exited with code $ec." -Level err }
     exit $ec

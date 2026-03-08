@@ -14,7 +14,9 @@
     .\scripts\run_web.ps1 -Reload
 #>
 param(
-    [switch]$Reload
+    [switch]$Reload,
+    [int]$Port = 8502,
+    [string]$Host_ = "127.0.0.1"
 )
 
 Set-StrictMode -Version Latest
@@ -45,12 +47,21 @@ try {
         pip install @Missing --quiet
     }
 
+    # Check port availability before launching
+    try {
+        $listener = [System.Net.Sockets.TcpClient]::new()
+        $listener.Connect($Host_, $Port)
+        $listener.Close()
+        Write-Host "Port $Port is already in use. Choose a different port with -Port." -ForegroundColor Red
+        exit 1
+    } catch [System.Net.Sockets.SocketException] {
+        # Port is available (connection refused = nobody listening)
+    }
+
     # Launch
-    $Port = 8502
-    $Host_ = "127.0.0.1"
     $Url = "http://${Host_}:${Port}"
-    $Args_ = @("--host", $Host_, "--port", $Port)
-    if ($Reload) { $Args_ += "--reload" }
+    $UvicornArgs = @("--host", $Host_, "--port", $Port)
+    if ($Reload) { $UvicornArgs += "--reload" }
 
     Write-Host ""
     Write-Host "Starting web UI at $Url" -ForegroundColor Cyan
@@ -64,7 +75,7 @@ try {
         Start-Process $u
     } -ArgumentList $Url | Out-Null
 
-    python -m uvicorn web.api:app @Args_
+    python -m uvicorn web.api:app @UvicornArgs
 }
 finally {
     Pop-Location

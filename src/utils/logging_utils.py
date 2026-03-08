@@ -186,8 +186,8 @@ def _format_level(level: str) -> str:
     if _color_allowed():
         color = COLORS.get(level, "")
         reset = COLORS["RESET"]
-        return f"{color}{level:<5}{reset}"
-    return f"{level:<5}"
+        return f"{color}{level:<4}{reset}"
+    return f"{level:<4}"
 
 
 def _line(level: str, msg: Any) -> str:

@@ -38,8 +38,13 @@ Set-StrictMode -Version Latest
 # to checking CommandOrigin when the simple test is inconclusive.
 # ------------------------------------------------------------
 $isDotSourced = ($MyInvocation.InvocationName -eq '.')
-if (-not $isDotSourced -and $MyInvocation.CommandOrigin) {
-    $isDotSourced = ($MyInvocation.CommandOrigin -eq 'Internal')
+if (-not $isDotSourced) {
+    # ISE / VS Code / pwsh may report CommandOrigin differently; also check Line for dot-source pattern
+    if ($MyInvocation.CommandOrigin -and $MyInvocation.CommandOrigin -eq 'Internal') {
+        $isDotSourced = $true
+    } elseif ($MyInvocation.Line -and $MyInvocation.Line.TrimStart() -match '^\.\s') {
+        $isDotSourced = $true
+    }
 }
 
 if (-not $isDotSourced) {
@@ -89,6 +94,9 @@ if (-not (Test-Path -LiteralPath $ActivatePs)) {
 
     Write-Step "Venv missing; creating via $CreateScript ..." -Level warn
     & $CreateScriptPath
+    if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        throw "Venv creation script failed with exit code $LASTEXITCODE."
+    }
 
     # Re-check expected activation script.
     if (-not (Test-Path -LiteralPath $ActivatePs)) {

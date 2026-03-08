@@ -58,7 +58,7 @@ BEGIN
     DECLARE @blocked nvarchar(2048) = N'';
     DECLARE @s sysname, @t sysname;
 
-    DECLARE cur_block CURSOR FAST_FORWARD FOR
+    DECLARE cur_block CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
     SELECT tt.schema_name, tt.table_name
     FROM @Targets tt
     JOIN sys.indexes i ON i.object_id = tt.object_id
@@ -86,7 +86,7 @@ BEGIN
 END;
 
 DECLARE @schema sysname, @table sysname, @obj nvarchar(517), @sql nvarchar(max), @ix sysname;
-DECLARE cur CURSOR FAST_FORWARD FOR
+DECLARE cur CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
 SELECT schema_name, table_name
 FROM @Targets
 ORDER BY schema_name, table_name;
@@ -143,7 +143,11 @@ DECLARE @cci_count int =
 
 IF @Action = 'CREATE' AND @cci_count = 0
 BEGIN
-    THROW 51004, 'CCI apply completed but created 0 CCIs (unexpected).', 1;
+    -- Only warn if no CCIs exist at all (idempotent: all tables may already have CCIs)
+    DECLARE @total_targets int = (SELECT COUNT(*) FROM @Targets);
+    DECLARE @warn_msg nvarchar(256) =
+        N'CCI apply completed but 0 of ' + CAST(@total_targets AS nvarchar(10)) + N' target tables have CCIs.';
+    THROW 51004, @warn_msg, 1;
 END;
 
 SELECT @cci_count AS cci_tables_with_columnstore;

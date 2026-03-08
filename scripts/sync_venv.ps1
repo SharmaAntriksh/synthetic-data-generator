@@ -46,6 +46,7 @@ function Read-Stamp {
         if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
         return ($raw | ConvertFrom-Json)
     } catch {
+        Write-Warning "Stamp file is corrupted ($Path): $($_.Exception.Message). Will re-sync."
         return $null
     }
 }
@@ -142,11 +143,14 @@ try {
     $venvPyVer = (& $VenvPython -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>$null).Trim()
 
     $stamp = Read-Stamp -Path $StampFile
+    # Normalize version strings for comparison (e.g. "3.10.0" vs "3.10.0.0")
+    $stampPyNorm = if ($stamp -and $stamp.python_version) { try { [version]$stamp.python_version } catch { $stamp.python_version } } else { $null }
+    $venvPyNorm  = try { [version]$venvPyVer } catch { $venvPyVer }
     $needsSync =
         (-not $stamp) -or
         ($stamp.requirements_sha256 -ne $reqHash) -or
         ($stamp.constraints_sha256  -ne $conHash) -or
-        ($stamp.python_version      -ne $venvPyVer)
+        ($stampPyNorm -ne $venvPyNorm)
 
     if (-not $needsSync) {
         Log "Virtual environment already up to date." -Level ok
