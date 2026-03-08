@@ -366,6 +366,7 @@ def update_config_yaml(body: ConfigYamlUpdate):
 
     # Normalize shorthand keys (scale → per-section, region_mix → pct_*, etc.)
     if _HAS_NORMALIZER:
+        tmp_path = None
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".yaml", delete=False, encoding="utf-8"
@@ -376,7 +377,7 @@ def update_config_yaml(body: ConfigYamlUpdate):
             os.unlink(tmp_path)
         except Exception:
             _cfg = parsed
-            if os.path.exists(tmp_path):
+            if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
     else:
         _cfg = parsed

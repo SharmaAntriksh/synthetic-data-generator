@@ -24,6 +24,15 @@ from .returns_builder import ReturnsConfig, build_sales_returns_from_detail
 from .schemas import schema_dict_cols
 from .task import _worker_task, normalize_tasks, derive_chunk_seed, write_table_by_format
 
+# Legacy back-compat aliases (underscore-prefixed)
+_int_or = int_or
+_float_or = float_or
+_str_or = str_or
+_as_int64 = as_int64
+_as_f64 = as_f64
+_dense_map = dense_map
+_infer_T_from_date_pool = infer_T_from_date_pool
+
 __all__ = [
     # Sales worker entrypoints
     "init_sales_worker",
