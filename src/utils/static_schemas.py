@@ -595,6 +595,8 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("OrgUnitType", VARCHAR(20, not_null=True)),
         ("RegionId", INT_NULL),
         ("DistrictId", INT_NULL),
+        ("StoreKey", INT_NULL),
+        ("GeographyKey", INT_NULL),
         ("HireDate", DATE_NN),
         ("TerminationDate", DATE_NULL),
         ("IsActive", BIT(not_null=True)),

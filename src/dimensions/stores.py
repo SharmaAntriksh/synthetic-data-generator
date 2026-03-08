@@ -904,6 +904,21 @@ def generate_store_table(
     df["LastAuditScore"]            = audit
     df["ShrinkageRatePct"]          = shrink
 
+    # Reorder columns to match the static schema (CREATE TABLE column order).
+    # StoreName is built late (needs geography lookups) so the DataFrame
+    # insertion order diverges from the canonical schema order.
+    _SCHEMA_ORDER = [
+        "StoreKey", "StoreNumber", "StoreName", "StoreType", "StoreFormat",
+        "OwnershipType", "RevenueClass", "Status", "GeographyKey",
+        "StoreZone", "StoreDistrict", "StoreRegion",
+        "OpeningDate", "ClosingDate", "OpenFlag", "SquareFootage",
+        "EmployeeCount", "StoreManager", "Phone", "StoreEmail",
+        "StoreDescription", "CloseReason",
+        "AvgTransactionValue", "CustomerSatisfactionScore",
+        "InventoryTurnoverTarget", "LastAuditScore", "ShrinkageRatePct",
+    ]
+    df = df[_SCHEMA_ORDER]
+
     return df
 
 

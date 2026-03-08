@@ -860,6 +860,21 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
         df = _finalize_employee_integer_cols(df)
 
+        # Reorder columns to match the static schema (CREATE TABLE column order).
+        _SCHEMA_ORDER = [
+            "EmployeeKey", "ParentEmployeeKey", "EmployeeName", "Title",
+            "OrgLevel", "OrgUnitType", "RegionId", "DistrictId",
+            "StoreKey", "GeographyKey",
+            "HireDate", "TerminationDate", "IsActive",
+            "Gender", "FirstName", "LastName", "MiddleName",
+            "BirthDate", "MaritalStatus", "EmailAddress", "Phone",
+            "EmergencyContactName", "EmergencyContactPhone",
+            "SalariedFlag", "PayFrequency", "BaseRate", "VacationHours",
+            "CurrentFlag", "StartDate", "EndDate", "Status",
+            "SalesPersonFlag", "DepartmentName",
+        ]
+        df = df[_SCHEMA_ORDER]
+
         compression = emp_cfg.get("parquet_compression", "snappy")
         compression_level = emp_cfg.get("parquet_compression_level", None)
 
