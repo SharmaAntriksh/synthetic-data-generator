@@ -628,6 +628,8 @@ def generate_store_table(
     country_by_geo: Optional[dict[int, str]] = None,
     ensure_iso_coverage: bool = False,
     people_pools=None,
+    district_size: int = 10,
+    districts_per_region: int = 8,
 ) -> pd.DataFrame:
     """
     Generate synthetic store dimension table.
@@ -690,6 +692,8 @@ def generate_store_table(
         geo_keys=df["GeographyKey"].to_numpy(dtype=np.int64),
         iso_by_geo=iso_by_geo,
         country_by_geo=country_by_geo,
+        district_size=int_or(district_size, 10),
+        districts_per_region=int_or(districts_per_region, 8),
     )
     df["StoreZone"]     = zones
     df["StoreDistrict"] = districts
@@ -1003,6 +1007,8 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             country_by_geo=country_by_geo,
             ensure_iso_coverage=ensure_iso_coverage,
             people_pools=people_pools,
+            district_size=int_or(store_cfg.get("district_size"), 10),
+            districts_per_region=int_or(store_cfg.get("districts_per_region"), 8),
         )
 
         write_parquet_with_date32(

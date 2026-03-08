@@ -205,7 +205,7 @@ def generate_employee_store_assignments(
     *,
     enabled: bool = True,
     ensure_store_sales_coverage: bool = False,
-    mover_share: float = 0.03,
+    mover_share: float = 0.20,
     pool_scope: str = "district",
     allow_store_revisit: bool = True,
     part_time_multiplier: float = 1.0,
@@ -791,6 +791,10 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     version_cfg = dict(a_cfg)
     version_cfg.pop("_force_regenerate", None)
     version_cfg["schema_version"] = 9
+    version_cfg["_stores_cfg"] = {
+        k: v for k, v in as_dict(cfg.get("stores")).items()
+        if k != "_force_regenerate"
+    }
     version_cfg["_rows_employees"] = int(len(employees))
     if "EmployeeKey" in employees.columns and len(employees) > 0:
         ek = pd.to_numeric(employees["EmployeeKey"], errors="coerce").dropna().astype(np.int32)

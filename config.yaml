@@ -144,6 +144,8 @@ promotions:
 # ------------------------------------------------------------------
 stores:
   ensure_iso_coverage: true
+  district_size: 10
+  districts_per_region: 8
 
   opening:
     start: "1995-01-01"
@@ -154,10 +156,9 @@ stores:
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:
-  district_size: 10              # stores per district (default: 15)
-  districts_per_region: 8        # districts per region (default: 8)
+  # district_size / districts_per_region now live under 'stores:' (single source of truth).
+  # Values here are ignored; hierarchy is read from stores.parquet.
   use_store_employee_count: false
-  include_store_cols: false
   min_staff_per_store: 3
   max_staff_per_store: 5
 

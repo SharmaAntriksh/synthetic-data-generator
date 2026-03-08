@@ -44,19 +44,15 @@ _STAFF_TITLES_P = np.array([0.35, 0.25, 0.20, 0.10, 0.10], dtype=float)
 # ---------------------------------------------------------
 
 def _stores_signature(stores: pd.DataFrame) -> Dict[str, Any]:
+    """Version signature for stores — excludes EmployeeCount to avoid churn
+    when run_employees updates stores.parquet with actual counts."""
     if stores.empty:
-        return {"rows": 0, "min_store": None, "max_store": None, "emp_sum": 0}
+        return {"rows": 0, "min_store": None, "max_store": None}
     sk = stores["StoreKey"].to_numpy()
-    emp_sum = (
-        int(stores["EmployeeCount"].fillna(0).astype(np.int64).sum())
-        if "EmployeeCount" in stores.columns
-        else 0
-    )
     return {
         "rows": int(len(stores)),
         "min_store": int(np.min(sk)),
         "max_store": int(np.max(sk)),
-        "emp_sum": emp_sum,
     }
 
 
@@ -307,20 +303,20 @@ def generate_employee_dimension(
     seed: int,
     global_start: pd.Timestamp,
     global_end: pd.Timestamp,
-    district_size: int = 15,
+    district_size: int = 10,
     districts_per_region: int = 8,
-    max_staff_per_store: int = 10,
+    max_staff_per_store: int = 5,
     termination_rate: float = 0.08,
     use_store_employee_count: bool = False,
     min_staff_per_store: int = 3,
     staff_scale: float = 0.25,
-    include_store_cols: bool = False,
     people_pools=None,
     iso_by_geo: dict[int, str] | None = None,
     default_region: str = "US",
     primary_sales_role: str = "Sales Associate",
     min_primary_sales_per_store: int = 1,
     ensure_store_sales_coverage: bool = False,
+    store_manager_names: dict[int, str] | None = None,
 ) -> pd.DataFrame:
     """
     Build a parent-child employee hierarchy with stable keys.
@@ -342,20 +338,7 @@ def generate_employee_dimension(
     stores = stores.copy()
     stores["StoreKey"] = stores["StoreKey"].astype(np.int32)
 
-    # Sort stores by geography so districts contain geographically nearby stores.
-    # Falls back to StoreKey-only ordering when geography columns are absent.
-    sort_cols = []
-    has_continent = "Continent" in stores.columns
-    if has_continent:
-        sort_cols.append("Continent")
-    if "Country" in stores.columns:
-        sort_cols.append("Country")
-    sort_cols.append("StoreKey")
-    stores = stores.sort_values(sort_cols).reset_index(drop=True)
-
-    district_size = max(1, int_or(district_size, 15))
-    districts_per_region = max(1, int_or(districts_per_region, 8))
-    max_staff_per_store = max(0, int_or(max_staff_per_store, 10))
+    max_staff_per_store = max(0, int_or(max_staff_per_store, 5))
     min_staff_per_store = max(0, int_or(min_staff_per_store, 3))
     if max_staff_per_store > 0:
         min_staff_per_store = min(min_staff_per_store, max_staff_per_store)
@@ -363,33 +346,68 @@ def generate_employee_dimension(
         min_staff_per_store = 0
     staff_scale = float(np.clip(float_or(staff_scale, 0.25), 0.0, 1.0))
     termination_rate = float(np.clip(float_or(termination_rate, 0.08), 0.0, 1.0))
-    include_store_cols = bool(include_store_cols)
-
     rng = np.random.default_rng(int(seed))
 
-    # Partition stores into districts that never cross continent boundaries.
-    # Within each continent group, stores are subdivided into chunks of
-    # district_size.  Districts are numbered sequentially across all groups,
-    # then grouped into regions using districts_per_region.
     n_stores = len(stores)
 
-    if has_continent:
-        district_id = np.zeros(n_stores, dtype=np.int16)
-        next_did = 1
-        for _, grp_idx in stores.groupby("Continent", sort=False):
-            idx = grp_idx.index.to_numpy()
-            n_grp = len(idx)
-            local_did = np.arange(n_grp) // district_size
-            district_id[idx] = (local_did + next_did).astype(np.int16)
-            next_did += int(local_did.max()) + 1
-    else:
-        district_id = (np.arange(n_stores) // district_size + 1).astype(np.int16)
+    # ----- Hierarchy: prefer stores.parquet columns (single source of truth) -----
+    has_store_hierarchy = (
+        "StoreDistrict" in stores.columns and "StoreRegion" in stores.columns
+    )
 
-    region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int16)
+    if has_store_hierarchy:
+        district_id = (
+            stores["StoreDistrict"].astype(str)
+            .str.extract(r"(\d+)", expand=False)
+            .astype(np.int16)
+            .to_numpy()
+        )
+        region_id = (
+            stores["StoreRegion"].astype(str)
+            .str.extract(r"(\d+)", expand=False)
+            .astype(np.int16)
+            .to_numpy()
+        )
+        stores = stores.drop(
+            columns=["StoreDistrict", "StoreRegion", "StoreZone"],
+            errors="ignore",
+        )
+    else:
+        # Legacy fallback: compute hierarchy when stores.parquet lacks columns
+        warn(
+            "stores.parquet missing StoreDistrict/StoreRegion columns; "
+            "computing employee hierarchy independently. "
+            "Regenerate stores to enable unified hierarchy."
+        )
+        sort_cols = []
+        has_continent = "Continent" in stores.columns
+        if has_continent:
+            sort_cols.append("Continent")
+        if "Country" in stores.columns:
+            sort_cols.append("Country")
+        sort_cols.append("StoreKey")
+        stores = stores.sort_values(sort_cols).reset_index(drop=True)
+
+        district_size = max(1, int_or(district_size, 10))
+        districts_per_region = max(1, int_or(districts_per_region, 8))
+
+        if has_continent:
+            district_id = np.zeros(n_stores, dtype=np.int16)
+            next_did = 1
+            for _, grp_idx in stores.groupby("Continent", sort=False):
+                idx = grp_idx.index.to_numpy()
+                n_grp = len(idx)
+                local_did = np.arange(n_grp) // district_size
+                district_id[idx] = (local_did + next_did).astype(np.int16)
+                next_did += int(local_did.max()) + 1
+        else:
+            district_id = (np.arange(n_stores) // district_size + 1).astype(np.int16)
+
+        region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int16)
+        stores = stores.drop(columns=["Continent", "Country"], errors="ignore")
 
     stores["DistrictId"] = district_id
     stores["RegionId"] = region_id
-    stores = stores.drop(columns=["Continent", "Country"], errors="ignore")
 
     # --- Key-encoding helpers using module constants ---
     CEO_KEY = np.int32(1)
@@ -615,6 +633,30 @@ def generate_employee_dimension(
         default_region=default_region,
     )
 
+    # Override Store Manager names to match stores.parquet (single source of truth)
+    if store_manager_names:
+        mgr_mask = df["Title"].astype(str) == "Store Manager"
+        if mgr_mask.any():
+            mgr_ek = df.loc[mgr_mask, "EmployeeKey"]
+            mgr_ek_i32 = pd.to_numeric(mgr_ek, errors="coerce").fillna(0).astype(np.int32)
+            mgr_sk = (mgr_ek_i32 - STORE_MGR_KEY_BASE).astype(np.int32)
+            names = mgr_sk.map(
+                lambda sk: store_manager_names.get(int(sk), "")
+            )
+            valid = (names != "") & names.notna()
+            if valid.any():
+                vi = names.index[valid]
+                vn = names[valid].to_numpy(dtype=object)
+                first = np.array([str(n).split(" ", 1)[0] for n in vn], dtype=object)
+                last = np.array(
+                    [str(n).split(" ", 1)[1] if " " in str(n) else "" for n in vn],
+                    dtype=object,
+                )
+                df.loc[vi, "FirstName"] = first
+                df.loc[vi, "LastName"] = last
+                df.loc[vi, "MiddleName"] = ""
+                df.loc[vi, "EmployeeName"] = vn
+
     # Final integer casts (single consolidated pass)
     df["EmployeeKey"] = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int32)
     df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").astype("Int32")
@@ -624,10 +666,68 @@ def generate_employee_dimension(
     df["StoreKey"] = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int32)
     df["GeographyKey"] = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(0).astype(np.int32)
 
-    if not include_store_cols:
-        df = df.drop(columns=["StoreKey", "GeographyKey"], errors="ignore")
-
     return df
+
+
+# ---------------------------------------------------------
+# EmployeeCount sync — update stores.parquet after generation
+# ---------------------------------------------------------
+
+def _count_employees_per_store(df: pd.DataFrame) -> dict[int, int]:
+    """Count employees per store from EmployeeKey encoding."""
+    ek = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
+    store_keys = np.full(len(ek), -1, dtype=np.int32)
+
+    mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE)
+    store_keys[mgr_mask] = ek[mgr_mask] - STORE_MGR_KEY_BASE
+
+    staff_mask = ek >= STAFF_KEY_BASE
+    store_keys[staff_mask] = (ek[staff_mask] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
+
+    valid = store_keys >= 0
+    if not valid.any():
+        return {}
+    unique, counts = np.unique(store_keys[valid], return_counts=True)
+    return dict(zip(unique.astype(int).tolist(), counts.astype(int).tolist()))
+
+
+def _sync_stores_employee_count(emp_df: pd.DataFrame, stores_path: Path) -> None:
+    """Update stores.parquet EmployeeCount with actual employee counts."""
+    import re as _re
+
+    actual = _count_employees_per_store(emp_df)
+    if not actual:
+        return
+
+    stores_full = pd.read_parquet(stores_path)
+    new_counts = stores_full["StoreKey"].map(
+        lambda sk: actual.get(int(sk), 0)
+    ).astype(np.int64)
+
+    if stores_full["EmployeeCount"].astype(np.int64).equals(new_counts):
+        return  # already accurate
+
+    stores_full["EmployeeCount"] = new_counts
+
+    # Patch "headcount <N>" in StoreDescription to match actual counts
+    if "StoreDescription" in stores_full.columns:
+        desc = stores_full["StoreDescription"].astype(str).to_numpy(dtype=object)
+        sk_arr = stores_full["StoreKey"].to_numpy()
+        for i in range(len(stores_full)):
+            cnt = actual.get(int(sk_arr[i]), 0)
+            desc[i] = _re.sub(r"(headcount )\d+", rf"\g<1>{cnt}", str(desc[i]))
+        stores_full["StoreDescription"] = desc
+
+    write_parquet_with_date32(
+        stores_full,
+        stores_path,
+        date_cols=["OpeningDate", "ClosingDate"],
+        cast_all_datetime=False,
+        compression="snappy",
+        compression_level=None,
+        force_date32=True,
+    )
+    info("Updated stores.parquet EmployeeCount with actual employee counts.")
 
 
 # ---------------------------------------------------------
@@ -651,15 +751,27 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     seed = pick_seed_nested(cfg, emp_cfg, fallback=42)
     global_start, global_end = _parse_employee_dates(cfg, emp_cfg)
 
-    stores = pd.read_parquet(
-        stores_path,
-        columns=["StoreKey", "GeographyKey", "EmployeeCount", "StoreType"],
-    )
+    _STORES_READ_COLS = [
+        "StoreKey", "GeographyKey", "EmployeeCount", "StoreType",
+        "StoreDistrict", "StoreRegion", "StoreManager",
+    ]
+    try:
+        stores = pd.read_parquet(stores_path, columns=_STORES_READ_COLS)
+    except Exception:
+        # Legacy stores.parquet may lack hierarchy/manager columns
+        stores = pd.read_parquet(
+            stores_path,
+            columns=["StoreKey", "GeographyKey", "EmployeeCount", "StoreType"],
+        )
 
     version_cfg = dict(emp_cfg)
     version_cfg.pop("_force_regenerate", None)
     version_cfg["schema_version"] = 6
     version_cfg["_stores_sig"] = _stores_signature(stores)
+    version_cfg["_stores_cfg"] = {
+        k: v for k, v in as_dict(cfg.get("stores")).items()
+        if k != "_force_regenerate"
+    }
     version_cfg["_global_dates"] = {
         "start": str(global_start.date()),
         "end": str(global_end.date()),
@@ -682,6 +794,9 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     )
 
     iso_by_geo: dict[int, str] = {}
+    has_store_hierarchy = (
+        "StoreDistrict" in stores.columns and "StoreRegion" in stores.columns
+    )
     geo_path = parquet_folder / "geography.parquet"
     if geo_path.exists():
         geo_df = pd.read_parquet(geo_path)
@@ -689,16 +804,24 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         iso = geo_df.loc[geo_df["GeographyKey"].notna(), "ISOCode"].astype(str).to_numpy()
         iso_by_geo = dict(zip(gk, iso))
 
-        if "Continent" in geo_df.columns and "Country" in geo_df.columns:
-            geo_sort = geo_df[["GeographyKey", "Continent", "Country"]].drop_duplicates("GeographyKey").copy()
-            geo_sort["GeographyKey"] = pd.to_numeric(geo_sort["GeographyKey"], errors="coerce").astype(np.int32)
-            stores = stores.merge(
-                geo_sort, on="GeographyKey", how="left",
-            )
+        # Merge Continent/Country only when stores lacks hierarchy columns (legacy fallback)
+        if not has_store_hierarchy:
+            if "Continent" in geo_df.columns and "Country" in geo_df.columns:
+                geo_sort = geo_df[["GeographyKey", "Continent", "Country"]].drop_duplicates("GeographyKey").copy()
+                geo_sort["GeographyKey"] = pd.to_numeric(geo_sort["GeographyKey"], errors="coerce").astype(np.int32)
+                stores = stores.merge(
+                    geo_sort, on="GeographyKey", how="left",
+                )
+
+    # Build StoreKey → StoreManager name mapping (source of truth for manager names)
+    store_manager_names: dict[int, str] | None = None
+    if "StoreManager" in stores.columns:
+        _sk = stores["StoreKey"].astype(np.int32).to_numpy()
+        _nm = stores["StoreManager"].astype(str).to_numpy()
+        store_manager_names = dict(zip(_sk.tolist(), _nm.tolist()))
+        stores = stores.drop(columns=["StoreManager"], errors="ignore")
 
     with stage("Generating Employees"):
-        include_store_cols = bool_or(emp_cfg.get("include_store_cols"), False)
-
         sa_cfg = as_dict(emp_cfg.get("store_assignments"))
         primary_sales_role = str(sa_cfg.get("primary_sales_role") or "Sales Associate")
         min_primary_sales_per_store = int_or(sa_cfg.get("min_primary_sales_per_store"), 1)
@@ -709,20 +832,20 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             seed=seed,
             global_start=global_start,
             global_end=global_end,
-            district_size=int_or(emp_cfg.get("district_size"), 15),
+            district_size=int_or(emp_cfg.get("district_size"), 10),
             districts_per_region=int_or(emp_cfg.get("districts_per_region"), 8),
-            max_staff_per_store=int_or(emp_cfg.get("max_staff_per_store"), 10),
+            max_staff_per_store=int_or(emp_cfg.get("max_staff_per_store"), 5),
             termination_rate=float_or(emp_cfg.get("termination_rate"), 0.08),
             use_store_employee_count=bool_or(emp_cfg.get("use_store_employee_count"), False),
             min_staff_per_store=int_or(emp_cfg.get("min_staff_per_store"), 3),
             staff_scale=float_or(emp_cfg.get("staff_scale"), 0.25),
-            include_store_cols=include_store_cols,
             people_pools=people_pools,
             iso_by_geo=iso_by_geo,
             default_region="US",
             primary_sales_role=primary_sales_role,
             min_primary_sales_per_store=min_primary_sales_per_store,
             ensure_store_sales_coverage=ensure_store_sales_coverage,
+            store_manager_names=store_manager_names,
         )
 
         hr_cfg = as_dict(emp_cfg.get("hr"))
@@ -753,3 +876,6 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     save_version("employees", version_cfg, out_path)
     info(f"Employees dimension written: {out_path}")
+
+    # --- Sync stores.parquet EmployeeCount with actual generated counts ---
+    _sync_stores_employee_count(df, stores_path)
