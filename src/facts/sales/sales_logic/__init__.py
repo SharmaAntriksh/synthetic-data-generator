@@ -18,8 +18,9 @@ from . import core as core
 from . import globals as globals
 
 # Re-export key symbols (matches the old sales_logic.py __all__)
+# State and bind_globals come from globals; fmt and PA_AVAILABLE come from globals
+# (core re-exports them but globals is the canonical source)
 from .globals import State, bind_globals, PA_AVAILABLE, fmt
-from .core import fmt, PA_AVAILABLE
 from .chunk_builder import build_chunk_table
 
 __all__ = [

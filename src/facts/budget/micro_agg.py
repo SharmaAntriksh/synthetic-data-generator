@@ -213,9 +213,13 @@ def micro_aggregate_returns(
     ret_ln = returns_table.column("SalesOrderLineNumber").to_numpy(zero_copy_only=False)
 
     # Pack (OrderNumber, LineNumber) into a single int64 for fast lookup.
-    # LineNumber fits in 16 bits (max ~5 lines/order), so shift order by 16.
-    sales_key = (sales_so.astype(np.int64) << 16) | sales_ln.astype(np.int64)
-    ret_key = (ret_so.astype(np.int64) << 16) | ret_ln.astype(np.int64)
+    sales_ln_i64 = sales_ln.astype(np.int64)
+    ret_ln_i64 = ret_ln.astype(np.int64)
+    max_ln = max(int(sales_ln_i64.max()) if sales_ln_i64.size else 0,
+                    int(ret_ln_i64.max()) if ret_ln_i64.size else 0)
+    shift_bits = max(16, int(max_ln).bit_length())
+    sales_key = (sales_so.astype(np.int64) << shift_bits) | sales_ln_i64
+    ret_key = (ret_so.astype(np.int64) << shift_bits) | ret_ln_i64
 
     # Map each return row to its source detail row via sorted lookup
     sort_idx = np.argsort(sales_key)

@@ -432,10 +432,6 @@ def build_chunk_table(
     chunk_idx: int,
     chunk_capacity_orders: int,
 ) -> pa.Table:
-
-    # Lazy import to avoid circular import: sales_models imports State from sales_logic
-    from ..sales_models import build_quantity, build_prices
-
     """
     Build a chunk of synthetic sales data.
 
@@ -446,6 +442,10 @@ def build_chunk_table(
       - IMPORTANT: discovery is OFF if customer_discovery block is absent
     - All per-order arrays remain aligned
     """
+
+    # Lazy import to avoid circular import: sales_models imports State from sales_logic
+    from ..sales_models import build_quantity, build_prices
+
     if not PA_AVAILABLE:
         raise RuntimeError("pyarrow is required")
 
@@ -454,7 +454,7 @@ def build_chunk_table(
     chunk_idx = int(chunk_idx)
     cap = int(chunk_capacity_orders)
 
-    MOD = np.int64(1_000_000_000)
+    INT32_MAX = np.int64(np.iinfo(np.int32).max)
 
     # Each chunk owns a disjoint suffix range: [base, base + cap)
     base = np.int64(chunk_idx) * np.int64(cap)
@@ -781,8 +781,12 @@ def build_chunk_table(
                 )
 
             order_id_start = base + order_cursor
-            if order_id_start + np.int64(order_count) >= MOD:
-                raise RuntimeError("SalesOrderNumber suffix overflow; increase suffix width/capacity.")
+            if order_id_start + np.int64(order_count) + 1 >= INT32_MAX:
+                raise RuntimeError(
+                    f"SalesOrderNumber would exceed int32 range "
+                    f"(order_id_start={int(order_id_start)}, order_count={order_count}, "
+                    f"int32_max={int(INT32_MAX)}). Reduce total rows or increase chunk count."
+                )
 
             orders = build_orders(
                 rng=rng,
