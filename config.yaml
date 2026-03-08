@@ -143,7 +143,7 @@ promotions:
 # STORES
 # ------------------------------------------------------------------
 stores:
-  ensure_currency_coverage: true
+  ensure_iso_coverage: true
 
   opening:
     start: "1995-01-01"

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
 
-from src.utils.logging_utils import info, skip, stage
+from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 from src.utils.name_pools import (
@@ -78,6 +78,61 @@ _ONLINE_SUFFIX = np.array(
     ["Online", "Digital", "E-Commerce", "Web Store", "Direct"],
     dtype=object,
 )
+
+# StoreFormat — choices and probabilities keyed by StoreType
+_STORE_FORMATS: dict[str, tuple[list[str], list[float]]] = {
+    "Online":      (["Digital"],                                   [1.00]),
+    "Hypermarket": (["Flagship", "Standard"],                      [0.30, 0.70]),
+    "Supermarket": (["Flagship", "Standard", "Express"],           [0.10, 0.60, 0.30]),
+    "Convenience": (["Standard", "Express", "Drive-Thru"],         [0.10, 0.50, 0.40]),
+}
+_DEFAULT_FORMATS: tuple[list[str], list[float]] = (["Standard", "Express"], [0.50, 0.50])
+
+# OwnershipType — choices and probabilities keyed by StoreType
+_OWNERSHIP_TYPES: dict[str, tuple[list[str], list[float]]] = {
+    "Online":      (["Corporate", "Licensed"],              [0.70, 0.30]),
+    "Hypermarket": (["Corporate", "Franchise", "Licensed"], [0.80, 0.15, 0.05]),
+    "Supermarket": (["Corporate", "Franchise", "Licensed"], [0.50, 0.35, 0.15]),
+    "Convenience": (["Corporate", "Franchise", "Licensed"], [0.30, 0.50, 0.20]),
+}
+_DEFAULT_OWNERSHIP: tuple[list[str], list[float]] = (
+    ["Corporate", "Franchise", "Licensed"], [0.50, 0.35, 0.15],
+)
+
+_REVENUE_CLASSES   = np.array(["A", "B", "C"], dtype=object)
+_REVENUE_CLASSES_P = np.array([0.20, 0.60, 0.20], dtype=float)
+
+# StoreZone derived from ISO/currency code
+_ISO_TO_ZONE: dict[str, str] = {
+    "USD": "Americas",    "CAD": "Americas",    "MXN": "Americas",    "BRL": "Americas",
+    "ARS": "Americas",    "CLP": "Americas",    "COP": "Americas",    "PEN": "Americas",
+    "GBP": "Europe",      "EUR": "Europe",      "CHF": "Europe",      "SEK": "Europe",
+    "NOK": "Europe",      "DKK": "Europe",      "PLN": "Europe",      "CZK": "Europe",
+    "HUF": "Europe",      "RON": "Europe",
+    "INR": "South Asia",
+    "AUD": "Asia Pacific", "NZD": "Asia Pacific", "CNY": "Asia Pacific", "JPY": "Asia Pacific",
+    "HKD": "Asia Pacific", "SGD": "Asia Pacific", "KRW": "Asia Pacific", "TWD": "Asia Pacific",
+    "THB": "Asia Pacific", "IDR": "Asia Pacific", "PHP": "Asia Pacific", "MYR": "Asia Pacific",
+}
+
+# Brand → email domain
+_BRAND_DOMAINS: dict[str, str] = {
+    "Northwind Market":       "northwindmarket.com",
+    "Contoso Mart":           "contosomart.com",
+    "Fabrikam Foods":         "fabrikamfoods.com",
+    "Woodgrove Grocers":      "woodgrovegrocers.com",
+    "Adventure Works Retail": "adventureworks.com",
+    "Tailspin Superstores":   "tailspinstores.com",
+    "Wingtip Fresh":          "wingtipfresh.com",
+    "Proseware Market":       "prosewaremarket.com",
+    "CitySquare Grocers":     "citysquaregrocers.com",
+    "Harborview Market":      "harborviewmarket.com",
+    "Summit Retail":          "summitretail.com",
+    "BlueSky Foods":          "blueskyfoods.com",
+}
+
+# EU country code rotation for phone generation
+_EU_COUNTRY_CODES = [33, 34, 39, 49, 31, 32, 41, 46, 47, 45]
 
 
 # ---------------------------------------------------------
@@ -166,7 +221,7 @@ def _require_cfg(cfg: Dict) -> Dict:
     return stores_cfg
 
 
-def _as_date64d(s: Union[str, np.datetime64]) -> np.datetime64:
+def _as_date64d(s: str | np.datetime64) -> np.datetime64:
     if isinstance(s, np.datetime64):
         return s.astype("datetime64[D]")
     return np.datetime64(pd.to_datetime(str(s)).date(), "D")
@@ -212,7 +267,8 @@ def _square_footage_from_cfg(
     """
     default_lo, default_hi = range2(sqft_cfg.get("default"), 5000.0, 60000.0)
 
-    out = np.empty(n, dtype=np.int64)
+    # Use zeros so the missing-mask fallback (`out == 0`) is reliable
+    out = np.zeros(n, dtype=np.int64)
     st = store_type.astype(str).to_numpy()
 
     for t in np.unique(st):
@@ -341,6 +397,218 @@ def _sample_geography_keys(
 
 
 # ---------------------------------------------------------
+# New column helpers
+# ---------------------------------------------------------
+
+def _iso_to_zone(iso: str) -> str:
+    """Map an ISO/currency code to a geographic zone label."""
+    return _ISO_TO_ZONE.get(str(iso).strip().upper(), "International")
+
+
+def _build_phone(key: int, iso: str) -> str:
+    """Return a country-formatted synthetic phone number for a single store."""
+    iso = str(iso).strip().upper()
+    a = (key * 7 + 131) % 900 + 100       # 3-digit part  (100-999)
+    b = (key * 13 + 271) % 9000 + 1000    # 4-digit part (1000-9999)
+    c = key % 10000                         # 4-digit suffix
+
+    if iso in ("USD", "CAD", "MXN"):
+        return f"+1 (555) {a:03d}-{c:04d}"
+    if iso == "GBP":
+        return f"+44 {a:03d} {b // 10:03d} {c:04d}"
+    if iso == "EUR":
+        cc = _EU_COUNTRY_CODES[key % len(_EU_COUNTRY_CODES)]
+        return f"+{cc} {a // 10:02d} {b:04d} {c:04d}"
+    if iso == "INR":
+        return f"+91 {a * 10 + b % 10:05d} {c:05d}"
+    if iso == "AUD":
+        return f"+61 {key % 9 + 2} {a:04d} {c:04d}"
+    if iso in ("CNY", "HKD"):
+        return f"+86 {a:03d} {b:04d} {c:04d}"
+    if iso == "JPY":
+        return f"+81 {a % 90 + 10:02d} {b:04d} {c:04d}"
+    if iso == "SGD":
+        return f"+65 {b:04d} {c:04d}"
+    # Generic international fallback
+    cc = 10 + key % 89
+    return f"+{cc} {a:03d} {b // 10:03d} {c:04d}"
+
+
+def _build_store_format(rng: np.random.Generator, store_type: pd.Series) -> np.ndarray:
+    """Assign StoreFormat correlated with StoreType."""
+    st = store_type.astype(str).to_numpy()
+    out = np.full(len(st), "Standard", dtype=object)
+    for t in np.unique(st):
+        mask = st == t
+        choices, probs = _STORE_FORMATS.get(t, _DEFAULT_FORMATS)
+        out[mask] = rng.choice(np.array(choices, dtype=object), size=int(mask.sum()), p=probs)
+    return out
+
+
+def _build_ownership_type(rng: np.random.Generator, store_type: pd.Series) -> np.ndarray:
+    """Assign OwnershipType correlated with StoreType."""
+    st = store_type.astype(str).to_numpy()
+    out = np.full(len(st), "Corporate", dtype=object)
+    for t in np.unique(st):
+        mask = st == t
+        choices, probs = _OWNERSHIP_TYPES.get(t, _DEFAULT_OWNERSHIP)
+        out[mask] = rng.choice(np.array(choices, dtype=object), size=int(mask.sum()), p=probs)
+    return out
+
+
+def _build_hierarchy(
+    geo_keys: np.ndarray,
+    iso_by_geo: Optional[dict[int, str]],
+    country_by_geo: Optional[dict[int, str]] = None,
+    district_size: int = 10,
+    districts_per_region: int = 8,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Derive (StoreZone, StoreDistrict, StoreRegion) from GeographyKey + ISOCode.
+
+    Districts are assigned per *country within zone* so that stores in
+    different countries (e.g. China vs Australia) never share a district,
+    even when they belong to the same zone ("Asia Pacific").  Region IDs
+    roll up districts using ``districts_per_region``.
+    """
+    n = len(geo_keys)
+    zones = np.empty(n, dtype=object)
+
+    if iso_by_geo:
+        for i, gk in enumerate(geo_keys):
+            iso = iso_by_geo.get(int(gk), "")
+            zones[i] = _iso_to_zone(iso)
+    else:
+        zones[:] = "International"
+
+    # Country label per store (used for sub-grouping within a zone)
+    countries = np.empty(n, dtype=object)
+    if country_by_geo:
+        for i, gk in enumerate(geo_keys):
+            countries[i] = country_by_geo.get(int(gk), "Unknown")
+    else:
+        countries[:] = "Unknown"
+
+    # Assign districts: iterate zone → country within zone → sequential IDs
+    district_id = np.zeros(n, dtype=np.int16)
+    next_did = 1
+    for z in sorted(np.unique(zones)):
+        z_mask = zones == z
+        z_countries = countries[z_mask]
+        z_idx = np.where(z_mask)[0]
+
+        for c in sorted(np.unique(z_countries)):
+            c_local = z_countries == c
+            idx = z_idx[c_local]
+            local_did = np.arange(len(idx)) // district_size
+            district_id[idx] = (local_did + next_did).astype(np.int16)
+            next_did += int(local_did.max()) + 1 if len(idx) > 0 else 1
+
+    region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int16)
+
+    store_districts = np.array([f"District {d}" for d in district_id], dtype=object)
+    store_regions   = np.array([f"Region {r}"   for r in region_id],   dtype=object)
+
+    return zones, store_districts, store_regions
+
+
+def _build_emails(
+    brand_arr: np.ndarray,
+    area_arr: np.ndarray,
+    store_number_arr: np.ndarray,
+    is_online: np.ndarray,
+) -> np.ndarray:
+    """Generate ``StoreEmail`` addresses keyed to brand domain."""
+    n = len(brand_arr)
+    out = np.empty(n, dtype=object)
+    for i in range(n):
+        domain = _BRAND_DOMAINS.get(str(brand_arr[i]), "retailstore.com")
+        sn = str(store_number_arr[i]).lower().replace("-", ".")
+        if is_online[i]:
+            out[i] = f"online.{sn}@{domain}"
+        else:
+            area_slug = str(area_arr[i]).lower().replace(" ", ".").replace("-", ".")
+            out[i] = f"{area_slug}.{sn}@{domain}"
+    return out
+
+
+def _build_analytical(
+    rng: np.random.Generator,
+    store_type: pd.Series,
+    revenue_class: np.ndarray,
+    n: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Generate five analytical columns:
+      AvgTransactionValue, CustomerSatisfactionScore,
+      InventoryTurnoverTarget, LastAuditScore, ShrinkageRatePct
+
+    All values are correlated with StoreType and/or RevenueClass.
+    """
+    st = store_type.astype(str).to_numpy()
+    rc = np.asarray(revenue_class, dtype=object)
+
+    # AvgTransactionValue — base ranges by type, then adjusted for revenue class
+    atv_base = np.zeros(n, dtype=np.float64)
+    for t in np.unique(st):
+        mask = st == t
+        cnt = int(mask.sum())
+        if t == "Hypermarket":
+            atv_base[mask] = rng.uniform(80.0, 250.0, cnt)
+        elif t == "Supermarket":
+            atv_base[mask] = rng.uniform(40.0, 120.0, cnt)
+        elif t == "Convenience":
+            atv_base[mask] = rng.uniform(10.0, 30.0, cnt)
+        elif t == "Online":
+            atv_base[mask] = rng.uniform(50.0, 200.0, cnt)
+        else:
+            warn(f"Unknown StoreType {t!r} in AvgTransactionValue; using Supermarket range.")
+            atv_base[mask] = rng.uniform(40.0, 120.0, cnt)
+
+    rc_mult = np.where(rc == "A", 1.30, np.where(rc == "C", 0.80, 1.00))
+    avg_transaction = np.round(atv_base * rc_mult, 2)
+
+    # CustomerSatisfactionScore — 1.0-10.0, positive skew via beta distribution
+    raw_csat = rng.beta(a=6, b=2, size=n)
+    csat = np.round(1.0 + raw_csat * 9.0, 1)
+
+    # InventoryTurnoverTarget — turns/year, varies by store type
+    inv_turn = np.zeros(n, dtype=np.float64)
+    for t in np.unique(st):
+        mask = st == t
+        cnt = int(mask.sum())
+        if t == "Hypermarket":
+            inv_turn[mask] = rng.uniform(15.0, 25.0, cnt)
+        elif t == "Supermarket":
+            inv_turn[mask] = rng.uniform(18.0, 30.0, cnt)
+        elif t == "Convenience":
+            inv_turn[mask] = rng.uniform(30.0, 50.0, cnt)
+        elif t == "Online":
+            inv_turn[mask] = rng.uniform(20.0, 40.0, cnt)
+        else:
+            inv_turn[mask] = rng.uniform(18.0, 30.0, cnt)
+    inv_turn = np.round(inv_turn, 1)
+
+    # LastAuditScore — integer 50-100
+    audit = rng.integers(50, 101, size=n, dtype=np.int64)
+
+    # ShrinkageRatePct — Convenience is higher risk; Online is lower
+    shrink = np.zeros(n, dtype=np.float64)
+    for t in np.unique(st):
+        mask = st == t
+        cnt = int(mask.sum())
+        if t == "Convenience":
+            shrink[mask] = rng.uniform(1.5, 4.0, cnt)
+        elif t == "Online":
+            shrink[mask] = rng.uniform(0.2, 1.0, cnt)
+        else:  # Supermarket, Hypermarket, or any future type
+            shrink[mask] = rng.uniform(0.5, 2.5, cnt)
+    shrink = np.round(shrink, 2)
+
+    return avg_transaction, csat, inv_turn, audit, shrink
+
+
+# ---------------------------------------------------------
 # Generator
 # ---------------------------------------------------------
 
@@ -357,16 +625,20 @@ def generate_store_table(
     geo_loc_short: Optional[Dict[int, str]] = None,
     geo_loc_full: Optional[Dict[int, str]] = None,
     iso_by_geo: Optional[dict[int, str]] = None,
-    ensure_currency_coverage: bool = False,
+    country_by_geo: Optional[dict[int, str]] = None,
+    ensure_iso_coverage: bool = False,
     people_pools=None,
 ) -> pd.DataFrame:
     """
     Generate synthetic store dimension table.
 
     Output columns:
-      StoreKey, StoreName, StoreType, Status, GeographyKey,
+      StoreKey, StoreNumber, StoreName, StoreType, StoreFormat, OwnershipType,
+      RevenueClass, Status, GeographyKey, StoreZone, StoreDistrict, StoreRegion,
       OpeningDate, ClosingDate, OpenFlag, SquareFootage, EmployeeCount,
-      StoreManager, Phone, StoreDescription, CloseReason
+      StoreManager, Phone, StoreEmail, StoreDescription, CloseReason,
+      AvgTransactionValue, CustomerSatisfactionScore, InventoryTurnoverTarget,
+      LastAuditScore, ShrinkageRatePct
     """
     num_stores = int_or(num_stores, 200)
     if num_stores <= 0:
@@ -381,7 +653,13 @@ def generate_store_table(
     df = pd.DataFrame({"StoreKey": store_key})
     sk = store_key.astype(np.int64)
 
+    # StoreNumber — human-readable alphanumeric key (STR-0001 … STR-9999)
+    df["StoreNumber"] = pd.array([f"STR-{k:04d}" for k in store_key], dtype="object")
+
     df["StoreType"] = rng.choice(_STORE_TYPES, size=num_stores, p=_STORE_TYPES_P)
+    df["StoreFormat"] = _build_store_format(rng, df["StoreType"])
+    df["OwnershipType"] = _build_ownership_type(rng, df["StoreType"])
+    df["RevenueClass"] = rng.choice(_REVENUE_CLASSES, size=num_stores, p=_REVENUE_CLASSES_P)
     df["Status"] = rng.choice(_STORE_STATUS, size=num_stores, p=_STORE_STATUS_P)
 
     df["GeographyKey"] = _sample_geography_keys(
@@ -389,7 +667,7 @@ def generate_store_table(
         geo_keys=geo_keys.astype(np.int64),
         n=num_stores,
         iso_by_geo=iso_by_geo,
-        ensure_iso_coverage=bool(ensure_currency_coverage),
+        ensure_iso_coverage=bool(ensure_iso_coverage),
     )
 
     # Location strings
@@ -406,6 +684,16 @@ def generate_store_table(
         loc_full = df["GeographyKey"].astype(np.int64).map(
             lambda k: geo_loc_full.get(int(k), f"Geo {int(k)}")
         )
+
+    # Hierarchy: StoreZone, StoreDistrict, StoreRegion
+    zones, districts, regions = _build_hierarchy(
+        geo_keys=df["GeographyKey"].to_numpy(dtype=np.int64),
+        iso_by_geo=iso_by_geo,
+        country_by_geo=country_by_geo,
+    )
+    df["StoreZone"]     = zones
+    df["StoreDistrict"] = districts
+    df["StoreRegion"]   = regions
 
     # Manager names
     if people_pools is not None:
@@ -452,7 +740,7 @@ def generate_store_table(
 
     # StoreName
     brand = _BRANDS[(sk + int(seed)) % len(_BRANDS)]
-    area = _AREAS[(sk * 7 + int(seed) * 13) % len(_AREAS)]
+    area  = _AREAS[(sk * 7 + int(seed) * 13) % len(_AREAS)]
     stype = df["StoreType"].astype(str)
     is_online = stype.to_numpy() == "Online"
 
@@ -476,8 +764,8 @@ def generate_store_table(
 
     # Dates at DAY granularity
     open_start_d = _as_date64d(opening_start)
-    open_end_d = _as_date64d(opening_end)
-    close_end_d = _as_date64d(closing_end)
+    open_end_d   = _as_date64d(opening_end)
+    close_end_d  = _as_date64d(closing_end)
 
     opening_d = _rand_dates_d(rng, open_start_d, open_end_d, num_stores)
     df["OpeningDate"] = pd.to_datetime(opening_d.astype("datetime64[ns]")).normalize()
@@ -487,8 +775,16 @@ def generate_store_table(
     closed_mask = status.to_numpy() == "Closed"
 
     if closed_mask.any():
-        open_days = opening_d.astype("int64")[closed_mask]
+        open_days     = opening_d.astype("int64")[closed_mask]
         close_end_day = close_end_d.astype("int64")
+
+        late_openers = int((open_days > close_end_day).sum())
+        if late_openers:
+            warn(
+                f"{late_openers} closed store(s) have OpeningDate after "
+                f"closing_end={closing_end!r}; ClosingDate will equal OpeningDate for those stores."
+            )
+
         effective_end = np.maximum(open_days, close_end_day)
         close_days = rng.integers(open_days, effective_end + 1, dtype=np.int64)
         close_d = close_days.astype("datetime64[D]")
@@ -513,14 +809,23 @@ def generate_store_table(
         emp_cfg=as_dict(employee_count_cfg),
     )
 
-    # Phone
-    first_part = (store_key % 900) + 100
-    second_part = store_key % 10000
-    df["Phone"] = (
-        "(555) "
-        + pd.Series(first_part).astype(str).str.zfill(3)
-        + "-"
-        + pd.Series(second_part).astype(str).str.zfill(4)
+    # Phone — format varies by country via ISO/currency code
+    gk_arr  = df["GeographyKey"].to_numpy(dtype=np.int64)
+    iso_arr = np.array(
+        [iso_by_geo.get(int(k), "") if iso_by_geo else "" for k in gk_arr],
+        dtype=object,
+    )
+    df["Phone"] = pd.array(
+        [_build_phone(int(k), str(iso)) for k, iso in zip(store_key, iso_arr)],
+        dtype="object",
+    )
+
+    # StoreEmail
+    df["StoreEmail"] = _build_emails(
+        brand_arr=brand,
+        area_arr=area,
+        store_number_arr=df["StoreNumber"].to_numpy(),
+        is_online=is_online,
     )
 
     # CloseReason (must exist before StoreDescription references it)
@@ -582,6 +887,19 @@ def generate_store_table(
 
     df["StoreDescription"] = base
 
+    # Analytical columns
+    avg_txn, csat, inv_turn, audit, shrink = _build_analytical(
+        rng=rng,
+        store_type=df["StoreType"],
+        revenue_class=df["RevenueClass"].to_numpy(),
+        n=num_stores,
+    )
+    df["AvgTransactionValue"]      = avg_txn
+    df["CustomerSatisfactionScore"] = csat
+    df["InventoryTurnoverTarget"]   = inv_turn
+    df["LastAuditScore"]            = audit
+    df["ShrinkageRatePct"]          = shrink
+
     return df
 
 
@@ -610,7 +928,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     geo_keys = geo["GeographyKey"].astype(np.int64).to_numpy()
     loc_short_map, loc_full_map = _build_location_maps(geo)
 
-    ensure_currency_coverage = bool(store_cfg.get("ensure_currency_coverage", False))
+    ensure_iso_coverage = bool(store_cfg.get("ensure_iso_coverage", False))
 
     iso_by_geo: Optional[dict[int, str]] = None
     if "ISOCode" in geo.columns:
@@ -622,21 +940,36 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             )
         )
 
+    # Country lookup — used for district sub-grouping within zones
+    country_col = next(
+        (c for c in ("Country", "CountryRegionName", "RegionCountryName") if c in geo.columns),
+        None,
+    )
+    country_by_geo: Optional[dict[int, str]] = None
+    if country_col is not None:
+        gc = geo[["GeographyKey", country_col]].dropna()
+        country_by_geo = dict(
+            zip(
+                gc["GeographyKey"].astype(np.int64).to_numpy(),
+                gc[country_col].astype(str).to_numpy(),
+            )
+        )
+
     sqft_cfg = as_dict(store_cfg.get("square_footage"))
-    emp_cfg = as_dict(store_cfg.get("employee_count"))
+    emp_cfg  = as_dict(store_cfg.get("employee_count"))
 
     version_cfg = dict(store_cfg)
     version_cfg.pop("_force_regenerate", None)
-    version_cfg["schema_version"] = 2
+    version_cfg["schema_version"] = 3
     version_cfg["_geography_sig"] = _geography_signature(geo_keys)
 
     if not force and not should_regenerate("stores", version_cfg, out_path):
         skip("Stores up-to-date; skipping.")
         return
 
-    compression = store_cfg.get("parquet_compression", "snappy")
+    compression       = store_cfg.get("parquet_compression", "snappy")
     compression_level = store_cfg.get("parquet_compression_level", None)
-    force_date32 = bool(store_cfg.get("force_date32", True))
+    force_date32      = bool(store_cfg.get("force_date32", True))
 
     opening_cfg = as_dict(store_cfg.get("opening"))
 
@@ -667,7 +1000,8 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             geo_loc_short=loc_short_map,
             geo_loc_full=loc_full_map,
             iso_by_geo=iso_by_geo,
-            ensure_currency_coverage=ensure_currency_coverage,
+            country_by_geo=country_by_geo,
+            ensure_iso_coverage=ensure_iso_coverage,
             people_pools=people_pools,
         )
 
