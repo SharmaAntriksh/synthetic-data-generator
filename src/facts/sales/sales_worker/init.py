@@ -470,6 +470,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
         promo_keys_all = worker_cfg["promo_keys_all"]
         promo_start_all = worker_cfg["promo_start_all"]
         promo_end_all = worker_cfg["promo_end_all"]
+        new_customer_promo_keys = worker_cfg.get("new_customer_promo_keys")
+        new_customer_window_months = int(worker_cfg.get("new_customer_window_months", 3))
 
         customer_keys = worker_cfg["customer_keys"]
         customer_is_active_in_sales = worker_cfg.get("customer_is_active_in_sales")
@@ -644,6 +646,10 @@ def init_sales_worker(worker_cfg: dict) -> None:
     promo_keys_all = as_int64(promo_keys_all)
     promo_start_all = np.asarray(promo_start_all, dtype="datetime64[D]")
     promo_end_all = np.asarray(promo_end_all, dtype="datetime64[D]")
+    if new_customer_promo_keys is not None and len(new_customer_promo_keys) > 0:
+        new_customer_promo_keys = as_int64(new_customer_promo_keys)
+    else:
+        new_customer_promo_keys = None
 
     customer_keys = as_int64(customer_keys)
 
@@ -767,6 +773,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "promo_keys_all": promo_keys_all,
             "promo_start_all": promo_start_all,
             "promo_end_all": promo_end_all,
+            "new_customer_promo_keys": new_customer_promo_keys,
+            "new_customer_window_months": new_customer_window_months,
             "customer_keys": customer_keys,
             "customer_is_active_in_sales": customer_is_active_in_sales,
             "customer_start_month": customer_start_month,

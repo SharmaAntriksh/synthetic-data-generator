@@ -515,6 +515,29 @@ def build_chunk_table(
     promo_start_all = State.promo_start_all
     promo_end_all = State.promo_end_all
 
+    nc_promo_keys = State.new_customer_promo_keys
+    nc_promo_set = frozenset(nc_promo_keys.tolist()) if nc_promo_keys is not None and nc_promo_keys.size > 0 else None
+    nc_window_months = int(State.new_customer_window_months or 3)
+
+    # Precompute New Customer promo date windows for force-assignment
+    if nc_promo_set is not None and customer_keys.size > 0 and start_month is not None:
+        _max_ckey = int(customer_keys.max())
+        _ckey_to_start_month = np.full(_max_ckey + 1, -1, dtype=np.int64)
+        _ckey_to_start_month[customer_keys] = start_month
+
+        _nc_min_month = int(date_pool.astype("datetime64[M]").astype("int64").min())
+
+        nc_idx = np.isin(promo_keys_all, list(nc_promo_set))
+        _nc_keys = promo_keys_all[nc_idx]
+        _nc_starts = promo_start_all[nc_idx]
+        _nc_ends = promo_end_all[nc_idx]
+    else:
+        _ckey_to_start_month = None
+        _nc_min_month = 0
+        _nc_keys = None
+        _nc_starts = None
+        _nc_ends = None
+
     st2g_arr = State.store_to_geo_arr
     g2c_arr = State.geo_to_currency_arr
     if st2g_arr is None or g2c_arr is None:
@@ -859,6 +882,31 @@ def build_chunk_table(
                 no_discount_key=no_discount_key,
             )
         promo_keys = np.asarray(promo_keys, dtype=np.int64)
+
+        # New Customer promo: remove invalid assignments, then force-assign to genuinely new customers
+        if _ckey_to_start_month is not None and _nc_keys is not None and _nc_keys.size > 0:
+            order_dates_D = order_dates.astype("datetime64[D]", copy=False)
+            order_month_offset = order_dates.astype("datetime64[M]").astype("int64") - _nc_min_month
+            cust_start = _ckey_to_start_month[customer_keys_out]
+            months_since = order_month_offset - cust_start
+            is_new = (cust_start >= 0) & (months_since >= 0) & (months_since <= nc_window_months)
+
+            # Step 1: remove NC promo from non-new customers (invalid random assignments)
+            has_nc = np.isin(promo_keys, list(nc_promo_set))
+            invalid_nc = has_nc & ~is_new
+            if invalid_nc.any():
+                promo_keys[invalid_nc] = int(no_discount_key)
+
+            # Step 2: force-assign NC promo to new customers that have no other promo
+            eligible = is_new & (promo_keys == int(no_discount_key))
+            if eligible.any():
+                new_indices = np.flatnonzero(eligible)
+                new_dates = order_dates_D[new_indices]
+
+                for pi in range(len(_nc_keys)):
+                    active = (new_dates >= _nc_starts[pi]) & (new_dates <= _nc_ends[pi])
+                    if active.any():
+                        promo_keys[new_indices[active]] = int(_nc_keys[pi])
 
         # --------------------------------------------------------
         # EMPLOYEE (SalesPersonEmployeeKey)

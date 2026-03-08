@@ -403,22 +403,21 @@ def _ensure_defaults_dates(cfg: dict) -> None:
 
 def _apply_promotions_total(promotions_cfg: Dict[str, Any], total: int) -> None:
     """
-    Config has three promotion buckets:
-      - num_seasonal
-      - num_clearance
-      - num_limited
+    Config has eight promotion buckets (num_seasonal, num_clearance,
+    num_limited, num_flash, num_volume, num_loyalty, num_bundle,
+    num_new_customer).
 
     If those exist, scale them proportionally to match `total`.
     Otherwise, store a back-compat 'total_promotions' key.
     """
     total = max(0, int(total))
 
-    keys = ("num_seasonal", "num_clearance", "num_limited")
+    keys = ("num_seasonal", "num_clearance", "num_limited", "num_flash", "num_volume", "num_loyalty", "num_bundle", "num_new_customer")
     if all(k in promotions_cfg and isinstance(promotions_cfg[k], (int, float)) for k in keys):
         current = sum(int(promotions_cfg[k]) for k in keys)
         if current <= 0:
-            base = [1, 1, 1]
-            current = 3
+            base = [1] * len(keys)
+            current = len(keys)
         else:
             base = [int(promotions_cfg[k]) for k in keys]
 
@@ -432,9 +431,8 @@ def _apply_promotions_total(promotions_cfg: Dict[str, Any], total: int) -> None:
         for i in range(remainder):
             floors[fracs[i % len(keys)][0]] += 1
 
-        promotions_cfg["num_seasonal"] = floors[0]
-        promotions_cfg["num_clearance"] = floors[1]
-        promotions_cfg["num_limited"] = floors[2]
+        for i, k in enumerate(keys):
+            promotions_cfg[k] = floors[i]
         promotions_cfg["total_promotions"] = total
     else:
         promotions_cfg["total_promotions"] = total
