@@ -122,11 +122,11 @@ def apply_preset(cfg, base_loader, preset_name: str) -> None:
     cfg["defaults"]["dates"]["start"] = preset["start"]
     cfg["defaults"]["dates"]["end"] = preset["end"]
 
-    cfg["sales"]["total_rows"] = _jitter(preset["sales_rows"], pct=0.02, rng=rng)
-    cfg["customers"]["total_customers"] = _jitter(preset["customers"], pct=0.03, rng=rng)
+    cfg["sales"]["total_rows"] = preset["sales_rows"]
+    cfg["customers"]["total_customers"] = preset["customers"]
 
     if "products" in preset:
-        cfg["products"]["num_products"] = _jitter(preset["products"], pct=0.04, rng=rng)
+        cfg["products"]["num_products"] = preset["products"]
 
 
 def _extract_sales_bucket(name: str) -> str:

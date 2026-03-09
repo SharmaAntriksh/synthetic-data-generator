@@ -13,14 +13,14 @@
   --diff-add:#dcfce7;--diff-del:#fee2e2;
 }
 :root[data-theme="dark"]{
-  --bg:#0f1117;--surface:#1a1b26;--alt:#22243a;--border:#2e3150;
-  --focus:#7b8aff;--accent:#7b8aff;--glow:rgba(123,138,255,.12);
-  --text:#e2e4f0;--dim:#9ba0c0;--muted:#6b70a0;
-  --ok:#4ade80;--okBg:rgba(74,222,128,.1);
-  --warn:#fbbf24;--warnBg:rgba(251,191,36,.1);
-  --err:#f87171;--errBg:rgba(248,113,113,.08);
-  --shadow:rgba(0,0,0,.3);
-  --diff-add:rgba(74,222,128,.12);--diff-del:rgba(248,113,113,.1);
+  --bg:#13141b;--surface:#1b1d28;--alt:#242736;--border:#33374a;
+  --focus:#8b9cf7;--accent:#818cf8;--glow:rgba(129,140,248,.10);
+  --text:#dfe1ec;--dim:#a3a8c2;--muted:#6e7393;
+  --ok:#5ae0a0;--okBg:rgba(90,224,160,.08);
+  --warn:#f5c542;--warnBg:rgba(245,197,66,.08);
+  --err:#f07178;--errBg:rgba(240,113,120,.07);
+  --shadow:rgba(0,0,0,.4);
+  --diff-add:rgba(90,224,160,.10);--diff-del:rgba(240,113,120,.08);
 }
 body{font-family:var(--sans);background:var(--bg);color:var(--text);color-scheme:light;transition:background .2s,color .2s}
 :root[data-theme="dark"] body{color-scheme:dark}
@@ -97,8 +97,8 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
   padding:0 8px 0 6px;
 }
 .cm-s-rdg .CodeMirror-cursor{border-left:2px solid var(--accent)}
-.cm-s-rdg .CodeMirror-selected{background:rgba(79,91,213,.12)}
-.cm-s-rdg .CodeMirror-activeline-background{background:rgba(79,91,213,.04)}
+.cm-s-rdg .CodeMirror-selected{background:rgba(129,140,248,.14)}
+.cm-s-rdg .CodeMirror-activeline-background{background:rgba(129,140,248,.05)}
 .cm-s-rdg .CodeMirror-matchingbracket{color:var(--accent)!important;font-weight:700}
 
 /* YAML tokens */
@@ -111,11 +111,11 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .cm-s-rdg .cm-def{color:#be185d}
 
 /* Dark mode YAML token overrides */
-:root[data-theme="dark"] .cm-s-rdg .cm-atom{color:#fbbf24}
-:root[data-theme="dark"] .cm-s-rdg .cm-number{color:#2dd4bf}
-:root[data-theme="dark"] .cm-s-rdg .cm-string{color:#4ade80}
-:root[data-theme="dark"] .cm-s-rdg .cm-keyword{color:#a78bfa}
-:root[data-theme="dark"] .cm-s-rdg .cm-def{color:#f472b6}
+:root[data-theme="dark"] .cm-s-rdg .cm-atom{color:#e0a856}
+:root[data-theme="dark"] .cm-s-rdg .cm-number{color:#5ec4b6}
+:root[data-theme="dark"] .cm-s-rdg .cm-string{color:#5ae0a0}
+:root[data-theme="dark"] .cm-s-rdg .cm-keyword{color:#b4a4f4}
+:root[data-theme="dark"] .cm-s-rdg .cm-def{color:#e88dac}
 
 /* Fold gutter */
 .cm-s-rdg .CodeMirror-foldmarker{
