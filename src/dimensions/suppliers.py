@@ -247,7 +247,7 @@ def run_suppliers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         version_cfg["_countries"] = [str(x) for x in countries]
 
     if not force and not should_regenerate("suppliers", version_cfg, out_path):
-        skip("Suppliers up-to-date; skipping.")
+        skip("Suppliers up-to-date")
         return
 
     with stage("Generating Suppliers"):

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import warnings
 
-from src.utils.logging_utils import info, skip, stage
+from src.utils.logging_utils import info, skip, stage, warn
 from src.versioning.version_store import should_regenerate, save_version
 
 
@@ -504,7 +504,7 @@ def generate_promotions_catalog(
     for type_group, req in requested.items():
         got = generated[type_group]
         if got < req:
-            info(f"WARNING: {type_group} promotions — requested {req}, generated {got} "
+            warn(f"{type_group} - requested {req}, generated {got} "
                  f"({req - got} dropped by date-window clamping)")
 
     if not rows:
@@ -602,7 +602,7 @@ def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
 
     force = bool(promo_cfg.get("_force_regenerate", False))
     if not force and not should_regenerate("promotions", version_cfg, out_path):
-        skip("Promotions up-to-date; skipping.")
+        skip("Promotions up-to-date")
         return
 
     override_dates = _normalize_override_dates(promo_cfg)

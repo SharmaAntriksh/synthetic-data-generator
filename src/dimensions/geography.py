@@ -262,7 +262,7 @@ def run_geography(cfg: Dict, parquet_folder: Path) -> None:
     }
 
     if not force and not should_regenerate("geography", version_cfg, out_path):
-        skip("Geography up-to-date; skipping.")
+        skip("Geography up-to-date")
         return
 
     with stage("Generating Geography"):

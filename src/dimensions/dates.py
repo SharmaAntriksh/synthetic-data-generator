@@ -768,7 +768,7 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
 
     force = _bool_or(dates_cfg.get("_force_regenerate", False), False)
     if not force and not should_regenerate("dates", version_cfg, out_path):
-        skip("Dates up-to-date; skipping.")
+        skip("Dates up-to-date")
         return
 
     override_dates = _normalize_override_dates(dates_cfg)

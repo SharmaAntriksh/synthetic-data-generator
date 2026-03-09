@@ -855,12 +855,12 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     }
 
     if not force and not should_regenerate("employee_store_assignments", version_cfg, out_path):
-        skip("EmployeeStoreAssignments up-to-date; skipping.")
+        skip("Employee Store Assignments up-to-date")
         return
 
     role_profiles = as_dict(a_cfg.get("role_profiles"))
 
-    with stage("Generating EmployeeStoreAssignments"):
+    with stage("Generating Employee Store Assignments"):
         df = generate_employee_store_assignments(
             employees=employees,
             seed=seed,
@@ -905,4 +905,4 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
         )
 
     save_version("employee_store_assignments", version_cfg, out_path)
-    info(f"EmployeeStoreAssignments written: {out_path}")
+    info(f"Employee Store Assignments written: {out_path}")

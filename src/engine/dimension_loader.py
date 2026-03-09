@@ -21,7 +21,7 @@ def load_dimension(name, parquet_dims_path, expected_config):
 
     # Missing parquet -> must regenerate AND nothing to return
     if not os.path.exists(path):
-        info(f"{name.title()} missing — will regenerate.")
+        info(f"{name.title()} missing - will regenerate.")
         return None, True
 
     # Load the dimension as Pandas DataFrame (NOT PyArrow Table)

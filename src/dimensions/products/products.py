@@ -21,7 +21,7 @@ def generate_product_dimension(config, output_folder: Path):
             output_path=output_folder / "product_category.parquet",
         )
         if regen_cat:
-            info(f"product_category: {len(df_cat):,} rows")
+            info(f"Product Category: {len(df_cat):,} rows")
 
         df_sub, regen_sub = load_static_dimension(
             name="product_subcategory",
@@ -29,14 +29,14 @@ def generate_product_dimension(config, output_folder: Path):
             output_path=output_folder / "product_subcategory.parquet",
         )
         if regen_sub:
-            info(f"product_subcategory: {len(df_sub):,} rows")
+            info(f"Product Subcategory: {len(df_sub):,} rows")
 
         df_prod, df_prod_profile, regen_prod = load_product_dimension(
             config, output_folder, log_skip=False,
         )
         if regen_prod:
             info(f"Products: {len(df_prod):,} rows")
-            info(f"ProductProfile: {len(df_prod_profile):,} rows")
+            info(f"Product Profile: {len(df_prod_profile):,} rows")
 
     regenerated = regen_cat or regen_sub or regen_prod
 

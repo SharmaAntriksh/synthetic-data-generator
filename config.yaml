@@ -33,7 +33,7 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "parquet"              # csv | parquet | deltaparquet
+  file_format: "deltaparquet"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   write_delta: true
   skip_order_cols: false
@@ -185,7 +185,7 @@ employees:
     movable_sales_per_store: 2
 
     mover_share: 0.20
-    pool_scope: district
+    pool_scope: all
     allow_store_revisit: true
 
     role_profiles:

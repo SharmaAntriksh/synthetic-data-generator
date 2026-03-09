@@ -216,7 +216,7 @@ def write_create_table_scripts(*, dims_out: Path, facts_out: Path, sql_root: Pat
         facts_csv = list(facts_out.rglob("*.csv"))
 
         if not dims_csv and not facts_csv:
-            skip("No CSV files found — skipping CREATE TABLE scripts.")
+            skip("No CSV files found - skipping CREATE TABLE scripts.")
             return
 
         generate_all_create_tables(
@@ -240,7 +240,7 @@ def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path
         facts_csv = list(facts_out.rglob("*.csv"))
 
         if not dims_csv and not facts_csv:
-            skip("No CSV files found — skipping BULK INSERT scripts.")
+            skip("No CSV files found - skipping BULK INSERT scripts.")
             return
 
         load_root = sql_root / "load"

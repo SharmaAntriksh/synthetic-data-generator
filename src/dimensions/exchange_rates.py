@@ -90,7 +90,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
     force = fx_cfg.get("_force_regenerate", False)
 
     if not force and not should_regenerate("exchange_rates", minimal_cfg, out_path):
-        skip("Exchange Rates up-to-date; skipping.")
+        skip("Exchange Rates up-to-date")
         return
 
     # Ensure master directory exists (important if file was deleted/untracked)

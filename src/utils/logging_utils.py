@@ -345,7 +345,8 @@ class stage:
             done(f"{self.msg} completed in {elapsed}")
         else:
             self._skip_buffer.clear()
-            skip(f"{self.msg} up-to-date; skipping")
+            skip_label = self.msg.removeprefix("Generating ").removeprefix("Updating ")
+            skip(f"{skip_label} up-to-date")
         return False
 
 

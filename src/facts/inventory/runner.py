@@ -239,10 +239,8 @@ def _run_parallel(
         completed += 1
         total_rows += result["rows"]
         total_stockout += result["stockout_sum"]
-        work(
-            f"[{completed}/{n_chunks}] inventory_chunk_{result['chunk_idx']:05d}"
-            f" -> {result['rows']:,} rows"
-        )
+
+    work(f"{completed}/{n_chunks} inventory chunks completed ({total_rows:,} total rows)")
 
     stockout_pct = 0.0
     if total_rows > 0:
@@ -314,10 +312,10 @@ def _merge_inventory_chunks(
         delete_after=delete_chunks,
         compression="snappy",
         use_dictionary=True,
-        log_prefix="[inventory] ",
+        log_prefix="",
     )
-    if result:
-        info(f"Inventory merged: {len(chunk_files)} chunks -> {short_path(merged_path)}")
+    if not result:
+        info(f"Inventory merge: no output for {short_path(merged_path)}")
 
 
 def _merge_chunks_to_delta(
@@ -353,10 +351,7 @@ def _merge_chunks_to_delta(
             partition_by=pcols if pcols else None,
         )
 
-    info(
-        f"Inventory delta: {len(chunk_files)} chunks -> {short_path(delta_dir)}/"
-        + (f" (partitioned by {pcols})" if pcols else "")
-    )
+    info(f"[DELTA] Writing {len(chunk_files)} parts (Arrow -> Delta) table=InventorySnapshot")
 
     if delete_chunks:
         for f in chunk_files:

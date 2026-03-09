@@ -575,7 +575,7 @@ def run_superpowers(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]
             if not c.generate_bridge and out_bridge.exists():
                 out_bridge.unlink()
                 info("Removed stale customer_superpowers bridge file.")
-            skip("Superpowers up-to-date; skipping.")
+            skip("Superpowers up-to-date")
             return {"_regenerated": False, "reason": "version"}
 
     with stage("Generating Superpowers"):

@@ -180,11 +180,11 @@ def run_return_reasons(cfg: Mapping[str, Any], parquet_dims_folder: Path) -> Non
     out_path = parquet_dims_folder / "return_reason.parquet"
 
     if not forced and not should_regenerate("return_reason", expected_config, out_path):
-        skip("ReturnReason up-to-date; skipping.")
+        skip("Return Reason up-to-date")
         return
 
     table = build_return_reason_dimension(reasons=raw_reasons)
     pq.write_table(table, out_path)
 
     save_version("return_reason", expected_config, out_path)
-    done("Generating ReturnReason completed")
+    done("Generating Return Reason completed")

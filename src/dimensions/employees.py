@@ -778,7 +778,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     }
 
     if not force and not should_regenerate("employees", version_cfg, out_path):
-        skip("Employees up-to-date; skipping.")
+        skip("Employees up-to-date")
         return
 
     people_folder = resolve_people_folder(cfg)

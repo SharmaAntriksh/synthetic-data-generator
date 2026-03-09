@@ -921,7 +921,7 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
             if not generate_bridge and bridge_out.exists():
                 bridge_out.unlink()
                 info("Removed stale customer_segment_membership bridge file.")
-            skip("Customer segments up-to-date; skipping.")
+            skip("Customer segments up-to-date")
             return {"_regenerated": False, "reason": "version"}
 
     # Parse global dates + cfg to decide which customer columns to read

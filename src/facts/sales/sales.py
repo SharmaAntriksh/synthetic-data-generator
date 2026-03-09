@@ -1052,7 +1052,7 @@ def generate_sales_fact(
         worker_cfg["assortment"] = dict(assortment_cfg)
         worker_cfg["product_subcat_key"] = product_subcat_key
         worker_cfg["store_type_map"] = store_type_map
-        info(f"Store-product assortment: enabled (coverage: {assortment_cfg.get('coverage', {})})")
+        info("Store-product assortment: enabled")
 
     # ------------------------------------------------------------
     # Budget streaming aggregation (optional)
@@ -1207,8 +1207,6 @@ def generate_sales_fact(
         else:
             completed_units += 1
             _record_chunk_result(result, completed_units, total_units)
-
-    done("All chunks completed.")
 
     # ------------------------------------------------------------
     # Manifest helper (defined BEFORE returns so it actually runs)

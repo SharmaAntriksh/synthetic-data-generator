@@ -983,7 +983,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     version_cfg["_geography_sig"] = _geography_signature(geo_keys)
 
     if not force and not should_regenerate("stores", version_cfg, out_path):
-        skip("Stores up-to-date; skipping.")
+        skip("Stores up-to-date")
         return
 
     compression       = store_cfg.get("parquet_compression", "snappy")

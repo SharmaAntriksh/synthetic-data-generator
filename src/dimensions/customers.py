@@ -1791,7 +1791,7 @@ def run_customers(cfg: Dict, parquet_folder: Path):
     version_cfg["_has_org_profile"] = True
 
     if not force and not should_regenerate("customers", version_cfg, out_path):
-        skip("Customers up-to-date; skipping.")
+        skip("Customers up-to-date")
         return
 
     with stage("Generating Customers"):
@@ -1802,10 +1802,10 @@ def run_customers(cfg: Dict, parquet_folder: Path):
         n_ind = int((customers_df["CustomerType"] == "Individual").sum())
         n_org = int((customers_df["CustomerType"] == "Organization").sum())
         info(f"Customers: {len(customers_df):,} rows ({n_ind:,} individual, {n_org:,} org)")
-        info(f"CustomerProfile: {len(profile_df):,} rows")
+        info(f"Customer Profile: {len(profile_df):,} rows")
 
         if not org_profile_df.empty:
             org_profile_df.to_parquet(org_profile_out_path, index=False)
-            info(f"OrganizationProfile: {len(org_profile_df):,} rows")
+            info(f"Organization Profile: {len(org_profile_df):,} rows")
 
     save_version("customers", version_cfg, out_path)

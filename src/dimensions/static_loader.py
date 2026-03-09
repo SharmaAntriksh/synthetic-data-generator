@@ -56,12 +56,14 @@ def load_static_dimension(
         "force_date32": bool(force_date32),
     }
 
+    display_name = name.replace("_", " ").title()
+
     if not should_regenerate(name, version_key, output_path):
         if log_skip:
-            skip(f"{name} up-to-date; skipping")
+            skip(f"{display_name} up-to-date")
         return pd.read_parquet(output_path), False
 
-    info(f"Loading {name}")
+    info(f"Loading {display_name}")
 
     df = pd.read_parquet(src_path)
 

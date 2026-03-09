@@ -130,7 +130,7 @@ def run_currency(cfg: Dict, parquet_folder: Path) -> None:
     }
 
     if not force and not should_regenerate("currency", version_cfg, out_path):
-        skip("Currency up-to-date; skipping.")
+        skip("Currency up-to-date")
         return
 
     # Optional parquet knobs (consistent with other dims)

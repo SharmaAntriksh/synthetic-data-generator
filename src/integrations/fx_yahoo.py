@@ -170,7 +170,7 @@ def refresh_fx_master(out_path):
         updates.append(df_gap)
 
     if not updates:
-        info("FX master already up to date — nothing downloaded.")
+        info("FX master already up to date - nothing downloaded.")
         return master
 
     updates_df = pd.concat(updates, ignore_index=True)
@@ -232,6 +232,7 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
 
     today = pd.Timestamp.now().normalize()
     updates = []
+    cached_currencies = []
 
     for cur in curr_list:
         if master.empty:
@@ -258,7 +259,7 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
                 gaps.append((cur_existing_end + pd.Timedelta(days=1), min(end_ts, today)))
 
         if not gaps:
-            info(f"FX for {cur} already covered; skipping download.")
+            cached_currencies.append(cur)
         else:
             for gap_start, gap_end in gaps:
                 if gap_start > gap_end:
@@ -269,6 +270,9 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
                 df_gap["FromCurrency"] = BASE
                 df_gap["ToCurrency"] = cur
                 updates.append(df_gap)
+
+    if cached_currencies:
+        info(f"FX cached (already covered): {', '.join(cached_currencies)}")
 
     # Merge any new downloads into master and persist (only real data goes into the file)
     if updates:
