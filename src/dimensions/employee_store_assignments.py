@@ -393,7 +393,26 @@ def generate_employee_store_assignments(
         if k <= 0 or not other_stores:
             return []
 
-        chosen = rng.choice(other_stores, size=int(k), replace=bool(allow_store_revisit))
+        # Pick stores ensuring no two consecutive picks are the same.
+        # When allow_store_revisit is False, numpy handles uniqueness;
+        # otherwise we re-roll consecutive duplicates so that each
+        # transfer is to a genuinely different location.
+        if not allow_store_revisit:
+            chosen = rng.choice(
+                other_stores, size=min(int(k), len(other_stores)), replace=False,
+            )
+        else:
+            chosen_list: List[int] = []
+            for _ in range(int(k)):
+                pool = (
+                    [s for s in other_stores if s != chosen_list[-1]]
+                    if chosen_list
+                    else list(other_stores)
+                )
+                if not pool:
+                    break
+                chosen_list.append(int(rng.choice(pool)))
+            chosen = np.array(chosen_list, dtype=np.int32)
 
         raw: List[Tuple[pd.Timestamp, int, int, float]] = []
         for store in chosen:
@@ -409,7 +428,7 @@ def generate_employee_store_assignments(
             return []
 
         raw.sort(key=lambda x: x[0])
-        out: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = []
+        placed: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = []
         last_end: Optional[pd.Timestamp] = None
 
         for s, dur, store, sec_fte in raw:
@@ -422,8 +441,22 @@ def generate_employee_store_assignments(
                 e = end_max
             if e < s:
                 continue
-            out.append((s, e, store, sec_fte))
+            placed.append((s, e, store, sec_fte))
             last_end = e
+
+        # Safety net: merge consecutive same-store episodes that can
+        # still arise after date-sorting reorders the picks.
+        if len(placed) <= 1:
+            return placed
+
+        out: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = [placed[0]]
+        for s, e, store, sec_fte in placed[1:]:
+            prev_s, prev_e, prev_store, prev_fte = out[-1]
+            if store == prev_store:
+                # Extend the previous episode to cover this one
+                out[-1] = (prev_s, e, prev_store, prev_fte)
+            else:
+                out.append((s, e, store, sec_fte))
 
         return out
 
@@ -605,13 +638,22 @@ def generate_employee_store_assignments(
 
         cur = pd.to_datetime(gen_start).normalize()
 
+        MIN_HOME_GAP_DAYS = 3
+
         for (s, e, store, sec_fte) in episodes:
             s = pd.to_datetime(s).normalize()
             e = pd.to_datetime(e).normalize()
 
             before_end = (s - pd.Timedelta(days=1)).normalize()
-            if cur <= before_end:
+            gap_days = (before_end - cur).days + 1 if cur <= before_end else 0
+
+            if gap_days >= MIN_HOME_GAP_DAYS:
+                # Emit a home-store segment for the gap
                 _emit_mover(ek, role, home_store, cur, before_end, True, tgt)
+            elif gap_days > 0:
+                # Gap too short for a realistic home stint;
+                # extend the away episode backwards to absorb it.
+                s = cur
 
             _emit_mover(ek, role, store, s, e, False, sec_fte)
             cur = (e + pd.Timedelta(days=1)).normalize()
@@ -790,7 +832,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
     version_cfg = dict(a_cfg)
     version_cfg.pop("_force_regenerate", None)
-    version_cfg["schema_version"] = 9
+    version_cfg["schema_version"] = 10
     version_cfg["_stores_cfg"] = {
         k: v for k, v in as_dict(cfg.get("stores")).items()
         if k != "_force_regenerate"
