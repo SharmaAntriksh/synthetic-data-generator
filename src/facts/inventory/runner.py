@@ -7,14 +7,19 @@ For large datasets (many product-store pairs), partitions demand by store
 groups and runs the simulation in parallel across multiple processes.
 Each worker writes its own chunk files directly (CSV + parquet), avoiding
 the need to build a single massive DataFrame in one process.
+
+After parallel chunks are written, they are merged into a single Parquet
+file (like Sales).  For deltaparquet mode, chunks are consolidated into a
+Delta Lake table partitioned by Year + Month.
 """
 from __future__ import annotations
 
 import dataclasses
+import os
 import time
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -74,10 +79,24 @@ def run_inventory_pipeline(
     inv_out = fact_out / "inventory"
     inv_out.mkdir(parents=True, exist_ok=True)
 
+    inv_cfg = cfg.get("inventory", {})
+    merge_cfg = inv_cfg.get("merge", {})
+    merge_enabled = merge_cfg.get("enabled", True)
+    merge_file = merge_cfg.get("file", "inventory_snapshot.parquet")
+    delete_chunks = merge_cfg.get("delete_chunks", True)
+    partition_by: List[str] = inv_cfg.get("partition_by") or []
+
     if qualified_pairs >= _PARALLEL_THRESHOLD and n_stores >= 2:
-        result = _run_parallel(demand, parquet_dims, icfg, inv_out, file_format, n_stores, workers=workers)
+        result = _run_parallel(
+            demand, parquet_dims, icfg, inv_out, file_format, n_stores,
+            workers=workers,
+            merge_enabled=merge_enabled,
+            merge_file=merge_file,
+            delete_chunks=delete_chunks,
+            partition_by=partition_by,
+        )
     else:
-        result = _run_single(demand, parquet_dims, icfg, inv_out, file_format)
+        result = _run_single(demand, parquet_dims, icfg, inv_out, file_format, partition_by=partition_by)
 
     elapsed = time.time() - t0
     n_rows = result["rows"]
@@ -103,6 +122,7 @@ def _run_single(
     icfg: InventoryConfig,
     inv_out: Path,
     file_format: str,
+    partition_by: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Original monolithic path — used for small datasets."""
     snapshots = compute_inventory_snapshots(
@@ -111,7 +131,7 @@ def _run_single(
         icfg=icfg,
     )
 
-    _write_inventory(snapshots, inv_out, "inventory_snapshot", file_format)
+    _write_inventory(snapshots, inv_out, "inventory_snapshot", file_format, partition_by=partition_by)
 
     n_rows = len(snapshots)
     stockout_pct = 0.0
@@ -160,6 +180,10 @@ def _run_parallel(
     file_format: str,
     n_stores: int,
     workers: Optional[int] = None,
+    merge_enabled: bool = True,
+    merge_file: str = "inventory_snapshot.parquet",
+    delete_chunks: bool = True,
+    partition_by: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Partition by store groups and run simulation in parallel."""
     from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
@@ -224,6 +248,27 @@ def _run_parallel(
     if total_rows > 0:
         stockout_pct = total_stockout / total_rows * 100
 
+    # ------------------------------------------------------------------
+    # Post-processing: merge chunk parquets into a single file, or
+    # consolidate into a Delta Lake table with Year+Month partitioning.
+    # ------------------------------------------------------------------
+    if total_rows > 0:
+        chunk_files = sorted(inv_out.glob("inventory_chunk_*.parquet"))
+
+        if file_format == "deltaparquet":
+            _merge_chunks_to_delta(
+                chunk_files=chunk_files,
+                inv_out=inv_out,
+                partition_by=partition_by or [],
+                delete_chunks=delete_chunks,
+            )
+        elif merge_enabled and file_format in ("parquet", "csv"):
+            _merge_inventory_chunks(
+                chunk_files=chunk_files,
+                merged_path=inv_out / merge_file,
+                delete_chunks=delete_chunks,
+            )
+
     n_pairs = demand.groupby(["ProductKey", "StoreKey"]).ngroups
     return {
         "rows": total_rows,
@@ -231,6 +276,94 @@ def _run_parallel(
         "stockout_pct": round(stockout_pct, 2),
         "chunks": completed,
     }
+
+
+# ------------------------------------------------------------------
+# Chunk merge helpers (used by parallel path)
+# ------------------------------------------------------------------
+
+def _add_year_month_to_table(table: pa.Table) -> pa.Table:
+    """Derive Year and Month int columns from SnapshotDate for partitioning."""
+    import pyarrow.compute as pc
+
+    dates = table.column("SnapshotDate")
+    # Cast to date32 if timestamp
+    if pa.types.is_timestamp(dates.type):
+        dates = pc.cast(dates, pa.date32())
+
+    year = pc.year(dates).cast(pa.int16())
+    month = pc.month(dates).cast(pa.int8())
+
+    table = table.append_column("Year", year)
+    table = table.append_column("Month", month)
+    return table
+
+
+def _merge_inventory_chunks(
+    chunk_files: list[Path],
+    merged_path: Path,
+    delete_chunks: bool = True,
+) -> None:
+    """Merge parallel inventory chunk parquets into one file (reuses sales merge logic)."""
+    from src.facts.sales.sales_writer.parquet_merge import _merge_parquet_files_common
+
+    str_files = [str(f) for f in chunk_files]
+    result = _merge_parquet_files_common(
+        str_files,
+        str(merged_path),
+        delete_after=delete_chunks,
+        compression="snappy",
+        use_dictionary=True,
+        log_prefix="[inventory] ",
+    )
+    if result:
+        info(f"Inventory merged: {len(chunk_files)} chunks -> {short_path(merged_path)}")
+
+
+def _merge_chunks_to_delta(
+    chunk_files: list[Path],
+    inv_out: Path,
+    partition_by: List[str],
+    delete_chunks: bool = True,
+) -> None:
+    """Consolidate inventory chunk parquets into a partitioned Delta Lake table."""
+    try:
+        from deltalake import write_deltalake
+    except ImportError:
+        from deltalake.writer import write_deltalake
+
+    delta_dir = inv_out / "inventory_snapshot"
+    delta_dir.mkdir(parents=True, exist_ok=True)
+
+    needs_year_month = any(c in partition_by for c in ("Year", "Month"))
+
+    for i, chunk_path in enumerate(chunk_files):
+        table = pq.read_table(str(chunk_path))
+
+        if needs_year_month and "Year" not in table.column_names:
+            table = _add_year_month_to_table(table)
+
+        # Validate partition cols against actual schema
+        pcols = [c for c in partition_by if c in table.column_names]
+
+        write_deltalake(
+            str(delta_dir),
+            table,
+            mode="overwrite" if i == 0 else "append",
+            partition_by=pcols if pcols else None,
+        )
+
+    info(
+        f"Inventory delta: {len(chunk_files)} chunks -> {short_path(delta_dir)}/"
+        + (f" (partitioned by {pcols})" if pcols else "")
+    )
+
+    if delete_chunks:
+        for f in chunk_files:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
 
 # ------------------------------------------------------------------
@@ -242,6 +375,7 @@ def _write_inventory(
     out_dir: Path,
     name: str,
     file_format: str,
+    partition_by: Optional[List[str]] = None,
 ) -> None:
     """Write an inventory DataFrame in the requested format."""
     table = pa.Table.from_pandas(df, preserve_index=False)
@@ -253,8 +387,21 @@ def _write_inventory(
             from deltalake import write_deltalake
         except ImportError:
             from deltalake.writer import write_deltalake
-        write_deltalake(str(delta_dir), table, mode="overwrite")
-        info(f"Wrote {name}: {len(df):,} rows -> {short_path(delta_dir)}/")
+
+        pcols = list(partition_by or [])
+        needs_year_month = any(c in pcols for c in ("Year", "Month"))
+        if needs_year_month and "Year" not in table.column_names:
+            table = _add_year_month_to_table(table)
+        pcols = [c for c in pcols if c in table.column_names]
+
+        write_deltalake(
+            str(delta_dir), table, mode="overwrite",
+            partition_by=pcols if pcols else None,
+        )
+        info(
+            f"Wrote {name}: {len(df):,} rows -> {short_path(delta_dir)}/"
+            + (f" (partitioned by {pcols})" if pcols else "")
+        )
         return
 
     parquet_path = out_dir / f"{name}.parquet"

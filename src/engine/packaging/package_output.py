@@ -72,14 +72,21 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
             return
 
         if file_format == "parquet":
-            for f in inv_src.glob("*.parquet"):
-                shutil.copy2(f, facts_out / f.name)
+            # Prefer merged file; fall back to individual chunks if merge was disabled
+            merged = list(inv_src.glob("inventory_snapshot.parquet"))
+            if merged:
+                for f in merged:
+                    shutil.copy2(f, facts_out / f.name)
+            else:
+                for f in inv_src.glob("*.parquet"):
+                    shutil.copy2(f, facts_out / f.name)
         elif file_format == "csv":
             inv_dst = facts_out / "inventory"
             inv_dst.mkdir(parents=True, exist_ok=True)
             for f in inv_src.glob("*.csv"):
                 shutil.copy2(f, inv_dst / f.name)
         else:
+            # deltaparquet: copy delta table directory
             inv_dst = facts_out / "inventory"
             inv_dst.mkdir(parents=True, exist_ok=True)
             for item in inv_src.iterdir():

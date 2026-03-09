@@ -6,10 +6,10 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 203285
+  sales_rows: 1032850
   products: 3258
-  customers: 3488
-  stores: 20
+  customers: 23488
+  stores: 40
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -245,6 +245,13 @@ inventory:
   enabled: true
   seed: 42
   grain: monthly
+
+  merge:
+    enabled: true
+    file: "inventory_snapshot.parquet"
+    delete_chunks: true
+
+  partition_by: ["Year", "Month"]     # null or [] to disable (used by deltaparquet)
 
   min_demand_months: 6
   initial_stock_multiplier: 1.5        # was 3.0 — start with 1.5 months of avg demand, not 3
