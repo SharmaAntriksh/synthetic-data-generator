@@ -4,7 +4,7 @@ const {useState,useEffect,useRef,useCallback}=React;
 const API="/api";
 const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-const DIMS=["customers","products","stores","geography","promotions","dates","currency","exchange_rates"];
+const DIMS=["customers","products","stores","geography","promotions","dates","currency","exchange_rates","employees"];
 
 /* Shared input style */
 const iS={width:"100%",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:8,padding:"8px 11px",fontSize:13.5,color:"var(--text)",outline:"none",fontFamily:"var(--mono)"};

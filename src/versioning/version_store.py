@@ -28,6 +28,15 @@ def _version_file(name: str) -> Path:
     return VERSION_DIR / f"{name}.version.json"
 
 
+def delete_version(name: str) -> bool:
+    """Delete the version file for a dimension. Returns True if file existed."""
+    vf = _version_file(name)
+    if vf.exists():
+        vf.unlink()
+        return True
+    return False
+
+
 def load_version(name: str):
     """Load the version metadata for a dimension."""
     vf = _version_file(name)

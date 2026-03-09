@@ -254,14 +254,12 @@ def run_geography(cfg: Dict, parquet_folder: Path) -> None:
     geo_cfg = _validate_cfg(cfg)
     out_path = parquet_folder / "geography.parquet"
 
-    force = bool(geo_cfg.get("_force_regenerate", False))
-
     version_cfg = {
         "exchange_rates": {"currencies": list(map(str, cfg["exchange_rates"]["currencies"]))},
         "_curated_sig": _curated_signature(),
     }
 
-    if not force and not should_regenerate("geography", version_cfg, out_path):
+    if not should_regenerate("geography", version_cfg, out_path):
         skip("Geography up-to-date")
         return
 

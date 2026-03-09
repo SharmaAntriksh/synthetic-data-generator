@@ -153,16 +153,13 @@ def build_return_reason_dimension(
 def run_return_reasons(cfg: Mapping[str, Any], parquet_dims_folder: Path) -> None:
     """
     Writes return_reason.parquet to parquet_dims_folder.
-    Skips when up-to-date unless forced via cfg["return_reason"]["_force_regenerate"] == True.
-    Uses version_store (should_regenerate/save_version) like other dimensions.
+    Skips when up-to-date (version_store check via should_regenerate/save_version).
     """
     parquet_dims_folder = Path(parquet_dims_folder)
     parquet_dims_folder.mkdir(parents=True, exist_ok=True)
 
     dim_cfg = cfg.get("return_reason") if isinstance(cfg, Mapping) else None
     dim_cfg = dim_cfg if isinstance(dim_cfg, Mapping) else {}
-    forced = bool(dim_cfg.get("_force_regenerate", False))
-
     # Determine reasons + stable expected_config
     raw_reasons = _extract_reasons_from_cfg(cfg) if isinstance(cfg, Mapping) else None
     if raw_reasons is None:
@@ -179,7 +176,7 @@ def run_return_reasons(cfg: Mapping[str, Any], parquet_dims_folder: Path) -> Non
 
     out_path = parquet_dims_folder / "return_reason.parquet"
 
-    if not forced and not should_regenerate("return_reason", expected_config, out_path):
+    if not should_regenerate("return_reason", expected_config, out_path):
         skip("Return Reason up-to-date")
         return
 

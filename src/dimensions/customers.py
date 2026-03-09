@@ -1781,7 +1781,6 @@ def run_customers(cfg: Dict, parquet_folder: Path):
     org_profile_out_path = parquet_folder / "organization_profile.parquet"
 
     cust_cfg = cfg["customers"]
-    force = cust_cfg.get("_force_regenerate", False)
 
     version_cfg = dict(cust_cfg)
     version_cfg["_schema_version"] = 5
@@ -1790,7 +1789,7 @@ def run_customers(cfg: Dict, parquet_folder: Path):
     version_cfg["_has_customer_profile"] = True
     version_cfg["_has_org_profile"] = True
 
-    if not force and not should_regenerate("customers", version_cfg, out_path):
+    if not should_regenerate("customers", version_cfg, out_path):
         skip("Customers up-to-date")
         return
 

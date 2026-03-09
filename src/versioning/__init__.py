@@ -12,6 +12,7 @@ This package exposes:
 from .version_store import (
     save_version,
     load_version,
+    delete_version,
     should_regenerate,
 )
 
@@ -25,6 +26,7 @@ __all__ = [
     # store
     "save_version",
     "load_version",
+    "delete_version",
     "should_regenerate",
     # validation
     "ensure_dimension_version_exists",

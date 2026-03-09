@@ -36,7 +36,6 @@ superpowers:
   include_primary_flag: true
   include_acquired_date: true
   seed: 123
-  _force_regenerate: false
   write_chunk_rows: 250000
 
 Requires:
@@ -146,7 +145,6 @@ class SuperpowersCfg:
     include_primary_flag: bool = True
     include_acquired_date: bool = True
     seed: int = 123
-    _force_regenerate: bool = False
     write_chunk_rows: int = 250_000
 
 
@@ -164,7 +162,6 @@ def _read_cfg(cfg: Dict[str, Any]) -> SuperpowersCfg:
         include_primary_flag=bool(sp.get("include_primary_flag", True)),
         include_acquired_date=bool(sp.get("include_acquired_date", True)),
         seed=int(sp.get("seed", 123)),
-        _force_regenerate=bool(sp.get("_force_regenerate", False)),
         write_chunk_rows=int(sp.get("write_chunk_rows", 250_000)),
     )
 
@@ -569,14 +566,13 @@ def run_superpowers(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]
         "mtime_ns": int(st.st_mtime_ns),
     }
 
-    if not c._force_regenerate:
-        version_files_exist = out_dim.exists() and (out_bridge.exists() or not c.generate_bridge)
-        if version_files_exist and (not should_regenerate("superpowers", version_cfg, out_dim)):
-            if not c.generate_bridge and out_bridge.exists():
-                out_bridge.unlink()
-                info("Removed stale customer_superpowers bridge file.")
-            skip("Superpowers up-to-date")
-            return {"_regenerated": False, "reason": "version"}
+    version_files_exist = out_dim.exists() and (out_bridge.exists() or not c.generate_bridge)
+    if version_files_exist and (not should_regenerate("superpowers", version_cfg, out_dim)):
+        if not c.generate_bridge and out_bridge.exists():
+            out_bridge.unlink()
+            info("Removed stale customer_superpowers bridge file.")
+        skip("Superpowers up-to-date")
+        return {"_regenerated": False, "reason": "version"}
 
     with stage("Generating Superpowers"):
         g_start, g_end = _parse_global_dates(cfg)

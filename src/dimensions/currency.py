@@ -116,8 +116,6 @@ def run_currency(cfg: Dict, parquet_folder: Path) -> None:
     out_path = Path(parquet_folder) / "currency.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    force = bool(cur_cfg.get("_force_regenerate", False))
-
     currencies = _normalize_currency_list(ex_cfg.get("currencies"))
     effective_dates = _get_effective_dates(cfg, ex_cfg)
 
@@ -129,7 +127,7 @@ def run_currency(cfg: Dict, parquet_folder: Path) -> None:
         "effective_dates": effective_dates,
     }
 
-    if not force and not should_regenerate("currency", version_cfg, out_path):
+    if not should_regenerate("currency", version_cfg, out_path):
         skip("Currency up-to-date")
         return
 

@@ -190,7 +190,21 @@ def get_config():
     if isinstance(wf, bool):
         wf = {"enabled": wf}
 
+    # Extra sections
+    cs = _g(_cfg, "customer_segments", default={})
+    sp = _g(_cfg, "superpowers", default={})
+    emp = _g(_cfg, "employees", default={})
+    er = _g(_cfg, "exchange_rates", default={})
+    budget = _g(_cfg, "budget", default={})
+    inv = _g(_cfg, "inventory", default={})
+    cost = _g(_cfg, "products", "pricing", "cost", default={})
+    brand_norm = _g(_cfg, "products", "pricing", "brand_normalization", default={})
+    cs_validity = _g(cs, "validity", default={})
+    store_assigns = _g(emp, "store_assignments", default={})
+
     return {
+        # Global
+        "seed": int(_g(_cfg, "defaults", "seed", default=42) or 42),
         # Output
         "format": str(sales.get("file_format", "parquet")),
         "salesOutput": str(sales.get("sales_output", "sales")),
@@ -199,10 +213,13 @@ def get_config():
         "rowGroupSize": int(_g(sales, "row_group_size", default=2000000)),
         "mergeParquet": bool(sales.get("merge_parquet", True)),
         "partitionEnabled": bool(_g(sales, "partitioning", "enabled", default=True)),
+        "maxLinesPerOrder": int(sales.get("max_lines_per_order", 5)),
+        "salesOptimize": bool(sales.get("optimize", True)),
         # Dates
         "startDate": str(defaults.get("start", "2023-01-01")),
         "endDate": str(defaults.get("end", "2026-12-31")),
         "fiscalMonthOffset": int(dates_cfg.get("fiscal_month_offset", dates_cfg.get("fiscal_start_month", 0)) or 0),
+        "asOfDate": str(dates_cfg.get("as_of_date", "") or ""),
         "includeCalendar": True,
         "includeIso": bool(include.get("iso", False)),
         "includeFiscal": bool(include.get("fiscal", True)),
@@ -210,6 +227,7 @@ def get_config():
         "wfFirstDay": int(wf.get("first_day_of_week", 0)),
         "wfWeeklyType": str(wf.get("weekly_type", "Last")),
         "wfQuarterType": str(wf.get("quarter_week_type", "445")),
+        "wfTypeStartFiscalYear": int(wf.get("type_start_fiscal_year", 1)),
         # Volume
         "salesRows": int(sales.get("total_rows", 100000)),
         "chunkSize": int(sales.get("chunk_size", 200000)),
@@ -233,6 +251,10 @@ def get_config():
         "minPrice": float(pricing.get("min_unit_price", 10)),
         "maxPrice": float(pricing.get("max_unit_price", 3000)),
         "productActiveRatio": float(prods.get("active_ratio", 0.94)),
+        "marginMin": float(cost.get("min_margin_pct", 0.20)),
+        "marginMax": float(cost.get("max_margin_pct", 0.35)),
+        "brandNormalize": bool(brand_norm.get("enabled", False)),
+        "brandNormalizeAlpha": float(brand_norm.get("alpha", 0.35)),
         # Geography
         "geoWeights": dict(geo.get("country_weights", {})),
         # Returns
@@ -240,9 +262,61 @@ def get_config():
         "returnRate": float(returns.get("return_rate", 0.03)),
         "returnMinDays": int(returns.get("min_days_after_sale", 1)),
         "returnMaxDays": int(returns.get("max_days_after_sale", 60)),
-        # Budget & Inventory
-        "budgetEnabled": bool(_g(_cfg, "budget", "enabled", default=True)),
-        "inventoryEnabled": bool(_g(_cfg, "inventory", "enabled", default=True)),
+        # Promotions
+        "promoNewCustWindow": int(_g(promos, "new_customer_window_months", default=3)),
+        # Customer Segments
+        "csEnabled": bool(cs.get("enabled", False)),
+        "csGenerateBridge": bool(cs.get("generate_bridge", False)),
+        "csSegmentCount": int(cs.get("segment_count", 10)),
+        "csPerCustomerMin": int(cs.get("segments_per_customer_min", 1)),
+        "csPerCustomerMax": int(cs.get("segments_per_customer_max", 2)),
+        "csIncludeScore": bool(cs.get("include_score", True)),
+        "csIncludePrimaryFlag": bool(cs.get("include_primary_flag", True)),
+        "csIncludeValidity": bool(cs.get("include_validity", True)),
+        "csValidityGrain": str(cs_validity.get("grain", "month")),
+        "csChurnRateQtr": float(cs_validity.get("churn_rate_qtr", 0.08)),
+        "csNewCustomerMonths": int(cs_validity.get("new_customer_months", 2)),
+        "csSeed": int(cs.get("seed", 123) or 123),
+        # Superpowers
+        "spEnabled": bool(sp.get("enabled", False)),
+        "spGenerateBridge": bool(sp.get("generate_bridge", False)),
+        "spPowersCount": int(sp.get("powers_count", 20)),
+        "spPerCustomerMin": int(sp.get("powers_per_customer_min", 1)),
+        "spPerCustomerMax": int(sp.get("powers_per_customer_max", 3)),
+        "spIncludePowerLevel": bool(sp.get("include_power_level", True)),
+        "spIncludePrimaryFlag": bool(sp.get("include_primary_flag", True)),
+        "spIncludeAcquiredDate": bool(sp.get("include_acquired_date", True)),
+        "spIncludeValidity": bool(sp.get("include_validity", False)),
+        "spSeed": int(sp.get("seed", 123) or 123),
+        # Stores detail
+        "storeEnsureIsoCoverage": bool(stores.get("ensure_iso_coverage", True)),
+        "storeDistrictSize": int(stores.get("district_size", 10)),
+        "storeDistrictsPerRegion": int(stores.get("districts_per_region", 8)),
+        "storeOpeningStart": str(stores.get("opening", {}).get("start", "1995-01-01")),
+        "storeOpeningEnd": str(stores.get("opening", {}).get("end", "2023-12-31")),
+        "storeClosingEnd": str(stores.get("closing_end", "2028-12-31")),
+        "storeAssortmentEnabled": bool(_g(stores, "assortment", "enabled", default=True)),
+        # Employees
+        "employeeMinStaff": int(emp.get("min_staff_per_store", 3)),
+        "employeeMaxStaff": int(emp.get("max_staff_per_store", 5)),
+        "employeeEmailDomain": str(_g(emp, "hr", "email_domain", default="contoso.com")),
+        "employeeStoreAssignments": bool(store_assigns.get("enabled", True)),
+        # Exchange Rates
+        "erCurrencies": list(er.get("currencies", ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"])),
+        "erBaseCurrency": str(er.get("base_currency", "USD")),
+        "erVolatility": float(er.get("volatility", 0.02)),
+        "erFutureDrift": float(er.get("future_annual_drift", 0.02)),
+        "erUseGlobalDates": bool(er.get("use_global_dates", True)),
+        # Budget detail
+        "budgetEnabled": bool(budget.get("enabled", True)),
+        "budgetReportCurrency": str(budget.get("report_currency", "USD")),
+        "budgetDefaultGrowth": float(budget.get("default_backcast_growth", 0.05)),
+        "budgetReturnRateCap": float(budget.get("return_rate_cap", 0.30)),
+        # Inventory detail
+        "inventoryEnabled": bool(inv.get("enabled", True)),
+        "inventoryGrain": str(inv.get("grain", "monthly")),
+        "inventoryShrinkageEnabled": bool(_g(inv, "shrinkage", "enabled", default=True)),
+        "inventoryShrinkageRate": float(_g(inv, "shrinkage", "rate", default=0.02)),
     }
 
 # ---------------------------------------------------------------------------
@@ -254,14 +328,28 @@ def update_config(body: ConfigUpdate):
     v = body.values
 
     _cfg.setdefault("defaults", {}).setdefault("dates", {})
+    _cfg["defaults"].setdefault("seed", 42)
     _cfg.setdefault("sales", {}).setdefault("partitioning", {})
     _cfg.setdefault("customers", {})
-    _cfg.setdefault("stores", {})
+    _cfg.setdefault("stores", {}).setdefault("opening", {})
+    _cfg["stores"].setdefault("assortment", {})
     _cfg.setdefault("products", {}).setdefault("pricing", {}).setdefault("base", {})
+    _cfg["products"]["pricing"].setdefault("cost", {})
+    _cfg["products"]["pricing"].setdefault("brand_normalization", {})
     _cfg.setdefault("promotions", {})
     _cfg.setdefault("returns", {})
     _cfg.setdefault("geography", {}).setdefault("country_weights", {})
     _cfg.setdefault("dates", {}).setdefault("include", {}).setdefault("weekly_fiscal", {})
+    _cfg.setdefault("customer_segments", {}).setdefault("validity", {})
+    _cfg.setdefault("superpowers", {})
+    _cfg.setdefault("employees", {}).setdefault("hr", {})
+    _cfg["employees"].setdefault("store_assignments", {})
+    _cfg.setdefault("exchange_rates", {})
+    _cfg.setdefault("budget", {})
+    _cfg.setdefault("inventory", {}).setdefault("shrinkage", {})
+
+    # Global
+    if "seed" in v: _cfg["defaults"]["seed"] = int(v["seed"])
 
     # Output
     if "format" in v: _cfg["sales"]["file_format"] = v["format"]
@@ -271,17 +359,21 @@ def update_config(body: ConfigUpdate):
     if "rowGroupSize" in v: _cfg["sales"]["row_group_size"] = int(v["rowGroupSize"])
     if "mergeParquet" in v: _cfg["sales"]["merge_parquet"] = bool(v["mergeParquet"])
     if "partitionEnabled" in v: _cfg["sales"]["partitioning"]["enabled"] = bool(v["partitionEnabled"])
+    if "maxLinesPerOrder" in v: _cfg["sales"]["max_lines_per_order"] = int(v["maxLinesPerOrder"])
+    if "salesOptimize" in v: _cfg["sales"]["optimize"] = bool(v["salesOptimize"])
 
     # Dates
     if "startDate" in v: _cfg["defaults"]["dates"]["start"] = v["startDate"]
     if "endDate" in v: _cfg["defaults"]["dates"]["end"] = v["endDate"]
     if "fiscalMonthOffset" in v: _cfg["dates"]["fiscal_month_offset"] = int(v["fiscalMonthOffset"])
+    if "asOfDate" in v: _cfg["dates"]["as_of_date"] = v["asOfDate"] or None
     if "includeIso" in v: _cfg["dates"]["include"]["iso"] = bool(v["includeIso"])
     if "includeFiscal" in v: _cfg["dates"]["include"]["fiscal"] = bool(v["includeFiscal"])
     if "includeWeeklyFiscal" in v: _cfg["dates"]["include"]["weekly_fiscal"]["enabled"] = bool(v["includeWeeklyFiscal"])
     if "wfFirstDay" in v: _cfg["dates"]["include"]["weekly_fiscal"]["first_day_of_week"] = int(v["wfFirstDay"])
     if "wfWeeklyType" in v: _cfg["dates"]["include"]["weekly_fiscal"]["weekly_type"] = v["wfWeeklyType"]
     if "wfQuarterType" in v: _cfg["dates"]["include"]["weekly_fiscal"]["quarter_week_type"] = v["wfQuarterType"]
+    if "wfTypeStartFiscalYear" in v: _cfg["dates"]["include"]["weekly_fiscal"]["type_start_fiscal_year"] = int(v["wfTypeStartFiscalYear"])
 
     # Volume
     if "salesRows" in v: _cfg["sales"]["total_rows"] = int(v["salesRows"])
@@ -309,6 +401,10 @@ def update_config(body: ConfigUpdate):
     if "minPrice" in v: _cfg["products"]["pricing"]["base"]["min_unit_price"] = float(v["minPrice"])
     if "maxPrice" in v: _cfg["products"]["pricing"]["base"]["max_unit_price"] = float(v["maxPrice"])
     if "productActiveRatio" in v: _cfg["products"]["active_ratio"] = float(v["productActiveRatio"])
+    if "marginMin" in v: _cfg["products"]["pricing"]["cost"]["min_margin_pct"] = float(v["marginMin"])
+    if "marginMax" in v: _cfg["products"]["pricing"]["cost"]["max_margin_pct"] = float(v["marginMax"])
+    if "brandNormalize" in v: _cfg["products"]["pricing"]["brand_normalization"]["enabled"] = bool(v["brandNormalize"])
+    if "brandNormalizeAlpha" in v: _cfg["products"]["pricing"]["brand_normalization"]["alpha"] = float(v["brandNormalizeAlpha"])
 
     # Geography
     if "geoWeights" in v and isinstance(v["geoWeights"], dict):
@@ -320,9 +416,68 @@ def update_config(body: ConfigUpdate):
     if "returnMinDays" in v: _cfg["returns"]["min_days_after_sale"] = int(v["returnMinDays"])
     if "returnMaxDays" in v: _cfg["returns"]["max_days_after_sale"] = int(v["returnMaxDays"])
 
-    # Budget & Inventory
-    if "budgetEnabled" in v: _cfg.setdefault("budget", {})["enabled"] = bool(v["budgetEnabled"])
-    if "inventoryEnabled" in v: _cfg.setdefault("inventory", {})["enabled"] = bool(v["inventoryEnabled"])
+    # Promotions
+    if "promoNewCustWindow" in v: _cfg["promotions"]["new_customer_window_months"] = int(v["promoNewCustWindow"])
+
+    # Customer Segments
+    if "csEnabled" in v: _cfg["customer_segments"]["enabled"] = bool(v["csEnabled"])
+    if "csGenerateBridge" in v: _cfg["customer_segments"]["generate_bridge"] = bool(v["csGenerateBridge"])
+    if "csSegmentCount" in v: _cfg["customer_segments"]["segment_count"] = int(v["csSegmentCount"])
+    if "csPerCustomerMin" in v: _cfg["customer_segments"]["segments_per_customer_min"] = int(v["csPerCustomerMin"])
+    if "csPerCustomerMax" in v: _cfg["customer_segments"]["segments_per_customer_max"] = int(v["csPerCustomerMax"])
+    if "csIncludeScore" in v: _cfg["customer_segments"]["include_score"] = bool(v["csIncludeScore"])
+    if "csIncludePrimaryFlag" in v: _cfg["customer_segments"]["include_primary_flag"] = bool(v["csIncludePrimaryFlag"])
+    if "csIncludeValidity" in v: _cfg["customer_segments"]["include_validity"] = bool(v["csIncludeValidity"])
+    if "csValidityGrain" in v: _cfg["customer_segments"]["validity"]["grain"] = v["csValidityGrain"]
+    if "csChurnRateQtr" in v: _cfg["customer_segments"]["validity"]["churn_rate_qtr"] = float(v["csChurnRateQtr"])
+    if "csNewCustomerMonths" in v: _cfg["customer_segments"]["validity"]["new_customer_months"] = int(v["csNewCustomerMonths"])
+    if "csSeed" in v: _cfg["customer_segments"]["seed"] = int(v["csSeed"])
+
+    # Superpowers
+    if "spEnabled" in v: _cfg["superpowers"]["enabled"] = bool(v["spEnabled"])
+    if "spGenerateBridge" in v: _cfg["superpowers"]["generate_bridge"] = bool(v["spGenerateBridge"])
+    if "spPowersCount" in v: _cfg["superpowers"]["powers_count"] = int(v["spPowersCount"])
+    if "spPerCustomerMin" in v: _cfg["superpowers"]["powers_per_customer_min"] = int(v["spPerCustomerMin"])
+    if "spPerCustomerMax" in v: _cfg["superpowers"]["powers_per_customer_max"] = int(v["spPerCustomerMax"])
+    if "spIncludePowerLevel" in v: _cfg["superpowers"]["include_power_level"] = bool(v["spIncludePowerLevel"])
+    if "spIncludePrimaryFlag" in v: _cfg["superpowers"]["include_primary_flag"] = bool(v["spIncludePrimaryFlag"])
+    if "spIncludeAcquiredDate" in v: _cfg["superpowers"]["include_acquired_date"] = bool(v["spIncludeAcquiredDate"])
+    if "spIncludeValidity" in v: _cfg["superpowers"]["include_validity"] = bool(v["spIncludeValidity"])
+    if "spSeed" in v: _cfg["superpowers"]["seed"] = int(v["spSeed"])
+
+    # Stores detail
+    if "storeEnsureIsoCoverage" in v: _cfg["stores"]["ensure_iso_coverage"] = bool(v["storeEnsureIsoCoverage"])
+    if "storeDistrictSize" in v: _cfg["stores"]["district_size"] = int(v["storeDistrictSize"])
+    if "storeDistrictsPerRegion" in v: _cfg["stores"]["districts_per_region"] = int(v["storeDistrictsPerRegion"])
+    if "storeOpeningStart" in v: _cfg["stores"]["opening"]["start"] = v["storeOpeningStart"]
+    if "storeOpeningEnd" in v: _cfg["stores"]["opening"]["end"] = v["storeOpeningEnd"]
+    if "storeClosingEnd" in v: _cfg["stores"]["closing_end"] = v["storeClosingEnd"]
+    if "storeAssortmentEnabled" in v: _cfg["stores"]["assortment"]["enabled"] = bool(v["storeAssortmentEnabled"])
+
+    # Employees
+    if "employeeMinStaff" in v: _cfg["employees"]["min_staff_per_store"] = int(v["employeeMinStaff"])
+    if "employeeMaxStaff" in v: _cfg["employees"]["max_staff_per_store"] = int(v["employeeMaxStaff"])
+    if "employeeEmailDomain" in v: _cfg["employees"]["hr"]["email_domain"] = v["employeeEmailDomain"]
+    if "employeeStoreAssignments" in v: _cfg["employees"]["store_assignments"]["enabled"] = bool(v["employeeStoreAssignments"])
+
+    # Exchange Rates
+    if "erCurrencies" in v and isinstance(v["erCurrencies"], list): _cfg["exchange_rates"]["currencies"] = v["erCurrencies"]
+    if "erBaseCurrency" in v: _cfg["exchange_rates"]["base_currency"] = v["erBaseCurrency"]
+    if "erVolatility" in v: _cfg["exchange_rates"]["volatility"] = float(v["erVolatility"])
+    if "erFutureDrift" in v: _cfg["exchange_rates"]["future_annual_drift"] = float(v["erFutureDrift"])
+    if "erUseGlobalDates" in v: _cfg["exchange_rates"]["use_global_dates"] = bool(v["erUseGlobalDates"])
+
+    # Budget detail
+    if "budgetEnabled" in v: _cfg["budget"]["enabled"] = bool(v["budgetEnabled"])
+    if "budgetReportCurrency" in v: _cfg["budget"]["report_currency"] = v["budgetReportCurrency"]
+    if "budgetDefaultGrowth" in v: _cfg["budget"]["default_backcast_growth"] = float(v["budgetDefaultGrowth"])
+    if "budgetReturnRateCap" in v: _cfg["budget"]["return_rate_cap"] = float(v["budgetReturnRateCap"])
+
+    # Inventory detail
+    if "inventoryEnabled" in v: _cfg["inventory"]["enabled"] = bool(v["inventoryEnabled"])
+    if "inventoryGrain" in v: _cfg["inventory"]["grain"] = v["inventoryGrain"]
+    if "inventoryShrinkageEnabled" in v: _cfg["inventory"]["shrinkage"]["enabled"] = bool(v["inventoryShrinkageEnabled"])
+    if "inventoryShrinkageRate" in v: _cfg["inventory"]["shrinkage"]["rate"] = float(v["inventoryShrinkageRate"])
 
     return {"ok": True}
 
@@ -431,6 +586,127 @@ def reset_models():
     _models_cfg = _load_yaml(_models_path)
     _models_yaml_text = _models_path.read_text(encoding="utf-8") if _models_path.exists() else ""
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Models form API (visual editor)
+# ---------------------------------------------------------------------------
+
+def _models_root() -> dict:
+    """Return the 'models' sub-dict (models.yaml wraps everything under 'models:')."""
+    m = _models_cfg.get("models")
+    return m if isinstance(m, dict) else _models_cfg
+
+
+@app.get("/api/models/form")
+def get_models_form():
+    """Flat form fields for the models visual editor."""
+    m = _models_root()
+    md = _g(m, "macro_demand", default={})
+    ylf = _g(md, "year_level_factors", default={})
+    qty = _g(m, "quantity", default={})
+    prc = _g(m, "pricing", default={})
+    inf = _g(prc, "inflation", default={})
+    mkd = _g(prc, "markdown", default={})
+    bp = _g(m, "brand_popularity", default={})
+    ret = _g(m, "returns", default={})
+    lag = _g(ret, "lag_days", default={})
+    rqty = _g(ret, "quantity", default={})
+
+    return {
+        # Macro demand
+        "demandMode": str(ylf.get("mode", "once")),
+        "demandFactors": list(ylf.get("values", [1.0])),
+        # Quantity
+        "qtyLambda": float(qty.get("base_poisson_lambda", 1.7)),
+        "qtyMin": int(qty.get("min_qty", 1)),
+        "qtyMax": int(qty.get("max_qty", 8)),
+        "qtyMonthly": list(qty.get("monthly_factors", [1.0] * 12)),
+        "qtyNoise": float(qty.get("noise_sigma", 0.12)),
+        # Pricing — inflation
+        "inflationRate": float(inf.get("annual_rate", 0.05)),
+        "inflationVolatility": float(inf.get("month_volatility_sigma", 0.012)),
+        "inflationClipMin": float((inf.get("factor_clip") or [1.0, 1.3])[0]),
+        "inflationClipMax": float((inf.get("factor_clip") or [1.0, 1.3])[1]),
+        # Pricing — markdown
+        "markdownEnabled": bool(mkd.get("enabled", True)),
+        "markdownMaxPct": float(mkd.get("max_pct_of_price", 0.50)),
+        "markdownMinNet": float(mkd.get("min_net_price", 0.01)),
+        "markdownAllowNeg": bool(mkd.get("allow_negative_margin", False)),
+        "markdownLadder": list(mkd.get("ladder", [])),
+        # Brand popularity
+        "brandEnabled": bool(bp.get("enabled", True)),
+        "brandSeed": int(bp.get("seed", 123) or 123),
+        "brandWinnerBoost": float(bp.get("winner_boost", 2.5)),
+        "brandWeights": dict(bp.get("brand_weights", {})),
+        # Returns
+        "retEnabled": bool(ret.get("enabled", True)),
+        "retReasons": list(ret.get("reasons", [])),
+        "retLagDist": str(lag.get("distribution", "triangular")),
+        "retLagMode": int(lag.get("mode", 7)),
+        "retFullLinePct": float(rqty.get("full_line_probability", 0.85)),
+    }
+
+
+@app.post("/api/models/form")
+def update_models_form(body: ConfigUpdate):
+    """Apply partial form updates to the in-memory models config, re-serialize YAML."""
+    global _models_yaml_text
+    v = body.values
+    m = _models_root()
+
+    m.setdefault("macro_demand", {}).setdefault("year_level_factors", {})
+    m.setdefault("quantity", {})
+    m.setdefault("pricing", {}).setdefault("inflation", {})
+    m["pricing"].setdefault("markdown", {})
+    m.setdefault("brand_popularity", {})
+    m.setdefault("returns", {}).setdefault("lag_days", {})
+    m["returns"].setdefault("quantity", {})
+
+    # Macro demand
+    if "demandMode" in v: m["macro_demand"]["year_level_factors"]["mode"] = v["demandMode"]
+    if "demandFactors" in v and isinstance(v["demandFactors"], list):
+        m["macro_demand"]["year_level_factors"]["values"] = [float(x) for x in v["demandFactors"]]
+
+    # Quantity
+    if "qtyLambda" in v: m["quantity"]["base_poisson_lambda"] = float(v["qtyLambda"])
+    if "qtyMin" in v: m["quantity"]["min_qty"] = int(v["qtyMin"])
+    if "qtyMax" in v: m["quantity"]["max_qty"] = int(v["qtyMax"])
+    if "qtyMonthly" in v and isinstance(v["qtyMonthly"], list):
+        m["quantity"]["monthly_factors"] = [float(x) for x in v["qtyMonthly"]]
+    if "qtyNoise" in v: m["quantity"]["noise_sigma"] = float(v["qtyNoise"])
+
+    # Pricing — inflation
+    if "inflationRate" in v: m["pricing"]["inflation"]["annual_rate"] = float(v["inflationRate"])
+    if "inflationVolatility" in v: m["pricing"]["inflation"]["month_volatility_sigma"] = float(v["inflationVolatility"])
+    if "inflationClipMin" in v or "inflationClipMax" in v:
+        clip = m["pricing"]["inflation"].get("factor_clip", [1.0, 1.3])
+        if "inflationClipMin" in v: clip[0] = float(v["inflationClipMin"])
+        if "inflationClipMax" in v: clip[1] = float(v["inflationClipMax"])
+        m["pricing"]["inflation"]["factor_clip"] = clip
+
+    # Pricing — markdown
+    if "markdownEnabled" in v: m["pricing"]["markdown"]["enabled"] = bool(v["markdownEnabled"])
+    if "markdownMaxPct" in v: m["pricing"]["markdown"]["max_pct_of_price"] = float(v["markdownMaxPct"])
+    if "markdownMinNet" in v: m["pricing"]["markdown"]["min_net_price"] = float(v["markdownMinNet"])
+    if "markdownAllowNeg" in v: m["pricing"]["markdown"]["allow_negative_margin"] = bool(v["markdownAllowNeg"])
+
+    # Brand popularity
+    if "brandEnabled" in v: m["brand_popularity"]["enabled"] = bool(v["brandEnabled"])
+    if "brandSeed" in v: m["brand_popularity"]["seed"] = int(v["brandSeed"])
+    if "brandWinnerBoost" in v: m["brand_popularity"]["winner_boost"] = float(v["brandWinnerBoost"])
+    if "brandWeights" in v and isinstance(v["brandWeights"], dict):
+        m["brand_popularity"]["brand_weights"] = {k: float(vv) for k, vv in v["brandWeights"].items()}
+
+    # Returns
+    if "retEnabled" in v: m["returns"]["enabled"] = bool(v["retEnabled"])
+    if "retLagDist" in v: m["returns"]["lag_days"]["distribution"] = v["retLagDist"]
+    if "retLagMode" in v: m["returns"]["lag_days"]["mode"] = int(v["retLagMode"])
+    if "retFullLinePct" in v: m["returns"]["quantity"]["full_line_probability"] = float(v["retFullLinePct"])
+
+    # Re-serialize to YAML text so the YAML editor stays in sync
+    _models_yaml_text = yaml.safe_dump(_models_cfg, sort_keys=False, default_flow_style=False)
+    return {"ok": True, "yaml_text": _models_yaml_text}
 
 
 # ---------------------------------------------------------------------------

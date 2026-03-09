@@ -41,8 +41,6 @@ customer_segments:
       customers: "customers.parquet"
       customer_segment: "customer_segment.parquet"
       customer_segment_membership: "customer_segment_membership.parquet"
-  _force_regenerate: false
-
 Notes:
 - "simple" mode is recommended for demos: stable, explainable, low volume.
 - The bridge output always includes ValidFromDate/ValidToDate as datetime64[ns].
@@ -860,7 +858,6 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
 
     seg_cfg = cfg.get("customer_segments") if isinstance(cfg.get("customer_segments"), dict) else {}
     enabled = bool(seg_cfg.get("enabled", False))
-    force = bool(seg_cfg.get("_force_regenerate", False))
     generate_bridge = bool(seg_cfg.get("generate_bridge", True))
 
     if not enabled:
@@ -914,15 +911,14 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
     seg_cfg_for_version["_schema_version"] = 2  # mode support + scd2 fast-path + simple mode
 
     # --- Version skip (bridge-aware) ---
-    if not force:
-        version_files_exist = dim_out.exists() and (bridge_out.exists() or not generate_bridge)
-        if version_files_exist and (not should_regenerate("customer_segments", seg_cfg_for_version, dim_out)):
-            # Clean up stale bridge from a previous run where generate_bridge was true
-            if not generate_bridge and bridge_out.exists():
-                bridge_out.unlink()
-                info("Removed stale customer_segment_membership bridge file.")
-            skip("Customer segments up-to-date")
-            return {"_regenerated": False, "reason": "version"}
+    version_files_exist = dim_out.exists() and (bridge_out.exists() or not generate_bridge)
+    if version_files_exist and (not should_regenerate("customer_segments", seg_cfg_for_version, dim_out)):
+        # Clean up stale bridge from a previous run where generate_bridge was true
+        if not generate_bridge and bridge_out.exists():
+            bridge_out.unlink()
+            info("Removed stale customer_segment_membership bridge file.")
+        skip("Customer segments up-to-date")
+        return {"_regenerated": False, "reason": "version"}
 
     # Parse global dates + cfg to decide which customer columns to read
     global_dates = (cfg.get("defaults", {}) or {}).get("dates", {})

@@ -28,10 +28,8 @@ def _int_or(x: Any, default: int) -> int:
 
 
 def _strip_force(cfg_section: Dict[str, Any]) -> Dict[str, Any]:
-    """Do not let runtime-only flags contaminate version signatures."""
-    out = dict(cfg_section)
-    out.pop("_force_regenerate", None)
-    return out
+    """Return a shallow copy of the config section (legacy helper kept for callers)."""
+    return dict(cfg_section)
 
 
 def _write_parquet(df: pd.DataFrame, out_path: Path, compression: str = "snappy") -> None:
@@ -81,8 +79,6 @@ def _run_lookup_dim(
     parquet_folder: Path,
 ) -> None:
     dim_cfg = _as_dict(cfg.get(dim_key))
-    force = bool(dim_cfg.get("_force_regenerate", False))
-
     parquet_folder = Path(parquet_folder)
     parquet_folder.mkdir(parents=True, exist_ok=True)
     out_path = parquet_folder / out_name
@@ -95,7 +91,7 @@ def _run_lookup_dim(
 
     display_name = dim_key.replace("_", " ").title()
 
-    if not force and not should_regenerate(dim_key, version_cfg, out_path):
+    if not should_regenerate(dim_key, version_cfg, out_path):
         skip(f"{display_name} up-to-date")
         return
 

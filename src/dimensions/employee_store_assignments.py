@@ -42,10 +42,10 @@ def _store_assignments_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     nested = as_dict(emp_cfg.get("store_assignments"))
     legacy = as_dict(cfg.get("employee_store_assignments"))
 
-    # The dimensions runner injects internal keys (global_dates, _force_regenerate)
+    # The dimensions runner injects internal keys (global_dates)
     # into cfg["employee_store_assignments"]; exclude those when checking for
     # actual user-supplied legacy config.
-    _RUNNER_KEYS = {"global_dates", "_force_regenerate"}
+    _RUNNER_KEYS = {"global_dates"}
     user_legacy = {k: v for k, v in legacy.items() if k not in _RUNNER_KEYS}
     if user_legacy:
         warn(
@@ -817,7 +817,6 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     if not employees_path.exists():
         raise FileNotFoundError(f"Missing employees parquet: {employees_path}")
 
-    force = bool(a_cfg.get("_force_regenerate", False))
     seed = pick_seed_nested(cfg, a_cfg, fallback=42)
     global_start, global_end = parse_global_dates(
         cfg, a_cfg,
@@ -831,12 +830,8 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     )
 
     version_cfg = dict(a_cfg)
-    version_cfg.pop("_force_regenerate", None)
     version_cfg["schema_version"] = 10
-    version_cfg["_stores_cfg"] = {
-        k: v for k, v in as_dict(cfg.get("stores")).items()
-        if k != "_force_regenerate"
-    }
+    version_cfg["_stores_cfg"] = dict(as_dict(cfg.get("stores")))
     version_cfg["_rows_employees"] = int(len(employees))
     if "EmployeeKey" in employees.columns and len(employees) > 0:
         ek = pd.to_numeric(employees["EmployeeKey"], errors="coerce").dropna().astype(np.int32)
@@ -854,7 +849,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
         "end": str(global_end.date()),
     }
 
-    if not force and not should_regenerate("employee_store_assignments", version_cfg, out_path):
+    if not should_regenerate("employee_store_assignments", version_cfg, out_path):
         skip("Employee Store Assignments up-to-date")
         return
 

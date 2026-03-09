@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from src.utils.logging_utils import info, skip, stage
+from src.versioning import delete_version
 
 from src.dimensions.geography import run_geography
 from src.dimensions.customers import run_customers
@@ -62,15 +63,10 @@ def _cfg_with_global_dates(cfg: Dict[str, Any], dim_key: str, global_dates) -> D
     return cfg_for
 
 
-def _cfg_for_dimension(cfg: Dict[str, Any], dim_key: str, force: bool) -> Dict[str, Any]:
-    """
-    Return a cfg where ONLY cfg[dim_key] is copied and optionally annotated with _force_regenerate.
-    """
+def _cfg_for_dimension(cfg: Dict[str, Any], dim_key: str) -> Dict[str, Any]:
+    """Return a cfg where ONLY cfg[dim_key] is shallow-copied."""
     cfg_for = cfg.copy()
-    dim_section = dict(cfg.get(dim_key, {}))
-    if force:
-        dim_section["_force_regenerate"] = True
-    cfg_for[dim_key] = dim_section
+    cfg_for[dim_key] = dict(cfg.get(dim_key, {}))
     return cfg_for
 
 
@@ -453,6 +449,13 @@ def generate_dimensions(
                 force_set.add(dep)
                 queue.append(dep)
 
+    # Delete version files for forced dims — each dimension's
+    # should_regenerate() will return True when the file is missing.
+    if force_set:
+        deleted = [n for n in sorted(force_set) if delete_version(n)]
+        if deleted:
+            info(f"Deleted version files to force regeneration: {deleted}")
+
     regenerated: Dict[str, bool] = {}
 
     with stage("Generating Dimensions"):
@@ -466,7 +469,7 @@ def generate_dimensions(
             cfg_run = cfg
             if spec.inject_global_dates:
                 cfg_run = _cfg_with_global_dates(cfg_run, spec.cfg_key, global_dates)
-            cfg_run = _cfg_for_dimension(cfg_run, spec.cfg_key, forced)
+            cfg_run = _cfg_for_dimension(cfg_run, spec.cfg_key)
 
             before = _snapshot(parquet_dims_folder, spec)
             out = spec.run_fn(cfg_run, parquet_dims_folder)
@@ -478,7 +481,7 @@ def generate_dimensions(
                 io_regen = _detect_regen_from_io(before, after)
                 regen = bool(io_regen) if io_regen is not None else False
 
-            regenerated[spec.name] = bool(regen or forced)
+            regenerated[spec.name] = bool(regen)
 
     return {
         "global_dates": global_dates,

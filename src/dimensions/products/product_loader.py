@@ -95,8 +95,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         version_key["supplier_assignment"] = {"enabled": True, "strategy": sup_strategy, "seed": sup_seed}
         version_key["supplier_sig"] = supplier_sig
 
-    force = bool(p.get("_force_regenerate", False))
-    if not force and not should_regenerate("products", version_key, parquet_path):
+    if not should_regenerate("products", version_key, parquet_path):
         if log_skip:
             skip("Products up-to-date")
         profile_path = output_folder / "product_profile.parquet"

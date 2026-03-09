@@ -747,7 +747,6 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     if not stores_path.exists():
         raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
 
-    force = bool(emp_cfg.get("_force_regenerate", False))
     seed = pick_seed_nested(cfg, emp_cfg, fallback=42)
     global_start, global_end = _parse_employee_dates(cfg, emp_cfg)
 
@@ -765,19 +764,15 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         )
 
     version_cfg = dict(emp_cfg)
-    version_cfg.pop("_force_regenerate", None)
     version_cfg["schema_version"] = 6
     version_cfg["_stores_sig"] = _stores_signature(stores)
-    version_cfg["_stores_cfg"] = {
-        k: v for k, v in as_dict(cfg.get("stores")).items()
-        if k != "_force_regenerate"
-    }
+    version_cfg["_stores_cfg"] = dict(as_dict(cfg.get("stores")))
     version_cfg["_global_dates"] = {
         "start": str(global_start.date()),
         "end": str(global_end.date()),
     }
 
-    if not force and not should_regenerate("employees", version_cfg, out_path):
+    if not should_regenerate("employees", version_cfg, out_path):
         skip("Employees up-to-date")
         return
 

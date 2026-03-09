@@ -206,8 +206,6 @@ def run_suppliers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     parquet_folder.mkdir(parents=True, exist_ok=True)
 
     out_path = parquet_folder / "suppliers.parquet"
-    force = bool(sup_cfg.get("_force_regenerate", False))
-
     # Resolve deterministic params up-front
     num_suppliers = _int_or(sup_cfg.get("num_suppliers"), 250)
     start_key = _int_or(sup_cfg.get("start_key"), 1)
@@ -228,7 +226,6 @@ def run_suppliers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     # Build version cfg BEFORE generation so we can skip cheaply.
     version_cfg = dict(sup_cfg)
-    version_cfg.pop("_force_regenerate", None)
 
     # Make seed explicit even if supplied via override/defaults
     version_cfg["seed"] = int(seed)
@@ -246,7 +243,7 @@ def run_suppliers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     if countries is not None:
         version_cfg["_countries"] = [str(x) for x in countries]
 
-    if not force and not should_regenerate("suppliers", version_cfg, out_path):
+    if not should_regenerate("suppliers", version_cfg, out_path):
         skip("Suppliers up-to-date")
         return
 

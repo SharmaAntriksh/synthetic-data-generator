@@ -941,8 +941,6 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     if not geo_path.exists():
         raise FileNotFoundError(f"Missing geography parquet: {geo_path}")
 
-    force = bool(store_cfg.get("_force_regenerate", False))
-
     geo = _safe_read_geography(geo_path)
     geo_keys = geo["GeographyKey"].astype(np.int64).to_numpy()
     loc_short_map, loc_full_map = _build_location_maps(geo)
@@ -978,11 +976,10 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     emp_cfg  = as_dict(store_cfg.get("employee_count"))
 
     version_cfg = dict(store_cfg)
-    version_cfg.pop("_force_regenerate", None)
     version_cfg["schema_version"] = 3
     version_cfg["_geography_sig"] = _geography_signature(geo_keys)
 
-    if not force and not should_regenerate("stores", version_cfg, out_path):
+    if not should_regenerate("stores", version_cfg, out_path):
         skip("Stores up-to-date")
         return
 
