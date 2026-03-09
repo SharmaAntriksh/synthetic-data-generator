@@ -124,7 +124,7 @@ def _load_sales_channels(State: Any) -> Optional[Tuple[np.ndarray, np.ndarray, n
     maxk = int(keys.max())
     lut = np.full(maxk + 1, P_DIGITAL, dtype=np.int8)
 
-    for k, g in zip(keys.astype(np.int64), grp):
+    for k, g in zip(keys.astype(np.int32), grp):
         gg = str(g).strip().lower()
         lut[k] = _PROFILE_FROM_GROUP.get(gg, P_DIGITAL)
 
@@ -191,7 +191,7 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
             keys, p, profile_lut = cache
 
         if order_ids_int is not None:
-            oid = np.asarray(order_ids_int, dtype=np.int64)
+            oid = np.asarray(order_ids_int, dtype=np.int32)
             unique_orders, inv = np.unique(oid, return_inverse=True)
             per_order_channel = rng.choice(keys, size=unique_orders.shape[0], p=p).astype(np.int16, copy=False)
             sales_channel = per_order_channel[inv]
@@ -214,9 +214,9 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
             # digital-like fallback so night bins aren't empty
             timekey = _sample_hour_weighted_minute(rng, n, DIGITAL_HOUR_W)
         else:
-            prof = profile_lut[sales_channel.astype(np.int64)]
+            prof = profile_lut[sales_channel.astype(np.int32)]
             if order_ids_int is not None:
-                oid = np.asarray(order_ids_int, dtype=np.int64)
+                oid = np.asarray(order_ids_int, dtype=np.int32)
                 # Vectorized first-occurrence index via np.unique with return_index
                 unique_orders, first_idx, inv = np.unique(
                     oid, return_index=True, return_inverse=True,

@@ -79,16 +79,16 @@ def build_worker_schemas(
     # ---------------------------------------------------------------------
     # GEN: what the chunk builder actually produces (NO TimeKey here)
     base_fields_gen = [
-        pa.field("CustomerKey", pa.int64()),
-        pa.field("ProductKey", pa.int64()),
-        pa.field("StoreKey", pa.int64()),
+        pa.field("CustomerKey", pa.int32()),
+        pa.field("ProductKey", pa.int32()),
+        pa.field("StoreKey", pa.int32()),
         pa.field("SalesPersonEmployeeKey", pa.int32()),
-        pa.field("PromotionKey", pa.int64()),
-        pa.field("CurrencyKey", pa.int64()),
+        pa.field("PromotionKey", pa.int32()),
+        pa.field("CurrencyKey", pa.int32()),
         pa.field("OrderDate", pa.date32()),
         pa.field("DueDate", pa.date32()),
         pa.field("DeliveryDate", pa.date32()),
-        pa.field("Quantity", pa.int64()),
+        pa.field("Quantity", pa.int32()),
         pa.field("NetPrice", pa.float64()),
         pa.field("UnitCost", pa.float64()),
         pa.field("UnitPrice", pa.float64()),
@@ -99,18 +99,18 @@ def build_worker_schemas(
 
     # OUT: what we want to write/merge/project (TimeKey injected later in task.py)
     base_fields_out = [
-        pa.field("CustomerKey", pa.int64()),
-        pa.field("ProductKey", pa.int64()),
-        pa.field("StoreKey", pa.int64()),
+        pa.field("CustomerKey", pa.int32()),
+        pa.field("ProductKey", pa.int32()),
+        pa.field("StoreKey", pa.int32()),
         pa.field("SalesPersonEmployeeKey", pa.int32()),
-        pa.field("PromotionKey", pa.int64()),
-        pa.field("CurrencyKey", pa.int64()),
+        pa.field("PromotionKey", pa.int32()),
+        pa.field("CurrencyKey", pa.int32()),
         pa.field("SalesChannelKey", pa.int16()),
         pa.field("TimeKey", pa.int16()),   # injected later; OUTPUT schema expects it
         pa.field("OrderDate", pa.date32()),
         pa.field("DueDate", pa.date32()),
         pa.field("DeliveryDate", pa.date32()),
-        pa.field("Quantity", pa.int64()),
+        pa.field("Quantity", pa.int32()),
         pa.field("NetPrice", pa.float64()),
         pa.field("UnitCost", pa.float64()),
         pa.field("UnitPrice", pa.float64()),
@@ -121,7 +121,7 @@ def build_worker_schemas(
 
     order_fields = [
         pa.field("SalesOrderNumber", pa.int32()),
-        pa.field("SalesOrderLineNumber", pa.int64()),
+        pa.field("SalesOrderLineNumber", pa.int32()),
     ]
     delta_fields = [pa.field("Year", pa.int16()), pa.field("Month", pa.int16())]
 
@@ -160,11 +160,11 @@ def build_worker_schemas(
     # ---------------------------------------------------------------------
     detail_fields = [
         pa.field("SalesOrderNumber", pa.int32()),
-        pa.field("SalesOrderLineNumber", pa.int64()),
-        pa.field("ProductKey", pa.int64()),
+        pa.field("SalesOrderLineNumber", pa.int32()),
+        pa.field("ProductKey", pa.int32()),
         pa.field("DueDate", pa.date32()),
         pa.field("DeliveryDate", pa.date32()),
-        pa.field("Quantity", pa.int64()),
+        pa.field("Quantity", pa.int32()),
         pa.field("NetPrice", pa.float64()),
         pa.field("UnitCost", pa.float64()),
         pa.field("UnitPrice", pa.float64()),
@@ -175,11 +175,11 @@ def build_worker_schemas(
 
     header_fields = [
         pa.field("SalesOrderNumber", pa.int32()),
-        pa.field("CustomerKey", pa.int64()),
-        pa.field("StoreKey", pa.int64()),
+        pa.field("CustomerKey", pa.int32()),
+        pa.field("StoreKey", pa.int32()),
         pa.field("SalesPersonEmployeeKey", pa.int32()),
-        pa.field("PromotionKey", pa.int64()),
-        pa.field("CurrencyKey", pa.int64()),
+        pa.field("PromotionKey", pa.int32()),
+        pa.field("CurrencyKey", pa.int32()),
         pa.field("SalesChannelKey", pa.int16()),
         pa.field("OrderDate", pa.date32()),
         pa.field("TimeKey", pa.int16()),

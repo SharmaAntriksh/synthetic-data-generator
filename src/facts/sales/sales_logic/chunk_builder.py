@@ -93,8 +93,8 @@ def _sample_product_row_indices(
         if product_weight is not None:
             ws = float(product_weight.sum())
             if ws > 1e-12:
-                return rng.choice(n_products, size=n_int, p=product_weight / ws).astype("int64", copy=False)
-        return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
+                return rng.choice(n_products, size=n_int, p=product_weight / ws).astype("int32", copy=False)
+        return rng.integers(0, n_products, size=n_int).astype("int32", copy=False)
 
     # Prefer "active" buckets if we're using active_product_np upstream.
     if getattr(State, "active_product_np", None) is not None and product_np is State.active_product_np:
@@ -115,7 +115,7 @@ def _sample_product_row_indices(
     brand_probs_by_month = _get_state_attr("brand_prob_by_month", default=None)
 
     if brand_to_rows is None or len(brand_to_rows) == 0:
-        return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
+        return rng.integers(0, n_products, size=n_int).astype("int32", copy=False)
 
     B = int(len(brand_to_rows))
 
@@ -135,7 +135,7 @@ def _sample_product_row_indices(
     if p is None:
         avail = np.asarray([len(x) > 0 for x in brand_to_rows], dtype="float64")
         if float(avail.sum()) <= 0:
-            return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
+            return rng.integers(0, n_products, size=n_int).astype("int32", copy=False)
         p = avail / float(avail.sum())
 
     brand_ids = rng.choice(B, size=n_int, p=p)
@@ -147,15 +147,15 @@ def _sample_product_row_indices(
     for b in range(B):
         bucket = brand_to_rows[b]
         if bucket is not None and len(bucket) > 0:
-            flat_parts.append(np.asarray(bucket, dtype="int64"))
+            flat_parts.append(np.asarray(bucket, dtype="int32"))
             offsets[b + 1] = offsets[b] + len(bucket)
         else:
             offsets[b + 1] = offsets[b]
 
     if offsets[-1] == 0:
-        return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
+        return rng.integers(0, n_products, size=n_int).astype("int32", copy=False)
 
-    flat_idx = np.concatenate(flat_parts) if flat_parts else np.empty(0, dtype="int64")
+    flat_idx = np.concatenate(flat_parts) if flat_parts else np.empty(0, dtype="int32")
 
     # Vectorized sampling: for each order, pick a random offset within its brand's bucket
     bucket_sizes = offsets[1:] - offsets[:-1]
@@ -167,7 +167,7 @@ def _sample_product_row_indices(
 
     # Within-brand weighted sampling when product_weight is available
     if product_weight is not None:
-        out = np.empty(n_int, dtype="int64")
+        out = np.empty(n_int, dtype="int32")
         for b in range(B):
             mask_b = brand_ids == b
             cnt = int(mask_b.sum())
@@ -175,7 +175,7 @@ def _sample_product_row_indices(
                 continue
             start, end = int(offsets[b]), int(offsets[b + 1])
             if start == end:
-                out[mask_b] = rng.integers(0, n_products, size=cnt).astype("int64", copy=False)
+                out[mask_b] = rng.integers(0, n_products, size=cnt).astype("int32", copy=False)
                 continue
             rows = flat_idx[start:end]
             w = product_weight[rows]
@@ -196,7 +196,7 @@ def _sample_product_row_indices(
     # Fix up any rows that landed on empty buckets with uniform fallback
     if empty_mask.any():
         n_empty = int(empty_mask.sum())
-        out[empty_mask] = rng.integers(0, n_products, size=n_empty).astype("int64", copy=False)
+        out[empty_mask] = rng.integers(0, n_products, size=n_empty).astype("int32", copy=False)
 
     return out
 
@@ -226,7 +226,7 @@ def _sample_products_per_store(
     n = len(store_key_arr)
     n_products = len(product_np)
     max_sk = len(store_to_product_rows)
-    out = np.empty(n, dtype=np.int64)
+    out = np.empty(n, dtype=np.int32)
 
     # Group lines by store for vectorized sampling per store
     unique_stores, inverse = np.unique(store_key_arr, return_inverse=True)
@@ -386,7 +386,7 @@ def _eligible_counts_fast(
     if T <= 0:
         return np.zeros(0, dtype="float64")
 
-    is_active_in_sales = np.asarray(is_active_in_sales, dtype="int64", order="C")
+    is_active_in_sales = np.asarray(is_active_in_sales, dtype="int32", order="C")
     start_month = np.asarray(start_month, dtype="int64", order="C")
     end_month_norm = np.asarray(end_month_norm, dtype="int64", order="C")
 
@@ -661,7 +661,7 @@ def build_chunk_table(
     customer_keys = _get_state_attr("customer_keys", "customers")
     if customer_keys is None:
         raise RuntimeError("State must provide customer_keys/customers")
-    customer_keys = np.asarray(customer_keys, dtype="int64")
+    customer_keys = np.asarray(customer_keys, dtype="int32")
 
     # is_active_in_sales (new contract)
     is_active_in_sales = _get_state_attr("customer_is_active_in_sales", "is_active_in_sales")
@@ -669,15 +669,15 @@ def build_chunk_table(
         # backward compat: if State.active_customer_keys exists, treat those as active
         active_keys = getattr(State, "active_customer_keys", None)
         if active_keys is not None:
-            is_active_in_sales = np.zeros(customer_keys.shape[0], dtype="int64")
-            idx = (np.asarray(active_keys, dtype="int64") - 1)
+            is_active_in_sales = np.zeros(customer_keys.shape[0], dtype="int32")
+            idx = (np.asarray(active_keys, dtype="int32") - 1)
             idx = idx[(idx >= 0) & (idx < customer_keys.shape[0])]
             is_active_in_sales[idx] = 1
         else:
             # assume all active
-            is_active_in_sales = np.ones(customer_keys.shape[0], dtype="int64")
+            is_active_in_sales = np.ones(customer_keys.shape[0], dtype="int32")
     else:
-        is_active_in_sales = np.asarray(is_active_in_sales, dtype="int64")
+        is_active_in_sales = np.asarray(is_active_in_sales, dtype="int32")
 
     start_month = _get_state_attr("customer_start_month")
     if start_month is None:
@@ -1059,7 +1059,7 @@ def build_chunk_table(
                 product_weight=_product_weight,
             )
 
-        product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)
+        product_keys = product_np[prod_idx, 0].astype(np.int32, copy=False)
         unit_price   = product_np[prod_idx, 1].astype(np.float64, copy=False)
         unit_cost    = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
@@ -1071,7 +1071,7 @@ def build_chunk_table(
             raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
 
 
-        customer_keys_out = np.asarray(customer_keys_out, dtype=np.int64)
+        customer_keys_out = np.asarray(customer_keys_out, dtype=np.int32)
         order_dates = np.asarray(order_dates, dtype="datetime64[D]")
 
         # --------------------------------------------------------
@@ -1102,7 +1102,7 @@ def build_chunk_table(
                 no_discount_key=no_discount_key,
             )
 
-            promo_keys = np.asarray(promo_order_keys, dtype=np.int64)[order_idx]
+            promo_keys = np.asarray(promo_order_keys, dtype=np.int32)[order_idx]
         else:
             promo_keys = apply_promotions(
                 rng=rng,
@@ -1113,7 +1113,7 @@ def build_chunk_table(
                 promo_end_all=promo_end_all,
                 no_discount_key=no_discount_key,
             )
-        promo_keys = np.asarray(promo_keys, dtype=np.int64)
+        promo_keys = np.asarray(promo_keys, dtype=np.int32)
 
         # New Customer promo: remove invalid assignments, then force-assign to genuinely new customers
         if _ckey_to_start_month is not None and _nc_keys is not None and _nc_keys.size > 0:
@@ -1175,7 +1175,7 @@ def build_chunk_table(
             salesperson_key_arr = salesperson_order[inv_idx]
         else:
             # Line-level fallback (when order ids do not exist)
-            s_ids = np.asarray(store_key_arr, dtype=np.int64)
+            s_ids = np.asarray(store_key_arr, dtype=np.int32)
             d_ids = np.asarray(order_dates, dtype="datetime64[D]")
             if isinstance(eff, dict) and eff:
                 salesperson_key_arr = _sample_salesperson_vectorized(s_ids, d_ids, eff, rng)

@@ -23,10 +23,10 @@ RETURNS_REQUIRED_DETAIL_COLS: tuple[str, ...] = (
 RETURNS_SCHEMA = pa.schema(
     [
         ("SalesOrderNumber", pa.int32()),
-        ("SalesOrderLineNumber", pa.int64()),
+        ("SalesOrderLineNumber", pa.int32()),
         ("ReturnDate", pa.date32()),
-        ("ReturnReasonKey", pa.int64()),
-        ("ReturnQuantity", pa.int64()),
+        ("ReturnReasonKey", pa.int32()),
+        ("ReturnQuantity", pa.int32()),
         ("ReturnNetPrice", pa.float64()),
         ("ReturnEventKey", pa.int64()),
     ]
@@ -50,6 +50,11 @@ def _empty_returns_table() -> pa.Table:
 def _as_np_i64(x) -> np.ndarray:
     arr = np.asarray(x)
     return arr if arr.dtype == np.int64 else arr.astype(np.int64, copy=False)
+
+
+def _as_np_i32(x) -> np.ndarray:
+    arr = np.asarray(x)
+    return arr if arr.dtype == np.int32 else arr.astype(np.int32, copy=False)
 
 
 def _as_np_f64(x) -> np.ndarray:
@@ -130,7 +135,7 @@ def _validate_cfg(cfg: ReturnsConfig) -> tuple[float, int, int, np.ndarray, np.n
     rp = _as_np_f64(list(cfg.reason_probs))
 
     if rk.size == 0:
-        rk = np.array([1], dtype=np.int64)
+        rk = np.array([1], dtype=np.int32)
         rp = np.array([1.0], dtype=np.float64)
 
     if rp.size != rk.size:
@@ -195,7 +200,7 @@ def build_sales_returns_from_detail(
 
     rng = np.random.default_rng(int(chunk_seed) ^ 0xA5A5_F00D)
 
-    qty_all = _as_np_i64(_col_np(detail_cc, "Quantity"))
+    qty_all = _as_np_i32(_col_np(detail_cc, "Quantity"))
     if qty_all.size != n:
         raise RuntimeError("Returns builder: unexpected Quantity length mismatch.")
 
@@ -205,8 +210,8 @@ def build_sales_returns_from_detail(
         return _empty_returns_table()
 
     # Extract masked arrays (alignment-safe).
-    so = _as_np_i64(_col_np(detail_cc, "SalesOrderNumber"))[mask]
-    line = _as_np_i64(_col_np(detail_cc, "SalesOrderLineNumber"))[mask]
+    so = _as_np_i32(_col_np(detail_cc, "SalesOrderNumber"))[mask]
+    line = _as_np_i32(_col_np(detail_cc, "SalesOrderLineNumber"))[mask]
 
     delivery_raw = _col_np(detail_cc, "DeliveryDate")[mask]
     delivery = _to_np_date_days(delivery_raw)
@@ -222,7 +227,7 @@ def build_sales_returns_from_detail(
 
     # ReturnQuantity: integer in [1, qty]
     u = rng.random(m)
-    ret_qty = (np.floor(u * qty).astype(np.int64) + 1).clip(1, qty)
+    ret_qty = (np.floor(u * qty).astype(np.int32) + 1).clip(1, qty)
 
     frac = ret_qty.astype(np.float64) / qty.astype(np.float64)
 
@@ -238,7 +243,7 @@ def build_sales_returns_from_detail(
     lag = lag_days.astype("timedelta64[D]")
     ret_date = (delivery + lag).astype("datetime64[D]", copy=False)
 
-    reason = rng.choice(reason_keys, size=m, p=reason_probs).astype(np.int64)
+    reason = rng.choice(reason_keys, size=m, p=reason_probs).astype(np.int32)
 
     # ReturnEventKey: (chunk_seed_u31 << 32) | ordinal
     seed31 = np.int64(int(chunk_seed) & 0x7FFF_FFFF)
@@ -251,10 +256,10 @@ def build_sales_returns_from_detail(
     return pa.table(
         {
             "SalesOrderNumber": pa.array(so, type=pa.int32()),
-            "SalesOrderLineNumber": pa.array(line, type=pa.int64()),
+            "SalesOrderLineNumber": pa.array(line, type=pa.int32()),
             "ReturnDate": pa.array(ret_date, type=pa.date32()),
-            "ReturnReasonKey": pa.array(reason, type=pa.int64()),
-            "ReturnQuantity": pa.array(ret_qty, type=pa.int64()),
+            "ReturnReasonKey": pa.array(reason, type=pa.int32()),
+            "ReturnQuantity": pa.array(ret_qty, type=pa.int32()),
             "ReturnNetPrice": pa.array(return_net_price, type=pa.float64()),
             "ReturnEventKey": pa.array(return_event_key, type=pa.int64()),
         },

@@ -70,7 +70,7 @@ def _build_store_assortment(
         coverage = float(coverage_cfg.get(str(st), coverage_cfg.get("default", 0.50)))
 
         if coverage >= 1.0:
-            result[sk_int] = np.arange(n_products, dtype=np.int64)
+            result[sk_int] = np.arange(n_products, dtype=np.int32)
             continue
 
         # Deterministic hash per (store, subcategory) to decide inclusion
@@ -114,7 +114,7 @@ def build_buckets_from_key(
         if called with raw, high-magnitude surrogate keys (e.g., EmployeeKey ~ 40,000,000+).
       - Override via `max_key=` or `max_buckets=` if you *intend* to allocate a large table.
     """
-    key_np = np.asarray(key, dtype=np.int64)
+    key_np = np.asarray(key, dtype=np.int32)
     if key_np.size == 0:
         return []
     if key_np.min() < 0:
@@ -133,10 +133,10 @@ def build_buckets_from_key(
     starts = np.flatnonzero(np.r_[True, k_sorted[1:] != k_sorted[:-1]])
     ends = np.r_[starts[1:], k_sorted.size]
 
-    buckets: list[np.ndarray] = [np.empty(0, dtype=np.int64) for _ in range(K)]
+    buckets: list[np.ndarray] = [np.empty(0, dtype=np.int32) for _ in range(K)]
     for s, e in zip(starts, ends):
         k = int(k_sorted[int(s)])
-        buckets[k] = order[int(s) : int(e)].astype(np.int64, copy=False)
+        buckets[k] = order[int(s) : int(e)].astype(np.int32, copy=False)
     return buckets
 
 
@@ -169,6 +169,11 @@ def as_int64(x: Any) -> np.ndarray:
     return np.asarray(x, dtype=np.int64)
 
 
+def as_int32(x: Any) -> np.ndarray:
+    """Convert to int32 — use for dimension/surrogate key columns."""
+    return np.asarray(x, dtype=np.int32)
+
+
 def as_f64(x: Any) -> np.ndarray:
     return np.asarray(x, dtype=np.float64)
 
@@ -176,14 +181,14 @@ def as_f64(x: Any) -> np.ndarray:
 def dense_map(mapping: Optional[dict]) -> Optional[np.ndarray]:
     if not mapping:
         return None
-    keys = np.fromiter((int(k) for k in mapping.keys()), dtype=np.int64)
-    vals = np.fromiter((int(v) for v in mapping.values()), dtype=np.int64)
+    keys = np.fromiter((int(k) for k in mapping.keys()), dtype=np.int32)
+    vals = np.fromiter((int(v) for v in mapping.values()), dtype=np.int32)
     if keys.size == 0:
         return None
     max_key = int(keys.max())
     if max_key < 0:
         return None
-    arr = np.full(max_key + 1, -1, dtype=np.int64)
+    arr = np.full(max_key + 1, -1, dtype=np.int32)
     arr[keys] = vals
     return arr
 
@@ -196,7 +201,7 @@ def infer_T_from_date_pool(date_pool: Any) -> int:
 # back-compat alias (keep older imports stable)
 def _build_buckets_from_brand_key(brand_key) -> list:
     """Back-compat alias for build_buckets_from_key. Prefer direct call in new code."""
-    arr = np.asarray(brand_key, dtype=np.int64)
+    arr = np.asarray(brand_key, dtype=np.int32)
     max_key = int(arr.max()) if arr.size > 0 else None
     return build_buckets_from_key(brand_key, max_key=max_key)
 
@@ -234,12 +239,12 @@ def _normalize_assignment_arrays(
     if assign_store is None or assign_emp is None or assign_start is None or assign_end is None:
         return None
 
-    store_keys = np.asarray(store_keys, dtype=np.int64)
+    store_keys = np.asarray(store_keys, dtype=np.int32)
     if store_keys.size == 0:
         return None
     max_store_key = int(store_keys.max())
 
-    a_store = np.asarray(assign_store, dtype=np.int64)
+    a_store = np.asarray(assign_store, dtype=np.int32)
     a_emp = np.asarray(assign_emp, dtype=np.int32)
     if a_store.size == 0 or a_emp.size == 0:
         return None
@@ -388,7 +393,7 @@ def _build_salesperson_by_store_month(
     This is a *month-rounded* view used only for backward compatibility.
     Uses an event-sweep per store to avoid O(assignments × months) nested loops.
     """
-    store_keys = np.asarray(store_keys, dtype=np.int64)
+    store_keys = np.asarray(store_keys, dtype=np.int32)
     if store_keys.size == 0:
         return None
 
@@ -658,16 +663,16 @@ def init_sales_worker(worker_cfg: dict) -> None:
         from src.utils.shared_arrays import resolve_jagged
         brand_to_row_idx = resolve_jagged(_prebuilt_brand_desc)
         if product_brand_key is not None:
-            product_brand_key = as_int64(product_brand_key)
+            product_brand_key = as_int32(product_brand_key)
     elif product_brand_key is not None:
-        product_brand_key = as_int64(product_brand_key)
+        product_brand_key = as_int32(product_brand_key)
         if product_brand_key.shape[0] != product_np.shape[0]:
             raise RuntimeError("product_brand_key must align with product_np row count")
         brand_to_row_idx = _build_buckets_from_brand_key(product_brand_key)
     else:
         brand_to_row_idx = None
 
-    store_keys = as_int64(store_keys)
+    store_keys = as_int32(store_keys)
 
     # ------------------------------------------------------------
     # Store-product assortment (optional)
@@ -683,7 +688,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
             product_subcat_key = worker_cfg.get("product_subcat_key")
             store_type_map = worker_cfg.get("store_type_map")
             if product_subcat_key is not None and store_type_map is not None:
-                product_subcat_key = np.asarray(product_subcat_key, dtype=np.int64)
+                product_subcat_key = np.asarray(product_subcat_key, dtype=np.int32)
                 store_type_arr = np.array(
                     [str(store_type_map.get(int(sk), "Supermarket")) for sk in store_keys],
                     dtype=object,
@@ -726,7 +731,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
                     f"Roles present: {np.unique(role_arr).tolist()}"
                 )
 
-            employee_assign_store_key = np.asarray(employee_assign_store_key, dtype=np.int64)[mask]
+            employee_assign_store_key = np.asarray(employee_assign_store_key, dtype=np.int32)[mask]
             employee_assign_employee_key = emp_key[mask]
             employee_assign_start_date = np.asarray(employee_assign_start_date, dtype="datetime64[D]")[mask]
             employee_assign_end_date = np.asarray(employee_assign_end_date, dtype="datetime64[D]")[mask]
@@ -766,18 +771,18 @@ def init_sales_worker(worker_cfg: dict) -> None:
             seed=employee_seed,
         )
 
-    promo_keys_all = as_int64(promo_keys_all)
+    promo_keys_all = as_int32(promo_keys_all)
     promo_start_all = np.asarray(promo_start_all, dtype="datetime64[D]")
     promo_end_all = np.asarray(promo_end_all, dtype="datetime64[D]")
     if new_customer_promo_keys is not None and len(new_customer_promo_keys) > 0:
-        new_customer_promo_keys = as_int64(new_customer_promo_keys)
+        new_customer_promo_keys = as_int32(new_customer_promo_keys)
     else:
         new_customer_promo_keys = None
 
-    customer_keys = as_int64(customer_keys)
+    customer_keys = as_int32(customer_keys)
 
     if customer_is_active_in_sales is not None:
-        customer_is_active_in_sales = as_int64(customer_is_active_in_sales)
+        customer_is_active_in_sales = as_int32(customer_is_active_in_sales)
         if customer_is_active_in_sales.shape[0] != customer_keys.shape[0]:
             raise RuntimeError("customer_is_active_in_sales must align with customer_keys length")
 

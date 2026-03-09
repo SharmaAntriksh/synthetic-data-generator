@@ -121,7 +121,7 @@ def build_quantity(rng, order_dates):
     cfg = _load_cfg()
     n = int(len(order_dates))
     if n <= 0:
-        return np.zeros(0, dtype=np.int64)
+        return np.zeros(0, dtype=np.int32)
 
     # 1. Base Poisson draw (+1 ensures minimum of 1)
     qty = rng.poisson(cfg["base_poisson_lambda"], n).astype(np.float64) + 1.0
@@ -139,5 +139,5 @@ def build_quantity(rng, order_dates):
         qty *= rng.lognormal(mean=0.0, sigma=sigma, size=n)
 
     # 4. Round and clamp
-    qty = np.rint(qty).astype(np.int64)
+    qty = np.rint(qty).astype(np.int32)
     return np.clip(qty, cfg["min_qty"], cfg["max_qty"])

@@ -67,7 +67,7 @@ def _stable_row_hash(order_dates: np.ndarray, product_keys: np.ndarray) -> np.nd
     IMPORTANT: uses uint64 ops to avoid numpy float/object promotion and overflows.
     """
     d = np.asarray(order_dates).astype("datetime64[D]").astype("int64", copy=False).astype(np.uint64, copy=False)
-    p = np.asarray(product_keys).astype("int64", copy=False).astype(np.uint64, copy=False)
+    p = np.asarray(product_keys).astype(np.uint64, copy=False)
 
     x = d * _C1
     x ^= (p + _C2)
@@ -105,7 +105,7 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
         }
 
     # Normalize inputs once
-    product_keys = np.asarray(product_keys, dtype=np.int64)
+    product_keys = np.asarray(product_keys, dtype=np.int32)
     order_dates = np.asarray(order_dates).astype("datetime64[D]", copy=False)
 
     has_orders = order_ids_int is not None

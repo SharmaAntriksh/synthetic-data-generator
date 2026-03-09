@@ -598,8 +598,8 @@ def generate_sales_fact(
     if cust_df.empty:
         raise RuntimeError("customers.parquet is empty; cannot generate sales")
 
-    customer_keys = _as_np(cust_df["CustomerKey"], np.int64)
-    is_active_in_sales = _as_np(cust_df["IsActiveInSales"], np.int64)
+    customer_keys = _as_np(cust_df["CustomerKey"], np.int32)
+    is_active_in_sales = _as_np(cust_df["IsActiveInSales"], np.int32)
 
     if "CustomerStartMonth" in cust_df.columns:
         customer_start_month = _as_np(cust_df["CustomerStartMonth"], np.int64)
@@ -633,7 +633,7 @@ def generate_sales_fact(
         # Guarantee no NA => no -1 codes
         s2 = s.fillna("Unknown").astype(str)
         codes, uniques = pd.factorize(s2, sort=True)
-        return np.asarray(codes, dtype=np.int64), np.asarray(uniques, dtype=object)
+        return np.asarray(codes, dtype=np.int32), np.asarray(uniques, dtype=object)
 
     if getattr(State, "active_product_np", None) is not None:
         product_np = State.active_product_np
@@ -642,7 +642,7 @@ def generate_sales_fact(
             brand_df = load_parquet_df(products_path, ["ProductKey", "Brand"])
             brand_df = brand_df.drop_duplicates("ProductKey", keep="first")
 
-            brand_df["ProductKey"] = brand_df["ProductKey"].astype("int64", copy=False)
+            brand_df["ProductKey"] = brand_df["ProductKey"].astype("int32", copy=False)
             codes, brand_names = _brand_codes_from_series(brand_df["Brand"])
             brand_df["_BrandKey"] = codes
 
@@ -652,7 +652,7 @@ def generate_sales_fact(
                 index=brand_df["ProductKey"].to_numpy(),
             )
 
-            active_keys = np.asarray(product_np[:, 0], dtype=np.int64)
+            active_keys = np.asarray(product_np[:, 0], dtype=np.int32)
             bk = brand_map.reindex(active_keys).to_numpy(dtype="float64")
 
             invalid = (~np.isfinite(bk)) | (bk < 0)
@@ -660,7 +660,7 @@ def generate_sales_fact(
                 info("Brand mapping missing/invalid for some ProductKeys; disabling brand_popularity for this run.")
                 product_brand_key = None
             else:
-                product_brand_key = bk.astype(np.int64, copy=False)
+                product_brand_key = bk.astype(np.int32, copy=False)
 
         except Exception as exc:
             info(f"Could not load/derive Brand from products.parquet ({type(exc).__name__}: {exc}); "
@@ -677,11 +677,11 @@ def generate_sales_fact(
             prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
             prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
             prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
-            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int64", copy=False)
+            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int32", copy=False)
 
             product_np = np.column_stack(
                 [
-                    prod_df["ProductKey"].to_numpy(dtype=np.int64, copy=False),
+                    prod_df["ProductKey"].to_numpy(dtype=np.int32, copy=False),
                     prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
                     prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
                 ]
@@ -700,11 +700,11 @@ def generate_sales_fact(
             prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
             prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
             prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
-            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int64", copy=False)
+            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int32", copy=False)
 
             product_np = np.column_stack(
                 [
-                    prod_df["ProductKey"].to_numpy(dtype=np.int64, copy=False),
+                    prod_df["ProductKey"].to_numpy(dtype=np.int32, copy=False),
                     prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
                     prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
                 ]
@@ -718,13 +718,13 @@ def generate_sales_fact(
         try:
             _subcat_df = load_parquet_df(products_path, ["ProductKey", "SubcategoryKey"])
             _subcat_df = _subcat_df.drop_duplicates("ProductKey", keep="first")
-            _subcat_df["ProductKey"] = _subcat_df["ProductKey"].astype("int64")
+            _subcat_df["ProductKey"] = _subcat_df["ProductKey"].astype("int32")
             _subcat_map = pd.Series(
-                _subcat_df["SubcategoryKey"].to_numpy(dtype=np.int64),
-                index=_subcat_df["ProductKey"].to_numpy(dtype=np.int64),
+                _subcat_df["SubcategoryKey"].to_numpy(dtype=np.int32),
+                index=_subcat_df["ProductKey"].to_numpy(dtype=np.int32),
             )
-            active_keys = np.asarray(product_np[:, 0], dtype=np.int64)
-            product_subcat_key = _subcat_map.reindex(active_keys).fillna(0).to_numpy(dtype=np.int64)
+            active_keys = np.asarray(product_np[:, 0], dtype=np.int32)
+            product_subcat_key = _subcat_map.reindex(active_keys).fillna(0).to_numpy(dtype=np.int32)
         except Exception as exc:
             info(f"Could not load SubcategoryKey ({type(exc).__name__}: {exc}); assortment disabled.")
             assortment_cfg = {}
@@ -737,16 +737,16 @@ def generate_sales_fact(
         try:
             _pp_df = load_parquet_df(_profile_path, ["ProductKey", "PopularityScore", "SeasonalityProfile"])
             _pp_df = _pp_df.drop_duplicates("ProductKey", keep="first")
-            _pp_df["ProductKey"] = _pp_df["ProductKey"].astype("int64")
-            active_keys = np.asarray(product_np[:, 0], dtype=np.int64)
+            _pp_df["ProductKey"] = _pp_df["ProductKey"].astype("int32")
+            active_keys = np.asarray(product_np[:, 0], dtype=np.int32)
             _pp_map_pop = pd.Series(
                 _pp_df["PopularityScore"].to_numpy(dtype=np.float64),
-                index=_pp_df["ProductKey"].to_numpy(dtype=np.int64),
+                index=_pp_df["ProductKey"].to_numpy(dtype=np.int32),
             )
             product_popularity = _pp_map_pop.reindex(active_keys).fillna(50.0).to_numpy(dtype=np.float64)
             _pp_map_sea = pd.Series(
                 _pp_df["SeasonalityProfile"].to_numpy().astype(str),
-                index=_pp_df["ProductKey"].to_numpy(dtype=np.int64),
+                index=_pp_df["ProductKey"].to_numpy(dtype=np.int32),
             )
             _sea_str = _pp_map_sea.reindex(active_keys).fillna("None").to_numpy().astype(str)
             # Encode as int8 so it can be shared via shared memory (avoids 8x pickle of object array)
@@ -768,8 +768,8 @@ def generate_sales_fact(
         if "StoreType" in _store_schema_names:
             _store_cols.append("StoreType")
     store_df = load_parquet_df(_store_path, _store_cols)
-    store_keys = _as_np(store_df["StoreKey"], np.int64)
-    store_to_geo = dict(zip(_as_np(store_df["StoreKey"], np.int64), _as_np(store_df["GeographyKey"], np.int64)))
+    store_keys = _as_np(store_df["StoreKey"], np.int32)
+    store_to_geo = dict(zip(_as_np(store_df["StoreKey"], np.int32), _as_np(store_df["GeographyKey"], np.int32)))
 
     # StoreType map for assortment (StoreKey -> "Supermarket" etc.)
     store_type_map = None
@@ -792,29 +792,29 @@ def generate_sales_fact(
         info(f"WARNING: {n_missing} geography row(s) have no currency match (ISOs: {missing_isos}); "
              f"defaulting to CurrencyKey={default_currency}.")
 
-    geo_to_currency = dict(zip(_as_np(geo_df["GeographyKey"], np.int64), _as_np(geo_df["CurrencyKey"], np.int64)))
+    geo_to_currency = dict(zip(_as_np(geo_df["GeographyKey"], np.int32), _as_np(geo_df["CurrencyKey"], np.int32)))
 
     # Promotions
     promo_df = load_parquet_df(parquet_folder_p / "promotions.parquet")
 
     if promo_df.empty:
-        promo_keys_all = np.array([], dtype=np.int64)
+        promo_keys_all = np.array([], dtype=np.int32)
         promo_start_all = np.array([], dtype="datetime64[D]")
         promo_end_all = np.array([], dtype="datetime64[D]")
-        new_customer_promo_keys = np.array([], dtype=np.int64)
+        new_customer_promo_keys = np.array([], dtype=np.int32)
     else:
         promo_start = _normalize_dt_any(promo_df["StartDate"])
         promo_end = _normalize_dt_any(promo_df["EndDate"])
 
-        promo_keys_all = _as_np(promo_df["PromotionKey"], np.int64)
+        promo_keys_all = _as_np(promo_df["PromotionKey"], np.int32)
         promo_start_all = _as_np(promo_start, "datetime64[D]")
         promo_end_all = _as_np(promo_end, "datetime64[D]")
 
         if "PromotionType" in promo_df.columns:
             nc_mask = promo_df["PromotionType"].astype(str) == "New Customer"
-            new_customer_promo_keys = _as_np(promo_df.loc[nc_mask, "PromotionKey"], np.int64)
+            new_customer_promo_keys = _as_np(promo_df.loc[nc_mask, "PromotionKey"], np.int32)
         else:
-            new_customer_promo_keys = np.array([], dtype=np.int64)
+            new_customer_promo_keys = np.array([], dtype=np.int32)
 
     # ------------------------------------------------------------
     # Employees / store assignments -> SalesPersonEmployeeKey
@@ -1204,7 +1204,7 @@ def generate_sales_fact(
     if product_brand_key is not None:
         _prebuilt_brand = _build_buckets_from_brand_key(product_brand_key)
         worker_cfg["_prebuilt_brand_to_row_idx"] = _shm.publish_jagged(
-            "brand_idx", _prebuilt_brand, dtype=np.int64,
+            "brand_idx", _prebuilt_brand, dtype=np.int32,
         )
         # Extract brand product counts before freeing (reused for brand_prob)
         _brand_product_counts = np.array(
@@ -1230,7 +1230,7 @@ def generate_sales_fact(
             seed=assort_seed,
         )
         worker_cfg["_prebuilt_store_to_product_rows"] = _shm.publish_jagged(
-            "assortment", _prebuilt_assortment, dtype=np.int64,
+            "assortment", _prebuilt_assortment, dtype=np.int32,
         )
         del _prebuilt_assortment  # free the original list
 

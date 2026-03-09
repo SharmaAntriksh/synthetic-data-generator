@@ -189,7 +189,7 @@ def _weights_for_indices(indices: np.ndarray, base_weight: Optional[np.ndarray])
     if base_weight is None:
         return None
     try:
-        w = base_weight[np.asarray(indices, dtype="int64")]
+        w = base_weight[np.asarray(indices, dtype="int32")]
         return _normalize_weights(w)
     except Exception:
         return None
@@ -205,9 +205,9 @@ def _weights_for_keys(keys: np.ndarray, base_weight: Optional[np.ndarray]) -> Op
     if base_weight is None:
         return None
     try:
-        keys_i64 = np.asarray(keys, dtype="int64")
+        keys_i32 = np.asarray(keys, dtype="int32")
 
-        idx = keys_i64 - 1
+        idx = keys_i32 - 1
         if idx.size == 0:
             return None
         if idx.min() < 0 or idx.max() >= base_weight.shape[0]:
@@ -271,7 +271,7 @@ def _build_seen_mask(eligible_keys: np.ndarray, seen_set) -> np.ndarray:
             return np.zeros(eligible_keys.size, dtype=bool)
         # Eligible keys that exceed the lookup size are unseen by definition
         max_idx = seen_set.size - 1
-        keys = np.asarray(eligible_keys, dtype=np.int64)
+        keys = np.asarray(eligible_keys, dtype=np.int32)
         in_range = keys <= max_idx
         out = np.zeros(keys.size, dtype=bool)
         out[in_range] = seen_set[keys[in_range]]
@@ -287,14 +287,14 @@ def _build_seen_mask(eligible_keys: np.ndarray, seen_set) -> np.ndarray:
     # Dense path: boolean lookup table
     if max_key < n_keys * _SPARSE_KEY_RATIO and max_key < 50_000_000:
         lookup = np.zeros(max_key + 1, dtype=bool)
-        seen_arr = np.fromiter(seen_set, dtype="int64", count=len(seen_set))
+        seen_arr = np.fromiter(seen_set, dtype="int32", count=len(seen_set))
         # Clip to valid range (keys outside the eligible range are irrelevant)
         valid = seen_arr[(seen_arr >= 0) & (seen_arr <= max_key)]
         lookup[valid] = True
         return lookup[eligible_keys]
 
     # Sparse path: sorted intersection via searchsorted (no Python loop)
-    seen_sorted = np.sort(np.fromiter(seen_set, dtype="int64", count=len(seen_set)))
+    seen_sorted = np.sort(np.fromiter(seen_set, dtype="int32", count=len(seen_set)))
     pos = np.searchsorted(seen_sorted, eligible_keys)
     pos = np.clip(pos, 0, seen_sorted.size - 1)
     return seen_sorted[pos] == eligible_keys
@@ -305,7 +305,7 @@ def _make_seen_lookup(customer_keys: np.ndarray, existing_set=None) -> np.ndarra
 
     Much faster than a Python set for repeated vectorized membership tests.
     """
-    max_key = int(np.asarray(customer_keys, dtype=np.int64).max())
+    max_key = int(np.asarray(customer_keys, dtype=np.int32).max())
     lookup = np.zeros(max_key + 1, dtype=bool)
     if existing_set:
         if isinstance(existing_set, np.ndarray):
@@ -321,7 +321,7 @@ def _make_seen_lookup(customer_keys: np.ndarray, existing_set=None) -> np.ndarra
 
 def _update_seen_lookup(lookup: np.ndarray, new_keys: np.ndarray) -> None:
     """Mark keys as seen in the boolean lookup array. O(k) for k new keys."""
-    keys = np.asarray(new_keys, dtype=np.int64)
+    keys = np.asarray(new_keys, dtype=np.int32)
     keys = keys[(keys >= 0) & (keys < lookup.size)]
     lookup[keys] = True
 

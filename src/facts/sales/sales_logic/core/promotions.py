@@ -66,14 +66,14 @@ def apply_promotions(
       promo_keys: int64 array (len n)
     """
     n = int(n)
-    promo_keys = np.full(n, int(no_discount_key), dtype=np.int64)
+    promo_keys = np.full(n, int(no_discount_key), dtype=np.int32)
 
     if n <= 0:
         return promo_keys
     if promo_keys_all is None:
         return promo_keys
 
-    promo_keys_all = np.asarray(promo_keys_all, dtype=np.int64)
+    promo_keys_all = np.asarray(promo_keys_all, dtype=np.int32)
     P = int(promo_keys_all.size)
     if P == 0:
         return promo_keys

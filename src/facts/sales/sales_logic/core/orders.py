@@ -107,7 +107,7 @@ def build_orders(
     n = int(n)
     if n <= 0:
         return {
-            "customer_keys": np.empty(0, dtype=np.int64),
+            "customer_keys": np.empty(0, dtype=np.int32),
             "order_dates": np.empty(0, dtype="datetime64[D]"),
         }
 
@@ -115,7 +115,7 @@ def build_orders(
     if date_pool.size == 0:
         raise RuntimeError("date_pool is empty")
 
-    customers = np.asarray(customers, dtype=np.int64)
+    customers = np.asarray(customers, dtype=np.int32)
     if customers.size == 0:
         raise RuntimeError("customers array is empty")
 
@@ -330,7 +330,7 @@ def build_orders(
 
     # line number per order
     line_num = (
-        np.arange(expanded_len, dtype=np.int64)
+        np.arange(expanded_len, dtype=np.int32)
         - np.repeat(order_starts, repeats)
         + 1
     )
@@ -339,7 +339,7 @@ def build_orders(
     # Output
     # ------------------------------------------------------------
     result = {
-        "customer_keys": customer_keys.astype(np.int64, copy=False),
+        "customer_keys": customer_keys.astype(np.int32, copy=False),
         "order_dates": order_dates_expanded.astype("datetime64[D]", copy=False),
     }
 

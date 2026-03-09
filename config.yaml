@@ -45,10 +45,10 @@ sales:
   partition_by: ["Year", "Month"]     # null or [] to disable
 
   advanced:
-    chunk_size: 5_000_00
+    chunk_size: 1_000_000
     workers: 8                        # null = auto-detect
     row_group_size: 1_000_000
-    compression: "snappy"
+    compression: "zstd"
     write_pyarrow: true
     heavy_pct: 5
     heavy_mult: 5
