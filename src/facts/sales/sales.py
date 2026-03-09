@@ -369,8 +369,6 @@ def generate_sales_fact(
     merge_parquet=False,
     merged_file="sales.parquet",
     delete_chunks=False,
-    heavy_pct=5,           # legacy (kept for API compatibility; ignored if CustomerBaseWeight exists)
-    heavy_mult=5,          # legacy (kept for API compatibility; ignored if CustomerBaseWeight exists)
     seed=42,
     file_format="parquet",
     workers=None,
@@ -992,9 +990,6 @@ def generate_sales_fact(
 
         sales_output=sales_output,
 
-        # legacy knobs (kept)
-        heavy_pct=heavy_pct,
-        heavy_mult=heavy_mult,
         no_discount_key=1,
 
         delta_output_folder=delta_output_folder,

@@ -1,7 +1,5 @@
 # ui/presets.py
 import re
-import hashlib
-import random
 from collections import defaultdict
 from typing import Dict, Any
 
@@ -10,17 +8,6 @@ _SALES_RE = re.compile(r"Sales\s+([\d\.]+[KMB]?)", re.IGNORECASE)
 
 START = "2021-01-01"
 END = "2025-12-31"
-
-
-def _stable_rng(key: str) -> random.Random:
-    h = hashlib.sha256(key.encode("utf-8")).hexdigest()
-    seed = int(h[:16], 16)
-    return random.Random(seed)
-
-
-def _jitter(value: int, pct: float, rng: random.Random) -> int:
-    delta = value * pct
-    return max(1, int(value + rng.uniform(-delta, delta)))
 
 
 # ------------------------------------------------------------------
@@ -116,8 +103,6 @@ def apply_preset(cfg, base_loader, preset_name: str) -> None:
     cfg.setdefault("sales", {})
     cfg.setdefault("customers", {})
     cfg.setdefault("products", {})
-
-    rng = _stable_rng(preset_name)
 
     cfg["defaults"]["dates"]["start"] = preset["start"]
     cfg["defaults"]["dates"]["end"] = preset["end"]

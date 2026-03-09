@@ -52,8 +52,6 @@ sales:
     row_group_size: 1_000_000
     compression: "snappy"
     write_pyarrow: true
-    heavy_pct: 5
-    heavy_mult: 5
 
 # ------------------------------------------------------------------
 # RETURNS

@@ -1,7 +1,7 @@
 """
 web/api.py – FastAPI backend for the Synthetic Data Generator.
 
-Exposes the same pipeline as the Streamlit UI via REST + SSE,
+Exposes the pipeline via REST + SSE,
 consumed by the React SPA served from web/frontend/.
 
 Launch:  python -m uvicorn web.api:app --port 8502
@@ -93,7 +93,7 @@ _models_yaml_text: str = _models_path.read_text(encoding="utf-8") if _models_pat
 # ---------------------------------------------------------------------------
 
 try:
-    from ui.presets import PRESETS, apply_preset, build_presets_by_sales
+    from .presets import PRESETS, apply_preset, build_presets_by_sales
 except ImportError:
     PRESETS = {}
     apply_preset = None
