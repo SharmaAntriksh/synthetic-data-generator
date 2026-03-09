@@ -1,5 +1,5 @@
 /* ═══ components.jsx — shared UI primitives ═══ */
-const {useState,useEffect,useRef,useCallback}=React;
+const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
 const API="/api";
 const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -84,9 +84,30 @@ function Badge({variant="default",children}){
   return <span style={{display:"inline-flex",padding:"2px 9px",borderRadius:6,fontSize:11.5,fontWeight:600,fontFamily:"var(--mono)",background:c.bg,color:c.color}}>{children}</span>;
 }
 
-function R2({children}){return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>{children}</div>;}
-function R3({children}){return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>{children}</div>;}
-function R4({children}){return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>{children}</div>;}
+function R2({children}){return <div className="resp-r2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>{children}</div>;}
+function R3({children}){return <div className="resp-r3" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>{children}</div>;}
+function R4({children}){return <div className="resp-r4" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>{children}</div>;}
+
+/* Theme toggle button */
+function ThemeToggle(){
+  const[dark,setDark]=useState(()=>document.documentElement.getAttribute("data-theme")==="dark");
+  const toggle=()=>{
+    const next=!dark;
+    setDark(next);
+    document.documentElement.setAttribute("data-theme",next?"dark":"light");
+    try{localStorage.setItem("rdg-theme",next?"dark":"light");}catch(e){}
+  };
+  useEffect(()=>{
+    try{const saved=localStorage.getItem("rdg-theme");if(saved){document.documentElement.setAttribute("data-theme",saved);setDark(saved==="dark");}}catch(e){}
+  },[]);
+  return(
+    <button onClick={toggle} title={dark?"Switch to light mode":"Switch to dark mode"}
+      style={{width:32,height:32,borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s",flexShrink:0}}
+      onMouseOver={e=>{e.currentTarget.style.borderColor="var(--accent)";e.currentTarget.style.color="var(--accent)";}}
+      onMouseOut={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.color="var(--dim)";}}
+    >{dark?"\u2600":"\u263E"}</button>
+  );
+}
 
 function Box({title,children}){
   return(

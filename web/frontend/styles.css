@@ -9,8 +9,21 @@
   --err:#dc2626;--errBg:rgba(220,38,38,.06);
   --mono:'JetBrains Mono','Fira Code',monospace;
   --sans:'DM Sans',system-ui,sans-serif;
+  --shadow:rgba(0,0,0,.06);
+  --diff-add:#dcfce7;--diff-del:#fee2e2;
 }
-body{font-family:var(--sans);background:var(--bg);color:var(--text)}
+:root[data-theme="dark"]{
+  --bg:#0f1117;--surface:#1a1b26;--alt:#22243a;--border:#2e3150;
+  --focus:#7b8aff;--accent:#7b8aff;--glow:rgba(123,138,255,.12);
+  --text:#e2e4f0;--dim:#9ba0c0;--muted:#6b70a0;
+  --ok:#4ade80;--okBg:rgba(74,222,128,.1);
+  --warn:#fbbf24;--warnBg:rgba(251,191,36,.1);
+  --err:#f87171;--errBg:rgba(248,113,113,.08);
+  --shadow:rgba(0,0,0,.3);
+  --diff-add:rgba(74,222,128,.12);--diff-del:rgba(248,113,113,.1);
+}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);color-scheme:light;transition:background .2s,color .2s}
+:root[data-theme="dark"] body{color-scheme:dark}
 
 /* ═══ Scrollbars ═══ */
 ::-webkit-scrollbar{width:6px}
@@ -23,6 +36,44 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 /* ═══ Animations ═══ */
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 @keyframes slideIn{from{transform:translateY(-16px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+@keyframes slideUp{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* ═══ Sticky generate bar ═══ */
+.sticky-generate-bar{
+  position:fixed;bottom:0;right:0;
+  background:var(--surface);
+  border-top:1px solid var(--border);
+  padding:10px 24px;
+  z-index:90;
+  display:flex;align-items:center;gap:14;
+  box-shadow:0 -2px 12px var(--shadow);
+  animation:slideUp .2s ease;
+  transition:left .2s;
+}
+
+/* ═══ Diff viewer ═══ */
+.diff-line{font-family:var(--mono);font-size:12px;line-height:1.7;padding:0 12px;white-space:pre-wrap}
+.diff-line-add{background:var(--diff-add);color:var(--ok)}
+.diff-line-del{background:var(--diff-del);color:var(--err)}
+.diff-line-ctx{color:var(--dim)}
+.diff-hunk{color:var(--accent);font-weight:600;padding:6px 12px;background:var(--glow);font-family:var(--mono);font-size:11px}
+
+/* ═══ Run history ═══ */
+.run-history-item{
+  display:flex;align-items:center;gap:8;padding:7px 10px;border-radius:6px;
+  font-size:11.5px;cursor:pointer;transition:background .1s;border:1px solid transparent;
+}
+.run-history-item:hover{background:var(--alt);border-color:var(--border)}
+
+/* ═══ Log viewer stages ═══ */
+.log-stage{
+  padding:4px 0;cursor:pointer;display:flex;align-items:center;gap:6;
+  font-weight:600;font-size:12px;color:var(--accent);
+}
+.log-stage:hover{opacity:.8}
+.log-stage-arrow{transition:transform .15s;font-size:10px}
+.log-stage-arrow.collapsed{transform:rotate(-90deg)}
 
 /* ═══ CodeMirror theme — matches app palette ═══ */
 .cm-s-rdg.CodeMirror{
@@ -58,6 +109,13 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 .cm-s-rdg .cm-meta{color:var(--accent)}
 .cm-s-rdg .cm-keyword{color:#7c3aed}
 .cm-s-rdg .cm-def{color:#be185d}
+
+/* Dark mode YAML token overrides */
+:root[data-theme="dark"] .cm-s-rdg .cm-atom{color:#fbbf24}
+:root[data-theme="dark"] .cm-s-rdg .cm-number{color:#2dd4bf}
+:root[data-theme="dark"] .cm-s-rdg .cm-string{color:#4ade80}
+:root[data-theme="dark"] .cm-s-rdg .cm-keyword{color:#a78bfa}
+:root[data-theme="dark"] .cm-s-rdg .cm-def{color:#f472b6}
 
 /* Fold gutter */
 .cm-s-rdg .CodeMirror-foldmarker{
@@ -98,3 +156,16 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
   box-shadow:0 0 0 2px var(--glow);
 }
 .cm-s-rdg .CodeMirror-searching{background:rgba(202,138,4,.2)}
+
+/* ═══ Responsive layout ═══ */
+@media(max-width:1200px){
+  .main-content{padding:20px 24px !important;max-width:none !important}
+}
+@media(max-width:900px){
+  .app-layout{flex-direction:column !important}
+  .app-sidebar{width:100% !important;max-height:300px;border-right:none !important;border-bottom:1px solid var(--border) !important}
+  .main-content{padding:16px !important}
+}
+@media(max-width:640px){
+  .resp-r2,.resp-r3,.resp-r4{grid-template-columns:1fr !important}
+}

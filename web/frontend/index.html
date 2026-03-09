@@ -31,9 +31,13 @@
 <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
 <!-- App styles -->
-<link rel="stylesheet" href="/static/styles.css" />
+<link rel="stylesheet" href="/static/styles.css?v=2" />
 </head>
 <body>
+<!-- Set theme BEFORE first paint to avoid flash -->
+<script>
+(function(){try{var t=localStorage.getItem("rdg-theme");if(t)document.documentElement.setAttribute("data-theme",t);}catch(e){}})();
+</script>
 <div id="root"></div>
 
 <!-- App modules (order matters — each builds on the previous) -->

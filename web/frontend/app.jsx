@@ -36,6 +36,23 @@ function useDebounce(fn,ms){
 /* ═══════════════════════════════════════════════════════════════════
    App
    ═══════════════════════════════════════════════════════════════════ */
+/* Simple line diff for YAML comparison */
+function computeDiff(a,b){
+  const al=(a||"").split("\n"),bl=(b||"").split("\n");
+  const lines=[];
+  let ai=0,bi=0;
+  while(ai<al.length||bi<bl.length){
+    if(ai<al.length&&bi<bl.length&&al[ai]===bl[bi]){
+      lines.push({type:"ctx",text:al[ai]});ai++;bi++;
+    }else if(bi<bl.length&&(ai>=al.length||al[ai]!==bl[bi])){
+      lines.push({type:"add",text:bl[bi]});bi++;
+    }else{
+      lines.push({type:"del",text:al[ai]});ai++;
+    }
+  }
+  return lines;
+}
+
 function App(){
   const[cfg,setCfg]=useState(null);
   const[presets,setPresets]=useState({});
@@ -46,6 +63,19 @@ function App(){
   const[isRunning,setIsRunning]=useState(false);
   const[elapsed,setElapsed]=useState(0);
   const timerRef=useRef(null);
+
+  /* Run history */
+  const[runHistory,setRunHistory]=useState([]);
+
+  /* Sidebar collapse */
+  const[sidebarOpen,setSidebarOpen]=useState(true);
+
+  /* Preset preview */
+  const[previewPreset,setPreviewPreset]=useState(null);
+  const[previewData,setPreviewData]=useState(null);
+
+  /* Config diff toggle */
+  const[showCfgDiff,setShowCfgDiff]=useState(false);
 
   /* Models YAML state */
   const[modelsYaml,setModelsYaml]=useState("");
@@ -148,7 +178,12 @@ function App(){
           const d=JSON.parse(ev.data);
           if(d.type==="log")setLogs(p=>[...p,d.line]);
           if(d.type==="status")setElapsed(d.elapsed);
-          if(d.type==="end"){clearInterval(timerRef.current);setIsRunning(false);setElapsed(d.elapsed);es.close();}
+          if(d.type==="end"){
+            clearInterval(timerRef.current);setIsRunning(false);setElapsed(d.elapsed);es.close();
+            const fmtE=d.elapsed<60?`${d.elapsed.toFixed(1)}s`:`${Math.floor(d.elapsed/60)}m ${Math.floor(d.elapsed%60)}s`;
+            flash(d.status==="done"?`Pipeline completed in ${fmtE}`:`Pipeline failed after ${fmtE}`);
+            setRunHistory(p=>[{status:d.status,elapsed:d.elapsed,rows:cfg.salesRows,time:new Date().toLocaleTimeString()},...p].slice(0,10));
+          }
           if(d.type==="idle"){es.close();}
         };
         es.onerror=()=>{clearInterval(timerRef.current);setIsRunning(false);es.close();};
@@ -158,6 +193,15 @@ function App(){
   const cancelGenerate=()=>{
     fetch(API+"/generate/cancel",{method:"POST"}).then(()=>{clearInterval(timerRef.current);setIsRunning(false);}).catch(()=>{});
   };
+
+  /* ─── Ctrl+Enter to generate ─── */
+  useEffect(()=>{
+    const handler=(e)=>{
+      if((e.ctrlKey||e.metaKey)&&e.key==="Enter"){e.preventDefault();runGenerate();}
+    };
+    window.addEventListener("keydown",handler);
+    return()=>window.removeEventListener("keydown",handler);
+  });
 
   /* ─── Models YAML ─── */
   const saveModels=()=>{
@@ -479,20 +523,29 @@ function App(){
         </Section>
   </>);
 
+  const sidebarW=sidebarOpen?360:0;
+
   return(
-    <div style={{display:"flex",minHeight:"100vh"}}>
-      {toast&&<div style={{position:"fixed",top:16,right:16,zIndex:999,background:"var(--accent)",color:"#fff",padding:"9px 20px",borderRadius:8,fontSize:13,fontWeight:600,boxShadow:"0 6px 24px rgba(79,91,213,.25)",animation:"slideIn .28s ease"}}>{toast}</div>}
+    <div className="app-layout" style={{display:"flex",minHeight:"100vh"}}>
+      {toast&&<div style={{position:"fixed",top:16,right:16,zIndex:999,background:toast.includes("failed")?"var(--err)":"var(--accent)",color:"#fff",padding:"9px 20px",borderRadius:8,fontSize:13,fontWeight:600,boxShadow:"0 6px 24px var(--shadow)",animation:"slideIn .28s ease"}}>{toast}</div>}
 
       {/* ═══ SIDEBAR ═══ */}
-      <div style={{width:360,flexShrink:0,background:"var(--surface)",borderRight:"1px solid var(--border)",padding:20,overflowY:"auto"}}>
-        <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Presets</div>
+      <div className="app-sidebar" style={{width:sidebarW,flexShrink:0,background:"var(--surface)",borderRight:sidebarOpen?"1px solid var(--border)":"none",overflowY:"auto",overflowX:"hidden",transition:"width .2s",position:"relative"}}>
+        {sidebarOpen&&<div style={{padding:20,width:360}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase"}}>Presets</div>
+          <div style={{display:"flex",gap:6}}><ThemeToggle /><button onClick={()=>setSidebarOpen(false)} title="Collapse sidebar" style={{width:32,height:32,borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}} onMouseOver={e=>{e.currentTarget.style.borderColor="var(--accent)";}} onMouseOut={e=>{e.currentTarget.style.borderColor="var(--border)";}}>{"\u2039"}</button></div>
+        </div>
         {Object.keys(presets).length>0?(<>
           <Sel value={presetBucket} onChange={setPresetBucket} options={Object.keys(presets)} />
           <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>{Object.entries(presets[presetBucket]||{}).map(([name,p])=>{
             const sel=selectedPreset===name;
             const c=p||{};const cust=c.customers||c.total_customers;const prod=c.products||c.num_products;const rows=c.sales_rows||c.total_rows;
             return(
-              <button key={name} onClick={()=>applyPreset(name)} style={{display:"flex",flexDirection:"column",alignItems:"flex-start",width:"100%",padding:"9px 12px",borderRadius:8,cursor:"pointer",border:`1px solid ${sel?"var(--accent)":"var(--border)"}`,background:sel?"var(--glow)":"var(--surface)",fontFamily:"var(--sans)",transition:"all .12s",gap:4}}>
+              <button key={name} onClick={()=>applyPreset(name)}
+                onMouseEnter={()=>setPreviewPreset(name)}
+                onMouseLeave={()=>setPreviewPreset(null)}
+                style={{display:"flex",flexDirection:"column",alignItems:"flex-start",width:"100%",padding:"9px 12px",borderRadius:8,cursor:"pointer",border:`1px solid ${sel?"var(--accent)":"var(--border)"}`,background:sel?"var(--glow)":"var(--surface)",fontFamily:"var(--sans)",transition:"all .12s",gap:4,position:"relative"}}>
                 <span style={{fontSize:12.5,fontWeight:sel?600:400,color:sel?"var(--accent)":"var(--text)",textAlign:"left",lineHeight:1.35}}>{name}</span>
                 {(cust||prod||rows)&&<span style={{display:"flex",gap:5}}>
                   {rows&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:4,background:sel?"rgba(79,91,213,.12)":"var(--alt)",color:sel?"var(--accent)":"var(--muted)",fontFamily:"var(--mono)",fontWeight:500}}>{rows>=1000000?(rows/1000000).toFixed(1)+"M":(rows/1000).toFixed(rows%1000?1:0)+"K"} rows</span>}
@@ -503,6 +556,28 @@ function App(){
             );
           })}</div>
         </>):(<div style={{fontSize:12,color:"var(--muted)"}}>No presets loaded</div>)}
+
+        {/* Preset preview tooltip */}
+        {previewPreset&&presets[presetBucket]&&presets[presetBucket][previewPreset]&&(()=>{
+          const p=presets[presetBucket][previewPreset];
+          const changes=[];
+          if(p.sales_rows||p.total_rows){const v=p.sales_rows||p.total_rows;if(v!==cfg.salesRows)changes.push({k:"Sales rows",from:cfg.salesRows.toLocaleString(),to:v.toLocaleString()});}
+          if(p.customers||p.total_customers){const v=p.customers||p.total_customers;if(v!==cfg.customers)changes.push({k:"Customers",from:cfg.customers.toLocaleString(),to:v.toLocaleString()});}
+          if(p.products||p.num_products){const v=p.products||p.num_products;if(v!==cfg.products)changes.push({k:"Products",from:cfg.products.toLocaleString(),to:v.toLocaleString()});}
+          if(p.stores&&p.stores!==cfg.stores)changes.push({k:"Stores",from:String(cfg.stores),to:String(p.stores)});
+          if(changes.length===0)return null;
+          return(
+            <div style={{marginTop:8,padding:"8px 10px",borderRadius:6,background:"var(--alt)",border:"1px solid var(--border)",fontSize:11,animation:"fadeIn .15s ease"}}>
+              <div style={{fontWeight:600,color:"var(--dim)",marginBottom:4}}>Preview changes:</div>
+              {changes.map(c=>(
+                <div key={c.k} style={{display:"flex",justifyContent:"space-between",padding:"2px 0",color:"var(--text)"}}>
+                  <span>{c.k}</span>
+                  <span><span style={{color:"var(--err)",textDecoration:"line-through"}}>{c.from}</span>{" \u2192 "}<span style={{color:"var(--ok)",fontWeight:600}}>{c.to}</span></span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
 
         <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
         <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Models</div>
@@ -529,10 +604,31 @@ function App(){
             setTimeout(()=>dl(modelsText,"models.yaml","text/yaml"),100);
           }).catch(()=>{});
         }} style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12,cursor:"pointer",fontFamily:"var(--sans)"}}>Download configs</button>
+
+        {/* Run history */}
+        {runHistory.length>0&&<>
+          <div style={{borderTop:"1px solid var(--border)",margin:"20px 0"}} />
+          <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:8}}>Run History</div>
+          {runHistory.map((r,i)=>(
+            <div key={i} className="run-history-item" style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",borderRadius:6,fontSize:11.5,marginBottom:2}}>
+              <span style={{width:7,height:7,borderRadius:"50%",background:r.status==="done"?"var(--ok)":"var(--err)",flexShrink:0}} />
+              <span style={{color:"var(--text)",fontFamily:"var(--mono)",flex:1}}>{r.rows>=1000000?(r.rows/1000000).toFixed(1)+"M":(r.rows/1000).toFixed(r.rows%1000?1:0)+"K"} rows</span>
+              <span style={{color:"var(--accent)",fontFamily:"var(--mono)"}}>{r.elapsed<60?r.elapsed.toFixed(1)+"s":Math.floor(r.elapsed/60)+"m "+Math.floor(r.elapsed%60)+"s"}</span>
+              <span style={{color:"var(--muted)",fontSize:10}}>{r.time}</span>
+            </div>
+          ))}
+        </>}
+        </div>}
       </div>
 
+      {/* Sidebar collapsed toggle */}
+      {!sidebarOpen&&<div style={{position:"fixed",top:12,left:12,zIndex:100,display:"flex",gap:6}}>
+        <button onClick={()=>setSidebarOpen(true)} title="Open sidebar" style={{width:36,height:36,borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:16,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px var(--shadow)"}} onMouseOver={e=>{e.currentTarget.style.borderColor="var(--accent)";}} onMouseOut={e=>{e.currentTarget.style.borderColor="var(--border)";}}>{"\u203A"}</button>
+        <ThemeToggle />
+      </div>}
+
       {/* ═══ MAIN ═══ */}
-      <div style={{flex:1,padding:"28px 40px",maxWidth:1120,overflowY:"auto"}}>
+      <div className="main-content" style={{flex:1,padding:"28px 40px",maxWidth:1120,overflowY:"auto",paddingBottom:page==="main"?80:28}}>
 
         {page==="models"?(
         /* ═══ MODELS EDITOR PAGE ═══ */
@@ -702,8 +798,23 @@ function App(){
           {/* Diff summary */}
           {cfgYamlApplied&&<div style={{padding:"9px 14px",marginBottom:14,borderRadius:8,background:"var(--glow)",border:"1px solid rgba(79,91,213,.15)",fontSize:12,color:"var(--accent)",display:"flex",alignItems:"center",gap:8}}>
             <span style={{width:7,height:7,borderRadius:"50%",background:"var(--accent)",flexShrink:0}} />
-            In-memory config differs from disk. Changes will be used for the next pipeline run.
+            <span style={{flex:1}}>In-memory config differs from disk. Changes will be used for the next pipeline run.</span>
+            <button onClick={()=>setShowCfgDiff(!showCfgDiff)} style={{padding:"3px 10px",borderRadius:5,fontSize:11,border:"1px solid var(--accent)",background:showCfgDiff?"var(--accent)":"transparent",color:showCfgDiff?"#fff":"var(--accent)",cursor:"pointer",fontFamily:"var(--sans)",fontWeight:500,whiteSpace:"nowrap"}}>{showCfgDiff?"Hide Diff":"Show Diff"}</button>
           </div>}
+          {showCfgDiff&&cfgYamlApplied&&(()=>{
+            const diffLines=computeDiff(cfgYamlDisk,cfgYamlCurrent);
+            const filtered=diffLines.filter(l=>l.type!=="ctx");
+            return(
+              <div style={{marginBottom:14,borderRadius:8,border:"1px solid var(--border)",overflow:"hidden",maxHeight:300,overflowY:"auto"}}>
+                <div style={{padding:"6px 12px",background:"var(--alt)",borderBottom:"1px solid var(--border)",fontSize:11,color:"var(--muted)",fontWeight:600}}>{filtered.length} change{filtered.length!==1?"s":""} from disk</div>
+                {diffLines.map((l,i)=>{
+                  if(l.type==="ctx")return <div key={i} className="diff-line diff-line-ctx">{l.text||" "}</div>;
+                  if(l.type==="add")return <div key={i} className="diff-line diff-line-add">{"+ "}{l.text}</div>;
+                  return <div key={i} className="diff-line diff-line-del">{"- "}{l.text}</div>;
+                })}
+              </div>
+            );
+          })()}
           {cfgYamlDirty&&<div style={{padding:"9px 14px",marginBottom:14,borderRadius:8,background:"var(--warnBg)",border:"1px solid rgba(202,138,4,.1)",fontSize:12,color:"var(--warn)",display:"flex",alignItems:"center",gap:8}}>
             <span style={{width:7,height:7,borderRadius:"50%",background:"var(--warn)",flexShrink:0}} />
             You have unsaved edits. Press Apply (Ctrl+S) to update in-memory config.
@@ -739,6 +850,24 @@ function App(){
         </div>
         )}
       </div>
+
+      {/* ═══ STICKY GENERATE BAR (main page only) ═══ */}
+      {page==="main"&&(
+        <div className="sticky-generate-bar" style={{position:"fixed",bottom:0,right:0,left:sidebarW,background:"var(--surface)",borderTop:"1px solid var(--border)",padding:"10px 24px",zIndex:90,display:"flex",alignItems:"center",gap:14,boxShadow:"0 -2px 12px var(--shadow)",transition:"left .2s"}}>
+          <div style={{flex:1,display:"flex",alignItems:"center",gap:12,fontSize:12,color:"var(--dim)",overflow:"hidden"}}>
+            <strong style={{color:"var(--text)",flexShrink:0}}>{cfg.salesRows.toLocaleString()} rows</strong>
+            <span style={{color:"var(--muted)"}}>{cfg.startDate} {"\u2192"} {cfg.endDate}</span>
+            {isRunning&&<><span style={{width:7,height:7,borderRadius:"50%",background:"var(--ok)",animation:"pulse 1.5s infinite",flexShrink:0}} /><span style={{color:"var(--ok)",fontFamily:"var(--mono)"}}>{elapsed<60?elapsed.toFixed(1)+"s":Math.floor(elapsed/60)+"m "+Math.floor(elapsed%60)+"s"}</span></>}
+            {errors.length>0&&<Badge variant="error">{errors.length} error{errors.length>1?"s":""}</Badge>}
+            <span style={{fontSize:10.5,color:"var(--muted)",marginLeft:"auto",flexShrink:0}}>Ctrl+Enter</span>
+          </div>
+          {isRunning?
+            <button onClick={cancelGenerate} style={{padding:"8px 20px",borderRadius:8,border:"1px solid var(--err)",background:"var(--errBg)",color:"var(--err)",fontWeight:600,fontSize:12.5,cursor:"pointer",fontFamily:"var(--sans)",whiteSpace:"nowrap"}}>Cancel</button>
+          :
+            <button onClick={runGenerate} disabled={errors.length>0} style={{padding:"8px 24px",borderRadius:8,border:"none",fontSize:13,fontWeight:700,cursor:errors.length>0?"not-allowed":"pointer",fontFamily:"var(--sans)",background:errors.length>0?"var(--alt)":"var(--accent)",color:errors.length>0?"var(--muted)":"#fff",whiteSpace:"nowrap",boxShadow:errors.length===0?"0 2px 8px rgba(79,91,213,.2)":"none"}}>Generate</button>
+          }
+        </div>
+      )}
     </div>
   );
 }
