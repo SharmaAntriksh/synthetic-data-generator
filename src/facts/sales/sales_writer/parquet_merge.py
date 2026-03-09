@@ -4,10 +4,16 @@ import os
 from typing import Any, Callable, Iterable, Optional, Sequence, Set, Union
 
 from .utils import _arrow, _ensure_dir_for_file, done, info, skip, warn
-from .projection import _project_table_to_schema
+from .projection import _project_table_to_schema, project_table_to_schema
 from .encoding import _schema_dict_cols, _validate_required, required_pricing_cols_for_table
 
 PathLike = Union[str, os.PathLike]
+
+# ---------------------------------------------------------------------------
+# Defaults (module-level so callers can inspect / override)
+# ---------------------------------------------------------------------------
+DEFAULT_COMPRESSION: str = "snappy"
+"""Default Parquet compression codec used by merge_parquet_files."""
 
 # ---------------------------------------------------------------------------
 # Module-level cache for _expected_cols_for_table imports
@@ -87,36 +93,6 @@ def _pm_restrict_schema_to_expected(schema, expected_cols: Sequence[str], pa, *,
     return pa.schema([fields[c] for c in expected_cols], metadata=getattr(schema, "metadata", None))
 
 
-def _pm_nulls_of_type(pa, pc, n: int, typ):
-    try:
-        return pa.nulls(n, type=typ)
-    except (TypeError, ValueError):
-        return pc.cast(pa.nulls(n), typ, safe=False)
-
-
-def _pm_project_table_to_schema(table, schema, *, cast_safe: bool, pa, pc):
-    """Performance-optimized projection that accepts pre-imported pa/pc to avoid
-    repeated module lookups on the hot path (merging many row groups).
-
-    Semantically equivalent to ``projection.project_table_to_schema``
-    with ``on_cast_error="raise"``.
-    """
-    cols = []
-    names = set(table.schema.names)
-    nrows = table.num_rows
-
-    for field in schema:
-        if field.name in names:
-            col = table[field.name]
-            if not col.type.equals(field.type):
-                col = pc.cast(col, field.type, safe=bool(cast_safe))
-        else:
-            col = _pm_nulls_of_type(pa, pc, nrows, field.type)
-        cols.append(col)
-
-    return pa.Table.from_arrays(cols, schema=schema)
-
-
 def _pm_row_group_num_rows(reader, rg_index: int) -> int:
     try:
         md = reader.metadata
@@ -151,39 +127,21 @@ def _pm_read_row_group_projected(
         n = _pm_row_group_num_rows(reader, rg_index)
         if n < 0:
             t0 = reader.read_row_group(rg_index, columns=[])
-            return _pm_project_table_to_schema(t0, schema, cast_safe=cast_safe, pa=pa, pc=pc)
+            return project_table_to_schema(t0, schema, cast_safe=cast_safe, pa=pa, pc=pc)
 
-        cols = [_pm_nulls_of_type(pa, pc, n, field.type) for field in schema]
-        return pa.Table.from_arrays(cols, schema=schema)
+        arrays = [pa.nulls(n, type=field.type) for field in schema]
+        return pa.Table.from_arrays(arrays, schema=schema)
 
     t = reader.read_row_group(rg_index, columns=cols_to_read)
-    return _pm_project_table_to_schema(t, schema, cast_safe=cast_safe, pa=pa, pc=pc)
+    return project_table_to_schema(t, schema, cast_safe=cast_safe, pa=pa, pc=pc)
 
 
-def _merge_parquet_files_common(
+def _resolve_parquet_files(
     parquet_files: Iterable[PathLike],
-    merged_file: PathLike,
-    delete_after: bool = False,
     *,
-    compression: str = "snappy",
-    compression_level: int | None = None,
-    write_statistics: bool = True,
-    schema_strategy: str = "union",
-    canonical_schema=None,
-    expected_cols: Optional[Sequence[str]] = None,
-    strict_expected: bool = False,
-    reject_extra_cols: bool = False,
-    required_cols: Optional[Set[str]] = None,
-    use_dictionary: Union[bool, Sequence[str]] = True,
-    dict_exclude: Optional[Set[str]] = None,
-    validate_schema_fn: Optional[Callable[[Any], None]] = None,
-    cast_safe: bool = True,
     sort_files: bool = True,
-    log_prefix: str = "",
-    log: bool = True,
-) -> Optional[str]:
-    pa, pc, pq = _arrow()
-
+) -> list[str]:
+    """Resolve an iterable of path-likes to a sorted list of existing absolute paths."""
     files: list[str] = []
     for f in parquet_files:
         if not f:
@@ -191,21 +149,31 @@ def _merge_parquet_files_common(
         fp = os.path.abspath(os.fspath(f))
         if os.path.exists(fp):
             files.append(fp)
-
-    if not files:
-        if log:
-            skip(f"{log_prefix}No parquet chunk files to merge".strip())
-        return None
-
     if sort_files:
         files.sort()
+    return files
 
-    merged_file_abs = os.path.abspath(os.fspath(merged_file))
-    _ensure_dir_for_file(merged_file_abs)
 
-    if log:
-        info(f"{log_prefix}Merging {len(files)} chunks: {os.path.basename(merged_file_abs)}".strip())
+def _prepare_schema_and_writer(
+    files: list[str],
+    merged_file_abs: str,
+    *,
+    schema_strategy: str,
+    canonical_schema,
+    expected_cols: Optional[Sequence[str]],
+    validate_schema_fn: Optional[Callable[[Any], None]],
+    use_dictionary: Union[bool, Sequence[str]],
+    dict_exclude: Optional[Set[str]],
+    compression: str,
+    compression_level: int | None,
+    write_statistics: bool,
+    pa,
+    pq,
+):
+    """Build the canonical schema and open a ParquetWriter.
 
+    Returns (schema, writer).
+    """
     schema = canonical_schema
     if schema is None:
         schema = _pm_build_canonical_schema(files, schema_strategy=schema_strategy, pa=pa, pq=pq)
@@ -234,54 +202,147 @@ def _merge_parquet_files_common(
         writer_kwargs.pop("compression_level", None)
         writer = pq.ParquetWriter(merged_file_abs, schema, **writer_kwargs)
 
-    expected_set = frozenset(expected_cols) if expected_cols else None
+    return schema, writer
+
+
+def _validate_chunk_columns(
+    chunk_cols: Set[str],
+    expected_set: Optional[frozenset[str]],
+    *,
+    strict_expected: bool,
+    reject_extra_cols: bool,
+    path: str,
+) -> None:
+    """Validate a chunk's columns against expected columns."""
+    if not expected_set:
+        return
+    if strict_expected:
+        missing = sorted(expected_set - chunk_cols)
+        if missing:
+            raise RuntimeError(f"Chunk missing expected columns {missing}: {path}")
+    if reject_extra_cols:
+        extra = sorted(chunk_cols - expected_set)
+        if extra:
+            raise RuntimeError(f"Chunk has unexpected columns {extra}: {path}")
+
+
+def _write_chunk_row_groups(
+    writer,
+    reader,
+    schema,
+    *,
+    chunk_cols: Set[str],
+    expected_cols: Optional[Sequence[str]],
+    required_cols: Optional[Set[str]],
+    cast_safe: bool,
+    pa,
+    pc,
+) -> None:
+    """Read row groups from a single chunk file and write them to the merged writer."""
+    schema_exact = _pm_schema_equals(reader.schema_arrow, schema, check_metadata=True)
+    schema_same_fields = (
+        schema_exact or _pm_schema_equals(reader.schema_arrow, schema, check_metadata=False)
+    )
     schema_names = schema.names
+
+    for rg in range(reader.num_row_groups):
+        if schema_exact and not expected_cols:
+            writer.write_table(reader.read_row_group(rg))
+            continue
+
+        if schema_same_fields:
+            t = reader.read_row_group(rg, columns=schema_names)
+            writer.write_table(
+                project_table_to_schema(t, schema, cast_safe=cast_safe, pa=pa, pc=pc)
+            )
+            continue
+
+        t = _pm_read_row_group_projected(
+            reader,
+            rg,
+            schema,
+            available=chunk_cols,
+            required_cols=required_cols,
+            cast_safe=cast_safe,
+            pa=pa,
+            pc=pc,
+        )
+        writer.write_table(t)
+
+
+def _merge_parquet_files_common(
+    parquet_files: Iterable[PathLike],
+    merged_file: PathLike,
+    delete_after: bool = False,
+    *,
+    compression: str = DEFAULT_COMPRESSION,
+    compression_level: int | None = None,
+    write_statistics: bool = True,
+    schema_strategy: str = "union",
+    canonical_schema=None,
+    expected_cols: Optional[Sequence[str]] = None,
+    strict_expected: bool = False,
+    reject_extra_cols: bool = False,
+    required_cols: Optional[Set[str]] = None,
+    use_dictionary: Union[bool, Sequence[str]] = True,
+    dict_exclude: Optional[Set[str]] = None,
+    validate_schema_fn: Optional[Callable[[Any], None]] = None,
+    cast_safe: bool = True,
+    sort_files: bool = True,
+    log_prefix: str = "",
+    log: bool = True,
+) -> Optional[str]:
+    pa, pc, pq = _arrow()
+
+    files = _resolve_parquet_files(parquet_files, sort_files=sort_files)
+    if not files:
+        if log:
+            skip(f"{log_prefix}No parquet chunk files to merge".strip())
+        return None
+
+    merged_file_abs = os.path.abspath(os.fspath(merged_file))
+    _ensure_dir_for_file(merged_file_abs)
+
+    if log:
+        info(f"{log_prefix}Merging {len(files)} chunks: {os.path.basename(merged_file_abs)}".strip())
+
+    schema, writer = _prepare_schema_and_writer(
+        files, merged_file_abs,
+        schema_strategy=schema_strategy,
+        canonical_schema=canonical_schema,
+        expected_cols=expected_cols,
+        validate_schema_fn=validate_schema_fn,
+        use_dictionary=use_dictionary,
+        dict_exclude=dict_exclude,
+        compression=compression,
+        compression_level=compression_level,
+        write_statistics=write_statistics,
+        pa=pa, pq=pq,
+    )
+
+    expected_set = frozenset(expected_cols) if expected_cols else None
 
     try:
         for path in files:
             src, reader = _pm_open_parquet(path, pa, pq)
             try:
-                chunk_schema = reader.schema_arrow
-                chunk_cols = set(chunk_schema.names)
+                chunk_cols = set(reader.schema_arrow.names)
 
-                if expected_set and strict_expected:
-                    missing = sorted(expected_set - chunk_cols)
-                    if missing:
-                        raise RuntimeError(f"Chunk missing expected columns {missing}: {path}")
-
-                if expected_set and reject_extra_cols:
-                    extra = sorted(chunk_cols - expected_set)
-                    if extra:
-                        raise RuntimeError(f"Chunk has unexpected columns {extra}: {path}")
-
-                schema_exact = _pm_schema_equals(chunk_schema, schema, check_metadata=True)
-                schema_same_fields = (
-                    schema_exact or _pm_schema_equals(chunk_schema, schema, check_metadata=False)
+                _validate_chunk_columns(
+                    chunk_cols, expected_set,
+                    strict_expected=strict_expected,
+                    reject_extra_cols=reject_extra_cols,
+                    path=path,
                 )
 
-                for rg in range(reader.num_row_groups):
-                    if schema_exact and not expected_cols:
-                        writer.write_table(reader.read_row_group(rg))
-                        continue
-
-                    if schema_same_fields:
-                        t = reader.read_row_group(rg, columns=schema_names)
-                        writer.write_table(
-                            _pm_project_table_to_schema(t, schema, cast_safe=cast_safe, pa=pa, pc=pc)
-                        )
-                        continue
-
-                    t = _pm_read_row_group_projected(
-                        reader,
-                        rg,
-                        schema,
-                        available=chunk_cols,
-                        required_cols=required_cols,
-                        cast_safe=cast_safe,
-                        pa=pa,
-                        pc=pc,
-                    )
-                    writer.write_table(t)
+                _write_chunk_row_groups(
+                    writer, reader, schema,
+                    chunk_cols=chunk_cols,
+                    expected_cols=expected_cols,
+                    required_cols=required_cols,
+                    cast_safe=cast_safe,
+                    pa=pa, pc=pc,
+                )
             finally:
                 try:
                     src.close()
@@ -308,16 +369,10 @@ def _load_expected_cols_schemas():
     if _EXPECTED_COLS_LOADED:
         return
 
-    try:
-        from ....utils.static_schemas import (
-            _SALES_ORDER_HEADER_COLS,
-            _SALES_ORDER_DETAIL_COLS,
-        )
-    except (ImportError, ValueError):
-        from src.utils.static_schemas import (
-            _SALES_ORDER_HEADER_COLS,
-            _SALES_ORDER_DETAIL_COLS,
-        )
+    from src.utils.static_schemas import (
+        _SALES_ORDER_HEADER_COLS,
+        _SALES_ORDER_DETAIL_COLS,
+    )
 
     _EXPECTED_COLS_CACHE["salesorderheader"] = _SALES_ORDER_HEADER_COLS
     _EXPECTED_COLS_CACHE["salesorderdetail"] = _SALES_ORDER_DETAIL_COLS
@@ -359,13 +414,49 @@ def merge_parquet_files(
     merged_file: str,
     delete_after: bool = False,
     *,
-    compression: str = "snappy",
+    compression: str = DEFAULT_COMPRESSION,
     compression_level: int | None = None,
     write_statistics: bool = True,
     table_name: str | None = None,
     schema_strategy: str = "union",
     log: bool = True,
 ) -> Optional[str]:
+    """Merge multiple Parquet chunk files into a single consolidated Parquet file.
+
+    Builds a canonical schema (via union or first-file strategy), validates
+    required pricing columns for line-grain tables, restricts to expected
+    columns when a known ``table_name`` is provided, and applies dictionary
+    encoding to eligible string columns.
+
+    Parameters
+    ----------
+    parquet_files : Iterable[str]
+        Paths to the source Parquet chunk files.
+    merged_file : str
+        Destination path for the merged output file.
+    delete_after : bool
+        If True, remove source chunk files after a successful merge.
+    compression : str
+        Parquet compression codec (default ``DEFAULT_COMPRESSION``).
+    compression_level : int | None
+        Optional compression level passed to PyArrow.
+    write_statistics : bool
+        Whether to write column statistics in the Parquet footer.
+    table_name : str | None
+        Logical table name (e.g. ``"SalesOrderDetail"``).  When set,
+        expected-column enforcement and pricing validation are applied.
+    schema_strategy : str
+        ``"union"`` (default) merges all chunk schemas; ``"first"`` uses
+        the first file's schema as-is.
+    log : bool
+        Emit progress/skip log messages.
+
+    Returns
+    -------
+    str | None
+        Absolute path to the merged file, or ``None`` if no input files
+        were found.
+    """
     pa, _, pq = _arrow()
 
     files = [os.path.abspath(p) for p in parquet_files if p and os.path.exists(p)]

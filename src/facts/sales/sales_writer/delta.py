@@ -12,6 +12,9 @@ from .parquet_merge import _pm_schema_equals
 
 ValidateSchemaFn = Callable[..., None]
 
+DEFAULT_SORT_ROW_LIMIT: int = 2_000_000
+"""Parts with more rows than this threshold are not sorted before Delta writes."""
+
 
 @dataclass(frozen=True)
 class DeltaWriteResult:
@@ -109,6 +112,116 @@ def _open_parquet_mapped(path: str, pa, pq):
     return source, reader
 
 
+def _resolve_partition_cols(
+    partition_cols: Optional[Sequence[str]],
+    canonical_names: set[str],
+    *,
+    on_missing: str = "drop",
+    table_name: Optional[str] = None,
+) -> List[str]:
+    """Validate partition columns against the canonical schema."""
+    pcols = list(partition_cols or [])
+    missing = [c for c in pcols if c not in canonical_names]
+    if missing:
+        if on_missing == "error":
+            raise RuntimeError(f"Partition columns missing from schema: {missing}")
+        pcols = [c for c in pcols if c in canonical_names]
+        info(
+            f"[DELTA] Partition cols missing for table={table_name or 'unknown'}; "
+            f"dropping {missing}. Remaining={pcols}"
+        )
+    return pcols
+
+
+def _read_and_project_part(pf, canonical_schema, *, needs_projection: bool, pa):
+    """Read all row groups from a Parquet file, projecting if needed.
+
+    Returns a single Arrow table.
+    """
+    if pf.num_row_groups == 1:
+        table = pf.read_row_group(0)
+    else:
+        tables = []
+        for rg in range(pf.num_row_groups):
+            tables.append(pf.read_row_group(rg))
+        table = pa.concat_tables(tables, promote_options="none")
+
+    if needs_projection:
+        table = project_table_to_schema(
+            table, canonical_schema, cast_safe=False, on_cast_error="warn"
+        )
+    return table
+
+
+def _process_single_part(
+    pf_path: str,
+    canonical_schema,
+    *,
+    write_deltalake,
+    delta_output_abs: str,
+    pcols: List[str],
+    sort_small_parts: bool,
+    sort_row_limit: int,
+    max_partitions: Optional[int],
+    first: bool,
+    pa,
+    pq,
+) -> None:
+    """Read, optionally sort, project, and write a single part file to Delta."""
+    source, pf = _open_parquet_mapped(pf_path, pa, pq)
+    try:
+        num_rows = 0
+        try:
+            if pf.metadata is not None:
+                num_rows = int(pf.metadata.num_rows)
+        except (AttributeError, TypeError, ValueError):
+            num_rows = 0
+
+        needs_sort = pcols and sort_small_parts and num_rows and num_rows <= int(sort_row_limit)
+        needs_projection = not _pm_schema_equals(
+            pf.schema_arrow, canonical_schema, check_metadata=False
+        )
+
+        table = _read_and_project_part(pf, canonical_schema, needs_projection=needs_projection, pa=pa)
+
+        if needs_sort:
+            try:
+                sort_keys = [(c, "ascending") for c in pcols]
+                table = table.sort_by(sort_keys)
+            except Exception as ex:
+                warn(f"[DELTA] Sort failed for {os.path.basename(pf_path)}: {ex}")
+
+        _delta_write_table(
+            write_deltalake, delta_output_abs, table,
+            first=first, pcols=pcols, max_partitions=max_partitions,
+        )
+    finally:
+        try:
+            source.close()
+        except OSError:
+            pass
+
+
+def _cleanup_parts_folder(
+    delta_output_abs: str,
+    parts_folder_abs: Optional[str],
+) -> None:
+    """Remove parts folder after verifying delta output exists."""
+    if not parts_folder_abs:
+        return
+    delta_log = os.path.join(delta_output_abs, "_delta_log")
+    if not os.path.isdir(delta_log):
+        warn(
+            f"[DELTA] Delta log not found at {delta_log} after write; "
+            "skipping parts folder cleanup to avoid data loss."
+        )
+    else:
+        try:
+            shutil.rmtree(parts_folder_abs, ignore_errors=True)
+        except OSError as ex:
+            warn(f"[DELTA] Failed to clean up parts folder {parts_folder_abs}: {ex}")
+
+
 def write_delta_from_parquet_parts(
     *,
     parts_folder: Optional[str],
@@ -121,7 +234,7 @@ def write_delta_from_parquet_parts(
     on_missing_partition_cols: str = "drop",  # "drop" | "error"
     # Performance knobs
     sort_small_parts: bool = True,
-    sort_row_limit: int = 2_000_000,
+    sort_row_limit: int = DEFAULT_SORT_ROW_LIMIT,
     # Housekeeping
     cleanup_parts_folder: bool = False,
     # Delta writer passthrough (best-effort; ignored if unsupported by installed deltalake)
@@ -135,108 +248,40 @@ def write_delta_from_parquet_parts(
 
     part_files = _delta_resolve_part_files(parts_folder=parts_folder_abs, parts=parts)
     if not part_files:
-        raise RuntimeError("No delta part files found.")
+        raise RuntimeError(
+            f"No delta part files found in folder: {parts_folder_abs or '(no folder specified)'}"
+        )
 
     canonical_schema = pq.read_schema(part_files[0])
 
     if validate_schema is not None:
         validate_schema(canonical_schema, table_name=table_name)
 
-    pcols = list(partition_cols or [])
-    canonical_names = set(canonical_schema.names)
-    missing = [c for c in pcols if c not in canonical_names]
-    if missing:
-        if on_missing_partition_cols == "error":
-            raise RuntimeError(f"Partition columns missing from schema: {missing}")
-        pcols = [c for c in pcols if c in canonical_names]
-        info(
-            f"[DELTA] Partition cols missing for table={table_name or 'unknown'}; "
-            f"dropping {missing}. Remaining={pcols}"
-        )
+    pcols = _resolve_partition_cols(
+        partition_cols, set(canonical_schema.names),
+        on_missing=on_missing_partition_cols, table_name=table_name,
+    )
 
     os.makedirs(delta_output_abs, exist_ok=True)
 
     suffix = f" table={table_name}" if table_name else ""
     info(f"[DELTA] Writing {len(part_files)} parts (Arrow -> Delta){suffix}")
 
-    first = True
-    for pf_path in part_files:
-        source, pf = _open_parquet_mapped(pf_path, pa, pq)
-        try:
-            num_rows = 0
-            try:
-                if pf.metadata is not None:
-                    num_rows = int(pf.metadata.num_rows)
-            except (AttributeError, TypeError, ValueError):
-                num_rows = 0
+    for i, pf_path in enumerate(part_files):
+        _process_single_part(
+            pf_path, canonical_schema,
+            write_deltalake=write_deltalake,
+            delta_output_abs=delta_output_abs,
+            pcols=pcols,
+            sort_small_parts=sort_small_parts,
+            sort_row_limit=sort_row_limit,
+            max_partitions=max_partitions,
+            first=(i == 0),
+            pa=pa, pq=pq,
+        )
 
-            needs_sort = pcols and sort_small_parts and num_rows and num_rows <= int(sort_row_limit)
-            needs_projection = not _pm_schema_equals(
-                pf.schema_arrow, canonical_schema, check_metadata=False
-            )
-
-            if needs_sort:
-                table = pf.read()
-                if needs_projection:
-                    table = project_table_to_schema(
-                        table, canonical_schema, cast_safe=False, on_cast_error="warn"
-                    )
-                try:
-                    sort_keys = [(c, "ascending") for c in pcols]
-                    table = table.sort_by(sort_keys)
-                except Exception as ex:
-                    warn(f"[DELTA] Sort failed for {os.path.basename(pf_path)}: {ex}")
-
-                _delta_write_table(
-                    write_deltalake, delta_output_abs, table,
-                    first=first, pcols=pcols, max_partitions=max_partitions,
-                )
-            elif pf.num_row_groups == 1:
-                table = pf.read_row_group(0)
-                if needs_projection:
-                    table = project_table_to_schema(
-                        table, canonical_schema, cast_safe=False, on_cast_error="warn"
-                    )
-                _delta_write_table(
-                    write_deltalake, delta_output_abs, table,
-                    first=first, pcols=pcols, max_partitions=max_partitions,
-                )
-            else:
-                tables = []
-                for rg in range(pf.num_row_groups):
-                    t = pf.read_row_group(rg)
-                    if needs_projection:
-                        t = project_table_to_schema(
-                            t, canonical_schema, cast_safe=False, on_cast_error="warn"
-                        )
-                    tables.append(t)
-
-                combined = pa.concat_tables(tables, promote_options="none")
-                _delta_write_table(
-                    write_deltalake, delta_output_abs, combined,
-                    first=first, pcols=pcols, max_partitions=max_partitions,
-                )
-
-            first = False
-        finally:
-            try:
-                source.close()
-            except OSError:
-                pass
-
-    # Verify delta output before cleanup
-    if cleanup_parts_folder and parts is None and parts_folder_abs:
-        delta_log = os.path.join(delta_output_abs, "_delta_log")
-        if not os.path.isdir(delta_log):
-            warn(
-                f"[DELTA] Delta log not found at {delta_log} after write; "
-                "skipping parts folder cleanup to avoid data loss."
-            )
-        else:
-            try:
-                shutil.rmtree(parts_folder_abs, ignore_errors=True)
-            except OSError as ex:
-                warn(f"[DELTA] Failed to clean up parts folder {parts_folder_abs}: {ex}")
+    if cleanup_parts_folder and parts is None:
+        _cleanup_parts_folder(delta_output_abs, parts_folder_abs)
 
     return DeltaWriteResult(
         part_files=part_files,
@@ -252,9 +297,36 @@ def write_delta_partitioned(
     parts: Optional[Iterable[Union[str, dict]]] = None,
     *,
     sort_small_parts: bool = True,
-    sort_row_limit: int = 2_000_000,
+    sort_row_limit: int = DEFAULT_SORT_ROW_LIMIT,
     table_name: str | None = None,
 ):
+    """Write Parquet part files to a partitioned Delta Lake table.
+
+    This is the high-level sales-specific entry point.  It validates
+    required pricing columns, resolves partition columns against the
+    schema, optionally sorts small parts for better Delta locality, and
+    cleans up the parts folder on success.
+
+    Parameters
+    ----------
+    parts_folder : str
+        Directory containing the source Parquet part files.
+    delta_output_folder : str
+        Destination directory for the Delta Lake table.
+    partition_cols : list[str] | None
+        Columns to partition by.  Missing columns are dropped (with a
+        warning) when ``table_name`` is set, or cause an error otherwise.
+    parts : Iterable[str | dict] | None
+        Explicit list of part files/dicts.  When ``None``, all ``.parquet``
+        files in ``parts_folder`` are used.
+    sort_small_parts : bool
+        Sort parts with <= ``sort_row_limit`` rows by partition columns
+        before writing (improves Delta read performance).
+    sort_row_limit : int
+        Row count threshold for sorting (default ``DEFAULT_SORT_ROW_LIMIT``).
+    table_name : str | None
+        Logical table name for validation and logging.
+    """
     on_missing = "error" if table_name is None else "drop"
 
     write_delta_from_parquet_parts(

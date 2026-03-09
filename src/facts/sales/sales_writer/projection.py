@@ -11,6 +11,8 @@ def project_table_to_schema(
     *,
     cast_safe: bool = False,
     on_cast_error: str = "raise",
+    pa: Any = None,
+    pc: Any = None,
 ) -> Any:
     """
     Project/align an Arrow table to the canonical schema:
@@ -25,8 +27,13 @@ def project_table_to_schema(
     on_cast_error : str
         ``"raise"`` (default) – propagate cast errors.
         ``"warn"``  – log a warning and keep the column in its original type.
+    pa, pc : optional
+        Pre-imported ``pyarrow`` and ``pyarrow.compute`` modules.  When
+        provided the function skips its own lazy import, avoiding repeated
+        module lookups on the hot path.
     """
-    pa, pc, _ = _arrow()
+    if pa is None or pc is None:
+        pa, pc, _ = _arrow()
 
     if table.schema == schema:
         return table
