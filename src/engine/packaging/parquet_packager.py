@@ -48,26 +48,54 @@ def resolve_merged_parquet(fact_out: Path, sales_cfg: dict, table: str) -> Optio
     return None
 
 
+def _find_chunk_parquets(fact_out: Path, table: str) -> list[Path]:
+    """Find unmerged chunk parquet files for a table when merge is disabled."""
+    snake = table_dir_name(table)
+
+    if table == TABLE_SALES:
+        # Sales chunks live directly in fact_out or fact_out/parquet
+        for root in [fact_out, fact_out / "parquet"]:
+            chunks = sorted(root.glob("sales_chunk*.parquet"))
+            if chunks:
+                return chunks
+    else:
+        # Other tables: chunks live in fact_out/<subdir>/ or fact_out/parquet/<subdir>/
+        prefix = f"{snake}_chunk"
+        for root in [fact_out / snake, fact_out / "parquet" / snake, fact_out, fact_out / "parquet"]:
+            chunks = sorted(root.glob(f"{prefix}*.parquet"))
+            if chunks:
+                return chunks
+    return []
+
+
 def copy_parquet_facts(*, fact_out: Path, facts_out: Path, sales_cfg: dict, tables: list[str]) -> None:
     copied = 0
     missing: list[str] = []
 
     for t in tables:
+        dst_dir = facts_out / table_dir_name(t)
+        dst_dir.mkdir(parents=True, exist_ok=True)
+
         src = resolve_merged_parquet(fact_out, sales_cfg, t)
-        if src is None:
-            missing.append(t)
-            info(f"No merged parquet found for {t}. Checked: {fact_out / 'parquet'} and {fact_out}.")
+        if src is not None:
+            dst = dst_dir / src.name
+            if dst.exists():
+                dst.unlink()
+            shutil.copy2(src, dst)
+            copied += 1
             continue
 
-        # Keep Sales filename untouched; normalize others to <snake_table>.parquet
-        dst_name = src.name if t == TABLE_SALES else f"{table_dir_name(t)}.parquet"
-        dst = facts_out / dst_name
+        # No merged file — try copying unmerged chunks
+        chunks = _find_chunk_parquets(fact_out, t)
+        if chunks:
+            for chunk in chunks:
+                shutil.copy2(chunk, dst_dir / chunk.name)
+            copied += 1
+            info(f"Copied {len(chunks)} unmerged chunk(s) for {t} -> {table_dir_name(t)}/")
+            continue
 
-        if dst.exists():
-            dst.unlink()
-
-        shutil.copy2(src, dst)
-        copied += 1
+        missing.append(t)
+        info(f"No parquet found for {t}. Checked: {fact_out / 'parquet'} and {fact_out}.")
 
     if missing:
         raise RuntimeError(

@@ -477,9 +477,6 @@ def generate_sales_fact(
         returns_min_lag_days = returns_max_lag_days
 
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
-    if sales_output == "both" and not bool(skip_order_cols):
-        info("Config: both + skip_order_cols=false -> Sales includes order cols.")
-        info("Note: output will be large; set skip_order_cols=true for slimmer Sales.")
 
     # Keep "requested" vs "effective" separate so we can warn+continue.
     returns_enabled_requested = bool(returns_enabled)
@@ -588,9 +585,7 @@ def generate_sales_fact(
             pass
 
     if customer_base_weight is None:
-        info("CustomerBaseWeight not found; customer sampling will be uniform unless chunk_builder applies other logic.")
-    else:
-        info("CustomerBaseWeight loaded; chunk_builder can use it for weighted sampling.")
+        info("CustomerBaseWeight not found; customer sampling will be uniform.")
 
     # Products: respect runner-bound active_product_np
     product_brand_key = None
@@ -717,7 +712,6 @@ def generate_sales_fact(
                 index=_pp_df["ProductKey"].to_numpy(dtype=np.int64),
             )
             product_seasonality = _pp_map_sea.reindex(active_keys).fillna("None").to_numpy().astype(str)
-            info(f"Product profile loaded: PopularityScore + SeasonalityProfile for {len(active_keys):,} products")
         except Exception as exc:
             info(f"Could not load product profile ({type(exc).__name__}: {exc}); using uniform product sampling.")
             product_popularity = None

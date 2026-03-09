@@ -72,6 +72,14 @@ def run_budget_pipeline(
     _write_budget(yearly, budget_out, "budget_yearly", file_format)
     _write_budget(monthly, budget_out, "budget_monthly", file_format)
 
+    # For deltaparquet the delta tables are written outside budget_out;
+    # remove the empty temporary directory.
+    if file_format == "deltaparquet":
+        try:
+            budget_out.rmdir()
+        except OSError:
+            pass
+
     elapsed = time.time() - t0
     yearly_rows = len(yearly)
     monthly_rows = len(monthly)
@@ -88,7 +96,7 @@ def _write_budget(df: pd.DataFrame, out_dir: Path, name: str, file_format: str) 
     table = pa.Table.from_pandas(df, preserve_index=False)
 
     if file_format == "deltaparquet":
-        delta_dir = out_dir / name
+        delta_dir = out_dir.parent / name
         delta_dir.mkdir(parents=True, exist_ok=True)
         try:
             from deltalake import write_deltalake

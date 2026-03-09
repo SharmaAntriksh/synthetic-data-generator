@@ -67,62 +67,53 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
 
     def _copy_inventory_if_exists():
         """Copy inventory outputs into the packaged facts folder (format-aware)."""
+        if file_format == "deltaparquet":
+            # Delta table lives directly at fact_out/inventory_snapshot
+            inv_delta = fact_out / "inventory_snapshot"
+            if inv_delta.exists():
+                dst = facts_out / "inventory_snapshot"
+                shutil.copytree(inv_delta, dst, dirs_exist_ok=True)
+            return
+
         inv_src = fact_out / "inventory"
         if not inv_src.exists():
             return
 
         if file_format == "parquet":
-            # Prefer merged file; fall back to individual chunks if merge was disabled
-            merged = list(inv_src.glob("inventory_snapshot.parquet"))
-            if merged:
-                for f in merged:
-                    shutil.copy2(f, facts_out / f.name)
-            else:
-                for f in inv_src.glob("*.parquet"):
-                    shutil.copy2(f, facts_out / f.name)
+            parquets = sorted(inv_src.glob("*.parquet"))
+            if parquets:
+                inv_dst = facts_out / "inventory_snapshot"
+                inv_dst.mkdir(parents=True, exist_ok=True)
+                for f in parquets:
+                    shutil.copy2(f, inv_dst / f.name)
         elif file_format == "csv":
-            inv_dst = facts_out / "inventory"
+            inv_dst = facts_out / "inventory_snapshot"
             inv_dst.mkdir(parents=True, exist_ok=True)
             for f in inv_src.glob("*.csv"):
                 shutil.copy2(f, inv_dst / f.name)
-        else:
-            # deltaparquet: copy delta table directory
-            inv_dst = facts_out / "inventory"
-            inv_dst.mkdir(parents=True, exist_ok=True)
-            for item in inv_src.iterdir():
-                target = inv_dst / item.name
-                if item.is_dir():
-                    shutil.copytree(item, target, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(item, target)
 
 
     def _copy_budget_if_exists():
         """Copy budget outputs into the packaged facts folder (format-aware)."""
+        if file_format == "deltaparquet":
+            # Delta tables live directly at fact_out/budget_yearly and fact_out/budget_monthly
+            for name in ("budget_yearly", "budget_monthly"):
+                src = fact_out / name
+                if src.exists():
+                    shutil.copytree(src, facts_out / name, dirs_exist_ok=True)
+            return
+
         budget_src = fact_out / "budget"
         if not budget_src.exists():
             return
 
-        if file_format == "parquet":
-            # Parquet: budget parquets go flat into facts/ (alongside sales.parquet)
-            for f in budget_src.glob("*.parquet"):
-                shutil.copy2(f, facts_out / f.name)
-        elif file_format == "csv":
-            # CSV: budget CSVs go into facts/budget/ subfolder
-            budget_dst = facts_out / "budget"
-            budget_dst.mkdir(parents=True, exist_ok=True)
-            for f in budget_src.glob("*.csv"):
-                shutil.copy2(f, budget_dst / f.name)
-        else:
-            # Delta: budget delta table dirs go into facts/budget/ subfolder
-            budget_dst = facts_out / "budget"
-            budget_dst.mkdir(parents=True, exist_ok=True)
-            for item in budget_src.iterdir():
-                target = budget_dst / item.name
-                if item.is_dir():
-                    shutil.copytree(item, target, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(item, target)
+        ext = "parquet" if file_format == "parquet" else "csv"
+        for name in ("budget_yearly", "budget_monthly"):
+            src = budget_src / f"{name}.{ext}"
+            if src.exists():
+                dst = facts_out / name
+                dst.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst / src.name)
 
     tables = tables_from_sales_cfg(sales_cfg, cfg)
 

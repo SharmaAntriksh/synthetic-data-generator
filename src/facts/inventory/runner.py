@@ -80,10 +80,10 @@ def run_inventory_pipeline(
     inv_out.mkdir(parents=True, exist_ok=True)
 
     inv_cfg = cfg.get("inventory", {})
-    merge_cfg = inv_cfg.get("merge", {})
-    merge_enabled = merge_cfg.get("enabled", True)
-    merge_file = merge_cfg.get("file", "inventory_snapshot.parquet")
-    delete_chunks = merge_cfg.get("delete_chunks", True)
+    sales_cfg = cfg.get("sales", {})
+    merge_enabled = bool(sales_cfg.get("merge_parquet", True))
+    merge_file = "inventory_snapshot.parquet"
+    delete_chunks = bool(sales_cfg.get("delete_chunks", True))
     partition_by: List[str] = inv_cfg.get("partition_by") or []
 
     if qualified_pairs >= _PARALLEL_THRESHOLD and n_stores >= 2:
@@ -132,6 +132,14 @@ def _run_single(
     )
 
     _write_inventory(snapshots, inv_out, "inventory_snapshot", file_format, partition_by=partition_by)
+
+    # For deltaparquet the delta table is written outside inv_out;
+    # remove the empty temporary directory.
+    if file_format == "deltaparquet":
+        try:
+            inv_out.rmdir()
+        except OSError:
+            pass
 
     n_rows = len(snapshots)
     stockout_pct = 0.0
@@ -260,6 +268,11 @@ def _run_parallel(
                 partition_by=partition_by or [],
                 delete_chunks=delete_chunks,
             )
+            # Remove the now-empty temporary chunk directory
+            try:
+                inv_out.rmdir()
+            except OSError:
+                pass
         elif merge_enabled and file_format in ("parquet", "csv"):
             _merge_inventory_chunks(
                 chunk_files=chunk_files,
@@ -330,7 +343,7 @@ def _merge_chunks_to_delta(
     except ImportError:
         from deltalake.writer import write_deltalake
 
-    delta_dir = inv_out / "inventory_snapshot"
+    delta_dir = inv_out.parent / "inventory_snapshot"
     delta_dir.mkdir(parents=True, exist_ok=True)
 
     needs_year_month = any(c in partition_by for c in ("Year", "Month"))
@@ -376,7 +389,7 @@ def _write_inventory(
     table = pa.Table.from_pandas(df, preserve_index=False)
 
     if file_format == "deltaparquet":
-        delta_dir = out_dir / name
+        delta_dir = out_dir.parent / name
         delta_dir.mkdir(parents=True, exist_ok=True)
         try:
             from deltalake import write_deltalake
