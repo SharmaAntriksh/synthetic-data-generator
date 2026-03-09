@@ -154,8 +154,9 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
     if mask_c.any():
         delivery_offset[mask_c] = (line_seed[mask_c] % 4) + 1
 
-    # Condition D: larger delay (2..6)
-    mask_d = order_seed >= 85
+    # Condition D: larger delay (2..6) – filter by product_seed so some
+    # lines stay non-delayed, allowing all 3 statuses within one order.
+    mask_d = (order_seed >= 85) & (product_seed >= 40)
     if mask_d.any():
         delivery_offset[mask_d] = (product_seed[mask_d] % 5) + 2
 
@@ -172,9 +173,10 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
         # Early days per order: 1..2
         early_days_per_order = rng.integers(1, 3, size=n_orders, dtype=np.int64)
 
-        # NEW: only some lines in an early order are early (e.g., ~60%)
-        # line_seed is per-row, so this creates within-order variation.
-        early_mask = early_order[inv_idx] & (line_seed < 60)
+        # Only some lines in an early order are early (~35%).
+        # Tighter threshold leaves room for On Time lines alongside
+        # Delayed and Early Delivery within the same order.
+        early_mask = early_order[inv_idx] & (line_seed < 35)
 
         if early_mask.any():
             early_days_rows = early_days_per_order[inv_idx]
