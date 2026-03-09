@@ -697,6 +697,32 @@ def generate_sales_fact(
             info(f"Could not load SubcategoryKey ({type(exc).__name__}: {exc}); assortment disabled.")
             assortment_cfg = {}
 
+    # PopularityScore + SeasonalityProfile from ProductProfile (for weighted sampling)
+    product_popularity = None
+    product_seasonality = None
+    _profile_path = parquet_folder_p / "product_profile.parquet"
+    if _profile_path.exists():
+        try:
+            _pp_df = load_parquet_df(_profile_path, ["ProductKey", "PopularityScore", "SeasonalityProfile"])
+            _pp_df = _pp_df.drop_duplicates("ProductKey", keep="first")
+            _pp_df["ProductKey"] = _pp_df["ProductKey"].astype("int64")
+            active_keys = np.asarray(product_np[:, 0], dtype=np.int64)
+            _pp_map_pop = pd.Series(
+                _pp_df["PopularityScore"].to_numpy(dtype=np.float64),
+                index=_pp_df["ProductKey"].to_numpy(dtype=np.int64),
+            )
+            product_popularity = _pp_map_pop.reindex(active_keys).fillna(50.0).to_numpy(dtype=np.float64)
+            _pp_map_sea = pd.Series(
+                _pp_df["SeasonalityProfile"].to_numpy().astype(str),
+                index=_pp_df["ProductKey"].to_numpy(dtype=np.int64),
+            )
+            product_seasonality = _pp_map_sea.reindex(active_keys).fillna("None").to_numpy().astype(str)
+            info(f"Product profile loaded: PopularityScore + SeasonalityProfile for {len(active_keys):,} products")
+        except Exception as exc:
+            info(f"Could not load product profile ({type(exc).__name__}: {exc}); using uniform product sampling.")
+            product_popularity = None
+            product_seasonality = None
+
     # Stores: read ONCE (keys + geography + StoreType for assortment)
     _store_cols = ["StoreKey", "GeographyKey"]
     _store_path = parquet_folder_p / "stores.parquet"
@@ -1013,6 +1039,10 @@ def generate_sales_fact(
         employee_assign_is_primary=employee_assign_is_primary,
         employee_assign_role=employee_assign_role,
         salesperson_roles=salesperson_roles,
+
+        # Product profile attributes for weighted sampling
+        product_popularity=product_popularity,
+        product_seasonality=product_seasonality,
     )
 
     # ------------------------------------------------------------

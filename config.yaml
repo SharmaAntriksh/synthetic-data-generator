@@ -154,7 +154,9 @@ stores:
 
   # Product assortment per store type (which subcategories each store carries)
   assortment:
-    enabled: true
+    enabled: true                    # false = every store sells every product (debug/test only) i.e. CROSSJOIN
+                                     # Tiny test runs: For unit tests with 2 stores and 5 products, assortment filtering might eliminate 
+                                     # too many combinations and produce empty results.
     seed: 42
     coverage:                        # fraction of subcategories carried by store type
       Online: 1.00                   # full catalog

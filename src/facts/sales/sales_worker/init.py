@@ -933,5 +933,9 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "inventory_enabled": bool(worker_cfg.get("inventory_enabled", False)),
 
             "store_to_product_rows": store_to_product_rows,
+
+            # Product profile attributes for weighted sampling
+            "product_popularity": worker_cfg.get("product_popularity"),
+            "product_seasonality": worker_cfg.get("product_seasonality"),
         }
     )

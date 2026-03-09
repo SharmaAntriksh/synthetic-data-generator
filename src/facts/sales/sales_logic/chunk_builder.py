@@ -68,6 +68,7 @@ def _sample_product_row_indices(
     *,
     m_offset: int,
     enabled: bool,
+    product_weight: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Return row indices into `product_np` for n orders.
@@ -76,12 +77,9 @@ def _sample_product_row_indices(
       - enabled == True (controlled by models_cfg.brand_popularity presence), AND
       - State provides brand buckets and optionally per-month brand probabilities.
 
-    Required State attributes (to actually take effect):
-      - State.brand_to_row_idx (list/tuple where entry b is np.ndarray of row indices into product_np)
-        OR State.active_brand_to_row_idx if product_np is State.active_product_np
-    Optional:
-      - State.brand_prob_by_month: shape (T, B) or (B,)
-        If absent or invalid, falls back to equal probability over non-empty brands.
+    When product_weight is provided, within-brand selection is weighted by
+    popularity+seasonality instead of uniform.  If brand sampling is disabled,
+    product_weight is used directly for weighted global sampling.
 
     Safe fallback:
       - If anything is missing/invalid -> uniform sampling over product_np (old behavior).
@@ -90,6 +88,10 @@ def _sample_product_row_indices(
     n_products = len(product_np)
 
     if not enabled:
+        if product_weight is not None:
+            ws = float(product_weight.sum())
+            if ws > 1e-12:
+                return rng.choice(n_products, size=n_int, p=product_weight / ws).astype("int64", copy=False)
         return rng.integers(0, n_products, size=n_int).astype("int64", copy=False)
 
     # Prefer "active" buckets if we're using active_product_np upstream.
@@ -161,6 +163,28 @@ def _sample_product_row_indices(
     empty_mask = sizes_per_order == 0
     sizes_per_order[empty_mask] = 1  # temporary to avoid division by zero
 
+    # Within-brand weighted sampling when product_weight is available
+    if product_weight is not None:
+        out = np.empty(n_int, dtype="int64")
+        for b in range(B):
+            mask_b = brand_ids == b
+            cnt = int(mask_b.sum())
+            if cnt == 0:
+                continue
+            start, end = int(offsets[b]), int(offsets[b + 1])
+            if start == end:
+                out[mask_b] = rng.integers(0, n_products, size=cnt).astype("int64", copy=False)
+                continue
+            rows = flat_idx[start:end]
+            w = product_weight[rows]
+            ws = float(w.sum())
+            if ws > 1e-12:
+                picks = rng.choice(len(rows), size=cnt, p=w / ws)
+            else:
+                picks = rng.integers(0, len(rows), size=cnt)
+            out[mask_b] = rows[picks]
+        return out
+
     rand_within = rng.integers(0, np.iinfo(np.int64).max, size=n_int, dtype="int64")
     rand_within = np.abs(rand_within) % sizes_per_order
 
@@ -180,13 +204,15 @@ def _sample_products_per_store(
     store_key_arr: np.ndarray,
     store_to_product_rows: list,
     product_np: np.ndarray,
+    *,
+    product_weight: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Sample product row indices from each store's assortment pool.
 
-    For each line, picks a uniform random product from the store's
-    available product rows. Falls back to full catalog for any store
-    without an assortment entry.
+    When product_weight is provided (e.g. PopularityScore-derived weights),
+    sampling is weighted within each store's pool.  Falls back to uniform
+    sampling if weights are absent or invalid.
     """
     n = len(store_key_arr)
     n_products = len(product_np)
@@ -203,9 +229,24 @@ def _sample_products_per_store(
 
         if sk_int < max_sk and store_to_product_rows[sk_int] is not None:
             pool = store_to_product_rows[sk_int]
-            out[mask] = pool[rng.integers(0, len(pool), size=count)]
+            if product_weight is not None and pool.size > 1:
+                w = product_weight[pool]
+                ws = float(w.sum())
+                if ws > 1e-12:
+                    out[mask] = pool[rng.choice(len(pool), size=count, p=w / ws)]
+                else:
+                    out[mask] = pool[rng.integers(0, len(pool), size=count)]
+            else:
+                out[mask] = pool[rng.integers(0, len(pool), size=count)]
         else:
-            out[mask] = rng.integers(0, n_products, size=count)
+            if product_weight is not None:
+                ws = float(product_weight.sum())
+                if ws > 1e-12:
+                    out[mask] = rng.choice(n_products, size=count, p=product_weight / ws)
+                else:
+                    out[mask] = rng.integers(0, n_products, size=count)
+            else:
+                out[mask] = rng.integers(0, n_products, size=count)
 
     return out
 
@@ -218,6 +259,47 @@ def _get_state_attr(*names, default=None):
             if v is not None:
                 return v
     return default
+
+
+# Seasonality boost: which calendar months each profile peaks in
+_SEASON_SALES_BOOST: dict[str, dict[int, float]] = {
+    "Holiday":      {11: 0.8, 12: 1.0, 1: 0.3, 10: 0.4},
+    "Winter":       {11: 0.5, 12: 0.5, 1: 0.5, 2: 0.4},
+    "Summer":       {6: 0.5, 7: 0.5, 8: 0.4, 5: 0.3},
+    "BackToSchool": {7: 0.4, 8: 0.7, 9: 0.4},
+    "Spring":       {3: 0.4, 4: 0.5, 5: 0.4},
+}
+
+
+def _build_product_weight_for_month(
+    month_date_pool: np.ndarray,
+    m_offset: int,
+) -> np.ndarray | None:
+    """
+    Build a per-product-row weight array combining PopularityScore and
+    SeasonalityProfile for the current calendar month.
+
+    Returns None if no profile data is available (uniform sampling fallback).
+    """
+    pop = getattr(State, "product_popularity", None)
+    sea = getattr(State, "product_seasonality", None)
+
+    if pop is None:
+        return None
+
+    # Base weight: popularity (clamp to avoid zeros)
+    w = np.maximum(pop, 1.0).copy()
+
+    # Seasonal boost for this calendar month
+    if sea is not None and month_date_pool.size > 0:
+        cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1
+        for season, boosts in _SEASON_SALES_BOOST.items():
+            if cal_month in boosts:
+                mask = sea == season
+                if mask.any():
+                    w[mask] *= 1.0 + boosts[cal_month]
+
+    return w
 
 
 def _build_month_slices(date_pool: np.ndarray):
@@ -874,7 +956,12 @@ def build_chunk_table(
         # so multi-line orders contain distinct items, not repeats.
         # When assortment is active, products are sampled from
         # the store's available pool instead of the full catalog.
+        #
+        # Product sampling is weighted by PopularityScore and
+        # boosted by SeasonalityProfile for the current calendar month.
         # --------------------------------------------------------
+        _product_weight = _build_product_weight_for_month(month_date_pool, m_offset)
+
         _store_product_rows = getattr(State, "store_to_product_rows", None)
         if _store_product_rows is not None:
             prod_idx = _sample_products_per_store(
@@ -882,6 +969,7 @@ def build_chunk_table(
                 store_key_arr=store_key_arr,
                 store_to_product_rows=_store_product_rows,
                 product_np=product_np,
+                product_weight=_product_weight,
             )
         else:
             prod_idx = _sample_product_row_indices(
@@ -890,6 +978,7 @@ def build_chunk_table(
                 product_np=product_np,
                 m_offset=int(m_offset),
                 enabled=use_brand_popularity,
+                product_weight=_product_weight,
             )
 
         product_keys = product_np[prod_idx, 0].astype(np.int64, copy=False)

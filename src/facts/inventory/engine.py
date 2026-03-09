@@ -79,6 +79,9 @@ _PRODUCT_PROFILE_COLS = [
     "ReorderPointUnits",
     "LeadTimeDays",
     "ABCClassification",
+    "SeasonalityProfile",
+    "IsFragile",
+    "CasePackQty",
 ]
 
 _PROFILE_DEFAULTS = {
@@ -86,6 +89,9 @@ _PROFILE_DEFAULTS = {
     "ReorderPointUnits": 10,
     "LeadTimeDays": 14,
     "ABCClassification": "B",
+    "SeasonalityProfile": "None",
+    "IsFragile": 0,
+    "CasePackQty": 1,
 }
 
 
@@ -221,6 +227,28 @@ def compute_inventory_snapshots(
         attr_lead_days[in_range] = dense_lead[pair_pk[in_range]]
         attr_abc_mult[in_range] = dense_abc_mult[pair_pk[in_range]]
 
+    # New profile attributes: seasonality, fragility, case pack qty
+    attr_seasonality = np.full(n_pairs, "None", dtype=object)
+    attr_fragile = np.zeros(n_pairs, dtype=np.int32)
+    attr_case_pack = np.ones(n_pairs, dtype=np.int32)
+
+    if not product_attrs.empty:
+        pa_season = product_attrs["SeasonalityProfile"].to_numpy().astype(str)
+        pa_fragile = product_attrs["IsFragile"].to_numpy(dtype=np.int32)
+        pa_case = product_attrs["CasePackQty"].to_numpy(dtype=np.int32)
+
+        dense_season = np.full(pa_max, "None", dtype=object)
+        dense_fragile = np.zeros(pa_max, dtype=np.int32)
+        dense_case = np.ones(pa_max, dtype=np.int32)
+
+        dense_season[pa_pk] = pa_season
+        dense_fragile[pa_pk] = pa_fragile
+        dense_case[pa_pk] = np.maximum(pa_case, 1)
+
+        attr_seasonality[in_range] = dense_season[pair_pk[in_range]]
+        attr_fragile[in_range] = dense_fragile[pair_pk[in_range]]
+        attr_case_pack[in_range] = dense_case[pair_pk[in_range]]
+
     attr_lead_months = np.maximum(1, np.round(attr_lead_days / 30.0).astype(np.int32))
 
     # ------------------------------------------------------------------
@@ -248,7 +276,35 @@ def compute_inventory_snapshots(
     ).astype(np.int32)
     reorder_qty = np.maximum(reorder_qty, (avg_demand * attr_lead_months * attr_abc_mult).astype(np.int32))
 
-    monthly_shrinkage = icfg.shrinkage_rate / 12.0 if icfg.shrinkage_enabled else 0.0
+    # Round reorder quantities up to CasePackQty multiples
+    reorder_qty = (np.ceil(reorder_qty / attr_case_pack) * attr_case_pack).astype(np.int32)
+
+    monthly_shrinkage_base = icfg.shrinkage_rate / 12.0 if icfg.shrinkage_enabled else 0.0
+    # Fragile items shrink at 2.5x the base rate
+    monthly_shrinkage_arr = np.where(
+        attr_fragile == 1,
+        monthly_shrinkage_base * 2.5,
+        monthly_shrinkage_base,
+    )
+
+    # Seasonality calendar multipliers (per month-of-year, per pair)
+    # Holiday=Nov/Dec, Winter=Nov-Feb, Summer=Jun-Aug, BackToSchool=Jul-Sep
+    _SEASON_MONTH_BOOST: dict[str, dict[int, float]] = {
+        "Holiday":       {11: 0.6, 12: 0.6, 1: 0.2, 10: 0.3},
+        "Winter":        {11: 0.4, 12: 0.4, 1: 0.4, 2: 0.3},
+        "Summer":        {6: 0.4, 7: 0.4, 8: 0.3, 5: 0.2},
+        "BackToSchool":  {7: 0.3, 8: 0.5, 9: 0.3},
+        "Spring":        {3: 0.3, 4: 0.4, 5: 0.3},
+    }
+
+    def _seasonal_mult(month_1based: int) -> np.ndarray:
+        """Return per-pair demand multiplier for a calendar month (1=Jan)."""
+        mult = np.ones(n_pairs, dtype=np.float64)
+        for season, boosts in _SEASON_MONTH_BOOST.items():
+            mask = attr_seasonality == season
+            if mask.any() and month_1based in boosts:
+                mult[mask] += boosts[month_1based]
+        return mult
 
     # ------------------------------------------------------------------
     # 5. Pre-generate all random draws (avoids per-step RNG calls)
@@ -290,7 +346,7 @@ def compute_inventory_snapshots(
         out_received[:, t] = received * is_active
 
         sold = demand_matrix[:, t]
-        shrink = (qoh.astype(np.float64) * monthly_shrinkage).astype(np.int32) if monthly_shrinkage > 0 else 0
+        shrink = (qoh.astype(np.float64) * monthly_shrinkage_arr).astype(np.int32) if monthly_shrinkage_base > 0 else 0
         qoh -= (sold + shrink) * is_active
 
         stockout_mask = (qoh < 0) & is_active
@@ -302,7 +358,12 @@ def compute_inventory_snapshots(
         )
         qoh = np.maximum(qoh, 0)
 
-        reorder_mask = (qoh <= attr_reorder_pt) & is_active
+        # Seasonal reorder point: boost threshold during peak months
+        cal_month = int(months_arr[t])
+        season_mult = _seasonal_mult(cal_month)
+        effective_reorder_pt = (attr_reorder_pt * season_mult).astype(np.int32)
+
+        reorder_mask = (qoh <= effective_reorder_pt) & is_active
         comply_mask = rand_compliance[:, t] < icfg.reorder_compliance
         trigger_mask = reorder_mask & comply_mask
 
