@@ -91,6 +91,58 @@ HOME_OWNERSHIP_PROBS_BY_INCOME = {
 CONTACT_METHOD_LABELS = np.array(["Email", "Phone", "SMS", "Mail"])
 CONTACT_METHOD_PROBS = np.array([0.45, 0.20, 0.25, 0.10])
 
+# ---------------------------------------------------------
+# Age-conditioned demographic tables
+# ---------------------------------------------------------
+# Age bracket index: 0=18-24, 1=25-34, 2=35-44, 3=45-54, 4=55-64, 5=65+
+# (matches AGE_GROUP_LABELS order via np.searchsorted on AGE_GROUP_EDGES)
+
+MARITAL_PROBS_BY_AGE = [
+    np.array([0.15, 0.85]),  # 18-24: mostly single
+    np.array([0.45, 0.55]),  # 25-34
+    np.array([0.65, 0.35]),  # 35-44
+    np.array([0.60, 0.40]),  # 45-54
+    np.array([0.55, 0.45]),  # 55-64
+    np.array([0.45, 0.55]),  # 65+: widowed/divorced skew single
+]
+
+EDUCATION_PROBS_BY_AGE = [
+    np.array([0.60, 0.35, 0.04, 0.01]),  # 18-24: mostly HS/Bachelors
+    np.array([0.15, 0.55, 0.25, 0.05]),  # 25-34
+    np.array([0.15, 0.45, 0.30, 0.10]),  # 35-44
+    np.array([0.20, 0.45, 0.28, 0.07]),  # 45-54
+    np.array([0.25, 0.45, 0.24, 0.06]),  # 55-64
+    np.array([0.30, 0.45, 0.20, 0.05]),  # 65+
+]
+
+OCCUPATION_PROBS_BY_EDUCATION = {
+    "High School":  np.array([0.15, 0.30, 0.30, 0.20, 0.05]),
+    "Bachelors":    np.array([0.50, 0.20, 0.15, 0.10, 0.05]),
+    "Masters":      np.array([0.50, 0.10, 0.10, 0.05, 0.25]),
+    "PhD":          np.array([0.55, 0.05, 0.05, 0.02, 0.33]),
+}
+
+# Poisson lambda for TotalChildren by (marital_status, age_bracket)
+CHILDREN_LAMBDA_BY_MARITAL_AGE = {
+    ("Single", 0): 0.05, ("Single", 1): 0.25, ("Single", 2): 0.50,
+    ("Single", 3): 0.60, ("Single", 4): 0.60, ("Single", 5): 0.50,
+    ("Married", 0): 0.30, ("Married", 1): 1.20, ("Married", 2): 1.80,
+    ("Married", 3): 2.10, ("Married", 4): 2.20, ("Married", 5): 2.20,
+}
+
+# HomeOwnership age adjustment: [Rent, Mortgage, Own] shift per age bracket
+HOME_OWNERSHIP_AGE_SHIFT = [
+    np.array([0.20, -0.10, -0.10]),   # 18-24: shift toward Rent
+    np.array([0.10, 0.00, -0.10]),    # 25-34
+    np.array([0.00, 0.00, 0.00]),     # 35-44: neutral
+    np.array([-0.05, 0.00, 0.05]),    # 45-54
+    np.array([-0.10, -0.05, 0.15]),   # 55-64: shift toward Own
+    np.array([-0.15, -0.05, 0.20]),   # 65+
+]
+
+# NumberOfCars: Poisson lambda by age bracket
+CAR_LAMBDA_BY_AGE = np.array([0.3, 0.8, 1.2, 1.3, 1.2, 0.9])
+
 ORG_EMAIL_PREFIXES = np.array([
     "info", "contact", "sales", "hello", "support",
     "admin", "office", "enquiries", "procurement", "orders",
@@ -1161,34 +1213,69 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         dates = anchor - pd.to_timedelta(ages_days[person_mask], unit="D")
         BirthDate[person_mask] = pd.to_datetime(dates).to_numpy("datetime64[ns]")
 
+    # Age bracket for person rows (0=18-24 .. 5=65+), used to condition demographics
+    ages_years = ages_days / 365.25
+    person_age_bracket = (
+        np.searchsorted(AGE_GROUP_EDGES, ages_years[person_mask])
+        if n_person else np.array([], dtype="int64")
+    )
+    person_idx = np.where(person_mask)[0]
+
     MaritalStatus = np.empty(N, dtype=object)
-    MaritalStatus[person_mask] = rng.choice(
-        MARITAL_STATUS_LABELS,
-        size=n_person,
-        p=MARITAL_STATUS_PROBS,
-    )
     MaritalStatus[IsOrg] = None
+    if n_person:
+        for bracket in range(len(AGE_GROUP_LABELS)):
+            bmask = person_age_bracket == bracket
+            n_b = int(bmask.sum())
+            if n_b:
+                MaritalStatus[person_idx[bmask]] = rng.choice(
+                    MARITAL_STATUS_LABELS, size=n_b,
+                    p=MARITAL_PROBS_BY_AGE[bracket],
+                )
 
-    Education = np.where(
-        IsOrg,
-        None,
-        rng.choice(EDUCATION_LABELS, size=N, p=EDUCATION_PROBS),
-    )
+    Education = np.empty(N, dtype=object)
+    Education[:] = None
+    if n_person:
+        for bracket in range(len(AGE_GROUP_LABELS)):
+            bmask = person_age_bracket == bracket
+            n_b = int(bmask.sum())
+            if n_b:
+                Education[person_idx[bmask]] = rng.choice(
+                    EDUCATION_LABELS, size=n_b,
+                    p=EDUCATION_PROBS_BY_AGE[bracket],
+                )
 
-    Occupation = np.where(
-        IsOrg,
-        None,
-        rng.choice(OCCUPATION_LABELS, size=N, p=OCCUPATION_PROBS),
-    )
+    Occupation = np.empty(N, dtype=object)
+    Occupation[:] = None
+    if n_person:
+        for edu_label in EDUCATION_LABELS:
+            emask = Education[person_mask] == edu_label
+            n_e = int(emask.sum())
+            if n_e:
+                Occupation[person_idx[emask]] = rng.choice(
+                    OCCUPATION_LABELS, size=n_e,
+                    p=OCCUPATION_PROBS_BY_EDUCATION[edu_label],
+                )
 
     income_raw = _generate_correlated_income(rng, Education, Occupation, person_mask, N)
     YearlyIncome = pd.array(
         np.where(IsOrg, pd.NA, income_raw), dtype="Int64"
     )
 
+    children_raw = np.zeros(N, dtype="int64")
+    if n_person:
+        person_marital = MaritalStatus[person_mask]
+        for ms in MARITAL_STATUS_LABELS:
+            for bracket in range(len(AGE_GROUP_LABELS)):
+                combo = (person_marital == ms) & (person_age_bracket == bracket)
+                n_c = int(combo.sum())
+                if n_c:
+                    lam = CHILDREN_LAMBDA_BY_MARITAL_AGE.get((ms, bracket), 1.0)
+                    children_raw[person_idx[combo]] = np.clip(
+                        rng.poisson(lam=lam, size=n_c), 0, MAX_CHILDREN - 1,
+                    )
     TotalChildren = pd.array(
-        np.where(IsOrg, pd.NA, rng.integers(0, MAX_CHILDREN, size=N)),
-        dtype="Int64",
+        np.where(IsOrg, pd.NA, children_raw), dtype="Int64",
     )
 
     # -----------------------------------------------------
@@ -1223,18 +1310,24 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     HomeOwnership[:] = None
     if n_person:
         ig = IncomeGroup[person_mask]
-        for grp, probs in HOME_OWNERSHIP_PROBS_BY_INCOME.items():
+        for grp, base_probs in HOME_OWNERSHIP_PROBS_BY_INCOME.items():
             grp_mask_local = ig == grp
-            n_grp = int(grp_mask_local.sum())
-            if n_grp:
-                global_idx = np.where(person_mask)[0][grp_mask_local]
-                HomeOwnership[global_idx] = rng.choice(
-                    HOME_OWNERSHIP_LABELS, size=n_grp, p=probs
-                )
+            if not grp_mask_local.any():
+                continue
+            for bracket in range(len(AGE_GROUP_LABELS)):
+                combo = grp_mask_local & (person_age_bracket == bracket)
+                n_c = int(combo.sum())
+                if n_c:
+                    adjusted = np.clip(base_probs + HOME_OWNERSHIP_AGE_SHIFT[bracket], 0.01, None)
+                    adjusted = adjusted / adjusted.sum()
+                    HomeOwnership[person_idx[combo]] = rng.choice(
+                        HOME_OWNERSHIP_LABELS, size=n_c, p=adjusted,
+                    )
 
     NumberOfCars = np.full(N, pd.NA, dtype=object)
     if n_person:
-        base_cars = rng.poisson(lam=1.2, size=n_person)
+        car_lambda = CAR_LAMBDA_BY_AGE[person_age_bracket]
+        base_cars = rng.poisson(lam=car_lambda)
         income_boost_cars = (income_norm[person_mask] > 0.5).astype(int)
         us_boost = (Region[person_mask] == "US").astype(int)
         raw_cars = np.clip(base_cars + income_boost_cars + us_boost, 0, 4)
