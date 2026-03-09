@@ -15,8 +15,10 @@ import pyarrow as pa
 from .globals import PA_AVAILABLE, State
 from .core import (
     _eligible_customer_mask_for_month,
+    _make_seen_lookup,
     _normalize_end_month,
     _sample_customers,
+    _update_seen_lookup,
     apply_promotions,
     build_orders,
     build_rows_per_month,
@@ -206,6 +208,8 @@ def _sample_products_per_store(
     product_np: np.ndarray,
     *,
     product_weight: np.ndarray | None = None,
+    _cdf_cache: dict | None = None,
+    _cal_month: int = 0,
 ) -> np.ndarray:
     """
     Sample product row indices from each store's assortment pool.
@@ -213,6 +217,11 @@ def _sample_products_per_store(
     When product_weight is provided (e.g. PopularityScore-derived weights),
     sampling is weighted within each store's pool.  Falls back to uniform
     sampling if weights are absent or invalid.
+
+    Performance: when ``_cdf_cache`` is provided, per-store CDFs are cached
+    by ``(pool_key, _cal_month)`` and reused across months that share the
+    same calendar month (only 12 unique months in a multi-year range).
+    This avoids redundant O(pool_size) CDF construction — the dominant cost.
     """
     n = len(store_key_arr)
     n_products = len(product_np)
@@ -230,10 +239,26 @@ def _sample_products_per_store(
         if sk_int < max_sk and store_to_product_rows[sk_int] is not None:
             pool = store_to_product_rows[sk_int]
             if product_weight is not None and pool.size > 1:
-                w = product_weight[pool]
-                ws = float(w.sum())
-                if ws > 1e-12:
-                    out[mask] = pool[rng.choice(len(pool), size=count, p=w / ws)]
+                # --- CDF-cached weighted sampling ---
+                # Pool identity: (size, first, last) is a fast proxy.
+                # Collisions are harmless (same CDF reused — correct if pool content matches).
+                pool_key = (int(pool.size), int(pool[0]), int(pool[-1]))
+                cache_key = (pool_key, _cal_month)
+
+                if _cdf_cache is not None and cache_key in _cdf_cache:
+                    pool_cached, cdf = _cdf_cache[cache_key]
+                else:
+                    w = product_weight[pool]
+                    cdf = np.cumsum(w, dtype=np.float64)
+                    if _cdf_cache is not None:
+                        _cdf_cache[cache_key] = (pool, cdf)
+
+                total = cdf[-1]
+                if total > 1e-12:
+                    u = rng.random(count) * total
+                    picks = np.searchsorted(cdf, u, side="right")
+                    np.minimum(picks, len(pool) - 1, out=picks)
+                    out[mask] = pool[picks]
                 else:
                     out[mask] = pool[rng.integers(0, len(pool), size=count)]
             else:
@@ -269,6 +294,8 @@ _SEASON_SALES_BOOST: dict[str, dict[int, float]] = {
     "BackToSchool": {7: 0.4, 8: 0.7, 9: 0.4},
     "Spring":       {3: 0.4, 4: 0.5, 5: 0.4},
 }
+# Numeric encoding matching sales.py _SEASON_ENCODE
+_SEASON_CODE = {"Holiday": 1, "Winter": 2, "Summer": 3, "BackToSchool": 4, "Spring": 5}
 
 
 def _build_product_weight_for_month(
@@ -295,7 +322,8 @@ def _build_product_weight_for_month(
         cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1
         for season, boosts in _SEASON_SALES_BOOST.items():
             if cal_month in boosts:
-                mask = sea == season
+                code = _SEASON_CODE[season]
+                mask = sea == code
                 if mask.any():
                     w[mask] *= 1.0 + boosts[cal_month]
 
@@ -435,9 +463,9 @@ def _sample_salesperson_vectorized(
 ) -> np.ndarray:
     """Sample one salesperson per (store, date) row using composite-key vectorization.
 
-    Replaces per-store Python loop + per-date inner loop with:
-      1. Composite key (store, date) → np.unique → contiguous slices
-      2. Batch-sample all rows sharing the same (store, date) in one rng call
+    Groups by store first, then vectorizes date-eligibility across all dates
+    for that store using 2-D broadcasting, reducing Python loop iterations
+    from O(stores × dates) to O(stores × eligibility_patterns).
 
     STRICT: never assigns a salesperson outside an effective-dated assignment window.
     If no eligible salesperson exists for a given (StoreKey, Date), emits -1.
@@ -467,67 +495,108 @@ def _sample_salesperson_vectorized(
     pair_starts = np.zeros(n_pairs + 1, dtype=np.int64)
     np.cumsum(pair_counts, out=pair_starts[1:])
 
-    # Pre-process eff entries: cache cleaned arrays per store to avoid re-converting
-    _eff_cache: dict = {}
+    # Group pairs by store for batch processing
+    store_uniq_vals, store_inv = np.unique(pair_store, return_inverse=True)
 
-    for i in range(n_pairs):
-        sk = int(pair_store[i])
+    for si in range(store_uniq_vals.size):
+        sk = int(store_uniq_vals[si])
+        entry = eff.get(sk)
+        if entry is None:
+            continue
 
-        # Lazily clean each store's eff entry once
-        if sk not in _eff_cache:
-            entry = eff.get(sk)
-            if entry is None:
-                _eff_cache[sk] = None
-            else:
-                emp_keys, start_d, end_d, weights = entry
-                emp_keys = np.asarray(emp_keys, dtype=np.int32)
-                start_d = np.asarray(start_d, dtype="datetime64[D]")
-                end_d = np.asarray(end_d, dtype="datetime64[D]")
-                weights = np.asarray(weights, dtype=np.float64)
+        emp_keys, start_d, end_d, weights = entry
+        emp_keys = np.asarray(emp_keys, dtype=np.int32)
+        start_d = np.asarray(start_d, dtype="datetime64[D]")
+        end_d = np.asarray(end_d, dtype="datetime64[D]")
+        weights = np.asarray(weights, dtype=np.float64)
 
-                # Never allow Store Manager keys (30M..40M)
-                non_mgr = (emp_keys < 30_000_000) | (emp_keys >= 40_000_000)
-                emp_keys = emp_keys[non_mgr]
-                start_d = start_d[non_mgr]
-                end_d = end_d[non_mgr]
-                weights = weights[non_mgr]
+        # Never allow Store Manager keys (30M..40M)
+        non_mgr = (emp_keys < 30_000_000) | (emp_keys >= 40_000_000)
+        emp_keys = emp_keys[non_mgr]
+        start_d = start_d[non_mgr]
+        end_d = end_d[non_mgr]
+        weights = weights[non_mgr]
 
-                if emp_keys.size == 0:
-                    _eff_cache[sk] = None
+        if emp_keys.size == 0:
+            continue
+
+        if np.isnat(start_d).any():
+            start_d = start_d.copy()
+            start_d[np.isnat(start_d)] = _FAR_PAST
+        if np.isnat(end_d).any():
+            end_d = end_d.copy()
+            end_d[np.isnat(end_d)] = _FAR_FUTURE
+
+        # All pair indices belonging to this store
+        pair_idxs = np.where(store_inv == si)[0]
+        store_days = pair_day64[pair_idxs]  # int64 epoch days
+
+        # 2-D eligibility: active[emp, date] — broadcast (k,1) vs (1,d)
+        start_i64 = start_d.astype("int64")
+        end_i64 = end_d.astype("int64")
+        active = (start_i64[:, None] <= store_days[None, :]) & (store_days[None, :] <= end_i64[:, None])
+        # active shape: (n_employees, n_dates_for_store)
+
+        # Find unique eligibility patterns to avoid redundant sampling
+        # Pack each column's active bool pattern into a hashable key
+        # For small k (<64), pack into a single int; otherwise hash the bytes
+        k = emp_keys.size
+        d = store_days.size
+
+        if k <= 63:
+            # Pack each date's active pattern into a uint64 fingerprint
+            powers = np.uint64(1) << np.arange(k, dtype=np.uint64)
+            pattern_keys = active.astype(np.uint64).T @ powers  # shape (d,)
+
+            # Group dates by pattern — batch-sample all rows per pattern
+            pat_uniq, pat_inv = np.unique(pattern_keys, return_inverse=True)
+            for pi in range(pat_uniq.size):
+                p_mask = active[:, pat_inv == pi][:, 0]  # which employees are active
+                if not p_mask.any():
+                    continue
+                emp2 = emp_keys[p_mask]
+                w2 = weights[p_mask]
+                sw = float(w2.sum())
+
+                # Total rows across all dates with this eligibility pattern
+                date_positions = np.where(pat_inv == pi)[0]
+                gi_arr = pair_idxs[date_positions]
+                total_count = int(pair_counts[gi_arr].sum())
+                if total_count == 0:
+                    continue
+
+                # Single batch sample for all rows in this pattern
+                if sw <= 1e-12:
+                    all_picked = emp2[rng.integers(0, emp2.size, size=total_count)]
                 else:
-                    if np.isnat(start_d).any():
-                        start_d = start_d.copy()
-                        start_d[np.isnat(start_d)] = _FAR_PAST
-                    if np.isnat(end_d).any():
-                        end_d = end_d.copy()
-                        end_d[np.isnat(end_d)] = _FAR_FUTURE
-                    _eff_cache[sk] = (emp_keys, start_d, end_d, weights)
+                    p = w2 / sw
+                    all_picked = emp2[rng.choice(emp2.size, size=total_count, p=p)]
 
-        rec = _eff_cache[sk]
-        if rec is None:
-            continue
-
-        emp_keys, start_d, end_d, weights = rec
-        d = np.datetime64(int(pair_day64[i]), "D")
-
-        ok = (start_d <= d) & (d <= end_d)
-        if not bool(ok.any()):
-            continue
-
-        emp2 = emp_keys[ok]
-        w2 = weights[ok]
-
-        count = int(pair_counts[i])
-        sw = float(w2.sum())
-
-        if sw <= 1e-12:
-            picked = emp2[rng.integers(0, emp2.size, size=count)]
+                # Scatter into output
+                offset = 0
+                for gi in gi_arr:
+                    count = int(pair_counts[gi])
+                    s, e = int(pair_starts[gi]), int(pair_starts[gi + 1])
+                    out[pair_order[s:e]] = all_picked[offset:offset + count]
+                    offset += count
         else:
-            p = w2 / sw
-            picked = emp2[rng.choice(emp2.size, size=count, p=p)]
-
-        s, e = int(pair_starts[i]), int(pair_starts[i + 1])
-        out[pair_order[s:e]] = picked
+            # Fallback for many employees: iterate per date (rare)
+            for j in range(d):
+                ok = active[:, j]
+                if not ok.any():
+                    continue
+                emp2 = emp_keys[ok]
+                w2 = weights[ok]
+                gi = pair_idxs[j]
+                count = int(pair_counts[gi])
+                sw = float(w2.sum())
+                if sw <= 1e-12:
+                    picked = emp2[rng.integers(0, emp2.size, size=count)]
+                else:
+                    p = w2 / sw
+                    picked = emp2[rng.choice(emp2.size, size=count, p=p)]
+                s, e = int(pair_starts[gi]), int(pair_starts[gi + 1])
+                out[pair_order[s:e]] = picked
 
     return out
 
@@ -757,9 +826,10 @@ def build_chunk_table(
     if use_discovery:
         seen_customers = getattr(State, "seen_customers", None)
         if seen_customers is None:
-            seen_customers = set()
-        elif not isinstance(seen_customers, set):
-            seen_customers = set(seen_customers)
+            seen_customers = _make_seen_lookup(customer_keys)
+        elif isinstance(seen_customers, set):
+            seen_customers = _make_seen_lookup(customer_keys, existing_set=seen_customers)
+        # else: already a numpy boolean lookup from a previous chunk
     else:
         seen_customers = None
 
@@ -780,6 +850,10 @@ def build_chunk_table(
     # so we sample fewer customers (≈ m_rows / avg_lines) and let build_orders expand.
     max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
     avg_lines_est = 1.0 if max_lines == 1 else 1.8
+
+    # CDF cache for weighted product sampling — keyed by (pool_key, cal_month).
+    # Only 12 unique calendar months exist, so CDFs are reused across years.
+    _product_cdf_cache: dict = {}
 
     for m_offset in range(T):
         m_rows = int(rows_per_month[m_offset])
@@ -880,6 +954,7 @@ def build_chunk_table(
             target_distinct=target_distinct,
         )
 
+
         if customer_keys_for_orders.size == 0:
             continue
 
@@ -964,12 +1039,15 @@ def build_chunk_table(
 
         _store_product_rows = getattr(State, "store_to_product_rows", None)
         if _store_product_rows is not None:
+            _cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1 if month_date_pool.size > 0 else 0
             prod_idx = _sample_products_per_store(
                 rng=rng,
                 store_key_arr=store_key_arr,
                 store_to_product_rows=_store_product_rows,
                 product_np=product_np,
                 product_weight=_product_weight,
+                _cdf_cache=_product_cdf_cache,
+                _cal_month=_cal_month,
             )
         else:
             prod_idx = _sample_product_row_indices(
@@ -991,6 +1069,7 @@ def build_chunk_table(
         currency_arr = g2c_arr[geo_arr]
         if np.any(currency_arr < 0):
             raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
+
 
         customer_keys_out = np.asarray(customer_keys_out, dtype=np.int64)
         order_dates = np.asarray(order_dates, dtype="datetime64[D]")
@@ -1111,7 +1190,7 @@ def build_chunk_table(
         # --------------------------------------------------------
         if use_discovery:
             # track customers that actually appeared in this month
-            seen_customers.update(map(int, np.unique(customer_keys_out)))
+            _update_seen_lookup(seen_customers, np.unique(customer_keys_out))
             State.seen_customers = seen_customers
 
         # --------------------------------------------------------

@@ -14,6 +14,7 @@ from ..output_paths import (
 )
 from ..sales_logic import bind_globals
 from .schemas import build_worker_schemas
+from src.utils.shared_arrays import resolve_array
 
 
 EMPLOYEE_KEY_MIN_NON_MANAGER = 40_000_000
@@ -533,6 +534,11 @@ def _build_brand_prob_by_month_rotate_winner(
 
 
 def init_sales_worker(worker_cfg: dict) -> None:
+    # Resolve any shared-memory descriptors back into numpy array views.
+    # This is a no-op for values that are already plain arrays/None.
+    for _k in list(worker_cfg):
+        worker_cfg[_k] = resolve_array(worker_cfg[_k])
+
     try:
         product_np = worker_cfg["product_np"]
         product_brand_key = worker_cfg.get("product_brand_key")
@@ -647,85 +653,103 @@ def init_sales_worker(worker_cfg: dict) -> None:
 
     product_np = np.asarray(product_np)
 
-    brand_to_row_idx = None
-    if product_brand_key is not None:
+    _prebuilt_brand_desc = worker_cfg.get("_prebuilt_brand_to_row_idx")
+    if _prebuilt_brand_desc is not None:
+        from src.utils.shared_arrays import resolve_jagged
+        brand_to_row_idx = resolve_jagged(_prebuilt_brand_desc)
+        if product_brand_key is not None:
+            product_brand_key = as_int64(product_brand_key)
+    elif product_brand_key is not None:
         product_brand_key = as_int64(product_brand_key)
         if product_brand_key.shape[0] != product_np.shape[0]:
             raise RuntimeError("product_brand_key must align with product_np row count")
         brand_to_row_idx = _build_buckets_from_brand_key(product_brand_key)
+    else:
+        brand_to_row_idx = None
 
     store_keys = as_int64(store_keys)
 
     # ------------------------------------------------------------
     # Store-product assortment (optional)
     # ------------------------------------------------------------
-    store_to_product_rows = None
-    assortment_cfg = worker_cfg.get("assortment")
-    if isinstance(assortment_cfg, dict) and assortment_cfg.get("enabled"):
-        product_subcat_key = worker_cfg.get("product_subcat_key")
-        store_type_map = worker_cfg.get("store_type_map")
-        if product_subcat_key is not None and store_type_map is not None:
-            product_subcat_key = np.asarray(product_subcat_key, dtype=np.int64)
-            store_type_arr = np.array(
-                [str(store_type_map.get(int(sk), "Supermarket")) for sk in store_keys],
-                dtype=object,
-            )
-            coverage = assortment_cfg.get("coverage", _DEFAULT_ASSORTMENT_COVERAGE)
-            assort_seed = int(assortment_cfg.get("seed", worker_cfg.get("seed_master", 42)))
-            store_to_product_rows = _build_store_assortment(
-                store_keys=store_keys,
-                store_type_arr=store_type_arr,
-                product_np=product_np,
-                product_subcat_key=product_subcat_key,
-                coverage_cfg=coverage,
-                seed=assort_seed,
-            )
+    _prebuilt_assortment = worker_cfg.get("_prebuilt_store_to_product_rows")
+    if _prebuilt_assortment is not None:
+        from src.utils.shared_arrays import resolve_jagged
+        store_to_product_rows = resolve_jagged(_prebuilt_assortment)
+    else:
+        store_to_product_rows = None
+        assortment_cfg = worker_cfg.get("assortment")
+        if isinstance(assortment_cfg, dict) and assortment_cfg.get("enabled"):
+            product_subcat_key = worker_cfg.get("product_subcat_key")
+            store_type_map = worker_cfg.get("store_type_map")
+            if product_subcat_key is not None and store_type_map is not None:
+                product_subcat_key = np.asarray(product_subcat_key, dtype=np.int64)
+                store_type_arr = np.array(
+                    [str(store_type_map.get(int(sk), "Supermarket")) for sk in store_keys],
+                    dtype=object,
+                )
+                coverage = assortment_cfg.get("coverage", _DEFAULT_ASSORTMENT_COVERAGE)
+                assort_seed = int(assortment_cfg.get("seed", worker_cfg.get("seed_master", 42)))
+                store_to_product_rows = _build_store_assortment(
+                    store_keys=store_keys,
+                    store_type_arr=store_type_arr,
+                    product_np=product_np,
+                    product_subcat_key=product_subcat_key,
+                    coverage_cfg=coverage,
+                    seed=assort_seed,
+                )
 
     # ------------------------------------------------------------
     # Filter employee assignment rows to sales-eligible roles
     # ------------------------------------------------------------
-    if employee_assign_employee_key is not None and employee_assign_store_key is not None:
-        emp_key = np.asarray(employee_assign_employee_key, dtype=np.int32)
-
-        if employee_assign_role is None:
-            raise RuntimeError(
-                "RoleAtStore is required in employee_store_assignments.parquet. "
-                "Regenerate the bridge table."
-            )
-        role_arr = np.asarray(employee_assign_role).astype(str)
-        allowed = np.asarray(list(salesperson_roles), dtype=str)
-        mask = np.isin(role_arr, allowed)
-
-        if not mask.any():
-            raise RuntimeError(
-                f"No employees with role in {salesperson_roles} found in bridge. "
-                f"Roles present: {np.unique(role_arr).tolist()}"
-            )
-
-        employee_assign_store_key = np.asarray(employee_assign_store_key, dtype=np.int64)[mask]
-        employee_assign_employee_key = emp_key[mask]
-        employee_assign_start_date = np.asarray(employee_assign_start_date, dtype="datetime64[D]")[mask]
-        employee_assign_end_date = np.asarray(employee_assign_end_date, dtype="datetime64[D]")[mask]
-
-        if employee_assign_fte is not None:
-            employee_assign_fte = np.asarray(employee_assign_fte, dtype=np.float64)[mask]
-        if employee_assign_is_primary is not None:
-            employee_assign_is_primary = np.asarray(employee_assign_is_primary, dtype=bool)[mask]
-
-        salesperson_global_pool = np.unique(employee_assign_employee_key).astype(np.int32, copy=False)
+    _prebuilt_sp = worker_cfg.get("_prebuilt_salesperson_effective_by_store")
+    if _prebuilt_sp is not None:
+        # Pre-built in main process — skip redundant filtering & construction
+        salesperson_effective_by_store = _prebuilt_sp
+        salesperson_global_pool = worker_cfg.get("_prebuilt_salesperson_global_pool")
     else:
-        salesperson_global_pool = None
+        if employee_assign_employee_key is not None and employee_assign_store_key is not None:
+            emp_key = np.asarray(employee_assign_employee_key, dtype=np.int32)
 
-    salesperson_effective_by_store = _build_salesperson_effective_by_store(
-        store_keys=store_keys,
-        assign_store=employee_assign_store_key,
-        assign_emp=employee_assign_employee_key,
-        assign_start=employee_assign_start_date,
-        assign_end=employee_assign_end_date,
-        assign_fte=employee_assign_fte,
-        assign_is_primary=employee_assign_is_primary,
-        primary_boost=employee_primary_boost,
-    )
+            if employee_assign_role is None:
+                raise RuntimeError(
+                    "RoleAtStore is required in employee_store_assignments.parquet. "
+                    "Regenerate the bridge table."
+                )
+            role_arr = np.asarray(employee_assign_role).astype(str)
+            allowed = np.asarray(list(salesperson_roles), dtype=str)
+            mask = np.isin(role_arr, allowed)
+
+            if not mask.any():
+                raise RuntimeError(
+                    f"No employees with role in {salesperson_roles} found in bridge. "
+                    f"Roles present: {np.unique(role_arr).tolist()}"
+                )
+
+            employee_assign_store_key = np.asarray(employee_assign_store_key, dtype=np.int64)[mask]
+            employee_assign_employee_key = emp_key[mask]
+            employee_assign_start_date = np.asarray(employee_assign_start_date, dtype="datetime64[D]")[mask]
+            employee_assign_end_date = np.asarray(employee_assign_end_date, dtype="datetime64[D]")[mask]
+
+            if employee_assign_fte is not None:
+                employee_assign_fte = np.asarray(employee_assign_fte, dtype=np.float64)[mask]
+            if employee_assign_is_primary is not None:
+                employee_assign_is_primary = np.asarray(employee_assign_is_primary, dtype=bool)[mask]
+
+            salesperson_global_pool = np.unique(employee_assign_employee_key).astype(np.int32, copy=False)
+        else:
+            salesperson_global_pool = None
+
+        salesperson_effective_by_store = _build_salesperson_effective_by_store(
+            store_keys=store_keys,
+            assign_store=employee_assign_store_key,
+            assign_emp=employee_assign_employee_key,
+            assign_start=employee_assign_start_date,
+            assign_end=employee_assign_end_date,
+            assign_fte=employee_assign_fte,
+            assign_is_primary=employee_assign_is_primary,
+            primary_boost=employee_primary_boost,
+        )
 
     salesperson_by_store_month = None
     if legacy_salesperson_by_store_month:
@@ -772,61 +796,66 @@ def init_sales_worker(worker_cfg: dict) -> None:
         if customer_base_weight.shape[0] != customer_keys.shape[0]:
             raise RuntimeError("customer_base_weight must align with customer_keys length")
 
-    brand_prob_by_month = None
-    if isinstance(models_cfg, dict):
-        models_root = models_cfg.get("models") if isinstance(models_cfg.get("models"), dict) else models_cfg
-        brand_cfg = models_root.get("brand_popularity") if isinstance(models_root, dict) else None
-        if brand_cfg:
-            T = infer_T_from_date_pool(date_pool)
-            B = int(product_brand_key.max()) + 1 if product_brand_key is not None and product_brand_key.size else 0
-            rng_bp = np.random.default_rng(int(int_or(brand_cfg.get("seed"), 1234)))
+    # Use pre-built brand_prob_by_month from shared memory if available
+    _prebuilt_bp = worker_cfg.get("_prebuilt_brand_prob_by_month")
+    if _prebuilt_bp is not None:
+        brand_prob_by_month = resolve_array(_prebuilt_bp)
+    else:
+        brand_prob_by_month = None
+        if isinstance(models_cfg, dict):
+            models_root = models_cfg.get("models") if isinstance(models_cfg.get("models"), dict) else models_cfg
+            brand_cfg = models_root.get("brand_popularity") if isinstance(models_root, dict) else None
+            if brand_cfg:
+                T = infer_T_from_date_pool(date_pool)
+                B = int(product_brand_key.max()) + 1 if product_brand_key is not None and product_brand_key.size else 0
+                rng_bp = np.random.default_rng(int(int_or(brand_cfg.get("seed"), 1234)))
 
-            bp_counts = None
-            if brand_to_row_idx is not None and len(brand_to_row_idx) == B:
-                bp_counts = np.array(
-                    [len(b) if b is not None else 0 for b in brand_to_row_idx],
-                    dtype=np.float64,
+                bp_counts = None
+                if brand_to_row_idx is not None and len(brand_to_row_idx) == B:
+                    bp_counts = np.array(
+                        [len(b) if b is not None else 0 for b in brand_to_row_idx],
+                        dtype=np.float64,
+                    )
+
+                bp_explicit = None
+                cfg_weights = brand_cfg.get("brand_weights")
+                bp_brand_names = worker_cfg.get("brand_names")
+                if isinstance(cfg_weights, dict) and cfg_weights and bp_brand_names is not None and len(bp_brand_names) == B:
+                    bp_explicit = np.zeros(B, dtype=np.float64)
+                    name_to_idx = {str(n): i for i, n in enumerate(bp_brand_names)}
+                    has_override = False
+                    for bname, bw in cfg_weights.items():
+                        idx = name_to_idx.get(str(bname))
+                        if idx is not None:
+                            bp_explicit[idx] = float(bw)
+                            has_override = True
+                    if has_override:
+                        unset = bp_explicit == 0.0
+                        if unset.any() and bp_counts is not None:
+                            fallback = np.sqrt(np.maximum(bp_counts, 1.0))
+                            leftover = max(0.0, 1.0 - bp_explicit.sum())
+                            fallback_sum = fallback[unset].sum()
+                            if fallback_sum > 0 and leftover > 0:
+                                bp_explicit[unset] = fallback[unset] / fallback_sum * leftover
+                            elif leftover > 0:
+                                bp_explicit[unset] = leftover / unset.sum()
+                        elif unset.any():
+                            leftover = max(0.0, 1.0 - bp_explicit.sum())
+                            bp_explicit[unset] = leftover / unset.sum() if unset.sum() > 0 else 0.0
+                    else:
+                        bp_explicit = None
+
+                brand_prob_by_month = _build_brand_prob_by_month_rotate_winner(
+                    rng_bp,
+                    T=T,
+                    B=B,
+                    winner_boost=float_or(brand_cfg.get("winner_boost"), 2.5),
+                    noise_sd=float_or(brand_cfg.get("noise_sd"), 0.15),
+                    min_share=float_or(brand_cfg.get("min_share"), 0.02),
+                    year_len_months=int_or(brand_cfg.get("year_len_months"), 12),
+                    brand_product_counts=bp_counts,
+                    explicit_weights=bp_explicit,
                 )
-
-            bp_explicit = None
-            cfg_weights = brand_cfg.get("brand_weights")
-            bp_brand_names = worker_cfg.get("brand_names")
-            if isinstance(cfg_weights, dict) and cfg_weights and bp_brand_names is not None and len(bp_brand_names) == B:
-                bp_explicit = np.zeros(B, dtype=np.float64)
-                name_to_idx = {str(n): i for i, n in enumerate(bp_brand_names)}
-                has_override = False
-                for bname, bw in cfg_weights.items():
-                    idx = name_to_idx.get(str(bname))
-                    if idx is not None:
-                        bp_explicit[idx] = float(bw)
-                        has_override = True
-                if has_override:
-                    unset = bp_explicit == 0.0
-                    if unset.any() and bp_counts is not None:
-                        fallback = np.sqrt(np.maximum(bp_counts, 1.0))
-                        leftover = max(0.0, 1.0 - bp_explicit.sum())
-                        fallback_sum = fallback[unset].sum()
-                        if fallback_sum > 0 and leftover > 0:
-                            bp_explicit[unset] = fallback[unset] / fallback_sum * leftover
-                        elif leftover > 0:
-                            bp_explicit[unset] = leftover / unset.sum()
-                    elif unset.any():
-                        leftover = max(0.0, 1.0 - bp_explicit.sum())
-                        bp_explicit[unset] = leftover / unset.sum() if unset.sum() > 0 else 0.0
-                else:
-                    bp_explicit = None
-
-            brand_prob_by_month = _build_brand_prob_by_month_rotate_winner(
-                rng_bp,
-                T=T,
-                B=B,
-                winner_boost=float_or(brand_cfg.get("winner_boost"), 2.5),
-                noise_sd=float_or(brand_cfg.get("noise_sd"), 0.15),
-                min_share=float_or(brand_cfg.get("min_share"), 0.02),
-                year_len_months=int_or(brand_cfg.get("year_len_months"), 12),
-                brand_product_counts=bp_counts,
-                explicit_weights=bp_explicit,
-            )
 
     store_to_geo_arr = dense_map(store_to_geo) if isinstance(store_to_geo, dict) else None
     geo_to_currency_arr = dense_map(geo_to_currency) if isinstance(geo_to_currency, dict) else None
@@ -939,3 +968,4 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "product_seasonality": worker_cfg.get("product_seasonality"),
         }
     )
+

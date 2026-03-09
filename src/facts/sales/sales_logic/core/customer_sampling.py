@@ -254,17 +254,31 @@ def _concat_and_shuffle(rng: np.random.Generator, *arrays: np.ndarray) -> np.nda
 _SPARSE_KEY_RATIO = 64
 
 
-def _build_seen_mask(eligible_keys: np.ndarray, seen_set: set) -> np.ndarray:
+def _build_seen_mask(eligible_keys: np.ndarray, seen_set) -> np.ndarray:
     """
     Vectorized seen-membership test.
 
+    Accepts either a Python set or a numpy boolean lookup array (see
+    ``_make_seen_lookup`` / ``_update_seen_lookup``).
+
     Strategy:
-      - If keys are reasonably dense (max_key / n_keys < threshold): allocate a
-        boolean lookup array for O(n) vectorised membership.
-      - Otherwise: fall back to a sorted numpy intersection which is still much
-        faster than a per-element Python loop.
+      - If *seen_set* is a numpy array: direct O(n_eligible) indexed lookup.
+      - If *seen_set* is a Python set (legacy): convert to lookup on the fly.
     """
-    if len(seen_set) == 0:
+    # Fast path: numpy boolean lookup array (new contract)
+    if isinstance(seen_set, np.ndarray):
+        if seen_set.size == 0:
+            return np.zeros(eligible_keys.size, dtype=bool)
+        # Eligible keys that exceed the lookup size are unseen by definition
+        max_idx = seen_set.size - 1
+        keys = np.asarray(eligible_keys, dtype=np.int64)
+        in_range = keys <= max_idx
+        out = np.zeros(keys.size, dtype=bool)
+        out[in_range] = seen_set[keys[in_range]]
+        return out
+
+    # Legacy path: Python set
+    if not seen_set or len(seen_set) == 0:
         return np.zeros(eligible_keys.size, dtype=bool)
 
     max_key = int(eligible_keys.max())
@@ -284,6 +298,32 @@ def _build_seen_mask(eligible_keys: np.ndarray, seen_set: set) -> np.ndarray:
     pos = np.searchsorted(seen_sorted, eligible_keys)
     pos = np.clip(pos, 0, seen_sorted.size - 1)
     return seen_sorted[pos] == eligible_keys
+
+
+def _make_seen_lookup(customer_keys: np.ndarray, existing_set=None) -> np.ndarray:
+    """Create a boolean lookup array for seen-customer tracking.
+
+    Much faster than a Python set for repeated vectorized membership tests.
+    """
+    max_key = int(np.asarray(customer_keys, dtype=np.int64).max())
+    lookup = np.zeros(max_key + 1, dtype=bool)
+    if existing_set:
+        if isinstance(existing_set, np.ndarray):
+            # Copy existing lookup
+            copy_len = min(lookup.size, existing_set.size)
+            lookup[:copy_len] = existing_set[:copy_len]
+        elif isinstance(existing_set, set) and len(existing_set) > 0:
+            seen_arr = np.fromiter(existing_set, dtype="int64", count=len(existing_set))
+            valid = seen_arr[(seen_arr >= 0) & (seen_arr <= max_key)]
+            lookup[valid] = True
+    return lookup
+
+
+def _update_seen_lookup(lookup: np.ndarray, new_keys: np.ndarray) -> None:
+    """Mark keys as seen in the boolean lookup array. O(k) for k new keys."""
+    keys = np.asarray(new_keys, dtype=np.int64)
+    keys = keys[(keys >= 0) & (keys < lookup.size)]
+    lookup[keys] = True
 
 
 # ----------------------------------------------------------------
@@ -333,7 +373,7 @@ def _sample_customers(
     rng: np.random.Generator,
     customer_keys: np.ndarray,
     eligible_mask: np.ndarray,
-    seen_set: set,
+    seen_set,
     n: int,
     use_discovery: bool,
     discovery_cfg: dict,
@@ -363,7 +403,8 @@ def _sample_customers(
 
     eligible_keys = customer_keys[eligible_idx]
 
-    if not isinstance(seen_set, set):
+    # Accept numpy boolean lookup arrays (fast) or Python sets (legacy)
+    if not isinstance(seen_set, (set, np.ndarray)):
         seen_set = set(seen_set) if seen_set else set()
 
     k = None
@@ -402,7 +443,9 @@ def _sample_customers(
     # Discovery mode
     # -----------------------------
 
-    if seen_set:
+    _has_seen = (seen_set.any() if isinstance(seen_set, np.ndarray)
+                  else bool(seen_set))
+    if _has_seen:
         seen_mask = _build_seen_mask(eligible_keys, seen_set)
         seen_eligible = eligible_keys[seen_mask]
         seen_eligible_idx = eligible_idx[seen_mask]

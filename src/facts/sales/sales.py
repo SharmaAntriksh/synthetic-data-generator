@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils.logging_utils import debug, done, info, skip, work
+from src.utils.shared_arrays import SharedArrayGroup
 from .sales_logic import State
 from .sales_worker import PoolRunSpec, iter_imap_unordered, _worker_task, init_sales_worker
 from .sales_writer import merge_parquet_files
@@ -287,6 +288,42 @@ def build_weighted_date_pool(start: str, end: str, seed: int = 42) -> Tuple[np.n
         weights /= total
 
     return dates.to_numpy("datetime64[D]"), weights
+
+
+def _detect_total_ram_gb() -> Optional[float]:
+    """Return total physical RAM in GB, or None if detection fails."""
+    try:
+        import psutil
+        return psutil.virtual_memory().total / (1024 ** 3)
+    except ImportError:
+        pass
+    # Windows fallback via ctypes
+    try:
+        import ctypes
+        class _MEMSTAT(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+        stat = _MEMSTAT(dwLength=ctypes.sizeof(_MEMSTAT))
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+        return stat.ullTotalPhys / (1024 ** 3)
+    except Exception:
+        pass
+    # Linux/macOS fallback
+    try:
+        import os
+        mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+        return mem_bytes / (1024 ** 3)
+    except Exception:
+        return None
 
 
 def suggest_chunk_size(total_rows: int, target_workers: Optional[int] = None, preferred_chunks_per_worker: int = 2) -> int:
@@ -711,7 +748,12 @@ def generate_sales_fact(
                 _pp_df["SeasonalityProfile"].to_numpy().astype(str),
                 index=_pp_df["ProductKey"].to_numpy(dtype=np.int64),
             )
-            product_seasonality = _pp_map_sea.reindex(active_keys).fillna("None").to_numpy().astype(str)
+            _sea_str = _pp_map_sea.reindex(active_keys).fillna("None").to_numpy().astype(str)
+            # Encode as int8 so it can be shared via shared memory (avoids 8x pickle of object array)
+            _SEASON_ENCODE = {"Holiday": 1, "Winter": 2, "Summer": 3, "BackToSchool": 4, "Spring": 5}
+            product_seasonality = np.zeros(len(_sea_str), dtype=np.int8)
+            for _sname, _scode in _SEASON_ENCODE.items():
+                product_seasonality[_sea_str == _sname] = _scode
         except Exception as exc:
             info(f"Could not load product profile ({type(exc).__name__}: {exc}); using uniform product sampling.")
             product_popularity = None
@@ -868,6 +910,22 @@ def generate_sales_fact(
         n_workers = min(len(tasks), max(1, cpu_count() - 1))
     else:
         n_workers = min(len(tasks), max(1, _int_or(workers, cpu_count() - 1)))
+
+    # RAM-aware cap: on Windows (spawn), each worker loads a full Python
+    # interpreter + numpy/pyarrow/pandas (~1.5 GB base) plus chunk processing
+    # intermediates (~1-2 GB peak).  Reserve ~6 GB for the main process + OS +
+    # shared memory blocks.  Budget ~3.5 GB per worker to stay under 85% usage.
+    _total_ram_gb = _detect_total_ram_gb()
+    if _total_ram_gb is not None:
+        _target_usage = _total_ram_gb * 0.80  # stay under 80% to avoid thrashing
+        _reserved = 6.0  # main process + OS + shared memory
+        _per_worker = 3.5
+        _max_by_ram = max(1, int((_target_usage - _reserved) / _per_worker))
+        if n_workers > _max_by_ram:
+            info(f"Capping workers from {n_workers} to {_max_by_ram} "
+                 f"(total RAM: {_total_ram_gb:.0f} GB, "
+                 f"budget: {_per_worker:.1f} GB/worker + {_reserved:.0f} GB reserved)")
+            n_workers = _max_by_ram
 
     info(f"Spawning {n_workers} worker processes...")
 
@@ -1091,6 +1149,167 @@ def generate_sales_fact(
     else:
         worker_cfg["inventory_enabled"] = False
 
+    # ------------------------------------------------------------
+    # Shared memory: place large numpy arrays in OS shared memory
+    # so worker processes get zero-copy views instead of pickle copies.
+    # ------------------------------------------------------------
+    _shm = SharedArrayGroup()
+    _shm.publish_dict(worker_cfg, [
+        "product_np",
+        "product_brand_key",
+        "customers",              # alias for customer_keys
+        "customer_keys",
+        "customer_is_active_in_sales",
+        "customer_start_month",
+        "customer_end_month",
+        "customer_base_weight",
+        "product_subcat_key",
+        "product_popularity",
+        "date_pool",
+        "date_prob",
+        "promo_keys_all",
+        "promo_start_all",
+        "promo_end_all",
+        "employee_assign_store_key",
+        "employee_assign_employee_key",
+        "employee_assign_start_date",
+        "employee_assign_end_date",
+        "employee_assign_fte",
+        "employee_assign_is_primary",
+        "product_seasonality",
+    ])
+
+    # ------------------------------------------------------------
+    # Pre-build expensive derived structures once in the main process
+    # instead of redundantly in each worker (saves ~2.4 GB RAM and
+    # eliminates ~4.5 min worker init delay on Windows).
+    # NOTE: local variables (product_np, store_keys, etc.) still
+    # reference the original numpy arrays; worker_cfg values are now
+    # shared-memory descriptors after publish_dict above.
+    # ------------------------------------------------------------
+    from .sales_worker.init import (
+        _build_store_assortment,
+        _build_buckets_from_brand_key,
+        _build_brand_prob_by_month_rotate_winner,
+        _build_salesperson_effective_by_store,
+        _DEFAULT_ASSORTMENT_COVERAGE,
+        infer_T_from_date_pool,
+        int_or,
+        float_or,
+    )
+
+    # 1) brand_to_row_idx — list of ~300K arrays, share via jagged shared memory
+    #    (pickling 300K individual arrays is extremely slow on Windows spawn)
+    _brand_product_counts = None  # reused by brand_prob pre-build
+    if product_brand_key is not None:
+        _prebuilt_brand = _build_buckets_from_brand_key(product_brand_key)
+        worker_cfg["_prebuilt_brand_to_row_idx"] = _shm.publish_jagged(
+            "brand_idx", _prebuilt_brand, dtype=np.int64,
+        )
+        # Extract brand product counts before freeing (reused for brand_prob)
+        _brand_product_counts = np.array(
+            [len(b) if b is not None else 0 for b in _prebuilt_brand],
+            dtype=np.float64,
+        )
+        del _prebuilt_brand
+
+    # 2) store_to_product_rows (~350 MB — share via jagged shared memory)
+    if assortment_cfg.get("enabled") and product_subcat_key is not None and store_type_map is not None:
+        store_type_arr = np.array(
+            [str(store_type_map.get(int(sk), "Supermarket")) for sk in store_keys],
+            dtype=object,
+        )
+        coverage = assortment_cfg.get("coverage", _DEFAULT_ASSORTMENT_COVERAGE)
+        assort_seed = int(assortment_cfg.get("seed", seed))
+        _prebuilt_assortment = _build_store_assortment(
+            store_keys=store_keys,
+            store_type_arr=store_type_arr,
+            product_np=product_np,
+            product_subcat_key=product_subcat_key,
+            coverage_cfg=coverage,
+            seed=assort_seed,
+        )
+        worker_cfg["_prebuilt_store_to_product_rows"] = _shm.publish_jagged(
+            "assortment", _prebuilt_assortment, dtype=np.int64,
+        )
+        del _prebuilt_assortment  # free the original list
+
+    # 3) salesperson_effective_by_store (dict of small arrays — pickle)
+    if employee_assign_employee_key is not None and employee_assign_store_key is not None:
+        _sp_eff = _build_salesperson_effective_by_store(
+            store_keys=store_keys,
+            assign_store=employee_assign_store_key,
+            assign_emp=employee_assign_employee_key,
+            assign_start=employee_assign_start_date,
+            assign_end=employee_assign_end_date,
+            assign_fte=employee_assign_fte,
+            assign_is_primary=employee_assign_is_primary,
+            primary_boost=2.0,
+        )
+        worker_cfg["_prebuilt_salesperson_effective_by_store"] = _sp_eff
+        # Pre-compute salesperson_global_pool so workers skip employee_assign_role filtering
+        if _sp_eff is not None:
+            _all_sp = np.concatenate([v[0] for v in _sp_eff.values()])
+            worker_cfg["_prebuilt_salesperson_global_pool"] = np.unique(_all_sp).astype(np.int32)
+        del _sp_eff
+
+    # 4) brand_prob_by_month — (T, B) float64 matrix, ~164MB for 72 months × 300K brands.
+    #    Deterministic per seed, so build once and share instead of 8× in workers.
+    models_cfg = worker_cfg.get("models_cfg")
+    if isinstance(models_cfg, dict):
+        _models_root = models_cfg.get("models") if isinstance(models_cfg.get("models"), dict) else models_cfg
+        _brand_cfg = _models_root.get("brand_popularity") if isinstance(_models_root, dict) else None
+        if _brand_cfg and product_brand_key is not None and product_brand_key.size > 0:
+            _T = infer_T_from_date_pool(date_pool)
+            _B = int(product_brand_key.max()) + 1
+            _rng_bp = np.random.default_rng(int(int_or(_brand_cfg.get("seed"), 1234)))
+
+            # Brand product counts (reused from section 1 if available)
+            _bp_counts = _brand_product_counts if (_brand_product_counts is not None and len(_brand_product_counts) == _B) else None
+
+            # Explicit brand weights from config
+            _bp_explicit = None
+            _cfg_weights = _brand_cfg.get("brand_weights")
+            if isinstance(_cfg_weights, dict) and _cfg_weights and brand_names is not None and len(brand_names) == _B:
+                _bp_explicit = np.zeros(_B, dtype=np.float64)
+                _name_to_idx = {str(n): i for i, n in enumerate(brand_names)}
+                _has_override = False
+                for _bname, _bw in _cfg_weights.items():
+                    _idx = _name_to_idx.get(str(_bname))
+                    if _idx is not None:
+                        _bp_explicit[_idx] = float(_bw)
+                        _has_override = True
+                if _has_override:
+                    _unset = _bp_explicit == 0.0
+                    if _unset.any() and _bp_counts is not None:
+                        _fallback = np.sqrt(np.maximum(_bp_counts, 1.0))
+                        _leftover = max(0.0, 1.0 - _bp_explicit.sum())
+                        _fallback_sum = _fallback[_unset].sum()
+                        if _fallback_sum > 0 and _leftover > 0:
+                            _bp_explicit[_unset] = _fallback[_unset] / _fallback_sum * _leftover
+                        elif _leftover > 0:
+                            _bp_explicit[_unset] = _leftover / _unset.sum()
+                    elif _unset.any():
+                        _leftover = max(0.0, 1.0 - _bp_explicit.sum())
+                        _bp_explicit[_unset] = _leftover / _unset.sum() if _unset.sum() > 0 else 0.0
+                else:
+                    _bp_explicit = None
+
+            _brand_prob = _build_brand_prob_by_month_rotate_winner(
+                _rng_bp,
+                T=_T, B=_B,
+                winner_boost=float_or(_brand_cfg.get("winner_boost"), 2.5),
+                noise_sd=float_or(_brand_cfg.get("noise_sd"), 0.15),
+                min_share=float_or(_brand_cfg.get("min_share"), 0.02),
+                year_len_months=int_or(_brand_cfg.get("year_len_months"), 12),
+                brand_product_counts=_bp_counts,
+                explicit_weights=_bp_explicit,
+            )
+            worker_cfg["_prebuilt_brand_prob_by_month"] = _shm.publish(
+                "brand_prob", _brand_prob,
+            )
+            del _brand_prob
+
     # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)
     created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
     created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
@@ -1187,20 +1406,23 @@ def generate_sales_fact(
         label="sales",
     )
 
-    for result in iter_imap_unordered(
-        tasks=batched_tasks,
-        task_fn=_worker_task,
-        spec=pool_spec,
-        initializer=init_sales_worker,
-        initargs=(worker_cfg,),
-    ):
-        if isinstance(result, list):
-            for r in result:
+    try:
+        for result in iter_imap_unordered(
+            tasks=batched_tasks,
+            task_fn=_worker_task,
+            spec=pool_spec,
+            initializer=init_sales_worker,
+            initargs=(worker_cfg,),
+        ):
+            if isinstance(result, list):
+                for r in result:
+                    completed_units += 1
+                    _record_chunk_result(r, completed_units, total_units)
+            else:
                 completed_units += 1
-                _record_chunk_result(r, completed_units, total_units)
-        else:
-            completed_units += 1
-            _record_chunk_result(result, completed_units, total_units)
+                _record_chunk_result(result, completed_units, total_units)
+    finally:
+        _shm.cleanup()
 
     # ------------------------------------------------------------
     # Manifest helper (defined BEFORE returns so it actually runs)

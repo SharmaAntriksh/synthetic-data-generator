@@ -6,9 +6,9 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1032850
-  products: 3258
-  customers: 23488
+  sales_rows: 10328500
+  products: 12332
+  customers: 83488
   stores: 40
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
@@ -19,7 +19,7 @@ defaults:
   seed: 42
   dates:
     start: "2020-01-01"
-    end: "2025-02-15"
+    end: "2025-12-31"
 
 paths:
   geography: "./data/parquet_dims/geography.parquet"
@@ -34,7 +34,7 @@ sales:
   max_lines_per_order: 5
 
   file_format: "parquet"              # csv | parquet | deltaparquet
-  sales_output: "both"               # sales | sales_order | both
+  sales_output: "sales"               # sales | sales_order | both
   skip_order_cols: false
 
   merge:
@@ -45,9 +45,9 @@ sales:
   partition_by: ["Year", "Month"]     # null or [] to disable
 
   advanced:
-    chunk_size: 1_000_000
+    chunk_size: 5_000_00
     workers: 8                        # null = auto-detect
-    row_group_size: 2_000_000
+    row_group_size: 1_000_000
     compression: "snappy"
     write_pyarrow: true
     heavy_pct: 5
@@ -241,7 +241,7 @@ budget:
 # INVENTORY SNAPSHOT
 # ------------------------------------------------------------------
 inventory:
-  enabled: true
+  enabled: false
   seed: 42
   grain: monthly
   partition_by: ["Year", "Month"]     # null or [] to disable (used by deltaparquet)

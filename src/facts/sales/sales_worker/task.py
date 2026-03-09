@@ -893,7 +893,6 @@ def _worker_task(args):
             chunk_idx=idx_i,
             chunk_capacity_orders=cap_orders,
         )
-
         order_enc = _encode_orders(detail_table)
 
         detail_table = _ensure_sales_channel_key_on_lines(

@@ -30,6 +30,8 @@ from .customer_sampling import (
     _eligible_customer_mask_for_month,
     _participation_distinct_target,
     _sample_customers,
+    _make_seen_lookup,
+    _update_seen_lookup,
 )
 
 # Re-export: promotions
