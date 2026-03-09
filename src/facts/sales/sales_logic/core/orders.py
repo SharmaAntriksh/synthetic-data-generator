@@ -320,20 +320,19 @@ def build_orders(
     if expanded_len != n:
         raise RuntimeError("Internal error: repeats sum != n after adjustment")
 
-    # prefix sums for line numbering
-    order_starts = np.cumsum(repeats, dtype=np.int64) - repeats
-
     # expand to line level
     customer_keys = np.repeat(order_customers, repeats)
     order_dates_expanded = np.repeat(order_dates, repeats)
     sales_order_num_int = np.repeat(order_ids_int, repeats)
 
-    # line number per order
-    line_num = (
-        np.arange(expanded_len, dtype=np.int32)
-        - np.repeat(order_starts, repeats)
-        + 1
-    )
+    # line number per order (1-based, resets at each order boundary)
+    # Uses cumsum trick: start with all 1s, subtract repeats[j] at each
+    # boundary so cumsum resets to 1.  Avoids a 4th np.repeat call.
+    line_num = np.ones(expanded_len, dtype=np.int32)
+    if order_count > 1:
+        boundaries = np.cumsum(repeats[:-1], dtype=np.int64)
+        line_num[boundaries] -= repeats[:-1].astype(np.int32)
+    np.cumsum(line_num, out=line_num)
 
     # ------------------------------------------------------------
     # Output

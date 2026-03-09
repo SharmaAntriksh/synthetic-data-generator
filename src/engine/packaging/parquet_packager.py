@@ -73,21 +73,21 @@ def copy_parquet_facts(*, fact_out: Path, facts_out: Path, sales_cfg: dict, tabl
     missing: list[str] = []
 
     for t in tables:
-        dst_dir = facts_out / table_dir_name(t)
-        dst_dir.mkdir(parents=True, exist_ok=True)
-
         src = resolve_merged_parquet(fact_out, sales_cfg, t)
         if src is not None:
-            dst = dst_dir / src.name
+            # Merged file: copy directly into facts_out (no subdirectory)
+            dst = facts_out / src.name
             if dst.exists():
                 dst.unlink()
             shutil.copy2(src, dst)
             copied += 1
             continue
 
-        # No merged file — try copying unmerged chunks
+        # No merged file — try copying unmerged chunks into a subdirectory
         chunks = _find_chunk_parquets(fact_out, t)
         if chunks:
+            dst_dir = facts_out / table_dir_name(t)
+            dst_dir.mkdir(parents=True, exist_ok=True)
             for chunk in chunks:
                 shutil.copy2(chunk, dst_dir / chunk.name)
             copied += 1

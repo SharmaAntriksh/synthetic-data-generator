@@ -46,11 +46,16 @@ def _inventory_worker_task(args: Tuple) -> Dict[str, Any]:
         icfg_dict:       dict — InventoryConfig fields
         output_base:     str — base path without extension (e.g. .../inventory_chunk_00000)
         file_format:     str — "csv", "parquet", or "deltaparquet"
+        product_attrs_arrays: dict of numpy arrays or None — pre-loaded product attributes
 
     Returns:
         dict with chunk_idx, rows, stockout_sum
     """
-    chunk_idx, demand_arrays, parquet_dims, icfg_dict, output_base, file_format = args
+    if len(args) == 7:
+        chunk_idx, demand_arrays, parquet_dims, icfg_dict, output_base, file_format, product_attrs_arrays = args
+    else:
+        chunk_idx, demand_arrays, parquet_dims, icfg_dict, output_base, file_format = args
+        product_attrs_arrays = None
 
     demand = pd.DataFrame({
         "ProductKey": demand_arrays["ProductKey"],
@@ -70,6 +75,7 @@ def _inventory_worker_task(args: Tuple) -> Dict[str, Any]:
         demand=demand,
         parquet_dims=parquet_dims,
         icfg=icfg,
+        product_attrs_arrays=product_attrs_arrays,
     )
 
     n_rows = len(snapshots)

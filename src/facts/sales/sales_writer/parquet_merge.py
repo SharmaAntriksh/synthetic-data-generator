@@ -497,3 +497,116 @@ def merge_parquet_files(
         sort_files=False,
         log=log,
     )
+
+
+# ---------------------------------------------------------------------------
+# Post-merge optimize: sort + rewrite
+# ---------------------------------------------------------------------------
+
+# Sort keys per table type — OrderDate + StoreKey for Sales/Header,
+# SalesOrderNumber for Detail, ReturnDate for Returns.
+_SORT_KEYS_BY_TABLE: dict[str, list[tuple[str, str]]] = {
+    "Sales": [("OrderDate", "ascending"), ("StoreKey", "ascending")],
+    "SalesOrderHeader": [("OrderDate", "ascending"), ("StoreKey", "ascending")],
+    "SalesOrderDetail": [("SalesOrderNumber", "ascending"), ("SalesOrderLineNumber", "ascending")],
+    "SalesReturn": [("ReturnDate", "ascending"), ("SalesOrderNumber", "ascending")],
+}
+
+
+def optimize_parquet(
+    file_path: str,
+    *,
+    sort_keys: Optional[list[tuple[str, str]]] = None,
+    table_name: Optional[str] = None,
+    compression: str = DEFAULT_COMPRESSION,
+    row_group_size: int = 1_000_000,
+    batch_row_groups: int = 10,
+) -> Optional[str]:
+    """Sort and rewrite a merged parquet file for better query performance.
+
+    Reads ``batch_row_groups`` row groups at a time, sorts them, and writes to
+    a temp file, then replaces the original.  This bounds peak memory to
+    roughly ``batch_row_groups * row_group_size`` rows instead of the full file.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the parquet file to optimize.
+    sort_keys : list of (column, order) tuples, optional
+        Sort specification.  If *None*, inferred from ``table_name``.
+    table_name : str, optional
+        Logical table name used to pick default sort keys.
+    compression : str
+        Compression codec for the rewritten file.
+    row_group_size : int
+        Row group size for the rewritten file.
+    batch_row_groups : int
+        Number of row groups to read, sort, and flush at a time.
+
+    Returns
+    -------
+    str | None
+        Path to the optimized file, or None if skipped.
+    """
+    pa, pc, pq = _arrow()
+
+    file_path = os.path.abspath(file_path)
+    if not os.path.isfile(file_path):
+        return None
+
+    # Resolve sort keys
+    if sort_keys is None and table_name:
+        sort_keys = _SORT_KEYS_BY_TABLE.get(table_name)
+    if not sort_keys:
+        return None
+
+    pf = pq.ParquetFile(file_path)
+    schema = pf.schema_arrow
+    n_rg = pf.metadata.num_row_groups
+
+    # Validate that sort columns exist in the file
+    file_cols = set(schema.names)
+    sort_keys = [(col, order) for col, order in sort_keys if col in file_cols]
+    if not sort_keys:
+        pf.close() if hasattr(pf, "close") else None
+        return None
+
+    # Determine dictionary encoding columns (string/binary)
+    dict_cols = [
+        f.name for f in schema
+        if pa.types.is_string(f.type) or pa.types.is_large_string(f.type)
+        or pa.types.is_binary(f.type) or pa.types.is_large_binary(f.type)
+    ]
+
+    tmp_path = file_path + ".optimize_tmp"
+    writer = pq.ParquetWriter(
+        tmp_path,
+        schema,
+        compression=compression,
+        use_dictionary=dict_cols if dict_cols else False,
+        write_statistics=True,
+    )
+
+    try:
+        for start in range(0, n_rg, batch_row_groups):
+            end = min(start + batch_row_groups, n_rg)
+            tables = [pf.read_row_group(i) for i in range(start, end)]
+            batch = pa.concat_tables(tables)
+            del tables
+
+            indices = pc.sort_indices(batch, sort_keys=sort_keys)
+            batch = batch.take(indices)
+            del indices
+
+            writer.write_table(batch, row_group_size=row_group_size)
+            del batch
+    finally:
+        writer.close()
+        try:
+            pf.close() if hasattr(pf, "close") else None
+        except OSError:
+            pass
+
+    # Replace original with optimized file
+    os.replace(tmp_path, file_path)
+    return file_path

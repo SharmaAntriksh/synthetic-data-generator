@@ -4,7 +4,7 @@ from __future__ import annotations
 from .encoding import DICT_EXCLUDE, REQUIRED_PRICING_COLS
 
 # Public APIs (stable)
-from .parquet_merge import merge_parquet_files, DEFAULT_COMPRESSION
+from .parquet_merge import merge_parquet_files, optimize_parquet, DEFAULT_COMPRESSION
 from .delta import write_delta_partitioned, DEFAULT_SORT_ROW_LIMIT, DeltaWriteResult
 
 # Convenience re-exports
@@ -27,6 +27,7 @@ __all__ = [
     "DEFAULT_SORT_ROW_LIMIT",
     # public APIs
     "merge_parquet_files",
+    "optimize_parquet",
     "write_delta_partitioned",
     "write_delta_from_parquet_parts",
     "DeltaWriteResult",

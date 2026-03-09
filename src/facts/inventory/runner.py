@@ -29,7 +29,7 @@ import pyarrow.parquet as pq
 from src.utils.logging_utils import info, work, short_path
 
 from .accumulator import InventoryAccumulator
-from .engine import load_inventory_config, compute_inventory_snapshots, InventoryConfig
+from .engine import load_inventory_config, compute_inventory_snapshots, InventoryConfig, _load_product_attrs
 from .worker import _inventory_worker_task
 
 # Below this pair count, run single-process (overhead of spawning isn't worth it)
@@ -84,7 +84,17 @@ def run_inventory_pipeline(
     merge_enabled = bool(sales_cfg.get("merge_parquet", True))
     merge_file = "inventory_snapshot.parquet"
     delete_chunks = bool(sales_cfg.get("delete_chunks", True))
+    compression = str(sales_cfg.get("compression", "snappy"))
     partition_by: List[str] = inv_cfg.get("partition_by") or []
+
+    # Load product attributes ONCE in the main process instead of per-worker
+    product_attrs = _load_product_attrs(parquet_dims)
+    product_attrs_arrays: Optional[Dict[str, np.ndarray]] = None
+    if not product_attrs.empty:
+        product_attrs_arrays = {
+            col: product_attrs[col].to_numpy(copy=True)
+            for col in product_attrs.columns
+        }
 
     if qualified_pairs >= _PARALLEL_THRESHOLD and n_stores >= 2:
         result = _run_parallel(
@@ -94,9 +104,12 @@ def run_inventory_pipeline(
             merge_file=merge_file,
             delete_chunks=delete_chunks,
             partition_by=partition_by,
+            product_attrs_arrays=product_attrs_arrays,
+            compression=compression,
         )
     else:
-        result = _run_single(demand, parquet_dims, icfg, inv_out, file_format, partition_by=partition_by)
+        result = _run_single(demand, parquet_dims, icfg, inv_out, file_format, partition_by=partition_by,
+                             product_attrs_arrays=product_attrs_arrays)
 
     elapsed = time.time() - t0
     n_rows = result["rows"]
@@ -123,12 +136,14 @@ def _run_single(
     inv_out: Path,
     file_format: str,
     partition_by: Optional[List[str]] = None,
+    product_attrs_arrays: Optional[Dict[str, np.ndarray]] = None,
 ) -> Dict[str, Any]:
     """Original monolithic path — used for small datasets."""
     snapshots = compute_inventory_snapshots(
         demand=demand,
         parquet_dims=parquet_dims,
         icfg=icfg,
+        product_attrs_arrays=product_attrs_arrays,
     )
 
     _write_inventory(snapshots, inv_out, "inventory_snapshot", file_format, partition_by=partition_by)
@@ -192,6 +207,8 @@ def _run_parallel(
     merge_file: str = "inventory_snapshot.parquet",
     delete_chunks: bool = True,
     partition_by: Optional[List[str]] = None,
+    product_attrs_arrays: Optional[Dict[str, np.ndarray]] = None,
+    compression: str = "snappy",
 ) -> Dict[str, Any]:
     """Partition by store groups and run simulation in parallel."""
     from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
@@ -225,6 +242,7 @@ def _run_parallel(
             icfg_dict,
             out_base,
             file_format,
+            product_attrs_arrays,
         ))
 
     del partitions
@@ -278,6 +296,7 @@ def _run_parallel(
                 chunk_files=chunk_files,
                 merged_path=inv_out / merge_file,
                 delete_chunks=delete_chunks,
+                compression=compression,
             )
 
     n_pairs = demand.groupby(["ProductKey", "StoreKey"]).ngroups
@@ -314,6 +333,7 @@ def _merge_inventory_chunks(
     chunk_files: list[Path],
     merged_path: Path,
     delete_chunks: bool = True,
+    compression: str = "snappy",
 ) -> None:
     """Merge parallel inventory chunk parquets into one file (reuses sales merge logic)."""
     from src.facts.sales.sales_writer.parquet_merge import _merge_parquet_files_common
@@ -323,7 +343,7 @@ def _merge_inventory_chunks(
         str_files,
         str(merged_path),
         delete_after=delete_chunks,
-        compression="snappy",
+        compression=compression,
         use_dictionary=True,
         log_prefix="",
     )

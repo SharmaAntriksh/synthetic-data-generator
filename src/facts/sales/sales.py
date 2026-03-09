@@ -16,7 +16,7 @@ from src.utils.logging_utils import debug, done, info, skip, work
 from src.utils.shared_arrays import SharedArrayGroup
 from .sales_logic import State
 from .sales_worker import PoolRunSpec, iter_imap_unordered, _worker_task, init_sales_worker
-from .sales_writer import merge_parquet_files
+from .sales_writer import merge_parquet_files, optimize_parquet
 from .output_paths import (
     OutputPaths,
     TABLE_SALES,
@@ -290,41 +290,6 @@ def build_weighted_date_pool(start: str, end: str, seed: int = 42) -> Tuple[np.n
     return dates.to_numpy("datetime64[D]"), weights
 
 
-def _detect_total_ram_gb() -> Optional[float]:
-    """Return total physical RAM in GB, or None if detection fails."""
-    try:
-        import psutil
-        return psutil.virtual_memory().total / (1024 ** 3)
-    except ImportError:
-        pass
-    # Windows fallback via ctypes
-    try:
-        import ctypes
-        class _MEMSTAT(ctypes.Structure):
-            _fields_ = [
-                ("dwLength", ctypes.c_ulong),
-                ("dwMemoryLoad", ctypes.c_ulong),
-                ("ullTotalPhys", ctypes.c_ulonglong),
-                ("ullAvailPhys", ctypes.c_ulonglong),
-                ("ullTotalPageFile", ctypes.c_ulonglong),
-                ("ullAvailPageFile", ctypes.c_ulonglong),
-                ("ullTotalVirtual", ctypes.c_ulonglong),
-                ("ullAvailVirtual", ctypes.c_ulonglong),
-                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
-            ]
-        stat = _MEMSTAT(dwLength=ctypes.sizeof(_MEMSTAT))
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
-        return stat.ullTotalPhys / (1024 ** 3)
-    except Exception:
-        pass
-    # Linux/macOS fallback
-    try:
-        import os
-        mem_bytes = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
-        return mem_bytes / (1024 ** 3)
-    except Exception:
-        return None
-
 
 def suggest_chunk_size(total_rows: int, target_workers: Optional[int] = None, preferred_chunks_per_worker: int = 2) -> int:
     if target_workers is None:
@@ -452,6 +417,8 @@ def generate_sales_fact(
     )
 
     start_date, end_date = _resolve_date_range(cfg, start_date, end_date)
+    optimize_after_merge = _bool_or(sales_cfg.get("optimize"), False)
+
     seed = _resolve_seed(cfg, seed, default_seed=42)
     partition_enabled, partition_cols = _resolve_partitioning(cfg, partition_enabled, partition_cols)
 
@@ -627,7 +594,9 @@ def generate_sales_fact(
     # Products: respect runner-bound active_product_np
     product_brand_key = None
     brand_names = None
+    product_subcat_key = None
     products_path = parquet_folder_p / "products.parquet"
+    assortment_cfg = (cfg.get("stores") or {}).get("assortment") or {}
 
     def _brand_codes_from_series(s: pd.Series) -> tuple[np.ndarray, np.ndarray]:
         # Guarantee no NA => no -1 codes
@@ -635,32 +604,49 @@ def generate_sales_fact(
         codes, uniques = pd.factorize(s2, sort=True)
         return np.asarray(codes, dtype=np.int32), np.asarray(uniques, dtype=object)
 
+    # Read schema once (metadata only) to discover available columns
+    import pyarrow.parquet as _pq
+    _prod_schema = set(_pq.read_schema(str(products_path)).names)
+    _has_brand_col = "Brand" in _prod_schema
+    _has_subcat_col = "SubcategoryKey" in _prod_schema
+    _need_subcat = bool(assortment_cfg.get("enabled")) and _has_subcat_col
+
     if getattr(State, "active_product_np", None) is not None:
         product_np = State.active_product_np
+        active_keys = np.asarray(product_np[:, 0], dtype=np.int32)
+
+        # Single load: Brand + optional SubcategoryKey (one parquet open)
+        _prod_cols = ["ProductKey"]
+        if _has_brand_col:
+            _prod_cols.append("Brand")
+        if _need_subcat:
+            _prod_cols.append("SubcategoryKey")
 
         try:
-            brand_df = load_parquet_df(products_path, ["ProductKey", "Brand"])
-            brand_df = brand_df.drop_duplicates("ProductKey", keep="first")
+            _prod_df = load_parquet_df(products_path, _prod_cols)
+            _prod_df = _prod_df.drop_duplicates("ProductKey", keep="first")
+            _prod_keys = _prod_df["ProductKey"].to_numpy(dtype=np.int32)
 
-            brand_df["ProductKey"] = brand_df["ProductKey"].astype("int32", copy=False)
-            codes, brand_names = _brand_codes_from_series(brand_df["Brand"])
-            brand_df["_BrandKey"] = codes
+            # Sorted-key lookup (avoids pandas reindex float64 promotion)
+            _sort_idx = np.argsort(_prod_keys)
+            _sorted_keys = _prod_keys[_sort_idx]
+            _pos = np.clip(np.searchsorted(_sorted_keys, active_keys), 0, max(len(_sorted_keys) - 1, 0))
+            _found = _sorted_keys[_pos] == active_keys
 
-            # Map ProductKey -> BrandKey
-            brand_map = pd.Series(
-                brand_df["_BrandKey"].to_numpy(),
-                index=brand_df["ProductKey"].to_numpy(),
-            )
+            if _has_brand_col:
+                codes, brand_names = _brand_codes_from_series(_prod_df["Brand"])
+                bk = np.full(len(active_keys), -1, dtype=np.int32)
+                bk[_found] = codes[_sort_idx][_pos[_found]]
+                if np.any(bk < 0):
+                    info("Brand mapping missing/invalid for some ProductKeys; disabling brand_popularity for this run.")
+                else:
+                    product_brand_key = bk
 
-            active_keys = np.asarray(product_np[:, 0], dtype=np.int32)
-            bk = brand_map.reindex(active_keys).to_numpy(dtype="float64")
-
-            invalid = (~np.isfinite(bk)) | (bk < 0)
-            if np.any(invalid):
-                info("Brand mapping missing/invalid for some ProductKeys; disabling brand_popularity for this run.")
-                product_brand_key = None
-            else:
-                product_brand_key = bk.astype(np.int32, copy=False)
+            if _need_subcat and "SubcategoryKey" in _prod_df.columns:
+                subcat_vals = _prod_df["SubcategoryKey"].to_numpy(dtype=np.int32)
+                sc = np.zeros(len(active_keys), dtype=np.int32)
+                sc[_found] = subcat_vals[_sort_idx][_pos[_found]]
+                product_subcat_key = sc
 
         except Exception as exc:
             info(f"Could not load/derive Brand from products.parquet ({type(exc).__name__}: {exc}); "
@@ -668,66 +654,32 @@ def generate_sales_fact(
             product_brand_key = None
 
     else:
-        # Full product path: keep backward compatibility if Brand is absent
-        try:
-            prod_df = load_parquet_df(products_path, ["ProductKey", "UnitPrice", "UnitCost", "Brand"])
+        # Full product path — single load with all needed columns
+        _prod_cols = ["ProductKey", "UnitPrice", "UnitCost"]
+        if _has_brand_col:
+            _prod_cols.append("Brand")
+        if _need_subcat:
+            _prod_cols.append("SubcategoryKey")
 
-            # Force numeric dtypes (avoid object arrays)
-            prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
-            prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
-            prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
-            prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
-            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int32", copy=False)
+        prod_df = load_parquet_df(products_path, _prod_cols)
+        prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
+        prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
+        prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
+        prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
+        prod_df["ProductKey"] = prod_df["ProductKey"].astype("int32", copy=False)
 
-            product_np = np.column_stack(
-                [
-                    prod_df["ProductKey"].to_numpy(dtype=np.int32, copy=False),
-                    prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
-                    prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
-                ]
-            )
+        product_np = np.column_stack([
+            prod_df["ProductKey"].to_numpy(dtype=np.int32, copy=False),
+            prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
+            prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
+        ])
 
+        if _has_brand_col:
             codes, brand_names = _brand_codes_from_series(prod_df["Brand"])
             product_brand_key = codes if not np.any(codes < 0) else None
 
-        except Exception as exc:
-            # Brand column missing or unreadable — fall back to no-Brand load
-            info(f"Brand column unavailable ({type(exc).__name__}); loading products without brand_popularity.")
-            prod_df = load_parquet_df(products_path, ["ProductKey", "UnitPrice", "UnitCost"])
-
-            # Force numeric dtypes (avoid object arrays)
-            prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
-            prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
-            prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
-            prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
-            prod_df["ProductKey"] = prod_df["ProductKey"].astype("int32", copy=False)
-
-            product_np = np.column_stack(
-                [
-                    prod_df["ProductKey"].to_numpy(dtype=np.int32, copy=False),
-                    prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
-                    prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
-                ]
-            )
-            product_brand_key = None
-
-    # SubcategoryKey for assortment (aligned to product_np row order)
-    product_subcat_key = None
-    assortment_cfg = (cfg.get("stores") or {}).get("assortment") or {}
-    if assortment_cfg.get("enabled"):
-        try:
-            _subcat_df = load_parquet_df(products_path, ["ProductKey", "SubcategoryKey"])
-            _subcat_df = _subcat_df.drop_duplicates("ProductKey", keep="first")
-            _subcat_df["ProductKey"] = _subcat_df["ProductKey"].astype("int32")
-            _subcat_map = pd.Series(
-                _subcat_df["SubcategoryKey"].to_numpy(dtype=np.int32),
-                index=_subcat_df["ProductKey"].to_numpy(dtype=np.int32),
-            )
-            active_keys = np.asarray(product_np[:, 0], dtype=np.int32)
-            product_subcat_key = _subcat_map.reindex(active_keys).fillna(0).to_numpy(dtype=np.int32)
-        except Exception as exc:
-            info(f"Could not load SubcategoryKey ({type(exc).__name__}: {exc}); assortment disabled.")
-            assortment_cfg = {}
+        if _need_subcat and "SubcategoryKey" in prod_df.columns:
+            product_subcat_key = prod_df["SubcategoryKey"].to_numpy(dtype=np.int32)
 
     # PopularityScore + SeasonalityProfile from ProductProfile (for weighted sampling)
     product_popularity = None
@@ -911,21 +863,6 @@ def generate_sales_fact(
     else:
         n_workers = min(len(tasks), max(1, _int_or(workers, cpu_count() - 1)))
 
-    # RAM-aware cap: on Windows (spawn), each worker loads a full Python
-    # interpreter + numpy/pyarrow/pandas (~1.5 GB base) plus chunk processing
-    # intermediates (~1-2 GB peak).  Reserve ~6 GB for the main process + OS +
-    # shared memory blocks.  Budget ~3.5 GB per worker to stay under 85% usage.
-    _total_ram_gb = _detect_total_ram_gb()
-    if _total_ram_gb is not None:
-        _target_usage = _total_ram_gb * 0.80  # stay under 80% to avoid thrashing
-        _reserved = 6.0  # main process + OS + shared memory
-        _per_worker = 3.5
-        _max_by_ram = max(1, int((_target_usage - _reserved) / _per_worker))
-        if n_workers > _max_by_ram:
-            info(f"Capping workers from {n_workers} to {_max_by_ram} "
-                 f"(total RAM: {_total_ram_gb:.0f} GB, "
-                 f"budget: {_per_worker:.1f} GB/worker + {_reserved:.0f} GB reserved)")
-            n_workers = _max_by_ram
 
     info(f"Spawning {n_workers} worker processes...")
 
@@ -1522,9 +1459,22 @@ def generate_sales_fact(
                         chunks,
                         out,
                         delete_after=bool(delete_chunks),
+                        compression=compression,
                         table_name=t,
                         log=False,
                     )
+
+                if optimize_after_merge:
+                    info("Optimize parquet: sorting merged files...")
+                    for t, _chunks, out in merge_jobs:
+                        result = optimize_parquet(
+                            out,
+                            table_name=t,
+                            compression=compression,
+                            row_group_size=row_group_size,
+                        )
+                        if result:
+                            info(f"  Optimized: {os.path.basename(out)}")
             else:
                 info("Merge parquet: none")
 

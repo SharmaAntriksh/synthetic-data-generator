@@ -81,11 +81,8 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
 
         if file_format == "parquet":
             parquets = sorted(inv_src.glob("*.parquet"))
-            if parquets:
-                inv_dst = facts_out / "inventory_snapshot"
-                inv_dst.mkdir(parents=True, exist_ok=True)
-                for f in parquets:
-                    shutil.copy2(f, inv_dst / f.name)
+            for f in parquets:
+                shutil.copy2(f, facts_out / f.name)
         elif file_format == "csv":
             inv_dst = facts_out / "inventory_snapshot"
             inv_dst.mkdir(parents=True, exist_ok=True)
@@ -111,9 +108,12 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         for name in ("budget_yearly", "budget_monthly"):
             src = budget_src / f"{name}.{ext}"
             if src.exists():
-                dst = facts_out / name
-                dst.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst / src.name)
+                if file_format == "parquet":
+                    shutil.copy2(src, facts_out / src.name)
+                else:
+                    dst = facts_out / name
+                    dst.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, dst / src.name)
 
     tables = tables_from_sales_cfg(sales_cfg, cfg)
 

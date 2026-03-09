@@ -192,8 +192,11 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
         if order_ids_int is not None:
             oid = np.asarray(order_ids_int, dtype=np.int32)
-            unique_orders, inv = np.unique(oid, return_inverse=True)
-            per_order_channel = rng.choice(keys, size=unique_orders.shape[0], p=p).astype(np.int16, copy=False)
+            # Order IDs are sequential ints — skip O(n log n) np.unique
+            _min_oid = int(oid[0])
+            _n_orders = int(oid[-1]) - _min_oid + 1
+            inv = oid - np.int32(_min_oid)
+            per_order_channel = rng.choice(keys, size=_n_orders, p=p).astype(np.int16, copy=False)
             sales_channel = per_order_channel[inv]
         else:
             sales_channel = rng.choice(keys, size=n, p=p).astype(np.int16, copy=False)
@@ -217,10 +220,15 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
             prof = profile_lut[sales_channel.astype(np.int32)]
             if order_ids_int is not None:
                 oid = np.asarray(order_ids_int, dtype=np.int32)
-                # Vectorized first-occurrence index via np.unique with return_index
-                unique_orders, first_idx, inv = np.unique(
-                    oid, return_index=True, return_inverse=True,
-                )
+                # Order IDs are sequential — derive first-row indices in O(n)
+                _min_oid = int(oid[0])
+                _n_orders = int(oid[-1]) - _min_oid + 1
+                inv = oid - np.int32(_min_oid)
+                # First occurrence: where oid changes value (sorted+grouped)
+                _changes = np.empty(len(oid), dtype=np.bool_)
+                _changes[0] = True
+                _changes[1:] = oid[1:] != oid[:-1]
+                first_idx = np.flatnonzero(_changes)
                 per_order_prof = prof[first_idx]
                 per_order_time = _sample_timekey_by_profile(rng, per_order_prof)
                 timekey = per_order_time[inv]
@@ -229,19 +237,20 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
         out["TimeKey"] = timekey
 
-        # Rollups (only if present in schema)
+        # Rollups — single int32 cast shared across all divisions
+        _tk32 = timekey.astype(np.int32)
         if "TimeKey15" in schema_types:
-            out["TimeKey15"] = (timekey.astype(np.int32) // 15).astype(np.int16)
+            out["TimeKey15"] = (_tk32 // 15).astype(np.int16)
         if "TimeKey30" in schema_types:
-            out["TimeKey30"] = (timekey.astype(np.int32) // 30).astype(np.int16)
+            out["TimeKey30"] = (_tk32 // 30).astype(np.int16)
         if "TimeKey60" in schema_types:
-            out["TimeKey60"] = (timekey.astype(np.int32) // 60).astype(np.int16)
+            out["TimeKey60"] = (_tk32 // 60).astype(np.int16)
         if "TimeKey360" in schema_types:
-            out["TimeKey360"] = (timekey.astype(np.int32) // 360).astype(np.int16)
+            out["TimeKey360"] = (_tk32 // 360).astype(np.int16)
         if "TimeKey720" in schema_types:
-            out["TimeKey720"] = (timekey.astype(np.int32) // 720).astype(np.int16)
+            out["TimeKey720"] = (_tk32 // 720).astype(np.int16)
         if "TimeBucketKey4" in schema_types:
-            out["TimeBucketKey4"] = (timekey.astype(np.int32) // 240).astype(np.int16)
+            out["TimeBucketKey4"] = (_tk32 // 240).astype(np.int16)
 
     return out
 

@@ -125,6 +125,7 @@ def compute_inventory_snapshots(
     demand: pd.DataFrame,
     parquet_dims: Any,
     icfg: InventoryConfig,
+    product_attrs_arrays: Any = None,
 ) -> pd.DataFrame:
     """
     Simulate monthly inventory snapshots from accumulated sales demand.
@@ -172,10 +173,10 @@ def compute_inventory_snapshots(
     d_qty = demand["QuantitySold"].to_numpy(dtype=np.int32)
 
     d_pair_idx = pair_lookup[d_pk, d_sk]
-    d_month_idx = np.empty(len(d_yr), dtype=np.int32)
-    for i in range(n_months):
-        mask = (d_yr == years_arr[i]) & (d_mo == months_arr[i])
-        d_month_idx[mask] = i
+    # Vectorized month-index mapping: encode year*12+month as a single int, then searchsorted
+    month_keys_encoded = years_arr.astype(np.int32) * 12 + months_arr.astype(np.int32)
+    d_encoded = d_yr * np.int32(12) + d_mo
+    d_month_idx = np.searchsorted(month_keys_encoded, d_encoded).astype(np.int32)
 
     valid = d_pair_idx >= 0
     np.add.at(demand_matrix, (d_pair_idx[valid], d_month_idx[valid]), d_qty[valid])
@@ -195,7 +196,10 @@ def compute_inventory_snapshots(
     # ------------------------------------------------------------------
     # 3. Load product attributes into dense arrays aligned to pairs
     # ------------------------------------------------------------------
-    product_attrs = _load_product_attrs(parquet_dims)
+    if product_attrs_arrays is not None:
+        product_attrs = pd.DataFrame(product_attrs_arrays)
+    else:
+        product_attrs = _load_product_attrs(parquet_dims)
 
     attr_safety = np.full(n_pairs, 20, dtype=np.int32)
     attr_reorder_pt = np.full(n_pairs, 10, dtype=np.int32)
@@ -227,17 +231,23 @@ def compute_inventory_snapshots(
         attr_lead_days[in_range] = dense_lead[pair_pk[in_range]]
         attr_abc_mult[in_range] = dense_abc_mult[pair_pk[in_range]]
 
-    # New profile attributes: seasonality, fragility, case pack qty
-    attr_seasonality = np.full(n_pairs, "None", dtype=object)
+    # New profile attributes: seasonality (int8 encoded), fragility, case pack qty
+    _SEASON_ENCODE = {"Holiday": 1, "Winter": 2, "Summer": 3, "BackToSchool": 4, "Spring": 5}
+    attr_seasonality = np.zeros(n_pairs, dtype=np.int8)
     attr_fragile = np.zeros(n_pairs, dtype=np.int32)
     attr_case_pack = np.ones(n_pairs, dtype=np.int32)
 
     if not product_attrs.empty:
-        pa_season = product_attrs["SeasonalityProfile"].to_numpy().astype(str)
+        pa_season_str = product_attrs["SeasonalityProfile"].to_numpy().astype(str)
         pa_fragile = product_attrs["IsFragile"].to_numpy(dtype=np.int32)
         pa_case = product_attrs["CasePackQty"].to_numpy(dtype=np.int32)
 
-        dense_season = np.full(pa_max, "None", dtype=object)
+        # Encode seasonality as int8
+        pa_season = np.zeros(len(pa_season_str), dtype=np.int8)
+        for sname, scode in _SEASON_ENCODE.items():
+            pa_season[pa_season_str == sname] = scode
+
+        dense_season = np.zeros(pa_max, dtype=np.int8)
         dense_fragile = np.zeros(pa_max, dtype=np.int32)
         dense_case = np.ones(pa_max, dtype=np.int32)
 
@@ -262,10 +272,11 @@ def compute_inventory_snapshots(
         n_months,  # sentinel: pair never had demand (shouldn't happen, but safe)
     )
 
-    demand_positive = demand_matrix.copy().astype(np.float64)
-    demand_positive[demand_positive <= 0] = np.nan
-    avg_demand = np.nanmean(demand_positive, axis=1)
-    avg_demand = np.where(np.isnan(avg_demand), 1.0, np.maximum(avg_demand, 1.0))
+    # Compute average demand without a full float64 copy
+    demand_sum = demand_matrix.sum(axis=1).astype(np.float64)
+    demand_nonzero_months = (demand_matrix > 0).sum(axis=1)
+    avg_demand = np.where(demand_nonzero_months > 0, demand_sum / demand_nonzero_months, 1.0)
+    avg_demand = np.maximum(avg_demand, 1.0)
 
     initial_stock = (
         avg_demand * icfg.initial_stock_multiplier * attr_abc_mult * icfg.overstock_bias
@@ -287,24 +298,24 @@ def compute_inventory_snapshots(
         monthly_shrinkage_base,
     )
 
-    # Seasonality calendar multipliers (per month-of-year, per pair)
-    # Holiday=Nov/Dec, Winter=Nov-Feb, Summer=Jun-Aug, BackToSchool=Jul-Sep
-    _SEASON_MONTH_BOOST: dict[str, dict[int, float]] = {
-        "Holiday":       {11: 0.6, 12: 0.6, 1: 0.2, 10: 0.3},
-        "Winter":        {11: 0.4, 12: 0.4, 1: 0.4, 2: 0.3},
-        "Summer":        {6: 0.4, 7: 0.4, 8: 0.3, 5: 0.2},
-        "BackToSchool":  {7: 0.3, 8: 0.5, 9: 0.3},
-        "Spring":        {3: 0.3, 4: 0.4, 5: 0.3},
+    # Seasonality calendar multipliers — pre-compute full (n_pairs × 12) table
+    # using int8-encoded seasonality codes instead of per-month string comparison
+    _SEASON_MONTH_BOOST: dict[int, dict[int, float]] = {
+        1: {11: 0.6, 12: 0.6, 1: 0.2, 10: 0.3},           # Holiday
+        2: {11: 0.4, 12: 0.4, 1: 0.4, 2: 0.3},             # Winter
+        3: {6: 0.4, 7: 0.4, 8: 0.3, 5: 0.2},               # Summer
+        4: {7: 0.3, 8: 0.5, 9: 0.3},                         # BackToSchool
+        5: {3: 0.3, 4: 0.4, 5: 0.3},                         # Spring
     }
 
-    def _seasonal_mult(month_1based: int) -> np.ndarray:
-        """Return per-pair demand multiplier for a calendar month (1=Jan)."""
-        mult = np.ones(n_pairs, dtype=np.float64)
-        for season, boosts in _SEASON_MONTH_BOOST.items():
-            mask = attr_seasonality == season
-            if mask.any() and month_1based in boosts:
-                mult[mask] += boosts[month_1based]
-        return mult
+    # Pre-compute: seasonal_mult_table[month_1based] = per-pair multiplier array
+    seasonal_mult_table = np.ones((13, n_pairs), dtype=np.float64)  # index 1..12
+    for scode, boosts in _SEASON_MONTH_BOOST.items():
+        mask = attr_seasonality == scode
+        if not mask.any():
+            continue
+        for month_1, boost in boosts.items():
+            seasonal_mult_table[month_1, mask] += boost
 
     # ------------------------------------------------------------------
     # 5. Pre-generate all random draws (avoids per-step RNG calls)
@@ -360,8 +371,7 @@ def compute_inventory_snapshots(
 
         # Seasonal reorder point: boost threshold during peak months
         cal_month = int(months_arr[t])
-        season_mult = _seasonal_mult(cal_month)
-        effective_reorder_pt = (attr_reorder_pt * season_mult).astype(np.int32)
+        effective_reorder_pt = (attr_reorder_pt * seasonal_mult_table[cal_month]).astype(np.int32)
 
         reorder_mask = (qoh <= effective_reorder_pt) & is_active
         comply_mask = rand_compliance[:, t] < icfg.reorder_compliance

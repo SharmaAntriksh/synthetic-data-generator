@@ -31,12 +31,13 @@ def _normalize_file_format(sales_cfg: Dict[str, Any]) -> str:
     return fmt
 
 
-def _resolve_sales_out_folder(fact_out: Path, fmt: str) -> Path:
-    # Preserve your existing folder conventions
+def _resolve_sales_out_folder(fact_out: Path, fmt: str, *, merge_enabled: bool = False) -> Path:
+    # When merge is enabled for parquet, write directly under fact_out
+    # (no extra subfolder).  Chunks-only runs keep the parquet/ subfolder.
     if fmt == "csv":
         return fact_out / "csv"
     if fmt == "parquet":
-        return fact_out / "parquet"
+        return fact_out if merge_enabled else fact_out / "parquet"
     return fact_out / "sales"  # deltaparquet
 
 
@@ -179,7 +180,8 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     fact_out_p.mkdir(parents=True, exist_ok=True)
 
     fmt = _normalize_file_format(sales_cfg)
-    sales_out_folder = _resolve_sales_out_folder(fact_out_p, fmt)
+    merge_enabled = bool(sales_cfg.get("merge_parquet", False))
+    sales_out_folder = _resolve_sales_out_folder(fact_out_p, fmt, merge_enabled=merge_enabled)
 
     # --- Validate critical config early (same semantics, clearer errors)
     _require_key(sales_cfg, "skip_order_cols", "sales")
