@@ -35,7 +35,7 @@ _DIM_FILE_RETURN_REASON = "return_reason.parquet"
 def _all_null_series(s: pd.Series) -> bool:
     try:
         return bool(s.isna().all())
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 
@@ -73,10 +73,10 @@ def _object_series_looks_like_date(s: pd.Series) -> bool:
                 try:
                     pd.Timestamp(v)
                     return True
-                except Exception:
+                except (ValueError, TypeError):
                     pass
         return False
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 
@@ -87,7 +87,7 @@ def _datetime_cols(df: pd.DataFrame) -> list[str]:
         try:
             if pd.api.types.is_datetime64_any_dtype(df[c]):
                 cols.append(str(c))
-        except Exception:
+        except (TypeError, ValueError):
             continue
     return cols
 
@@ -123,7 +123,7 @@ def _guess_date_cols(df: pd.DataFrame) -> list[str]:
         try:
             if pd.api.types.is_object_dtype(df[c]) and _object_series_looks_like_date(df[c]):
                 out.append(cs)
-        except Exception:
+        except (TypeError, ValueError):
             continue
 
     # De-duplicate preserving order
@@ -185,7 +185,7 @@ def write_parquet_with_date32(
     try:
         import pyarrow as pa
         import pyarrow.parquet as pq
-    except Exception:
+    except ImportError:
         # PyArrow unavailable — fall back to pandas writer
         if force_date32:
             date_overrides = {
@@ -456,7 +456,7 @@ def create_final_output_folder(
         elif ff == "deltaparquet":
             try:
                 from deltalake import write_deltalake
-            except Exception as e:
+            except ImportError as e:
                 raise RuntimeError(
                     "deltaparquet mode requested but 'deltalake' is not installed. "
                     "Run `pip install deltalake` or switch to parquet/csv."

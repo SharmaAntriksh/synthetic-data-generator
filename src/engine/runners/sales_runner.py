@@ -99,7 +99,7 @@ def _load_active_products(parquet_dims: Path) -> np.ndarray:
     wanted_cols = ["ProductKey", "IsActiveInSales", "UnitPrice", "UnitCost"]
     try:
         products_df = pd.read_parquet(products_path, columns=wanted_cols)
-    except Exception as e:
+    except (KeyError, ValueError, OSError) as e:
         raise RuntimeError(
             f"Failed reading {products_path} with columns {wanted_cols}. "
             f"Underlying error: {type(e).__name__}: {e}"
@@ -264,10 +264,12 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             skip_order_cols=ctx.skip_order_cols,
             return_manifest=True,
         )
-        if isinstance(result, tuple) and len(result) >= 4:
-            _, _, budget_acc, inventory_acc = result
-        elif isinstance(result, tuple) and len(result) >= 3:
-            _, _, budget_acc = result
+        if isinstance(result, tuple):
+            # result layout: (chunk_files, row_count, budget_acc?, inventory_acc?)
+            if len(result) >= 4:
+                _chunk_files, _row_count, budget_acc, inventory_acc = result[:4]
+            elif len(result) >= 3:
+                _chunk_files, _row_count, budget_acc = result[:3]
 
     _run_step("Generating Sales", _do_generate)
 

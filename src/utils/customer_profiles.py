@@ -233,11 +233,11 @@ VALID_PROFILES = frozenset(_PROFILES.keys())
 # ================================================================
 
 def _deep_merge(base: dict, overrides: dict) -> dict:
-    """Merge overrides into base (one level deep). Overrides win."""
+    """Recursively merge overrides into base. Overrides win for non-dict values."""
     result = dict(base)
     for k, v in overrides.items():
         if isinstance(v, dict) and isinstance(result.get(k), dict):
-            result[k] = {**result[k], **v}
+            result[k] = _deep_merge(result[k], v)
         else:
             result[k] = v
     return result

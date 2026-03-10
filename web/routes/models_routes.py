@@ -63,8 +63,9 @@ def update_models(body: ModelsUpdate):
             raise HTTPException(400, "Models YAML must be a mapping at the top level.")
     except yaml.YAMLError as e:
         raise HTTPException(400, f"Invalid YAML: {e}")
-    _state._models_cfg = parsed
-    _state._models_yaml_text = text
+    with _state._cfg_lock:
+        _state._models_cfg = parsed
+        _state._models_yaml_text = text
     return {"ok": True}
 
 
@@ -75,8 +76,9 @@ def update_models(body: ModelsUpdate):
 @router.post("/reset")
 def reset_models():
     """Reload models from disk, discarding in-memory edits."""
-    _state._models_cfg = _load_yaml(_models_path)
-    _state._models_yaml_text = _models_path.read_text(encoding="utf-8") if _models_path.exists() else ""
+    with _state._cfg_lock:
+        _state._models_cfg = _load_yaml(_models_path)
+        _state._models_yaml_text = _models_path.read_text(encoding="utf-8") if _models_path.exists() else ""
     return {"ok": True}
 
 

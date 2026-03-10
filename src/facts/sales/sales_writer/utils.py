@@ -9,7 +9,7 @@ from typing import Union
 # ---------------------------------------------------------------------
 try:
     from src.utils.logging_utils import info, skip, done, warn
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     def info(msg: str) -> None:  # type: ignore[misc]
         print(msg)
 

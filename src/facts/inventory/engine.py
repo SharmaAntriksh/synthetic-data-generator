@@ -103,7 +103,7 @@ def _load_product_attrs(parquet_dims: Path) -> pd.DataFrame:
 
     try:
         df = pd.read_parquet(pp_path, columns=_PRODUCT_PROFILE_COLS)
-    except Exception:
+    except (KeyError, ValueError, OSError):
         available = pd.read_parquet(pp_path, columns=None).columns.tolist()
         cols_to_load = [c for c in _PRODUCT_PROFILE_COLS if c in available]
         if "ProductKey" not in cols_to_load:

@@ -44,7 +44,7 @@ def load_version(name: str):
         return None
     try:
         return json.loads(vf.read_text())
-    except Exception:
+    except (json.JSONDecodeError, OSError, ValueError):
         return None
 
 

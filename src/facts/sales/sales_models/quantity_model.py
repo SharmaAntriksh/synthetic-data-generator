@@ -35,6 +35,18 @@ _CFG_VERSION: int = -1
 _CFG_CACHE: dict | None = None
 
 
+def _cfg_hash(models: dict) -> int:
+    """Content-based hash of the quantity-relevant config subset."""
+    raw = models.get("quantity", {}) or {}
+    items = []
+    for k, v in sorted(raw.items()):
+        if isinstance(v, (list, tuple)):
+            items.append((k, tuple(v)))
+        else:
+            items.append((k, v))
+    return hash(tuple(items))
+
+
 def _load_cfg() -> dict:
     """
     Load, validate, and cache the quantity config.
@@ -45,7 +57,7 @@ def _load_cfg() -> dict:
     global _CFG_VERSION, _CFG_CACHE
 
     models = getattr(State, "models_cfg", None) or {}
-    version = id(models)
+    version = _cfg_hash(models)
     if version == _CFG_VERSION and _CFG_CACHE is not None:
         return _CFG_CACHE
 

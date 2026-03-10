@@ -120,7 +120,7 @@ CLI flags > config.yaml values (one-time, not persisted).
 
 2. **Dimension versioning:** Each dim has a `.version` file (JSON hash of its config section). Dims only regenerate if the hash changes or `--regen-dimensions` forces it. Stale outputs usually mean the version hash didn't change.
 
-3. **State class is sealed:** `State` in `sales_logic/globals.py` is per-worker, initialized once via `bind_globals()`. Never mutate it after binding. Pass runtime tweaks through function args or config. For new code, prefer `SalesContext.from_state()` (immutable dataclass snapshot) over accessing `State` directly.
+3. **State class is sealed via metaclass:** `State` in `sales_logic/globals.py` uses `_SealableMeta` metaclass to enforce immutability after `bind_globals()` calls `seal()`. Any `setattr(State, ...)` after sealing raises `RuntimeError`. Never mutate it after binding. For new code, prefer `SalesContext.from_state()` (immutable dataclass snapshot) over accessing `State` directly. In tests, call `State.reset()` to unseal.
 
 4. **Returns conditional skip:** Returns are auto-disabled at config load time if `returns.enabled=true` AND `sales_output='sales'` AND `skip_order_cols=true` (returns need SalesOrderNumber to link back). A warning is logged by `validate_cross_section_rules()` in `config.py`.
 
@@ -130,13 +130,17 @@ CLI flags > config.yaml values (one-time, not persisted).
 
 7. **Scratch vs final output:** Workers write to scratch (`data/`), then packaging copies to final timestamped folder (`generated_datasets/`). Interrupted runs may leave scratch behind.
 
-8. **Exception hierarchy:** Use exceptions from `src/exceptions.py` (`ConfigError`, `DimensionError`, `SalesError`, `PackagingError`, `ValidationError`) instead of generic `RuntimeError`/`ValueError`. All inherit from `PipelineError`.
+8. **Exception hierarchy & specificity:** Use exceptions from `src/exceptions.py` (`ConfigError`, `DimensionError`, `SalesError`, `PackagingError`, `ValidationError`) instead of generic `RuntimeError`/`ValueError`. All inherit from `PipelineError`. Avoid bare `except Exception`— always catch specific types (e.g., `except (KeyError, ValueError, OSError)`).
 
 9. **Type coercion helpers:** Always import `bool_or`, `int_or`, `float_or`, `str_or` from `src.utils.config_helpers`. Do not define local variants in dimension/fact generators.
 
-10. **Hardcoded constants:** Domain constants (store types, customer demographics, promo categories, currency maps, etc.) live in `src/defaults.py`. Dimension generators import from there — do not inline large constant dicts.
+10. **Hardcoded constants:** Domain constants (store types, customer demographics, promo categories, currency maps, etc.) live in `src/defaults.py`. Dimension generators import from there — do not inline large constant dicts. Probability arrays are validated at import time to sum to 1.0.
 
 11. **API versioning:** All web API endpoints are available at both `/api/...` (backward-compatible) and `/v1/api/...` (versioned). Both routes hit the same router handlers.
+
+12. **Web layer thread safety:** Shared mutable state in `web/shared_state.py` (`_cfg`, `_models_cfg`, etc.) is guarded by `_cfg_lock`. Always acquire the lock when mutating these globals from route handlers.
+
+13. **Deprecated: `apply_acquisition_tuning()`:** This function in `src/engine/config/config.py` is a no-op and emits `DeprecationWarning`. Use `customers.profile` in config.yaml instead.
 
 ## Testing
 

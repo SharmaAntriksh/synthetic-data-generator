@@ -7,7 +7,17 @@ from typing import Iterable, List, Tuple
 
 import pyodbc
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+def _find_project_root() -> Path:
+    """Walk up from this file to find the repo root (contains main.py)."""
+    d = Path(__file__).resolve().parent
+    for _ in range(10):
+        if (d / "main.py").exists():
+            return d
+        d = d.parent
+    return Path(__file__).resolve().parents[3]  # fallback
+
+
+PROJECT_ROOT = _find_project_root()
 _GO_SPLIT_RE = re.compile(r"^\s*GO\s*$", flags=re.MULTILINE | re.IGNORECASE)
 
 

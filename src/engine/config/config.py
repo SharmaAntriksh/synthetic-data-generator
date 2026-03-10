@@ -146,9 +146,19 @@ def load_config_file(path: str | Path) -> dict:
 def apply_acquisition_tuning(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """No-op: the tuning block has been replaced by models.customers.
 
-    Kept for backward compatibility with external callers.
+    .. deprecated:: 1.0
+        This function is a no-op and will be removed in a future release.
+        Use ``customers.profile`` in config.yaml instead.
+
     If an old-style ``tuning`` block is present it is silently ignored.
     """
+    import warnings
+    warnings.warn(
+        "apply_acquisition_tuning() is deprecated and has no effect. "
+        "Use customers.profile in config.yaml instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return cfg
 
 
@@ -168,8 +178,8 @@ def _load_and_normalize(
 
     cfg: Dict[str, Any] = _load_any(path)
 
-    # Safe, defaults-independent mapping of high-level tuning knobs (if present)
-    cfg = apply_acquisition_tuning(cfg)
+    # Legacy tuning block handling (no-op; kept as comment for traceability)
+    # apply_acquisition_tuning(cfg) — removed: function is deprecated and has no effect
 
     # Distribute scale block into per-section keys (new config format)
     cfg = _distribute_scale(cfg)
@@ -514,11 +524,26 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(pr, (list, tuple)) or len(pr) < 2:
         pr = [10, 3000]
     min_price, max_price = float(pr[0]), float(pr[1])
+    if min_price < 0:
+        raise ValueError(f"products.price_range minimum must be >= 0, got {min_price}")
+    if max_price <= min_price:
+        raise ValueError(
+            f"products.price_range maximum ({max_price}) must be > minimum ({min_price})"
+        )
 
     mr = products.get("margin_range", [0.20, 0.35])
     if not isinstance(mr, (list, tuple)) or len(mr) < 2:
         mr = [0.20, 0.35]
     min_margin, max_margin = float(mr[0]), float(mr[1])
+    if not (0.0 <= min_margin <= 1.0) or not (0.0 <= max_margin <= 1.0):
+        raise ValueError(
+            f"products.margin_range values must be between 0 and 1, "
+            f"got [{min_margin}, {max_margin}]"
+        )
+    if max_margin < min_margin:
+        raise ValueError(
+            f"products.margin_range maximum ({max_margin}) must be >= minimum ({min_margin})"
+        )
 
     brand_norm = bool(products.get("brand_normalize", True))
     brand_norm_alpha = float(products.get("brand_normalize_alpha", 0.35))

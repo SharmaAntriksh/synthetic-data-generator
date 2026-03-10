@@ -40,51 +40,16 @@ def _write_parquet_with_date32(
     compression_level: Optional[int] = None,
     force_date32: bool = True,
 ) -> None:
-    """
-    Write Parquet so datetime64 columns are stored as Arrow date32.
-    Power Query usually imports Arrow DATE as Date (not DateTime).
-
-    Fallback:
-      - If pyarrow is unavailable and force_date32 is True,
-        convert datetime cols to python date objects (object dtype) just for writing.
-    """
-    dt_cols = _infer_datetime_cols(df)
-
-    if not dt_cols:
-        df.to_parquet(out_path, index=False)
-        return
-
-    try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-    except Exception:
-        if force_date32:
-            df2 = df.copy()
-            for c in dt_cols:
-                df2[c] = pd.to_datetime(df2[c]).dt.date
-            df2.to_parquet(out_path, index=False)
-        else:
-            df.to_parquet(out_path, index=False)
-        return
-
-    # Build Arrow table and cast datetime cols to date32
-    table = pa.Table.from_pandas(df, preserve_index=False)
-
-    fields = []
-    dt_cols_set = set(dt_cols)
-    for f in table.schema:
-        if f.name in dt_cols_set:
-            fields.append(pa.field(f.name, pa.date32()))
-        else:
-            fields.append(f)
-
-    table = table.cast(pa.schema(fields), safe=False)
-
-    kwargs = {"compression": compression}
-    if compression_level is not None:
-        kwargs["compression_level"] = compression_level
-
-    pq.write_table(table, str(out_path), **kwargs)
+    """Write Parquet with date32 columns. Delegates to the shared utility."""
+    from src.utils.output_utils import write_parquet_with_date32 as _shared_writer
+    _shared_writer(
+        df,
+        out_path,
+        date_cols=_infer_datetime_cols(df) or None,
+        compression=compression,
+        compression_level=compression_level,
+        force_date32=force_date32,
+    )
 
 
 # ---------------------------------------------------------

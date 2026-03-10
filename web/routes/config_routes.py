@@ -401,13 +401,15 @@ def update_config_yaml(body: ConfigYamlUpdate):
     except yaml.YAMLError as e:
         raise HTTPException(400, f"Invalid YAML: {e}")
 
-    _state._cfg = normalize_config_yaml(parsed)
+    with _state._cfg_lock:
+        _state._cfg = normalize_config_yaml(parsed)
     return {"ok": True}
 
 
 @router.post("/yaml/reset")
 def reset_config_yaml():
     """Reload config from disk, discarding in-memory edits."""
-    _state._cfg = _base_config()
-    _state._cfg_disk_yaml = _config_path.read_text(encoding="utf-8") if _config_path.exists() else ""
+    with _state._cfg_lock:
+        _state._cfg = _base_config()
+        _state._cfg_disk_yaml = _config_path.read_text(encoding="utf-8") if _config_path.exists() else ""
     return {"ok": True}

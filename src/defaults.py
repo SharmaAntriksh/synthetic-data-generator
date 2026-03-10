@@ -381,3 +381,29 @@ CURRENCY_BASE = "USD"
 
 # Below this pair count, run single-process (overhead of spawning isn't worth it)
 INVENTORY_PARALLEL_THRESHOLD = 50_000
+
+
+# =================================================================
+#  MODULE-LEVEL VALIDATION
+# =================================================================
+
+def _validate_probability_arrays() -> None:
+    """Verify that all probability arrays in this module sum to ~1.0."""
+    _PROB_ARRAYS = {
+        "STORE_TYPES_P": STORE_TYPES_P,
+        "STORE_STATUS_P": STORE_STATUS_P,
+        "STORE_REVENUE_CLASSES_P": STORE_REVENUE_CLASSES_P,
+        "CUSTOMER_MARITAL_STATUS_PROBS": CUSTOMER_MARITAL_STATUS_PROBS,
+        "CUSTOMER_EDUCATION_PROBS": CUSTOMER_EDUCATION_PROBS,
+        "CUSTOMER_OCCUPATION_PROBS": CUSTOMER_OCCUPATION_PROBS,
+        "CUSTOMER_CONTACT_METHOD_PROBS": CUSTOMER_CONTACT_METHOD_PROBS,
+    }
+    for name, arr in _PROB_ARRAYS.items():
+        total = float(arr.sum())
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(
+                f"defaults.{name} probabilities sum to {total}, expected 1.0"
+            )
+
+
+_validate_probability_arrays()

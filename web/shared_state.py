@@ -73,14 +73,16 @@ def _base_config() -> dict:
     if _HAS_NORMALIZER:
         try:
             return _load_pipeline_config(str(_config_path))
-        except Exception:
+        except (KeyError, ValueError, OSError, TypeError):
             pass
     return _load_yaml(_config_path)
 
 
 # ---------------------------------------------------------------------------
-# Config state  (mutable module-level singletons)
+# Config state  (mutable module-level singletons, guarded by _cfg_lock)
 # ---------------------------------------------------------------------------
+
+_cfg_lock = threading.Lock()
 
 _cfg: Dict[str, Any] = _base_config()
 _cfg_disk_yaml: str = _config_path.read_text(encoding="utf-8") if _config_path.exists() else ""
@@ -158,10 +160,10 @@ def normalize_config_yaml(parsed: dict) -> dict:
                 yaml.safe_dump(parsed, tmp, sort_keys=False)
                 tmp_path = tmp.name
             result = _load_pipeline_config(tmp_path)
-            os.unlink(tmp_path)
             return result
         except Exception:
+            return parsed
+        finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
-            return parsed
     return parsed

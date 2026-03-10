@@ -459,7 +459,7 @@ def _global_start_month_int(order_dates: np.ndarray) -> int:
             if len(dp) > 0:
                 d0 = np.min(np.asarray(dp).astype("datetime64[D]"))
                 return int(d0.astype("datetime64[M]").astype("int64"))
-        except Exception:
+        except (TypeError, ValueError, OverflowError):
             pass
 
     d0 = np.min(np.asarray(order_dates).astype("datetime64[D]"))

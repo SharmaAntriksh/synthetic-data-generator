@@ -226,7 +226,7 @@ def _as_list(v: Any, default: Sequence[Any]) -> list[Any]:
             out = tolist()
             if isinstance(out, list):
                 return out
-        except Exception:
+        except (TypeError, ValueError):
             pass
     return [v]
 

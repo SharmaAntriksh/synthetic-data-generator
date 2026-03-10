@@ -164,7 +164,20 @@ class SalesContext:
 # Global Sales runtime state (process-local)
 # ===============================================================
 
-class State:
+class _SealableMeta(type):
+    """Metaclass that enforces immutability once ``_sealed`` is True."""
+
+    def __setattr__(cls, name, value):
+        if name == "_sealed" or not getattr(cls, "_sealed", False):
+            super().__setattr__(name, value)
+        else:
+            raise RuntimeError(
+                f"State is sealed; cannot set '{name}'. "
+                "Call State.reset() first (tests only) or pass values before seal()."
+            )
+
+
+class State(metaclass=_SealableMeta):
     """
     Shared global state for Sales runtime only.
 
@@ -173,6 +186,8 @@ class State:
     Notes:
     - Process-local (safe with multiprocessing)
     - Sealed after initialization (bind_globals refuses mutation once sealed)
+    - Uses ``_SealableMeta`` so that ``setattr(State, k, v)`` is blocked
+      after ``seal()`` is called.
     """
 
     # --------------------------------------------------------------
@@ -292,14 +307,15 @@ class State:
         Reset all State fields.
         Intended for tests / development only.
         """
+        # Unseal first so setattr calls below are allowed by _SealableMeta
+        State._sealed = False
         for key in list(vars(State).keys()):
-            if key.startswith("__"):
+            if key.startswith("__") or key == "_sealed":
                 continue
             attr = getattr(State, key)
             if callable(attr):
                 continue
             setattr(State, key, None)
-        State._sealed = False
 
     @staticmethod
     def validate(required):
@@ -315,6 +331,9 @@ class State:
         """
         Prevent further mutation of State via bind_globals().
         Called once during worker initialization.
+
+        After sealing, ``_SealableMeta.__setattr__`` rejects any
+        ``setattr(State, ...)`` calls so that sealed state is truly immutable.
         """
         if PA_AVAILABLE and State.sales_schema is None:
             raise RuntimeError("State.sales_schema was not bound before sealing")
@@ -349,7 +368,7 @@ def bind_globals(gdict: dict):
         # tolerate list/tuple/np arrays being passed by caller
         try:
             State.seen_customers = set(sc)
-        except Exception:
+        except (TypeError, ValueError):
             State.seen_customers = set()
 
     # --------------------------------------------------------------
