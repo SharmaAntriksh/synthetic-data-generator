@@ -66,12 +66,11 @@ def run_inventory_pipeline(
     months_per_pair = demand.groupby(["ProductKey", "StoreKey"]).size()
     qualified_pairs = int((months_per_pair >= icfg.min_demand_months).sum())
     n_stores = demand["StoreKey"].nunique()
+    from src.utils.output_utils import format_number_short
     info(
-        f"Inventory demand: {len(demand):,} monthly demand rows "
-        f"({n_pairs:,} product-store pairs, "
-        f"{qualified_pairs:,} with {icfg.min_demand_months}+ months of demand, "
-        f"{n_stores} stores, "
-        f"{demand['Year'].nunique()} years)"
+        f"Inventory demand: {format_number_short(len(demand))} monthly rows "
+        f"({format_number_short(n_pairs)} product-store pairs, "
+        f"{n_stores} stores, {demand['Year'].nunique()} years)"
     )
 
     inv_out = fact_out / "inventory"

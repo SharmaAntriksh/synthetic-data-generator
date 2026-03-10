@@ -97,6 +97,7 @@ def run_pipeline(
     dry_run: bool = False,
     regen_dimensions: Optional[Iterable[str]] = None,
     overrides: Optional[PipelineOverrides] = None,
+    report: bool = True,
 ) -> Dict[str, Any]:
     """
     Shared pipeline runner (CLI + Streamlit UI friendly).
@@ -230,7 +231,7 @@ def run_pipeline(
             dim_summary = generate_dimensions(cfg, parquet_dims, force_regenerate=force_regenerate)
 
         if only != "dimensions":
-            run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg)
+            run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, report=report)
 
         # ----------------------------
         # Final cleanup (scratch)

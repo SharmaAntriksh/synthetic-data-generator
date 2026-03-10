@@ -172,7 +172,7 @@ class SalesRunContext:
 # Public Runner
 # =========================================================
 
-def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenerate: bool = True):
+def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenerate: bool = True, report: bool = False):
     """
     Run the sales fact pipeline.
 
@@ -305,18 +305,30 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
         _run_step("Generating Inventory Snapshots", _do_inventory)
 
     # --- Step 3: Package output + PBIP
+    final_folder_result = None
+
     def _do_package():
-        final_folder = package_output(ctx.cfg_for_run, ctx.sales_cfg, ctx.parquet_dims, ctx.fact_out)
+        nonlocal final_folder_result
+        final_folder_result = package_output(ctx.cfg_for_run, ctx.sales_cfg, ctx.parquet_dims, ctx.fact_out)
 
         # PBIP templates now live under:
         #   samples/powerbi/templates/{csv|parquet}/{Sales|Orders|Sales and Orders}
         # deltaparquet intentionally skips PBIP.
         maybe_attach_pbip_project(
-            final_folder=final_folder,
+            final_folder=final_folder_result,
             file_format=ctx.sales_cfg["file_format"],
             sales_output=ctx.sales_cfg["sales_output"],
         )
 
     _run_step("Packaging Output", _do_package)
+
+    # --- Step 4: Quality report (optional)
+    if report and final_folder_result is not None:
+        from src.engine.quality_report import generate_quality_report
+
+        def _do_report():
+            generate_quality_report(final_folder_result, cfg=ctx.cfg)
+
+        _run_step("Quality Report", _do_report)
 
     return None
