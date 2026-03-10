@@ -23,116 +23,27 @@ from src.utils.config_helpers import (
     range2,
     region_from_iso_code,
 )
-
-# ---------------------------------------------------------
-# Constants
-# ---------------------------------------------------------
-
-_STORE_TYPES = np.array(["Supermarket", "Convenience", "Online", "Hypermarket"], dtype=object)
-_STORE_STATUS = np.array(["Open", "Closed", "Renovating"], dtype=object)
-_CLOSE_REASONS = np.array(["Low Sales", "Lease Ended", "Renovation", "Moved Location"], dtype=object)
-
-_STORE_TYPES_P = np.array([0.50, 0.30, 0.10, 0.10], dtype=float)
-_STORE_STATUS_P = np.array([0.85, 0.10, 0.05], dtype=float)
-
-_BRANDS = np.array(
-    [
-        "Northwind Market", "Contoso Mart", "Fabrikam Foods", "Woodgrove Grocers",
-        "Adventure Works Retail", "Tailspin Superstores", "Wingtip Fresh", "Proseware Market",
-        "CitySquare Grocers", "Harborview Market", "Summit Retail", "BlueSky Foods",
-    ],
-    dtype=object,
+from src.defaults import (
+    STORE_TYPES as _STORE_TYPES,
+    STORE_STATUS as _STORE_STATUS,
+    STORE_CLOSE_REASONS as _CLOSE_REASONS,
+    STORE_TYPES_P as _STORE_TYPES_P,
+    STORE_STATUS_P as _STORE_STATUS_P,
+    STORE_BRANDS as _BRANDS,
+    STORE_AREAS as _AREAS,
+    STORE_MANAGER_FIRST as _MANAGER_FIRST,
+    STORE_MANAGER_LAST as _MANAGER_LAST,
+    STORE_ONLINE_SUFFIX as _ONLINE_SUFFIX,
+    STORE_FORMATS as _STORE_FORMATS,
+    STORE_DEFAULT_FORMATS as _DEFAULT_FORMATS,
+    STORE_OWNERSHIP_TYPES as _OWNERSHIP_TYPES,
+    STORE_DEFAULT_OWNERSHIP as _DEFAULT_OWNERSHIP,
+    STORE_REVENUE_CLASSES as _REVENUE_CLASSES,
+    STORE_REVENUE_CLASSES_P as _REVENUE_CLASSES_P,
+    STORE_ISO_TO_ZONE as _ISO_TO_ZONE,
+    STORE_BRAND_DOMAINS as _BRAND_DOMAINS,
+    STORE_EU_COUNTRY_CODES as _EU_COUNTRY_CODES,
 )
-
-_AREAS = np.array(
-    [
-        "Downtown", "Uptown", "Midtown", "Riverside", "Lakeside", "Hillcrest",
-        "Old Town", "West End", "Eastside", "Northgate", "Southpark", "Harbor",
-        "Airport", "Market District", "Central", "University",
-    ],
-    dtype=object,
-)
-
-_MANAGER_FIRST = np.array(
-    [
-        "James","John","Robert","Michael","William","David","Richard","Joseph","Thomas","Charles",
-        "Christopher","Daniel","Matthew","Anthony","Mark","Steven","Paul","Andrew","Joshua","Ryan",
-        "Mary","Patricia","Jennifer","Linda","Elizabeth","Barbara","Susan","Jessica","Sarah","Karen",
-        "Nancy","Lisa","Margaret","Sandra","Ashley","Kimberly","Emily","Donna","Michelle","Laura",
-        "Alex","Jordan","Taylor","Casey","Morgan","Riley","Jamie","Avery","Cameron","Quinn",
-    ],
-    dtype=object,
-)
-
-_MANAGER_LAST = np.array(
-    [
-        "Smith","Johnson","Williams","Brown","Jones","Miller","Davis","Wilson","Anderson","Thomas",
-        "Taylor","Moore","Jackson","Martin","Lee","Perez","Thompson","White","Harris","Clark",
-        "Lewis","Robinson","Walker","Young","Allen","King","Wright","Scott","Green","Baker",
-        "Adams","Nelson","Hill","Campbell","Mitchell","Carter","Roberts","Turner","Phillips","Parker",
-    ],
-    dtype=object,
-)
-
-_ONLINE_SUFFIX = np.array(
-    ["Online", "Digital", "E-Commerce", "Web Store", "Direct"],
-    dtype=object,
-)
-
-# StoreFormat — choices and probabilities keyed by StoreType
-_STORE_FORMATS: dict[str, tuple[list[str], list[float]]] = {
-    "Online":      (["Digital"],                                   [1.00]),
-    "Hypermarket": (["Flagship", "Standard"],                      [0.30, 0.70]),
-    "Supermarket": (["Flagship", "Standard", "Express"],           [0.10, 0.60, 0.30]),
-    "Convenience": (["Standard", "Express", "Drive-Thru"],         [0.10, 0.50, 0.40]),
-}
-_DEFAULT_FORMATS: tuple[list[str], list[float]] = (["Standard", "Express"], [0.50, 0.50])
-
-# OwnershipType — choices and probabilities keyed by StoreType
-_OWNERSHIP_TYPES: dict[str, tuple[list[str], list[float]]] = {
-    "Online":      (["Corporate", "Licensed"],              [0.70, 0.30]),
-    "Hypermarket": (["Corporate", "Franchise", "Licensed"], [0.80, 0.15, 0.05]),
-    "Supermarket": (["Corporate", "Franchise", "Licensed"], [0.50, 0.35, 0.15]),
-    "Convenience": (["Corporate", "Franchise", "Licensed"], [0.30, 0.50, 0.20]),
-}
-_DEFAULT_OWNERSHIP: tuple[list[str], list[float]] = (
-    ["Corporate", "Franchise", "Licensed"], [0.50, 0.35, 0.15],
-)
-
-_REVENUE_CLASSES   = np.array(["A", "B", "C"], dtype=object)
-_REVENUE_CLASSES_P = np.array([0.20, 0.60, 0.20], dtype=float)
-
-# StoreZone derived from ISO/currency code
-_ISO_TO_ZONE: dict[str, str] = {
-    "USD": "Americas",    "CAD": "Americas",    "MXN": "Americas",    "BRL": "Americas",
-    "ARS": "Americas",    "CLP": "Americas",    "COP": "Americas",    "PEN": "Americas",
-    "GBP": "Europe",      "EUR": "Europe",      "CHF": "Europe",      "SEK": "Europe",
-    "NOK": "Europe",      "DKK": "Europe",      "PLN": "Europe",      "CZK": "Europe",
-    "HUF": "Europe",      "RON": "Europe",
-    "INR": "South Asia",
-    "AUD": "Asia Pacific", "NZD": "Asia Pacific", "CNY": "Asia Pacific", "JPY": "Asia Pacific",
-    "HKD": "Asia Pacific", "SGD": "Asia Pacific", "KRW": "Asia Pacific", "TWD": "Asia Pacific",
-    "THB": "Asia Pacific", "IDR": "Asia Pacific", "PHP": "Asia Pacific", "MYR": "Asia Pacific",
-}
-
-# Brand → email domain
-_BRAND_DOMAINS: dict[str, str] = {
-    "Northwind Market":       "northwindmarket.com",
-    "Contoso Mart":           "contosomart.com",
-    "Fabrikam Foods":         "fabrikamfoods.com",
-    "Woodgrove Grocers":      "woodgrovegrocers.com",
-    "Adventure Works Retail": "adventureworks.com",
-    "Tailspin Superstores":   "tailspinstores.com",
-    "Wingtip Fresh":          "wingtipfresh.com",
-    "Proseware Market":       "prosewaremarket.com",
-    "CitySquare Grocers":     "citysquaregrocers.com",
-    "Harborview Market":      "harborviewmarket.com",
-    "Summit Retail":          "summitretail.com",
-    "BlueSky Foods":          "blueskyfoods.com",
-}
-
-# EU country code rotation for phone generation
-_EU_COUNTRY_CODES = [33, 34, 39, 49, 31, 32, 41, 46, 47, 45]
 
 
 # ---------------------------------------------------------

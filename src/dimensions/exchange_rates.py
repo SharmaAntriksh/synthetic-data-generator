@@ -5,6 +5,7 @@ from pathlib import Path
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
 from src.integrations.fx_yahoo import build_or_update_fx
+from src.defaults import CURRENCY_BASE
 
 
 # ---------------------------------------------------------
@@ -70,10 +71,10 @@ def run_exchange_rates(cfg, parquet_folder: Path):
     annual_drift = fx_cfg.get("future_annual_drift", 0.02)
 
     # Enforce current supported invariant
-    if base != "USD":
+    if base != CURRENCY_BASE:
         raise ValueError(
-            f"Only base_currency='USD' is supported currently. Got base_currency={base!r}. "
-            "fx_yahoo master is stored as USD -> Curr."
+            f"Only base_currency='{CURRENCY_BASE}' is supported currently. Got base_currency={base!r}. "
+            f"fx_yahoo master is stored as {CURRENCY_BASE} -> Curr."
         )
 
     # Minimal config for versioning (dimension-only)
@@ -105,7 +106,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
 
     # Step 2: Slice master (USD -> currencies) and apply date window
     df = master_fx[
-        (master_fx["FromCurrency"] == "USD") &
+        (master_fx["FromCurrency"] == CURRENCY_BASE) &
         (master_fx["ToCurrency"].isin(currencies)) &
         (master_fx["Date"] >= start) &
         (master_fx["Date"] <= end)

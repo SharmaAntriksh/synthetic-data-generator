@@ -1,3 +1,9 @@
+"""Sales fact pipeline coordinator.
+
+Resolves config, loads dimension data, binds worker state, and
+orchestrates the multi-step sales → budget → inventory → packaging
+pipeline.
+"""
 from __future__ import annotations
 
 import shutil
@@ -5,8 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
+from src.exceptions import ConfigError, SalesError
 from src.utils.logging_utils import stage, info
 from src.engine.packaging import package_output
 from src.engine.powerbi_packaging import maybe_attach_pbip_project
@@ -20,14 +28,14 @@ from src.facts.sales.sales_logic import bind_globals, State
 
 def _require_key(d: Dict[str, Any], key: str, ctx: str) -> Any:
     if key not in d:
-        raise RuntimeError(f"Missing required config key: {ctx}.{key}")
+        raise ConfigError(f"Missing required config key: {ctx}.{key}")
     return d[key]
 
 
 def _normalize_file_format(sales_cfg: Dict[str, Any]) -> str:
     fmt = str(_require_key(sales_cfg, "file_format", "sales")).strip().lower()
     if fmt not in {"csv", "parquet", "deltaparquet"}:
-        raise RuntimeError("sales.file_format must be one of: csv | parquet | deltaparquet")
+        raise ConfigError("sales.file_format must be one of: csv | parquet | deltaparquet")
     return fmt
 
 
@@ -79,7 +87,7 @@ def _compute_returns_effective(cfg: Dict[str, Any], sales_cfg: Dict[str, Any]) -
     return cfg, effective
 
 
-def _load_active_products(parquet_dims: Path) -> Any:
+def _load_active_products(parquet_dims: Path) -> np.ndarray:
     """
     Loads active products pool: (ProductKey, UnitPrice, UnitCost)
     Raises clear errors if file/columns missing or no active products.

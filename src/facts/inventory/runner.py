@@ -31,9 +31,7 @@ from src.utils.logging_utils import info, work, short_path
 from .accumulator import InventoryAccumulator
 from .engine import load_inventory_config, compute_inventory_snapshots, InventoryConfig, _load_product_attrs
 from .worker import _inventory_worker_task
-
-# Below this pair count, run single-process (overhead of spawning isn't worth it)
-_PARALLEL_THRESHOLD = 50_000
+from src.defaults import INVENTORY_PARALLEL_THRESHOLD as _PARALLEL_THRESHOLD
 
 
 def run_inventory_pipeline(

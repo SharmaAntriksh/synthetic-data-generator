@@ -1,11 +1,25 @@
 """Sales runtime state + schema binding.
 
 This module is imported by worker processes; keep it lightweight and deterministic.
+
+The ``State`` class remains the canonical process-local singleton for
+multiprocessing workers.  ``SalesContext`` is the new dependency-injection
+friendly dataclass that makes dependencies explicit.  Use
+``SalesContext.from_state()`` to snapshot the current ``State`` into a
+context object, which can then be passed through function parameters
+instead of relying on the global.
+
+Migration path:
+    1. New/refactored functions accept ``ctx: SalesContext`` as their
+       first parameter.
+    2. Legacy code continues to read from ``State`` directly.
+    3. Over time, functions are converted to use ``ctx`` and ``State``
+       access is phased out.
 """
 from __future__ import annotations
 
-
-
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -67,6 +81,83 @@ def _logical_to_arrow_schema(logical_schema):
     for name, sql_type in logical_schema:
         fields.append(pa.field(str(name), _sql_to_pa_type(sql_type)))
     return pa.schema(fields)
+
+
+# ===============================================================
+# Dependency-injection context (explicit alternative to State)
+# ===============================================================
+
+@dataclass
+class SalesContext:
+    """Explicit, testable container for all sales worker dependencies.
+
+    Every field that ``State`` exposes as a class variable is represented
+    here as a typed dataclass field.  Use ``SalesContext.from_state()``
+    to snapshot the current global ``State`` into a portable context.
+    """
+
+    # -- Dimension data --
+    product_np: Any = None
+    active_product_np: Any = None
+    customer_keys: Any = None
+    customer_is_active_in_sales: Any = None
+    customer_start_month: Any = None
+    customer_end_month: Any = None
+    customer_base_weight: Any = None
+    seen_customers: Any = field(default_factory=set)
+    date_pool: Any = None
+    date_prob: Any = None
+    store_keys: Any = None
+
+    # -- Promotions --
+    promo_keys_all: Any = None
+    promo_start_all: Any = None
+    promo_end_all: Any = None
+    new_customer_promo_keys: Any = None
+    new_customer_window_months: int = 3
+
+    # -- Mappings --
+    store_to_product_rows: Any = None
+    store_to_geo_arr: Any = None
+    geo_to_currency_arr: Any = None
+    models_cfg: Optional[Dict[str, Any]] = None
+
+    # -- Output config --
+    file_format: Optional[str] = None
+    out_folder: Optional[str] = None
+    chunk_size: Optional[int] = None
+    row_group_size: Optional[int] = None
+    compression: Optional[str] = None
+    order_id_stride_orders: Optional[int] = None
+    skip_order_cols: Optional[bool] = None
+    skip_order_cols_requested: Optional[bool] = None
+    max_lines_per_order: int = 6
+
+    # -- Delta / partitioning --
+    no_discount_key: Any = None
+    delta_output_folder: Optional[str] = None
+    write_delta: Optional[bool] = None
+    partition_enabled: Optional[bool] = None
+    partition_cols: Optional[List[str]] = None
+
+    # -- Budget --
+    budget_enabled: Optional[bool] = None
+    budget_store_to_country: Any = None
+    budget_product_to_cat: Any = None
+
+    # -- Schema --
+    sales_schema: Any = None
+
+    @classmethod
+    def from_state(cls) -> "SalesContext":
+        """Snapshot the current ``State`` singleton into a ``SalesContext``."""
+        fields = {f.name for f in cls.__dataclass_fields__.values()}
+        kwargs = {}
+        for name in fields:
+            val = getattr(State, name, None)
+            if val is not None:
+                kwargs[name] = val
+        return cls(**kwargs)
 
 
 # ===============================================================
@@ -299,6 +390,7 @@ def fmt(dt):
 
 
 __all__ = [
+    "SalesContext",
     "State",
     "bind_globals",
     "fmt",

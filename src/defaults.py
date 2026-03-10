@@ -1,0 +1,383 @@
+"""Centralized hardcoded constants for dimension and fact generators.
+
+All domain constants that were previously scattered across individual
+generator modules are collected here.  Grouped by domain so that
+each generator can import only what it needs.
+
+IMPORTANT: values must stay exactly in sync with what was previously
+inline — changing a value here changes generation output.
+"""
+from __future__ import annotations
+
+from typing import Dict, List, Tuple
+
+import numpy as np
+
+
+# =================================================================
+#  STORE_DEFAULTS
+# =================================================================
+
+STORE_TYPES = np.array(
+    ["Supermarket", "Convenience", "Online", "Hypermarket"], dtype=object
+)
+STORE_STATUS = np.array(["Open", "Closed", "Renovating"], dtype=object)
+STORE_CLOSE_REASONS = np.array(
+    ["Low Sales", "Lease Ended", "Renovation", "Moved Location"], dtype=object
+)
+
+STORE_TYPES_P = np.array([0.50, 0.30, 0.10, 0.10], dtype=float)
+STORE_STATUS_P = np.array([0.85, 0.10, 0.05], dtype=float)
+
+STORE_BRANDS = np.array(
+    [
+        "Northwind Market", "Contoso Mart", "Fabrikam Foods", "Woodgrove Grocers",
+        "Adventure Works Retail", "Tailspin Superstores", "Wingtip Fresh", "Proseware Market",
+        "CitySquare Grocers", "Harborview Market", "Summit Retail", "BlueSky Foods",
+    ],
+    dtype=object,
+)
+
+STORE_AREAS = np.array(
+    [
+        "Downtown", "Uptown", "Midtown", "Riverside", "Lakeside", "Hillcrest",
+        "Old Town", "West End", "Eastside", "Northgate", "Southpark", "Harbor",
+        "Airport", "Market District", "Central", "University",
+    ],
+    dtype=object,
+)
+
+STORE_MANAGER_FIRST = np.array(
+    [
+        "James","John","Robert","Michael","William","David","Richard","Joseph","Thomas","Charles",
+        "Christopher","Daniel","Matthew","Anthony","Mark","Steven","Paul","Andrew","Joshua","Ryan",
+        "Mary","Patricia","Jennifer","Linda","Elizabeth","Barbara","Susan","Jessica","Sarah","Karen",
+        "Nancy","Lisa","Margaret","Sandra","Ashley","Kimberly","Emily","Donna","Michelle","Laura",
+        "Alex","Jordan","Taylor","Casey","Morgan","Riley","Jamie","Avery","Cameron","Quinn",
+    ],
+    dtype=object,
+)
+
+STORE_MANAGER_LAST = np.array(
+    [
+        "Smith","Johnson","Williams","Brown","Jones","Miller","Davis","Wilson","Anderson","Thomas",
+        "Taylor","Moore","Jackson","Martin","Lee","Perez","Thompson","White","Harris","Clark",
+        "Lewis","Robinson","Walker","Young","Allen","King","Wright","Scott","Green","Baker",
+        "Adams","Nelson","Hill","Campbell","Mitchell","Carter","Roberts","Turner","Phillips","Parker",
+    ],
+    dtype=object,
+)
+
+STORE_ONLINE_SUFFIX = np.array(
+    ["Online", "Digital", "E-Commerce", "Web Store", "Direct"],
+    dtype=object,
+)
+
+# StoreFormat — choices and probabilities keyed by StoreType
+STORE_FORMATS: dict[str, tuple[list[str], list[float]]] = {
+    "Online":      (["Digital"],                                   [1.00]),
+    "Hypermarket": (["Flagship", "Standard"],                      [0.30, 0.70]),
+    "Supermarket": (["Flagship", "Standard", "Express"],           [0.10, 0.60, 0.30]),
+    "Convenience": (["Standard", "Express", "Drive-Thru"],         [0.10, 0.50, 0.40]),
+}
+STORE_DEFAULT_FORMATS: tuple[list[str], list[float]] = (["Standard", "Express"], [0.50, 0.50])
+
+# OwnershipType — choices and probabilities keyed by StoreType
+STORE_OWNERSHIP_TYPES: dict[str, tuple[list[str], list[float]]] = {
+    "Online":      (["Corporate", "Licensed"],              [0.70, 0.30]),
+    "Hypermarket": (["Corporate", "Franchise", "Licensed"], [0.80, 0.15, 0.05]),
+    "Supermarket": (["Corporate", "Franchise", "Licensed"], [0.50, 0.35, 0.15]),
+    "Convenience": (["Corporate", "Franchise", "Licensed"], [0.30, 0.50, 0.20]),
+}
+STORE_DEFAULT_OWNERSHIP: tuple[list[str], list[float]] = (
+    ["Corporate", "Franchise", "Licensed"], [0.50, 0.35, 0.15],
+)
+
+STORE_REVENUE_CLASSES = np.array(["A", "B", "C"], dtype=object)
+STORE_REVENUE_CLASSES_P = np.array([0.20, 0.60, 0.20], dtype=float)
+
+# StoreZone derived from ISO/currency code
+STORE_ISO_TO_ZONE: dict[str, str] = {
+    "USD": "Americas",    "CAD": "Americas",    "MXN": "Americas",    "BRL": "Americas",
+    "ARS": "Americas",    "CLP": "Americas",    "COP": "Americas",    "PEN": "Americas",
+    "GBP": "Europe",      "EUR": "Europe",      "CHF": "Europe",      "SEK": "Europe",
+    "NOK": "Europe",      "DKK": "Europe",      "PLN": "Europe",      "CZK": "Europe",
+    "HUF": "Europe",      "RON": "Europe",
+    "INR": "South Asia",
+    "AUD": "Asia Pacific", "NZD": "Asia Pacific", "CNY": "Asia Pacific", "JPY": "Asia Pacific",
+    "HKD": "Asia Pacific", "SGD": "Asia Pacific", "KRW": "Asia Pacific", "TWD": "Asia Pacific",
+    "THB": "Asia Pacific", "IDR": "Asia Pacific", "PHP": "Asia Pacific", "MYR": "Asia Pacific",
+}
+
+# Brand -> email domain
+STORE_BRAND_DOMAINS: dict[str, str] = {
+    "Northwind Market":       "northwindmarket.com",
+    "Contoso Mart":           "contosomart.com",
+    "Fabrikam Foods":         "fabrikamfoods.com",
+    "Woodgrove Grocers":      "woodgrovegrocers.com",
+    "Adventure Works Retail": "adventureworks.com",
+    "Tailspin Superstores":   "tailspinstores.com",
+    "Wingtip Fresh":          "wingtipfresh.com",
+    "Proseware Market":       "prosewaremarket.com",
+    "CitySquare Grocers":     "citysquaregrocers.com",
+    "Harborview Market":      "harborviewmarket.com",
+    "Summit Retail":          "summitretail.com",
+    "BlueSky Foods":          "blueskyfoods.com",
+}
+
+# EU country code rotation for phone generation
+STORE_EU_COUNTRY_CODES = [33, 34, 39, 49, 31, 32, 41, 46, 47, 45]
+
+
+# =================================================================
+#  CUSTOMER_DEFAULTS
+# =================================================================
+
+CUSTOMER_PERSONAL_EMAIL_DOMAINS = np.array(
+    ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com"]
+)
+
+CUSTOMER_MARITAL_STATUS_LABELS = np.array(["Married", "Single"])
+CUSTOMER_MARITAL_STATUS_PROBS = np.array([0.55, 0.45])
+
+CUSTOMER_EDUCATION_LABELS = np.array(["High School", "Bachelors", "Masters", "PhD"])
+CUSTOMER_EDUCATION_PROBS = np.array([0.20, 0.50, 0.25, 0.05])
+
+CUSTOMER_OCCUPATION_LABELS = np.array(
+    ["Professional", "Clerical", "Skilled", "Service", "Executive"]
+)
+CUSTOMER_OCCUPATION_PROBS = np.array([0.50, 0.20, 0.15, 0.10, 0.05])
+
+CUSTOMER_AGE_MIN_DAYS = 18 * 365
+CUSTOMER_AGE_MAX_DAYS = 70 * 365
+CUSTOMER_INCOME_MIN = 20_000
+CUSTOMER_INCOME_MAX = 200_000
+CUSTOMER_MAX_CHILDREN = 5  # exclusive upper bound for rng.integers
+
+# Loyalty score component weights
+CUSTOMER_LOYALTY_W_WEIGHT = 0.55
+CUSTOMER_LOYALTY_W_TEMP = 0.30
+CUSTOMER_LOYALTY_W_INCOME = 0.15
+
+# Income model: lognormal base by education, scaled by occupation
+CUSTOMER_EDUCATION_INCOME_PARAMS = {
+    "High School": (10.50, 0.40),   # median ~$36K
+    "Bachelors":   (10.80, 0.38),   # median ~$49K
+    "Masters":     (11.00, 0.35),   # median ~$60K
+    "PhD":         (11.20, 0.32),   # median ~$73K
+}
+
+CUSTOMER_OCCUPATION_INCOME_MULT = {
+    "Executive":    1.55,
+    "Professional": 1.20,
+    "Skilled":      1.00,
+    "Clerical":     0.85,
+    "Service":      0.75,
+}
+
+CUSTOMER_INCOME_ROUND_TO = 1_000
+
+# Derived demographic columns
+CUSTOMER_AGE_GROUP_EDGES = np.array([25, 35, 45, 55, 65])
+CUSTOMER_AGE_GROUP_LABELS = np.array(
+    ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"], dtype=object
+)
+
+CUSTOMER_INCOME_GROUP_EDGES = np.array([35_000, 65_000, 110_000])
+CUSTOMER_INCOME_GROUP_LABELS = np.array(["Low", "Mid", "High", "Premium"], dtype=object)
+
+CUSTOMER_HOME_OWNERSHIP_LABELS = np.array(["Rent", "Mortgage", "Own"])
+CUSTOMER_HOME_OWNERSHIP_PROBS_BY_INCOME = {
+    "Low":     np.array([0.65, 0.25, 0.10]),
+    "Mid":     np.array([0.35, 0.45, 0.20]),
+    "High":    np.array([0.15, 0.45, 0.40]),
+    "Premium": np.array([0.08, 0.32, 0.60]),
+}
+
+CUSTOMER_CONTACT_METHOD_LABELS = np.array(["Email", "Phone", "SMS", "Mail"])
+CUSTOMER_CONTACT_METHOD_PROBS = np.array([0.45, 0.20, 0.25, 0.10])
+
+# Age-conditioned demographic tables
+# Age bracket index: 0=18-24, 1=25-34, 2=35-44, 3=45-54, 4=55-64, 5=65+
+CUSTOMER_MARITAL_PROBS_BY_AGE = [
+    np.array([0.15, 0.85]),  # 18-24: mostly single
+    np.array([0.45, 0.55]),  # 25-34
+    np.array([0.65, 0.35]),  # 35-44
+    np.array([0.60, 0.40]),  # 45-54
+    np.array([0.55, 0.45]),  # 55-64
+    np.array([0.45, 0.55]),  # 65+: widowed/divorced skew single
+]
+
+CUSTOMER_EDUCATION_PROBS_BY_AGE = [
+    np.array([0.60, 0.35, 0.04, 0.01]),  # 18-24: mostly HS/Bachelors
+    np.array([0.15, 0.55, 0.25, 0.05]),  # 25-34
+    np.array([0.15, 0.45, 0.30, 0.10]),  # 35-44
+    np.array([0.20, 0.45, 0.28, 0.07]),  # 45-54
+    np.array([0.25, 0.45, 0.24, 0.06]),  # 55-64
+    np.array([0.30, 0.45, 0.20, 0.05]),  # 65+
+]
+
+CUSTOMER_OCCUPATION_PROBS_BY_EDUCATION = {
+    "High School":  np.array([0.15, 0.30, 0.30, 0.20, 0.05]),
+    "Bachelors":    np.array([0.50, 0.20, 0.15, 0.10, 0.05]),
+    "Masters":      np.array([0.50, 0.10, 0.10, 0.05, 0.25]),
+    "PhD":          np.array([0.55, 0.05, 0.05, 0.02, 0.33]),
+}
+
+# Poisson lambda for TotalChildren by (marital_status, age_bracket)
+CUSTOMER_CHILDREN_LAMBDA_BY_MARITAL_AGE = {
+    ("Single", 0): 0.05, ("Single", 1): 0.25, ("Single", 2): 0.50,
+    ("Single", 3): 0.60, ("Single", 4): 0.60, ("Single", 5): 0.50,
+    ("Married", 0): 0.30, ("Married", 1): 1.20, ("Married", 2): 1.80,
+    ("Married", 3): 2.10, ("Married", 4): 2.20, ("Married", 5): 2.20,
+}
+
+# HomeOwnership age adjustment: [Rent, Mortgage, Own] shift per age bracket
+CUSTOMER_HOME_OWNERSHIP_AGE_SHIFT = [
+    np.array([0.20, -0.10, -0.10]),   # 18-24: shift toward Rent
+    np.array([0.10, 0.00, -0.10]),    # 25-34
+    np.array([0.00, 0.00, 0.00]),     # 35-44: neutral
+    np.array([-0.05, 0.00, 0.05]),    # 45-54
+    np.array([-0.10, -0.05, 0.15]),   # 55-64: shift toward Own
+    np.array([-0.15, -0.05, 0.20]),   # 65+
+]
+
+# NumberOfCars: Poisson lambda by age bracket
+CUSTOMER_CAR_LAMBDA_BY_AGE = np.array([0.3, 0.8, 1.2, 1.3, 1.2, 0.9])
+
+CUSTOMER_ORG_EMAIL_PREFIXES = np.array([
+    "info", "contact", "sales", "hello", "support",
+    "admin", "office", "enquiries", "procurement", "orders",
+])
+
+# Phone formats keyed by region
+CUSTOMER_PHONE_COUNTRY_CODES = {"US": "+1", "IN": "+91", "EU": "+44", "AS": "+81"}
+
+# Address generation pools
+CUSTOMER_STREET_NAMES = np.array([
+    "Main", "Oak", "Cedar", "Maple", "Park", "Elm", "Pine", "Washington",
+    "Lake", "Hill", "Sunset", "River", "Spring", "Church", "Market",
+    "Forest", "Bridge", "Meadow", "Valley", "Highland", "Garden", "Willow",
+    "Birch", "Chestnut", "Victoria", "Lincoln", "Franklin", "Commerce",
+    "Industrial", "Technology", "Innovation", "Central", "Station",
+], dtype=object)
+
+CUSTOMER_STREET_TYPES = np.array([
+    "St", "Ave", "Blvd", "Dr", "Ln", "Way", "Rd", "Ct", "Pl", "Cir",
+], dtype=object)
+
+CUSTOMER_REGION_LAT_LON_CENTER = {
+    "US": (39.8, -98.5),
+    "IN": (22.5, 78.9),
+    "EU": (51.1, 10.4),
+    "AS": (36.2, 138.2),
+}
+CUSTOMER_LAT_LON_JITTER = {"US": (8.0, 15.0), "IN": (5.0, 7.0), "EU": (6.0, 12.0), "AS": (4.0, 8.0)}
+
+CUSTOMER_REGION_TIMEZONE = {
+    "US": np.array(["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"]),
+    "IN": np.array(["Asia/Kolkata"]),
+    "EU": np.array(["Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Rome"]),
+    "AS": np.array(["Asia/Tokyo", "Asia/Shanghai", "Asia/Singapore"]),
+}
+
+CUSTOMER_URBAN_RURAL_LABELS = np.array(["Urban", "Suburban", "Rural"])
+CUSTOMER_URBAN_RURAL_PROBS = {
+    "US": np.array([0.30, 0.50, 0.20]),
+    "IN": np.array([0.45, 0.35, 0.20]),
+    "EU": np.array([0.40, 0.40, 0.20]),
+    "AS": np.array([0.55, 0.30, 0.15]),
+}
+
+CUSTOMER_POSTCODE_FMT = {"US": "5digit", "IN": "6digit", "EU": "uk", "AS": "jp"}
+
+CUSTOMER_LANGUAGE_BY_REGION = {
+    "US": np.array(["English", "Spanish", "English", "English", "English"]),
+    "IN": np.array(["Hindi", "English", "Hindi", "English", "Hindi"]),
+    "EU": np.array(["English", "French", "German", "English", "French"]),
+    "AS": np.array(["Japanese", "Mandarin", "English", "Japanese", "Mandarin"]),
+}
+
+
+# =================================================================
+#  PROMOTION_DEFAULTS
+# =================================================================
+
+PROMOTION_PROMO_TYPES: Dict[str, str] = {
+    "Holiday": "Holiday Discount",
+    "Seasonal": "Seasonal Discount",
+    "Clearance": "Clearance",
+    "Limited": "Limited Time",
+    "Flash": "Flash Sale",
+    "Volume": "Volume Discount",
+    "Loyalty": "Loyalty Exclusive",
+    "Bundle": "Bundle Deal",
+    "NewCustomer": "New Customer",
+    "NoDiscount": "No Discount",
+}
+
+PROMOTION_CATEGORIES = ["Store", "Online", "Region"]
+
+# name, start_mmdd, end_mmdd, discount_min, discount_max
+PROMOTION_HOLIDAYS: List[Tuple[str, str, str, float, float]] = [
+    ("Black Friday",   "11-25", "11-30", 0.20, 0.70),
+    ("Cyber Monday",   "11-28", "12-02", 0.15, 0.50),
+    ("Christmas",      "12-10", "12-31", 0.20, 0.60),
+    ("New Year",       "12-26", "01-05", 0.10, 0.40),
+    ("Back-to-School", "07-01", "09-15", 0.05, 0.25),
+    ("Easter",         "03-20", "04-10", 0.05, 0.30),
+    ("Diwali",         "10-01", "11-15", 0.10, 0.50),
+]
+
+# Seasonal name -> (start_month, end_month) (end may wrap to next year)
+PROMOTION_SEASON_WINDOWS: Dict[str, Tuple[int, int]] = {
+    "Spring Event": (2, 4),
+    "Summer Event": (5, 8),
+    "Autumn Event": (9, 10),
+    "Winter Event": (11, 1),           # wraps year
+    "Mid-Season Event": (3, 9),
+}
+
+# Default counts per promotion type (used when not overridden by config)
+PROMOTION_DEFAULT_NUM_SEASONAL = 20
+PROMOTION_DEFAULT_NUM_CLEARANCE = 8
+PROMOTION_DEFAULT_NUM_LIMITED = 12
+PROMOTION_DEFAULT_NUM_FLASH = 6
+PROMOTION_DEFAULT_NUM_VOLUME = 4
+PROMOTION_DEFAULT_NUM_LOYALTY = 3
+PROMOTION_DEFAULT_NUM_BUNDLE = 3
+PROMOTION_DEFAULT_NUM_NEW_CUSTOMER = 3
+
+
+# =================================================================
+#  CURRENCY_DEFAULTS
+# =================================================================
+
+CURRENCY_NAME_MAP: Dict[str, str] = {
+    "USD": "US Dollar",
+    "EUR": "Euro",
+    "INR": "Indian Rupee",
+    "GBP": "British Pound",
+    "AUD": "Australian Dollar",
+    "CAD": "Canadian Dollar",
+    "CNY": "Chinese Yuan",
+    "JPY": "Japanese Yen",
+    "NZD": "New Zealand Dollar",
+    "CHF": "Swiss Franc",
+    "SEK": "Swedish Krona",
+    "NOK": "Norwegian Krone",
+    "SGD": "Singapore Dollar",
+    "HKD": "Hong Kong Dollar",
+    "KRW": "Korean Won",
+    "ZAR": "South African Rand",
+}
+
+CURRENCY_BASE = "USD"
+
+
+# =================================================================
+#  INVENTORY_DEFAULTS
+# =================================================================
+
+# Below this pair count, run single-process (overhead of spawning isn't worth it)
+INVENTORY_PARALLEL_THRESHOLD = 50_000

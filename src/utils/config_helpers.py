@@ -22,39 +22,54 @@ def as_dict(x: Any) -> Dict[str, Any]:
 
 
 def int_or(value: Any, default: int) -> int:
+    """Convert *value* to ``int``, falling back to *default* on failure."""
     try:
         if value is None or value == "":
             return int(default)
         return int(value)
-    except (TypeError, ValueError):
+    except Exception:
         return int(default)
 
 
 def float_or(value: Any, default: float) -> float:
+    """Convert *value* to ``float``, falling back to *default* on failure."""
     try:
         if value is None or value == "":
             return float(default)
         return float(value)
-    except (TypeError, ValueError):
+    except Exception:
         return float(default)
 
 
 def bool_or(value: Any, default: bool) -> bool:
+    """Convert *value* to ``bool``, falling back to *default* on failure.
+
+    Accepts common truthy/falsy string representations including
+    ``"t"``/``"f"``, ``"on"``/``"off"``, ``"yes"``/``"no"`` and numpy
+    integer types.
+    """
     if value is None:
         return bool(default)
     if isinstance(value, bool):
         return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    s = str(value).strip().lower()
-    if s in {"true", "1", "yes", "y", "on"}:
-        return True
-    if s in {"false", "0", "no", "n", "off"}:
-        return False
+    try:
+        import numpy as _np
+        if isinstance(value, (int, float, _np.integer)):
+            return bool(int(value))
+    except ImportError:
+        if isinstance(value, (int, float)):
+            return bool(int(value))
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in {"true", "t", "1", "yes", "y", "on"}:
+            return True
+        if s in {"false", "f", "0", "no", "n", "off"}:
+            return False
     return bool(default)
 
 
 def str_or(v: Any, default: str) -> str:
+    """Return *v* as a stripped string, or *default* if empty/None."""
     if v is None:
         return default
     s = str(v).strip()
@@ -82,13 +97,18 @@ def pick_seed_nested(
     local_cfg: Dict[str, Any],
     fallback: int = 42,
 ) -> int:
-    """Resolve seed: ``override.seed → local_cfg.seed → defaults.seed → fallback``."""
+    """Resolve seed: ``override.seed → local_cfg.seed → defaults.seed → fallback``.
+
+    Also checks ``_defaults.seed`` for backward compatibility.
+    """
     override = as_dict(local_cfg.get("override"))
     seed = override.get("seed")
     if seed is None:
         seed = local_cfg.get("seed")
     if seed is None:
         seed = as_dict(cfg.get("defaults")).get("seed")
+    if seed is None:
+        seed = as_dict(cfg.get("_defaults")).get("seed")
     return int_or(seed, fallback)
 
 

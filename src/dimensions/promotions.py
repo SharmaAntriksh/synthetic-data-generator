@@ -13,43 +13,15 @@ from src.versioning.version_store import should_regenerate, save_version
 
 
 # ---------------------------------------------------------
-#  CONSTANTS
+#  CONSTANTS (imported from src.defaults)
 # ---------------------------------------------------------
 
-PROMO_TYPES = {
-    "Holiday": "Holiday Discount",
-    "Seasonal": "Seasonal Discount",
-    "Clearance": "Clearance",
-    "Limited": "Limited Time",
-    "Flash": "Flash Sale",
-    "Volume": "Volume Discount",
-    "Loyalty": "Loyalty Exclusive",
-    "Bundle": "Bundle Deal",
-    "NewCustomer": "New Customer",
-    "NoDiscount": "No Discount",
-}
-
-CATEGORIES = ["Store", "Online", "Region"]
-
-# name, start_mmdd, end_mmdd, discount_min, discount_max
-HOLIDAYS: List[Tuple[str, str, str, float, float]] = [
-    ("Black Friday",   "11-25", "11-30", 0.20, 0.70),
-    ("Cyber Monday",   "11-28", "12-02", 0.15, 0.50),
-    ("Christmas",      "12-10", "12-31", 0.20, 0.60),
-    ("New Year",       "12-26", "01-05", 0.10, 0.40),
-    ("Back-to-School", "07-01", "09-15", 0.05, 0.25),
-    ("Easter",         "03-20", "04-10", 0.05, 0.30),
-    ("Diwali",         "10-01", "11-15", 0.10, 0.50),
-]
-
-# Seasonal name -> (start_month, end_month) (end may wrap to next year)
-SEASON_WINDOWS: Dict[str, Tuple[int, int]] = {
-    "Spring Event": (2, 4),
-    "Summer Event": (5, 8),
-    "Autumn Event": (9, 10),
-    "Winter Event": (11, 1),           # wraps year
-    "Mid-Season Event": (3, 9),
-}
+from src.defaults import (
+    PROMOTION_PROMO_TYPES as PROMO_TYPES,
+    PROMOTION_CATEGORIES as CATEGORIES,
+    PROMOTION_HOLIDAYS as HOLIDAYS,
+    PROMOTION_SEASON_WINDOWS as SEASON_WINDOWS,
+)
 
 
 # ---------------------------------------------------------

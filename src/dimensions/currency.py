@@ -10,24 +10,7 @@ from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 
 
-CURRENCY_NAME_MAP = {
-    "USD": "US Dollar",
-    "EUR": "Euro",
-    "INR": "Indian Rupee",
-    "GBP": "British Pound",
-    "AUD": "Australian Dollar",
-    "CAD": "Canadian Dollar",
-    "CNY": "Chinese Yuan",
-    "JPY": "Japanese Yen",
-    "NZD": "New Zealand Dollar",
-    "CHF": "Swiss Franc",
-    "SEK": "Swedish Krona",
-    "NOK": "Norwegian Krone",
-    "SGD": "Singapore Dollar",
-    "HKD": "Hong Kong Dollar",
-    "KRW": "Korean Won",
-    "ZAR": "South African Rand",
-}
+from src.defaults import CURRENCY_NAME_MAP
 
 
 # ---------------------------------------------------------

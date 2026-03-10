@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from src.utils.config_helpers import as_dict as _as_dict, int_or as _int_or, bool_or as _bool_or
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
 
@@ -13,35 +14,6 @@ from src.versioning.version_store import should_regenerate, save_version
 # ---------------------------------------------------------
 # Internals
 # ---------------------------------------------------------
-
-def _as_dict(x: Any) -> Dict[str, Any]:
-    return x if isinstance(x, dict) else {}
-
-
-def _int_or(value: Any, default: int) -> int:
-    """Safe int parsing: handles None, '', and non-numeric values."""
-    try:
-        if value is None or value == "":
-            return int(default)
-        return int(value)
-    except (TypeError, ValueError):
-        return int(default)
-
-
-def _bool_or(value: Any, default: bool) -> bool:
-    if value is None:
-        return bool(default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    s = str(value).strip().lower()
-    if s in {"true", "1", "yes", "y", "on"}:
-        return True
-    if s in {"false", "0", "no", "n", "off"}:
-        return False
-    return bool(default)
-
 
 def _pick_seed(cfg: Dict[str, Any], sup_cfg: Dict[str, Any], fallback: int = 42) -> int:
     """

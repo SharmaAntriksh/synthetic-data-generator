@@ -5,7 +5,7 @@ Analytics-ready retail data generator (star-schema, inspired by ContosoRetailDW)
 ## Tech Stack
 
 - **Language:** Python 3.x
-- **Web UI:** FastAPI backend (`web/api.py`) + React SPA (`web/frontend/`)
+- **Web UI:** FastAPI backend (`web/api.py` + `web/routes/`) + React SPA (`web/frontend/`)
 - **Data:** pandas, numpy, pyarrow, deltalake, fastparquet
 - **Config:** PyYAML, pydantic
 - **Other:** Faker (names), yfinance (FX rates), multiprocessing (parallel sales)
@@ -52,6 +52,8 @@ config.yaml + models.yaml --> Pipeline Runner
 main.py                          # Entry point, calls src.cli.main()
 src/
   cli.py                         # Argument parser, CLI overrides
+  defaults.py                    # Centralized hardcoded constants (stores, customers, promos, etc.)
+  exceptions.py                  # Custom exception hierarchy (PipelineError, ConfigError, etc.)
   dimensions/                    # One generator per dimension table
     customers.py, products/, stores.py, employees.py, dates.py,
     currency.py, exchange_rates.py, promotions.py, geography.py, etc.
@@ -59,7 +61,7 @@ src/
     sales/                       # Core sales fact generation
       sales.py                   # Entry point, orchestrates worker pool
       sales_logic/               # Business logic (orders, pricing, promos, allocation)
-        globals.py               # State class (per-worker, sealed after bind)
+        globals.py               # State class (per-worker, sealed after bind) + SalesContext dataclass
         core/                    # customer_sampling, orders, promotions, allocation, pricing, delivery
       sales_models/              # quantity model (Poisson), pricing pipeline (inflation+markdown+snap)
       sales_worker/              # Multiprocessing pool, task definitions, schemas
@@ -81,11 +83,19 @@ src/
     shared_arrays.py             # Numpy shared memory for dimension broadcasting to workers
     static_schemas.py            # Column definitions for all output tables
     customer_profiles.py         # Acquisition profiles (steady/gradual/aggressive/instant)
-    name_pools.py, output_utils.py, logging_utils.py, config_helpers.py
+    config_helpers.py            # Canonical type coercion helpers (bool_or, int_or, float_or, etc.)
+    config_precedence.py         # Standardized config resolution (resolve_seed, resolve_dates)
+    name_pools.py, output_utils.py, logging_utils.py
   versioning/
     version_checker.py           # Hash-based dimension version tracking (.version files)
 web/
-  api.py                         # FastAPI backend (SSE streaming, /generate, /config, /models)
+  api.py                         # FastAPI app entry point (includes routers, serves frontend)
+  shared_state.py                # Shared mutable state and helpers for web layer
+  routes/                        # FastAPI routers (split from monolithic api.py)
+    config_routes.py             # /api/config endpoints
+    models_routes.py             # /api/models endpoints
+    generation_routes.py         # /api/generate, /api/validate endpoints
+    presets_routes.py            # /api/presets endpoints
   frontend/                      # React SPA (YAML editor, presets, log viewer)
 ```
 
@@ -110,15 +120,23 @@ CLI flags > config.yaml values (one-time, not persisted).
 
 2. **Dimension versioning:** Each dim has a `.version` file (JSON hash of its config section). Dims only regenerate if the hash changes or `--regen-dimensions` forces it. Stale outputs usually mean the version hash didn't change.
 
-3. **State class is sealed:** `State` in `sales_logic/globals.py` is per-worker, initialized once via `bind_globals()`. Never mutate it after binding. Pass runtime tweaks through function args or config.
+3. **State class is sealed:** `State` in `sales_logic/globals.py` is per-worker, initialized once via `bind_globals()`. Never mutate it after binding. Pass runtime tweaks through function args or config. For new code, prefer `SalesContext.from_state()` (immutable dataclass snapshot) over accessing `State` directly.
 
-4. **Returns conditional skip:** Returns are silently skipped if `returns.enabled=true` AND `sales_output='sales'` AND `skip_order_cols=true` (returns need SalesOrderNumber to link back). A warning is logged.
+4. **Returns conditional skip:** Returns are auto-disabled at config load time if `returns.enabled=true` AND `sales_output='sales'` AND `skip_order_cols=true` (returns need SalesOrderNumber to link back). A warning is logged by `validate_cross_section_rules()` in `config.py`.
 
 5. **FX dates are coupled:** exchange_rates date range is overridden at runtime to match `defaults.dates.start/end`. You cannot set FX dates independently.
 
 6. **Shared arrays:** Dimensions are loaded into numpy shared memory for zero-copy worker access. If adding new dimension columns, update `SharedArrayGroup` initialization.
 
 7. **Scratch vs final output:** Workers write to scratch (`data/`), then packaging copies to final timestamped folder (`generated_datasets/`). Interrupted runs may leave scratch behind.
+
+8. **Exception hierarchy:** Use exceptions from `src/exceptions.py` (`ConfigError`, `DimensionError`, `SalesError`, `PackagingError`, `ValidationError`) instead of generic `RuntimeError`/`ValueError`. All inherit from `PipelineError`.
+
+9. **Type coercion helpers:** Always import `bool_or`, `int_or`, `float_or`, `str_or` from `src.utils.config_helpers`. Do not define local variants in dimension/fact generators.
+
+10. **Hardcoded constants:** Domain constants (store types, customer demographics, promo categories, currency maps, etc.) live in `src/defaults.py`. Dimension generators import from there — do not inline large constant dicts.
+
+11. **API versioning:** All web API endpoints are available at both `/api/...` (backward-compatible) and `/v1/api/...` (versioned). Both routes hit the same router handlers.
 
 ## Testing
 
@@ -147,7 +165,7 @@ pytest --lf            # rerun only last-failed tests
 pytest --co            # list tests without running
 ```
 
-Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py` (186 tests total).
+Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py` (219 tests total; web API tests require `httpx` and are skipped without it).
 
 ## Output Formats
 

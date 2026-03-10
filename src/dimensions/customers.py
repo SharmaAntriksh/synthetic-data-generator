@@ -21,182 +21,53 @@ from src.utils.name_pools import (
 )
 
 # ---------------------------------------------------------
-# Configurable defaults (extracted from inline magic numbers)
+# Configurable defaults (imported from src.defaults)
 # ---------------------------------------------------------
-PERSONAL_EMAIL_DOMAINS = np.array(
-    ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com"]
+from src.defaults import (
+    CUSTOMER_PERSONAL_EMAIL_DOMAINS as PERSONAL_EMAIL_DOMAINS,
+    CUSTOMER_MARITAL_STATUS_LABELS as MARITAL_STATUS_LABELS,
+    CUSTOMER_MARITAL_STATUS_PROBS as MARITAL_STATUS_PROBS,
+    CUSTOMER_EDUCATION_LABELS as EDUCATION_LABELS,
+    CUSTOMER_EDUCATION_PROBS as EDUCATION_PROBS,
+    CUSTOMER_OCCUPATION_LABELS as OCCUPATION_LABELS,
+    CUSTOMER_OCCUPATION_PROBS as OCCUPATION_PROBS,
+    CUSTOMER_AGE_MIN_DAYS as AGE_MIN_DAYS,
+    CUSTOMER_AGE_MAX_DAYS as AGE_MAX_DAYS,
+    CUSTOMER_INCOME_MIN as INCOME_MIN,
+    CUSTOMER_INCOME_MAX as INCOME_MAX,
+    CUSTOMER_MAX_CHILDREN as MAX_CHILDREN,
+    CUSTOMER_LOYALTY_W_WEIGHT as LOYALTY_W_WEIGHT,
+    CUSTOMER_LOYALTY_W_TEMP as LOYALTY_W_TEMP,
+    CUSTOMER_LOYALTY_W_INCOME as LOYALTY_W_INCOME,
+    CUSTOMER_EDUCATION_INCOME_PARAMS as EDUCATION_INCOME_PARAMS,
+    CUSTOMER_OCCUPATION_INCOME_MULT as OCCUPATION_INCOME_MULT,
+    CUSTOMER_INCOME_ROUND_TO as INCOME_ROUND_TO,
+    CUSTOMER_AGE_GROUP_EDGES as AGE_GROUP_EDGES,
+    CUSTOMER_AGE_GROUP_LABELS as AGE_GROUP_LABELS,
+    CUSTOMER_INCOME_GROUP_EDGES as INCOME_GROUP_EDGES,
+    CUSTOMER_INCOME_GROUP_LABELS as INCOME_GROUP_LABELS,
+    CUSTOMER_HOME_OWNERSHIP_LABELS as HOME_OWNERSHIP_LABELS,
+    CUSTOMER_HOME_OWNERSHIP_PROBS_BY_INCOME as HOME_OWNERSHIP_PROBS_BY_INCOME,
+    CUSTOMER_CONTACT_METHOD_LABELS as CONTACT_METHOD_LABELS,
+    CUSTOMER_CONTACT_METHOD_PROBS as CONTACT_METHOD_PROBS,
+    CUSTOMER_MARITAL_PROBS_BY_AGE as MARITAL_PROBS_BY_AGE,
+    CUSTOMER_EDUCATION_PROBS_BY_AGE as EDUCATION_PROBS_BY_AGE,
+    CUSTOMER_OCCUPATION_PROBS_BY_EDUCATION as OCCUPATION_PROBS_BY_EDUCATION,
+    CUSTOMER_CHILDREN_LAMBDA_BY_MARITAL_AGE as CHILDREN_LAMBDA_BY_MARITAL_AGE,
+    CUSTOMER_HOME_OWNERSHIP_AGE_SHIFT as HOME_OWNERSHIP_AGE_SHIFT,
+    CUSTOMER_CAR_LAMBDA_BY_AGE as CAR_LAMBDA_BY_AGE,
+    CUSTOMER_ORG_EMAIL_PREFIXES as ORG_EMAIL_PREFIXES,
+    CUSTOMER_PHONE_COUNTRY_CODES as _PHONE_COUNTRY_CODES,
+    CUSTOMER_STREET_NAMES as _STREET_NAMES,
+    CUSTOMER_STREET_TYPES as _STREET_TYPES,
+    CUSTOMER_REGION_LAT_LON_CENTER as _REGION_LAT_LON_CENTER,
+    CUSTOMER_LAT_LON_JITTER as _LAT_LON_JITTER,
+    CUSTOMER_REGION_TIMEZONE as _REGION_TIMEZONE,
+    CUSTOMER_URBAN_RURAL_LABELS as _URBAN_RURAL_LABELS,
+    CUSTOMER_URBAN_RURAL_PROBS as _URBAN_RURAL_PROBS,
+    CUSTOMER_POSTCODE_FMT as _POSTCODE_FMT,
+    CUSTOMER_LANGUAGE_BY_REGION as _LANGUAGE_BY_REGION,
 )
-
-MARITAL_STATUS_LABELS = np.array(["Married", "Single"])
-MARITAL_STATUS_PROBS = np.array([0.55, 0.45])
-
-EDUCATION_LABELS = np.array(["High School", "Bachelors", "Masters", "PhD"])
-EDUCATION_PROBS = np.array([0.20, 0.50, 0.25, 0.05])
-
-OCCUPATION_LABELS = np.array(
-    ["Professional", "Clerical", "Skilled", "Service", "Executive"]
-)
-OCCUPATION_PROBS = np.array([0.50, 0.20, 0.15, 0.10, 0.05])
-
-AGE_MIN_DAYS = 18 * 365
-AGE_MAX_DAYS = 70 * 365
-INCOME_MIN = 20_000
-INCOME_MAX = 200_000
-MAX_CHILDREN = 5  # exclusive upper bound for rng.integers
-
-# Loyalty score component weights
-LOYALTY_W_WEIGHT = 0.55
-LOYALTY_W_TEMP = 0.30
-LOYALTY_W_INCOME = 0.15
-
-# ---------------------------------------------------------
-# Income model: lognormal base by education, scaled by occupation
-# ---------------------------------------------------------
-EDUCATION_INCOME_PARAMS = {
-    "High School": (10.50, 0.40),   # median ~$36K
-    "Bachelors":   (10.80, 0.38),   # median ~$49K
-    "Masters":     (11.00, 0.35),   # median ~$60K
-    "PhD":         (11.20, 0.32),   # median ~$73K
-}
-
-OCCUPATION_INCOME_MULT = {
-    "Executive":    1.55,
-    "Professional": 1.20,
-    "Skilled":      1.00,
-    "Clerical":     0.85,
-    "Service":      0.75,
-}
-
-INCOME_ROUND_TO = 1_000
-
-# ---------------------------------------------------------
-# Derived demographic columns
-# ---------------------------------------------------------
-AGE_GROUP_EDGES = np.array([25, 35, 45, 55, 65])
-AGE_GROUP_LABELS = np.array(
-    ["18-24", "25-34", "35-44", "45-54", "55-64", "65+"], dtype=object
-)
-
-INCOME_GROUP_EDGES = np.array([35_000, 65_000, 110_000])
-INCOME_GROUP_LABELS = np.array(["Low", "Mid", "High", "Premium"], dtype=object)
-
-HOME_OWNERSHIP_LABELS = np.array(["Rent", "Mortgage", "Own"])
-HOME_OWNERSHIP_PROBS_BY_INCOME = {
-    "Low":     np.array([0.65, 0.25, 0.10]),
-    "Mid":     np.array([0.35, 0.45, 0.20]),
-    "High":    np.array([0.15, 0.45, 0.40]),
-    "Premium": np.array([0.08, 0.32, 0.60]),
-}
-
-CONTACT_METHOD_LABELS = np.array(["Email", "Phone", "SMS", "Mail"])
-CONTACT_METHOD_PROBS = np.array([0.45, 0.20, 0.25, 0.10])
-
-# ---------------------------------------------------------
-# Age-conditioned demographic tables
-# ---------------------------------------------------------
-# Age bracket index: 0=18-24, 1=25-34, 2=35-44, 3=45-54, 4=55-64, 5=65+
-# (matches AGE_GROUP_LABELS order via np.searchsorted on AGE_GROUP_EDGES)
-
-MARITAL_PROBS_BY_AGE = [
-    np.array([0.15, 0.85]),  # 18-24: mostly single
-    np.array([0.45, 0.55]),  # 25-34
-    np.array([0.65, 0.35]),  # 35-44
-    np.array([0.60, 0.40]),  # 45-54
-    np.array([0.55, 0.45]),  # 55-64
-    np.array([0.45, 0.55]),  # 65+: widowed/divorced skew single
-]
-
-EDUCATION_PROBS_BY_AGE = [
-    np.array([0.60, 0.35, 0.04, 0.01]),  # 18-24: mostly HS/Bachelors
-    np.array([0.15, 0.55, 0.25, 0.05]),  # 25-34
-    np.array([0.15, 0.45, 0.30, 0.10]),  # 35-44
-    np.array([0.20, 0.45, 0.28, 0.07]),  # 45-54
-    np.array([0.25, 0.45, 0.24, 0.06]),  # 55-64
-    np.array([0.30, 0.45, 0.20, 0.05]),  # 65+
-]
-
-OCCUPATION_PROBS_BY_EDUCATION = {
-    "High School":  np.array([0.15, 0.30, 0.30, 0.20, 0.05]),
-    "Bachelors":    np.array([0.50, 0.20, 0.15, 0.10, 0.05]),
-    "Masters":      np.array([0.50, 0.10, 0.10, 0.05, 0.25]),
-    "PhD":          np.array([0.55, 0.05, 0.05, 0.02, 0.33]),
-}
-
-# Poisson lambda for TotalChildren by (marital_status, age_bracket)
-CHILDREN_LAMBDA_BY_MARITAL_AGE = {
-    ("Single", 0): 0.05, ("Single", 1): 0.25, ("Single", 2): 0.50,
-    ("Single", 3): 0.60, ("Single", 4): 0.60, ("Single", 5): 0.50,
-    ("Married", 0): 0.30, ("Married", 1): 1.20, ("Married", 2): 1.80,
-    ("Married", 3): 2.10, ("Married", 4): 2.20, ("Married", 5): 2.20,
-}
-
-# HomeOwnership age adjustment: [Rent, Mortgage, Own] shift per age bracket
-HOME_OWNERSHIP_AGE_SHIFT = [
-    np.array([0.20, -0.10, -0.10]),   # 18-24: shift toward Rent
-    np.array([0.10, 0.00, -0.10]),    # 25-34
-    np.array([0.00, 0.00, 0.00]),     # 35-44: neutral
-    np.array([-0.05, 0.00, 0.05]),    # 45-54
-    np.array([-0.10, -0.05, 0.15]),   # 55-64: shift toward Own
-    np.array([-0.15, -0.05, 0.20]),   # 65+
-]
-
-# NumberOfCars: Poisson lambda by age bracket
-CAR_LAMBDA_BY_AGE = np.array([0.3, 0.8, 1.2, 1.3, 1.2, 0.9])
-
-ORG_EMAIL_PREFIXES = np.array([
-    "info", "contact", "sales", "hello", "support",
-    "admin", "office", "enquiries", "procurement", "orders",
-])
-
-# Phone formats keyed by region
-_PHONE_COUNTRY_CODES = {"US": "+1", "IN": "+91", "EU": "+44", "AS": "+81"}
-
-# ---------------------------------------------------------
-# Address generation pools
-# ---------------------------------------------------------
-_STREET_NAMES = np.array([
-    "Main", "Oak", "Cedar", "Maple", "Park", "Elm", "Pine", "Washington",
-    "Lake", "Hill", "Sunset", "River", "Spring", "Church", "Market",
-    "Forest", "Bridge", "Meadow", "Valley", "Highland", "Garden", "Willow",
-    "Birch", "Chestnut", "Victoria", "Lincoln", "Franklin", "Commerce",
-    "Industrial", "Technology", "Innovation", "Central", "Station",
-], dtype=object)
-
-_STREET_TYPES = np.array([
-    "St", "Ave", "Blvd", "Dr", "Ln", "Way", "Rd", "Ct", "Pl", "Cir",
-], dtype=object)
-
-_REGION_LAT_LON_CENTER = {
-    "US": (39.8, -98.5),
-    "IN": (22.5, 78.9),
-    "EU": (51.1, 10.4),
-    "AS": (36.2, 138.2),
-}
-_LAT_LON_JITTER = {"US": (8.0, 15.0), "IN": (5.0, 7.0), "EU": (6.0, 12.0), "AS": (4.0, 8.0)}
-
-_REGION_TIMEZONE = {
-    "US": np.array(["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"]),
-    "IN": np.array(["Asia/Kolkata"]),
-    "EU": np.array(["Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Rome"]),
-    "AS": np.array(["Asia/Tokyo", "Asia/Shanghai", "Asia/Singapore"]),
-}
-
-_URBAN_RURAL_LABELS = np.array(["Urban", "Suburban", "Rural"])
-_URBAN_RURAL_PROBS = {
-    "US": np.array([0.30, 0.50, 0.20]),
-    "IN": np.array([0.45, 0.35, 0.20]),
-    "EU": np.array([0.40, 0.40, 0.20]),
-    "AS": np.array([0.55, 0.30, 0.15]),
-}
-
-_POSTCODE_FMT = {"US": "5digit", "IN": "6digit", "EU": "uk", "AS": "jp"}
-
-_LANGUAGE_BY_REGION = {
-    "US": np.array(["English", "Spanish", "English", "English", "English"]),
-    "IN": np.array(["Hindi", "English", "Hindi", "English", "Hindi"]),
-    "EU": np.array(["English", "French", "German", "English", "French"]),
-    "AS": np.array(["Japanese", "Mandarin", "English", "Japanese", "Mandarin"]),
-}
 
 _PAYMENT_METHOD_LABELS = np.array([
     "Credit Card", "Debit Card", "Cash", "Digital Wallet", "Bank Transfer",

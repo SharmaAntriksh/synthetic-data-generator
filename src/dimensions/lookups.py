@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 import numpy as np
 import pandas as pd
 
+from src.utils.config_helpers import as_dict as _as_dict, int_or as _int_or
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
 
@@ -13,19 +14,6 @@ from src.versioning.version_store import should_regenerate, save_version
 # =========================================================
 # Internals
 # =========================================================
-
-def _as_dict(x: Any) -> Dict[str, Any]:
-    return x if isinstance(x, dict) else {}
-
-
-def _int_or(x: Any, default: int) -> int:
-    try:
-        if x is None or x == "":
-            return int(default)
-        return int(x)
-    except (TypeError, ValueError):
-        return int(default)
-
 
 def _strip_force(cfg_section: Dict[str, Any]) -> Dict[str, Any]:
     """Return a shallow copy of the config section (legacy helper kept for callers)."""

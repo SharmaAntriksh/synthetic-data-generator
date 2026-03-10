@@ -1,3 +1,9 @@
+"""Pipeline orchestrator — loads config, applies overrides, runs dimensions + sales.
+
+Type annotations follow the project convention of ``Dict[str, Any]`` for
+config dicts.  More specific ``TypedDict`` definitions can be introduced
+later as the config schema is formalised.
+"""
 from __future__ import annotations
 
 import shutil
@@ -10,6 +16,7 @@ from typing import Any, Dict, Iterable, Optional, Set, Tuple
 from src.engine.config.config_loader import load_config, load_config_file
 from src.engine.runners.dimensions_runner import generate_dimensions
 from src.engine.runners.sales_runner import run_sales_pipeline
+from src.exceptions import ConfigError, PipelineError
 from src.utils.logging_utils import info, fail, fmt_sec
 
 
@@ -117,13 +124,11 @@ def run_pipeline(
         # ----------------------------
         cfg_raw = load_config(config_path)
         if "sales" not in cfg_raw or not isinstance(cfg_raw["sales"], dict):
-            fail("Config must contain a 'sales' section")
-            raise RuntimeError("Missing 'sales' section")
+            raise ConfigError("Config must contain a 'sales' section")
 
         models_raw = load_config_file(models_config_path)
         if "models" not in models_raw or not isinstance(models_raw["models"], dict):
-            fail("models.yaml must contain a top-level 'models' section")
-            raise RuntimeError("Missing top-level 'models' section")
+            raise ConfigError("models.yaml must contain a top-level 'models' section")
         models_cfg: Dict[str, Any] = models_raw["models"]
 
         # Work on a shallow-copied cfg so repeated Streamlit runs remain sane

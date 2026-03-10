@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils import info, warn, skip, stage
+from src.utils.config_helpers import int_or as _int_or, bool_or as _bool_or
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 
@@ -38,33 +39,6 @@ def _dedupe_preserve_order(cols: Sequence[str]) -> List[str]:
 def _clamp_month(m: int) -> int:
     """Clamp an integer to the valid calendar-month range [1, 12]."""
     return max(1, min(12, int(m)))
-
-
-def _int_or(value: Any, default: int) -> int:
-    """Convert *value* to ``int``, falling back to *default* on failure."""
-    try:
-        if value is None or value == "":
-            return int(default)
-        return int(value)
-    except (ValueError, TypeError):
-        return int(default)
-
-
-def _bool_or(value: Any, default: bool) -> bool:
-    """Convert *value* to ``bool``, falling back to *default* on failure."""
-    if value is None:
-        return bool(default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, np.integer)):
-        return bool(int(value))
-    if isinstance(value, str):
-        s = value.strip().lower()
-        if s in {"true", "t", "1", "yes", "y", "on"}:
-            return True
-        if s in {"false", "f", "0", "no", "n", "off"}:
-            return False
-    return bool(default)
 
 
 def _normalize_override_dates(dates_cfg: Dict[str, Any]) -> Dict[str, Any]:

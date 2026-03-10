@@ -1,118 +1,201 @@
 /* ═══ components.jsx — shared UI primitives ═══ */
-const {useState,useEffect,useRef,useCallback,useMemo}=React;
+const {useState, useEffect, useRef, useCallback, useMemo} = React;
 
-const API="/api";
-const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-const DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
-const DIMS=["customers","products","stores","geography","promotions","dates","currency","exchange_rates","employees"];
+const API = "/api";
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DIMS = ["customers", "products", "stores", "geography", "promotions", "dates", "currency", "exchange_rates", "employees"];
 
-/* Shared input style */
-const iS={width:"100%",background:"var(--bg)",border:"1px solid var(--border)",borderRadius:8,padding:"8px 11px",fontSize:13.5,color:"var(--text)",outline:"none",fontFamily:"var(--mono)"};
+/* Shared input style (also exported as `iS` for backward compatibility) */
+const inputStyle = {
+  width: "100%",
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  padding: "8px 11px",
+  fontSize: 13.5,
+  color: "var(--text)",
+  outline: "none",
+  fontFamily: "var(--mono)"
+};
 
-function Section({num,title,children,defaultOpen=true,badge}){
-  const[open,setOpen]=useState(defaultOpen);
-  return(
-    <div style={{background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10,marginBottom:14,boxShadow:"0 1px 3px rgba(0,0,0,.04)",overflow:"hidden"}}>
-      <button onClick={()=>setOpen(!open)} style={{display:"flex",alignItems:"center",gap:10,padding:"14px 18px",cursor:"pointer",background:"none",border:"none",width:"100%",color:"var(--text)",fontFamily:"var(--sans)"}}>
-        <span style={{width:26,height:26,borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,fontFamily:"var(--mono)",background:open?"var(--accent)":"var(--alt)",color:open?"#fff":"var(--muted)",transition:"all .15s"}}>{num}</span>
-        <span style={{fontSize:14.5,fontWeight:600,flex:1,textAlign:"left"}}>{title}</span>
-        {badge&&<Badge variant={badge.v}>{badge.t}</Badge>}
-        <span style={{fontSize:16,color:"var(--muted)",transform:open?"rotate(0)":"rotate(-90deg)",transition:"transform .2s"}}>▾</span>
+const iS = inputStyle;
+
+function Section({num, title, children, defaultOpen = true, badge}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div style={{background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10, marginBottom: 14, boxShadow: "0 1px 3px rgba(0,0,0,.04)", overflow: "hidden"}}>
+      <button onClick={() => setOpen(!open)} style={{display: "flex", alignItems: "center", gap: 10, padding: "14px 18px", cursor: "pointer", background: "none", border: "none", width: "100%", color: "var(--text)", fontFamily: "var(--sans)"}}>
+        <span style={{width: 26, height: 26, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, fontFamily: "var(--mono)", background: open ? "var(--accent)" : "var(--alt)", color: open ? "#fff" : "var(--muted)", transition: "all .15s"}}>{num}</span>
+        <span style={{fontSize: 14.5, fontWeight: 600, flex: 1, textAlign: "left"}}>{title}</span>
+        {badge && <Badge variant={badge.v}>{badge.t}</Badge>}
+        <span style={{fontSize: 16, color: "var(--muted)", transform: open ? "rotate(0)" : "rotate(-90deg)", transition: "transform .2s"}}>▾</span>
       </button>
-      {open&&<div style={{padding:"0 18px 18px",borderTop:"1px solid var(--border)"}}>{children}</div>}
+      {open && <div style={{padding: "0 18px 18px", borderTop: "1px solid var(--border)"}}>{children}</div>}
     </div>
   );
 }
 
-function F({label,help,children}){
-  return(
-    <div style={{marginTop:14}}>
-      {label&&<label style={{display:"block",fontSize:12.5,fontWeight:500,color:"var(--dim)",marginBottom:5}}>{label}</label>}
+function FormField({label, help, children}) {
+  return (
+    <div style={{marginTop: 14}}>
+      {label && <label style={{display: "block", fontSize: 12.5, fontWeight: 500, color: "var(--dim)", marginBottom: 5}}>{label}</label>}
       {children}
-      {help&&<div style={{fontSize:11,color:"var(--muted)",marginTop:3}}>{help}</div>}
+      {help && <div style={{fontSize: 11, color: "var(--muted)", marginTop: 3}}>{help}</div>}
     </div>
   );
 }
+/* Backward-compatible alias */
+const F = FormField;
 
-function N({value,onChange,min,max,step,style:sx}){
-  const v=value!=null?value:"";
-  return <input type="number" style={{...iS,...sx}} value={v} min={min} max={max} step={step||1}
-    onChange={e=>{const n=parseFloat(e.target.value);onChange(isNaN(n)?(min||0):n);}}
-    onFocus={e=>{e.target.style.borderColor="var(--focus)";e.target.style.boxShadow="0 0 0 3px var(--glow)";}}
-    onBlur={e=>{e.target.style.borderColor="var(--border)";e.target.style.boxShadow="none";}} />;
+function NumberInput({value, onChange, min, max, step, style: extraStyle}) {
+  const displayValue = value != null ? value : "";
+  return (
+    <input
+      type="number"
+      style={{...inputStyle, ...extraStyle}}
+      value={displayValue}
+      min={min}
+      max={max}
+      step={step || 1}
+      onChange={event => {
+        const parsed = parseFloat(event.target.value);
+        onChange(isNaN(parsed) ? (min || 0) : parsed);
+      }}
+      onFocus={event => {
+        event.target.style.borderColor = "var(--focus)";
+        event.target.style.boxShadow = "0 0 0 3px var(--glow)";
+      }}
+      onBlur={event => {
+        event.target.style.borderColor = "var(--border)";
+        event.target.style.boxShadow = "none";
+      }}
+    />
+  );
 }
+/* Backward-compatible alias */
+const N = NumberInput;
 
-function Sel({value,onChange,options,labels}){
-  return <select style={{...iS,fontFamily:"var(--sans)",cursor:"pointer"}} value={value} onChange={e=>onChange(e.target.value)}>
-    {options.map((o,i)=><option key={o} value={o}>{labels?labels[i]:o}</option>)}
-  </select>;
+function Select({value, onChange, options, labels}) {
+  return (
+    <select
+      style={{...inputStyle, fontFamily: "var(--sans)", cursor: "pointer"}}
+      value={value}
+      onChange={event => onChange(event.target.value)}
+    >
+      {options.map((option, index) => (
+        <option key={option} value={option}>{labels ? labels[index] : option}</option>
+      ))}
+    </select>
+  );
 }
+/* Backward-compatible alias */
+const Sel = Select;
 
-function Check({checked,onChange,label,disabled}){
-  return(
-    <label onClick={e=>{e.preventDefault();if(!disabled)onChange(!checked);}}
-      style={{display:"flex",alignItems:"center",gap:7,cursor:disabled?"default":"pointer",fontSize:13,color:disabled?"var(--muted)":"var(--text)",fontFamily:"var(--sans)",opacity:disabled?.6:1}}>
-      <span style={{width:17,height:17,borderRadius:5,flexShrink:0,border:`2px solid ${checked?"var(--accent)":"var(--border)"}`,background:checked?"var(--accent)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .12s"}}>
-        {checked&&<span style={{color:"#fff",fontSize:10,fontWeight:700}}>✓</span>}
+function Checkbox({checked, onChange, label, disabled}) {
+  return (
+    <label
+      onClick={event => { event.preventDefault(); if (!disabled) onChange(!checked); }}
+      style={{display: "flex", alignItems: "center", gap: 7, cursor: disabled ? "default" : "pointer", fontSize: 13, color: disabled ? "var(--muted)" : "var(--text)", fontFamily: "var(--sans)", opacity: disabled ? .6 : 1}}
+    >
+      <span style={{width: 17, height: 17, borderRadius: 5, flexShrink: 0, border: `2px solid ${checked ? "var(--accent)" : "var(--border)"}`, background: checked ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .12s"}}>
+        {checked && <span style={{color: "#fff", fontSize: 10, fontWeight: 700}}>✓</span>}
       </span>
       {label}
     </label>
   );
 }
+/* Backward-compatible alias */
+const Check = Checkbox;
 
-function Sld({label,value,onChange,min,max,step,fmt}){
-  const v=Number(value)||0;
-  return(
-    <div style={{marginTop:10}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-        <span style={{fontSize:12,color:"var(--dim)"}}>{label}</span>
-        <span style={{fontSize:12,color:"var(--accent)",fontFamily:"var(--mono)",fontWeight:600}}>{fmt?fmt(v):v.toFixed(2)}</span>
+function Slider({label, value, onChange, min, max, step, fmt}) {
+  const numericValue = Number(value) || 0;
+  return (
+    <div style={{marginTop: 10}}>
+      <div style={{display: "flex", justifyContent: "space-between", marginBottom: 5}}>
+        <span style={{fontSize: 12, color: "var(--dim)"}}>{label}</span>
+        <span style={{fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)", fontWeight: 600}}>
+          {fmt ? fmt(numericValue) : numericValue.toFixed(2)}
+        </span>
       </div>
-      <input type="range" min={min} max={max} step={step} value={v}
-        onChange={e=>onChange(parseFloat(e.target.value))} style={{width:"100%",accentColor:"var(--accent)"}} />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={numericValue}
+        onChange={event => onChange(parseFloat(event.target.value))}
+        style={{width: "100%", accentColor: "var(--accent)"}}
+      />
     </div>
   );
 }
+/* Backward-compatible alias */
+const Sld = Slider;
 
-function Badge({variant="default",children}){
-  const c={
-    default:{bg:"var(--glow)",color:"var(--accent)"},
-    success:{bg:"var(--okBg)",color:"var(--ok)"},
-    warning:{bg:"var(--warnBg)",color:"var(--warn)"},
-    error:{bg:"var(--errBg)",color:"var(--err)"},
+function Badge({variant = "default", children}) {
+  const colors = {
+    default: {bg: "var(--glow)", color: "var(--accent)"},
+    success: {bg: "var(--okBg)", color: "var(--ok)"},
+    warning: {bg: "var(--warnBg)", color: "var(--warn)"},
+    error: {bg: "var(--errBg)", color: "var(--err)"},
   }[variant];
-  return <span style={{display:"inline-flex",padding:"2px 9px",borderRadius:6,fontSize:11.5,fontWeight:600,fontFamily:"var(--mono)",background:c.bg,color:c.color}}>{children}</span>;
-}
-
-function R2({children}){return <div className="resp-r2" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>{children}</div>;}
-function R3({children}){return <div className="resp-r3" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>{children}</div>;}
-function R4({children}){return <div className="resp-r4" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>{children}</div>;}
-
-/* Theme toggle button */
-function ThemeToggle(){
-  const[dark,setDark]=useState(()=>document.documentElement.getAttribute("data-theme")==="dark");
-  const toggle=()=>{
-    const next=!dark;
-    setDark(next);
-    document.documentElement.setAttribute("data-theme",next?"dark":"light");
-    try{localStorage.setItem("rdg-theme",next?"dark":"light");}catch(e){}
-  };
-  useEffect(()=>{
-    try{const saved=localStorage.getItem("rdg-theme");if(saved){document.documentElement.setAttribute("data-theme",saved);setDark(saved==="dark");}}catch(e){}
-  },[]);
-  return(
-    <button onClick={toggle} title={dark?"Switch to light mode":"Switch to dark mode"}
-      style={{width:32,height:32,borderRadius:8,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:15,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s",flexShrink:0}}
-      onMouseOver={e=>{e.currentTarget.style.borderColor="var(--accent)";e.currentTarget.style.color="var(--accent)";}}
-      onMouseOut={e=>{e.currentTarget.style.borderColor="var(--border)";e.currentTarget.style.color="var(--dim)";}}
-    >{dark?"\u2600":"\u263E"}</button>
+  return (
+    <span style={{display: "inline-flex", padding: "2px 9px", borderRadius: 6, fontSize: 11.5, fontWeight: 600, fontFamily: "var(--mono)", background: colors.bg, color: colors.color}}>
+      {children}
+    </span>
   );
 }
 
-function Box({title,children}){
-  return(
-    <div style={{marginTop:16,padding:"14px 16px",background:"var(--alt)",borderRadius:10,border:"1px solid var(--border)"}}>
-      {title&&<div style={{fontSize:12,fontWeight:600,color:"var(--dim)",marginBottom:10}}>{title}</div>}
+function GridRow2({children}) {
+  return <div className="resp-r2" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14}}>{children}</div>;
+}
+function GridRow3({children}) {
+  return <div className="resp-r3" style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14}}>{children}</div>;
+}
+function GridRow4({children}) {
+  return <div className="resp-r4" style={{display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12}}>{children}</div>;
+}
+/* Backward-compatible aliases */
+const R2 = GridRow2;
+const R3 = GridRow3;
+const R4 = GridRow4;
+
+/* Theme toggle button */
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => document.documentElement.getAttribute("data-theme") === "dark");
+  const toggle = () => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.setAttribute("data-theme", next ? "dark" : "light");
+    try { localStorage.setItem("rdg-theme", next ? "dark" : "light"); } catch (err) {}
+  };
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("rdg-theme");
+      if (saved) {
+        document.documentElement.setAttribute("data-theme", saved);
+        setDark(saved === "dark");
+      }
+    } catch (err) {}
+  }, []);
+  return (
+    <button
+      onClick={toggle}
+      title={dark ? "Switch to light mode" : "Switch to dark mode"}
+      style={{width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--dim)", fontSize: 15, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .15s", flexShrink: 0}}
+      onMouseOver={event => { event.currentTarget.style.borderColor = "var(--accent)"; event.currentTarget.style.color = "var(--accent)"; }}
+      onMouseOut={event => { event.currentTarget.style.borderColor = "var(--border)"; event.currentTarget.style.color = "var(--dim)"; }}
+    >
+      {dark ? "\u2600" : "\u263E"}
+    </button>
+  );
+}
+
+function Box({title, children}) {
+  return (
+    <div style={{marginTop: 16, padding: "14px 16px", background: "var(--alt)", borderRadius: 10, border: "1px solid var(--border)"}}>
+      {title && <div style={{fontSize: 12, fontWeight: 600, color: "var(--dim)", marginBottom: 10}}>{title}</div>}
       {children}
     </div>
   );

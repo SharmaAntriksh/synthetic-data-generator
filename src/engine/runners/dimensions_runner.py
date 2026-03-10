@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import info, skip, stage
 from src.versioning import delete_version
 

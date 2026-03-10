@@ -1,4 +1,10 @@
-# ui/validators.py
+"""Config and models validation helpers for the web UI.
+
+Returns ``(errors, warnings)`` tuples so the frontend can display
+validation feedback before the user starts a generation run.
+"""
+from __future__ import annotations
+
 import os
 from datetime import date, datetime
 from pathlib import Path

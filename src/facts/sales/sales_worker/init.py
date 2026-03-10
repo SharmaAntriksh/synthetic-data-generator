@@ -14,6 +14,7 @@ from ..output_paths import (
 )
 from ..sales_logic import bind_globals
 from .schemas import build_worker_schemas
+from src.utils.config_helpers import int_or, float_or, str_or
 from src.utils.shared_arrays import resolve_array
 
 
@@ -138,31 +139,6 @@ def build_buckets_from_key(
         k = int(k_sorted[int(s)])
         buckets[k] = order[int(s) : int(e)].astype(np.int32, copy=False)
     return buckets
-
-
-def int_or(v: Any, default: int) -> int:
-    try:
-        if v is None or v == "":
-            return int(default)
-        return int(v)
-    except Exception:
-        return int(default)
-
-
-def float_or(v: Any, default: float) -> float:
-    try:
-        if v is None or v == "":
-            return float(default)
-        return float(v)
-    except Exception:
-        return float(default)
-
-
-def str_or(v: Any, default: str) -> str:
-    if v is None:
-        return default
-    s = str(v).strip()
-    return s if s else default
 
 
 def as_int64(x: Any) -> np.ndarray:

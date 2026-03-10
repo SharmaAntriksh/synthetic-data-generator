@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
 from src.utils.logging_utils import debug, done, info, skip, work
 from src.utils.shared_arrays import SharedArrayGroup
 from .sales_logic import State
@@ -93,47 +94,6 @@ def _cfg_get(cfg: Any, path: Sequence[str], default: Any = None) -> Any:
             return default
         cur = cur[k]
     return cur
-
-
-def _int_or(value: Any, default: int) -> int:
-    try:
-        if value is None or value == "":
-            return int(default)
-        return int(value)
-    except Exception:
-        return int(default)
-
-
-def _float_or(value: Any, default: float) -> float:
-    try:
-        if value is None or value == "":
-            return float(default)
-        return float(value)
-    except Exception:
-        return float(default)
-
-
-def _bool_or(value: Any, default: bool) -> bool:
-    if value is None:
-        return bool(default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, np.integer)):
-        return bool(int(value))
-    if isinstance(value, str):
-        v = value.strip().lower()
-        if v in {"true", "1", "yes", "y"}:
-            return True
-        if v in {"false", "0", "no", "n"}:
-            return False
-    return bool(default)
-
-
-def _str_or(value: Any, default: str) -> str:
-    if value is None:
-        return default
-    s = str(value).strip()
-    return s if s else default
 
 
 def _apply_cfg_default(current: Any, default: Any, cfg_value: Any) -> Any:

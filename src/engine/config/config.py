@@ -203,6 +203,10 @@ def _load_and_normalize(
     # Normalize/validate known sections
     cfg = _normalize_sections(cfg, normalize_keys=normalize_keys)
 
+    # Cross-section business-rule validation (only for pipeline config)
+    if require_defaults:
+        cfg = validate_cross_section_rules(cfg)
+
     return cfg
 
 
@@ -1002,3 +1006,53 @@ _SECTION_NORMALIZERS.update(
         "geography": normalize_geography_config,
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# Cross-section business-rule validation
+# ---------------------------------------------------------------------------
+
+def validate_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate business rules that span multiple config sections.
+
+    Called after all section normalizers have run.  Mutates *cfg* to
+    enforce consistency and returns it.
+
+    Rules applied:
+    1. Returns are silently disabled when ``skip_order_cols=true`` with
+       ``sales_output='sales'`` because returns need ``SalesOrderNumber``.
+    2. Exchange-rate date range is always overridden to match
+       ``defaults.dates`` (FX dates cannot be set independently).
+    """
+    from src.utils.logging_utils import warn as _warn
+
+    sales_cfg = cfg.get("sales")
+    returns_cfg = cfg.get("returns")
+
+    # Rule 1: Returns require order columns
+    if isinstance(sales_cfg, dict) and isinstance(returns_cfg, dict):
+        returns_enabled = bool(returns_cfg.get("enabled", False))
+        skip_order = bool(sales_cfg.get("skip_order_cols", False))
+        sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+
+        if returns_enabled and skip_order and sales_output == "sales":
+            _warn(
+                "returns.enabled=true but sales_output='sales' with "
+                "skip_order_cols=true removes order identifiers. "
+                "Returns will be disabled. Set skip_order_cols=false or "
+                "use sales_output='sales_order'/'both' to generate returns."
+            )
+            returns_cfg = dict(returns_cfg)
+            returns_cfg["enabled"] = False
+            cfg["returns"] = returns_cfg
+
+    # Rule 2: FX dates follow global dates (enforced here AND in pipeline_runner
+    # for backward compat, but catching it at config time gives earlier feedback).
+    fx_cfg = cfg.get("exchange_rates")
+    if isinstance(fx_cfg, dict):
+        fx_cfg = dict(fx_cfg)
+        fx_cfg["use_global_dates"] = True
+        fx_cfg.pop("dates", None)
+        cfg["exchange_rates"] = fx_cfg
+
+    return cfg
