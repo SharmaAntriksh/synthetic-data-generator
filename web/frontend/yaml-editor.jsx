@@ -46,7 +46,7 @@ function prettyKey(k){
   return k.replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase());
 }
 
-function YamlEditor({value,onChange,filename,dirty,applied,error,onApply,onReset,onRefresh}){
+function YamlEditor({value,onChange,filename,dirty,applied=false,error,onApply,onReset,onRefresh}){
   const containerRef=useRef(null);
   const cmRef=useRef(null);
   const onChangeRef=useRef(onChange);
@@ -217,7 +217,7 @@ function YamlEditor({value,onChange,filename,dirty,applied,error,onApply,onReset
       )}
 
       {/* ─── CodeMirror container ─── */}
-      <div ref={containerRef} style={{minHeight:300,maxHeight:700,overflow:"auto"}} />
+      <div ref={containerRef} style={{minHeight:340,maxHeight:700,overflow:"auto"}} />
 
       {/* ─── Footer ─── */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 16px",background:"var(--alt)",borderTop:"1px solid var(--border)",fontSize:11,color:"var(--muted)",fontFamily:"var(--mono)"}}>

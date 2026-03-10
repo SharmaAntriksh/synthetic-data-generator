@@ -53,9 +53,9 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 }
 
 /* ═══ Diff viewer ═══ */
-.diff-line{font-family:var(--mono);font-size:12px;line-height:1.7;padding:0 12px;white-space:pre-wrap}
-.diff-line-add{background:var(--diff-add);color:var(--ok)}
-.diff-line-del{background:var(--diff-del);color:var(--err)}
+.diff-line{font-family:var(--mono);font-size:12.5px;line-height:1.75;padding:1px 14px;white-space:pre-wrap;border-left:3px solid transparent}
+.diff-line-add{background:var(--diff-add);color:var(--ok);border-left-color:var(--ok)}
+.diff-line-del{background:var(--diff-del);color:var(--err);border-left-color:var(--err)}
 .diff-line-ctx{color:var(--dim)}
 .diff-hunk{color:var(--accent);font-weight:600;padding:6px 12px;background:var(--glow);font-family:var(--mono);font-size:11px}
 
@@ -80,21 +80,22 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
   background:var(--surface);
   color:var(--text);
   font-family:var(--mono);
-  font-size:12.5px;
-  line-height:1.65;
+  font-size:13px;
+  line-height:1.7;
   height:auto;
-  padding:8px 0;
+  padding:10px 0;
   border:none;
 }
 .cm-s-rdg .CodeMirror-gutters{
   background:var(--alt);
   border-right:1px solid var(--border);
-  padding-right:4px;
+  padding-right:6px;
 }
 .cm-s-rdg .CodeMirror-linenumber{
   color:var(--muted);
-  font-size:11.5px;
-  padding:0 8px 0 6px;
+  font-size:11px;
+  padding:0 10px 0 12px;
+  min-width:32px;
 }
 .cm-s-rdg .CodeMirror-cursor{border-left:2px solid var(--accent)}
 .cm-s-rdg .CodeMirror-selected{background:rgba(129,140,248,.14)}

@@ -36,23 +36,6 @@ function useDebounce(fn,ms){
 /* ═══════════════════════════════════════════════════════════════════
    App
    ═══════════════════════════════════════════════════════════════════ */
-/* Simple line diff for YAML comparison */
-function computeDiff(a,b){
-  const al=(a||"").split("\n"),bl=(b||"").split("\n");
-  const lines=[];
-  let ai=0,bi=0;
-  while(ai<al.length||bi<bl.length){
-    if(ai<al.length&&bi<bl.length&&al[ai]===bl[bi]){
-      lines.push({type:"ctx",text:al[ai]});ai++;bi++;
-    }else if(bi<bl.length&&(ai>=al.length||al[ai]!==bl[bi])){
-      lines.push({type:"add",text:bl[bi]});bi++;
-    }else{
-      lines.push({type:"del",text:al[ai]});ai++;
-    }
-  }
-  return lines;
-}
-
 function App(){
   const[cfg,setCfg]=useState(null);
   const[presets,setPresets]=useState({});
@@ -77,9 +60,6 @@ function App(){
   const[previewPreset,setPreviewPreset]=useState(null);
   const[previewData,setPreviewData]=useState(null);
 
-  /* Config diff toggle */
-  const[showCfgDiff,setShowCfgDiff]=useState(false);
-
   /* Models YAML state */
   const[modelsYaml,setModelsYaml]=useState("");
   const[modelsOrig,setModelsOrig]=useState("");
@@ -95,11 +75,8 @@ function App(){
   /* Config YAML state */
   const[cfgYaml,setCfgYaml]=useState("");
   const[cfgYamlOrig,setCfgYamlOrig]=useState("");
-  const[cfgYamlDisk,setCfgYamlDisk]=useState("");
-  const[cfgYamlCurrent,setCfgYamlCurrent]=useState("");
   const[cfgYamlErr,setCfgYamlErr]=useState(null);
   const cfgYamlDirty=cfgYaml!==cfgYamlOrig;
-  const cfgYamlApplied=cfgYamlCurrent!==cfgYamlDisk;
 
   /* Page navigation */
   const[page,setPage_]=useState("main");
@@ -145,14 +122,8 @@ function App(){
   },[]);
 
   const loadCfgYaml=useCallback(()=>{
-    Promise.all([
-      fetch(API+"/config/yaml").then(r=>r.text()),
-      fetch(API+"/config/yaml/disk").then(r=>r.text()),
-    ]).then(([current,disk])=>{
-      setCfgYamlCurrent(current);
-      setCfgYamlDisk(disk);
-      const initial=(disk&&disk.trim().length>0)?disk:current;
-      setCfgYaml(initial);setCfgYamlOrig(initial);setCfgYamlErr(null);
+    fetch(API+"/config/yaml/disk").then(r=>r.text()).then(t=>{
+      setCfgYaml(t);setCfgYamlOrig(t);setCfgYamlErr(null);
     }).catch(()=>{});
   },[]);
 
@@ -240,7 +211,7 @@ function App(){
     setCfgYamlErr(null);
     fetch(API+"/config/yaml",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({yaml_text:cfgYaml})})
       .then(r=>{if(!r.ok)return r.json().then(d=>{throw new Error(d.detail||"Save failed")});return r.json();})
-      .then(()=>{setCfgYamlOrig(cfgYaml);setCfgYamlCurrent(cfgYaml);setCfgYamlErr(null);flash("Config applied (in memory)");reloadFormFromServer();})
+      .then(()=>{setCfgYamlOrig(cfgYaml);setCfgYamlErr(null);flash("Config applied (in memory)");reloadFormFromServer();})
       .catch(e=>setCfgYamlErr(e.message));
   };
 
@@ -252,7 +223,7 @@ function App(){
   };
 
   const refreshCfgYamlFromUI=()=>{
-    fetch(API+"/config/yaml").then(r=>r.text()).then(t=>{setCfgYamlCurrent(t);setCfgYaml(t);setCfgYamlOrig(t);setCfgYamlErr(null);flash("Loaded current UI settings");}).catch(()=>{});
+    fetch(API+"/config/yaml").then(r=>r.text()).then(t=>{setCfgYaml(t);setCfgYamlOrig(t);setCfgYamlErr(null);flash("Loaded current UI settings");}).catch(()=>{});
   };
 
   /* ─── Render ─── */
@@ -419,6 +390,21 @@ function App(){
 
           {/* ── Promotions ── */}
           {dimTab==="promotions"&&<div style={{marginTop:8}}>
+            <Box title="Promotion counts by type">
+              <R4>
+                <F label="Seasonal" help="Seasonal discount promos per year window."><N value={cfg.promoSeasonal} onChange={v=>s("promoSeasonal",v)} min={0} max={100} step={1} /></F>
+                <F label="Clearance" help="Clearance sale promos (steep discounts)."><N value={cfg.promoClearance} onChange={v=>s("promoClearance",v)} min={0} max={100} step={1} /></F>
+                <F label="Limited Time" help="Limited-time offer promos."><N value={cfg.promoLimited} onChange={v=>s("promoLimited",v)} min={0} max={100} step={1} /></F>
+                <F label="Flash Sale" help="Short 1–2 day flash sales."><N value={cfg.promoFlash} onChange={v=>s("promoFlash",v)} min={0} max={100} step={1} /></F>
+              </R4>
+              <R4>
+                <F label="Volume" help="Volume/bulk discount promos."><N value={cfg.promoVolume} onChange={v=>s("promoVolume",v)} min={0} max={100} step={1} /></F>
+                <F label="Loyalty" help="Loyalty-exclusive promos."><N value={cfg.promoLoyalty} onChange={v=>s("promoLoyalty",v)} min={0} max={100} step={1} /></F>
+                <F label="Bundle" help="Bundle deal promos."><N value={cfg.promoBundle} onChange={v=>s("promoBundle",v)} min={0} max={100} step={1} /></F>
+                <F label="New Customer" help="New customer welcome promos."><N value={cfg.promoNewCustomer} onChange={v=>s("promoNewCustomer",v)} min={0} max={100} step={1} /></F>
+              </R4>
+              <div style={{fontSize:11,color:"var(--muted)",marginTop:6}}>Total: {(cfg.promoSeasonal||0)+(cfg.promoClearance||0)+(cfg.promoLimited||0)+(cfg.promoFlash||0)+(cfg.promoVolume||0)+(cfg.promoLoyalty||0)+(cfg.promoBundle||0)+(cfg.promoNewCustomer||0)} promos (+ holidays auto-generated per year)</div>
+            </Box>
             <F label="New customer window (months)" help="Months after CustomerStartDate where New Customer promo applies. 0 = same month only."><N value={cfg.promoNewCustWindow} onChange={v=>s("promoNewCustWindow",v)} min={0} max={24} step={1} /></F>
           </div>}
 
@@ -596,7 +582,7 @@ function App(){
         <div style={{fontSize:10.5,fontWeight:700,color:"var(--muted)",letterSpacing:".09em",textTransform:"uppercase",marginBottom:10}}>Config</div>
         <button onClick={()=>setPage(page==="config"?"main":"config")} style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${page==="config"?"var(--accent)":"var(--border)"}`,background:page==="config"?"var(--glow)":"var(--surface)",color:page==="config"?"var(--accent)":"var(--dim)",fontSize:12.5,fontWeight:page==="config"?600:500,cursor:"pointer",fontFamily:"var(--sans)",transition:"all .15s",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
           <span>Config YAML</span>
-          {(cfgYamlDirty||cfgYamlApplied)&&<span style={{width:7,height:7,borderRadius:"50%",background:cfgYamlDirty?"var(--warn)":"var(--accent)",flexShrink:0}} />}
+          {cfgYamlDirty&&<span style={{width:7,height:7,borderRadius:"50%",background:"var(--warn)",flexShrink:0}} />}
         </button>
         {page==="config"&&<div style={{fontSize:11,color:"var(--muted)",marginTop:6,marginBottom:6}}>Editing config.yaml in memory</div>}
         <button onClick={()=>{
@@ -816,35 +802,15 @@ function App(){
           <button onClick={()=>setPage("main")} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"6px 14px",borderRadius:7,border:"1px solid var(--border)",background:"var(--surface)",color:"var(--dim)",fontSize:12.5,cursor:"pointer",fontFamily:"var(--sans)",marginBottom:18,transition:"all .12s"}} onMouseOver={e=>e.currentTarget.style.borderColor="var(--accent)"} onMouseOut={e=>e.currentTarget.style.borderColor="var(--border)"}>
             {"\u2190"} Back to configuration
           </button>
-          <h1 style={{fontSize:22,fontWeight:700,letterSpacing:"-.02em",marginBottom:4}}>Config YAML</h1>
-          <p style={{fontSize:13,color:"var(--dim)",marginTop:3,marginBottom:12}}>
+          <h1 style={{fontSize:22,fontWeight:700,letterSpacing:"-.02em",marginBottom:6}}>Config YAML</h1>
+          <p style={{fontSize:13,color:"var(--dim)",marginTop:0,marginBottom:16,lineHeight:1.5}}>
             Edit the full config below. Applying here will override any preset or form settings. The file on disk is never modified.
           </p>
-          {/* Diff summary */}
-          {cfgYamlApplied&&<div style={{padding:"9px 14px",marginBottom:14,borderRadius:8,background:"var(--glow)",border:"1px solid rgba(79,91,213,.15)",fontSize:12,color:"var(--accent)",display:"flex",alignItems:"center",gap:8}}>
-            <span style={{width:7,height:7,borderRadius:"50%",background:"var(--accent)",flexShrink:0}} />
-            <span style={{flex:1}}>In-memory config differs from disk. Changes will be used for the next pipeline run.</span>
-            <button onClick={()=>setShowCfgDiff(!showCfgDiff)} style={{padding:"3px 10px",borderRadius:5,fontSize:11,border:"1px solid var(--accent)",background:showCfgDiff?"var(--accent)":"transparent",color:showCfgDiff?"#fff":"var(--accent)",cursor:"pointer",fontFamily:"var(--sans)",fontWeight:500,whiteSpace:"nowrap"}}>{showCfgDiff?"Hide Diff":"Show Diff"}</button>
-          </div>}
-          {showCfgDiff&&cfgYamlApplied&&(()=>{
-            const diffLines=computeDiff(cfgYamlDisk,cfgYamlCurrent);
-            const filtered=diffLines.filter(l=>l.type!=="ctx");
-            return(
-              <div style={{marginBottom:14,borderRadius:8,border:"1px solid var(--border)",overflow:"hidden",maxHeight:300,overflowY:"auto"}}>
-                <div style={{padding:"6px 12px",background:"var(--alt)",borderBottom:"1px solid var(--border)",fontSize:11,color:"var(--muted)",fontWeight:600}}>{filtered.length} change{filtered.length!==1?"s":""} from disk</div>
-                {diffLines.map((l,i)=>{
-                  if(l.type==="ctx")return <div key={i} className="diff-line diff-line-ctx">{l.text||" "}</div>;
-                  if(l.type==="add")return <div key={i} className="diff-line diff-line-add">{"+ "}{l.text}</div>;
-                  return <div key={i} className="diff-line diff-line-del">{"- "}{l.text}</div>;
-                })}
-              </div>
-            );
-          })()}
           {cfgYamlDirty&&<div style={{padding:"9px 14px",marginBottom:14,borderRadius:8,background:"var(--warnBg)",border:"1px solid rgba(202,138,4,.1)",fontSize:12,color:"var(--warn)",display:"flex",alignItems:"center",gap:8}}>
             <span style={{width:7,height:7,borderRadius:"50%",background:"var(--warn)",flexShrink:0}} />
             You have unsaved edits. Press Apply (Ctrl+S) to update in-memory config.
           </div>}
-          <YamlEditor value={cfgYaml} onChange={setCfgYaml} filename="config.yaml" dirty={cfgYamlDirty} applied={cfgYamlApplied} error={cfgYamlErr} onApply={saveCfgYaml} onReset={resetCfgYaml} onRefresh={refreshCfgYamlFromUI} />
+          <YamlEditor value={cfgYaml} onChange={setCfgYaml} filename="config.yaml" dirty={cfgYamlDirty} error={cfgYamlErr} onApply={saveCfgYaml} onReset={resetCfgYaml} onRefresh={refreshCfgYamlFromUI} />
         </div>
 
         ):(

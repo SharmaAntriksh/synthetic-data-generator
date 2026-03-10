@@ -264,6 +264,14 @@ def get_config():
         "returnMaxDays": int(returns.get("max_days_after_sale", 60)),
         # Promotions
         "promoNewCustWindow": int(_g(promos, "new_customer_window_months", default=3)),
+        "promoSeasonal": int(promos.get("num_seasonal", 20)),
+        "promoClearance": int(promos.get("num_clearance", 8)),
+        "promoLimited": int(promos.get("num_limited", 12)),
+        "promoFlash": int(promos.get("num_flash", 6)),
+        "promoVolume": int(promos.get("num_volume", 4)),
+        "promoLoyalty": int(promos.get("num_loyalty", 3)),
+        "promoBundle": int(promos.get("num_bundle", 3)),
+        "promoNewCustomer": int(promos.get("num_new_customer", 3)),
         # Customer Segments
         "csEnabled": bool(cs.get("enabled", False)),
         "csGenerateBridge": bool(cs.get("generate_bridge", False)),
@@ -418,6 +426,14 @@ def update_config(body: ConfigUpdate):
 
     # Promotions
     if "promoNewCustWindow" in v: _cfg["promotions"]["new_customer_window_months"] = int(v["promoNewCustWindow"])
+    if "promoSeasonal" in v: _cfg["promotions"]["num_seasonal"] = int(v["promoSeasonal"])
+    if "promoClearance" in v: _cfg["promotions"]["num_clearance"] = int(v["promoClearance"])
+    if "promoLimited" in v: _cfg["promotions"]["num_limited"] = int(v["promoLimited"])
+    if "promoFlash" in v: _cfg["promotions"]["num_flash"] = int(v["promoFlash"])
+    if "promoVolume" in v: _cfg["promotions"]["num_volume"] = int(v["promoVolume"])
+    if "promoLoyalty" in v: _cfg["promotions"]["num_loyalty"] = int(v["promoLoyalty"])
+    if "promoBundle" in v: _cfg["promotions"]["num_bundle"] = int(v["promoBundle"])
+    if "promoNewCustomer" in v: _cfg["promotions"]["num_new_customer"] = int(v["promoNewCustomer"])
 
     # Customer Segments
     if "csEnabled" in v: _cfg["customer_segments"]["enabled"] = bool(v["csEnabled"])
@@ -500,7 +516,7 @@ def get_config_yaml():
 
 @app.get("/api/config/yaml/disk")
 def get_config_yaml_disk():
-    """Return the original config.yaml from disk (for three-state tracking)."""
+    """Return the original config.yaml from disk."""
     return Response(content=_cfg_disk_yaml, media_type="text/plain")
 
 
