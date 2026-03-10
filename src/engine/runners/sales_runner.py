@@ -94,7 +94,7 @@ def _load_active_products(parquet_dims: Path) -> np.ndarray:
     """
     products_path = parquet_dims / "products.parquet"
     if not products_path.exists():
-        raise RuntimeError(f"Missing products parquet: {products_path}")
+        raise SalesError(f"Missing products parquet: {products_path}")
 
     wanted_cols = ["ProductKey", "IsActiveInSales", "UnitPrice", "UnitCost"]
     try:

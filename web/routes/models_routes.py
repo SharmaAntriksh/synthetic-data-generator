@@ -57,6 +57,8 @@ def get_models():
 def update_models(body: ModelsUpdate):
     """Parse and store updated models YAML in memory. Original file is untouched."""
     text = body.yaml_text
+    if len(text) > 1_048_576:
+        raise HTTPException(413, "YAML text exceeds 1 MB limit")
     try:
         parsed = yaml.safe_load(text)
         if not isinstance(parsed, dict):
@@ -139,58 +141,59 @@ def get_models_form():
 @router.post("/form")
 def update_models_form(body: ConfigUpdate):
     """Apply partial form updates to the in-memory models config, re-serialize YAML."""
-    v = body.values
-    m = _models_root()
+    with _state._cfg_lock:
+        v = body.values
+        m = _models_root()
 
-    m.setdefault("macro_demand", {}).setdefault("year_level_factors", {})
-    m.setdefault("quantity", {})
-    m.setdefault("pricing", {}).setdefault("inflation", {})
-    m["pricing"].setdefault("markdown", {})
-    m.setdefault("brand_popularity", {})
-    m.setdefault("returns", {}).setdefault("lag_days", {})
-    m["returns"].setdefault("quantity", {})
+        m.setdefault("macro_demand", {}).setdefault("year_level_factors", {})
+        m.setdefault("quantity", {})
+        m.setdefault("pricing", {}).setdefault("inflation", {})
+        m["pricing"].setdefault("markdown", {})
+        m.setdefault("brand_popularity", {})
+        m.setdefault("returns", {}).setdefault("lag_days", {})
+        m["returns"].setdefault("quantity", {})
 
-    # Macro demand
-    if "demandMode" in v: m["macro_demand"]["year_level_factors"]["mode"] = v["demandMode"]
-    if "demandFactors" in v and isinstance(v["demandFactors"], list):
-        m["macro_demand"]["year_level_factors"]["values"] = [float(x) for x in v["demandFactors"]]
+        # Macro demand
+        if "demandMode" in v: m["macro_demand"]["year_level_factors"]["mode"] = v["demandMode"]
+        if "demandFactors" in v and isinstance(v["demandFactors"], list):
+            m["macro_demand"]["year_level_factors"]["values"] = [float(x) for x in v["demandFactors"]]
 
-    # Quantity
-    if "qtyLambda" in v: m["quantity"]["base_poisson_lambda"] = float(v["qtyLambda"])
-    if "qtyMin" in v: m["quantity"]["min_qty"] = int(v["qtyMin"])
-    if "qtyMax" in v: m["quantity"]["max_qty"] = int(v["qtyMax"])
-    if "qtyMonthly" in v and isinstance(v["qtyMonthly"], list):
-        m["quantity"]["monthly_factors"] = [float(x) for x in v["qtyMonthly"]]
-    if "qtyNoise" in v: m["quantity"]["noise_sigma"] = float(v["qtyNoise"])
+        # Quantity
+        if "qtyLambda" in v: m["quantity"]["base_poisson_lambda"] = float(v["qtyLambda"])
+        if "qtyMin" in v: m["quantity"]["min_qty"] = int(v["qtyMin"])
+        if "qtyMax" in v: m["quantity"]["max_qty"] = int(v["qtyMax"])
+        if "qtyMonthly" in v and isinstance(v["qtyMonthly"], list):
+            m["quantity"]["monthly_factors"] = [float(x) for x in v["qtyMonthly"]]
+        if "qtyNoise" in v: m["quantity"]["noise_sigma"] = float(v["qtyNoise"])
 
-    # Pricing -- inflation
-    if "inflationRate" in v: m["pricing"]["inflation"]["annual_rate"] = float(v["inflationRate"])
-    if "inflationVolatility" in v: m["pricing"]["inflation"]["month_volatility_sigma"] = float(v["inflationVolatility"])
-    if "inflationClipMin" in v or "inflationClipMax" in v:
-        clip = m["pricing"]["inflation"].get("factor_clip", [1.0, 1.3])
-        if "inflationClipMin" in v: clip[0] = float(v["inflationClipMin"])
-        if "inflationClipMax" in v: clip[1] = float(v["inflationClipMax"])
-        m["pricing"]["inflation"]["factor_clip"] = clip
+        # Pricing -- inflation
+        if "inflationRate" in v: m["pricing"]["inflation"]["annual_rate"] = float(v["inflationRate"])
+        if "inflationVolatility" in v: m["pricing"]["inflation"]["month_volatility_sigma"] = float(v["inflationVolatility"])
+        if "inflationClipMin" in v or "inflationClipMax" in v:
+            clip = m["pricing"]["inflation"].get("factor_clip", [1.0, 1.3])
+            if "inflationClipMin" in v: clip[0] = float(v["inflationClipMin"])
+            if "inflationClipMax" in v: clip[1] = float(v["inflationClipMax"])
+            m["pricing"]["inflation"]["factor_clip"] = clip
 
-    # Pricing -- markdown
-    if "markdownEnabled" in v: m["pricing"]["markdown"]["enabled"] = bool(v["markdownEnabled"])
-    if "markdownMaxPct" in v: m["pricing"]["markdown"]["max_pct_of_price"] = float(v["markdownMaxPct"])
-    if "markdownMinNet" in v: m["pricing"]["markdown"]["min_net_price"] = float(v["markdownMinNet"])
-    if "markdownAllowNeg" in v: m["pricing"]["markdown"]["allow_negative_margin"] = bool(v["markdownAllowNeg"])
+        # Pricing -- markdown
+        if "markdownEnabled" in v: m["pricing"]["markdown"]["enabled"] = bool(v["markdownEnabled"])
+        if "markdownMaxPct" in v: m["pricing"]["markdown"]["max_pct_of_price"] = float(v["markdownMaxPct"])
+        if "markdownMinNet" in v: m["pricing"]["markdown"]["min_net_price"] = float(v["markdownMinNet"])
+        if "markdownAllowNeg" in v: m["pricing"]["markdown"]["allow_negative_margin"] = bool(v["markdownAllowNeg"])
 
-    # Brand popularity
-    if "brandEnabled" in v: m["brand_popularity"]["enabled"] = bool(v["brandEnabled"])
-    if "brandSeed" in v: m["brand_popularity"]["seed"] = int(v["brandSeed"])
-    if "brandWinnerBoost" in v: m["brand_popularity"]["winner_boost"] = float(v["brandWinnerBoost"])
-    if "brandWeights" in v and isinstance(v["brandWeights"], dict):
-        m["brand_popularity"]["brand_weights"] = {k: float(vv) for k, vv in v["brandWeights"].items()}
+        # Brand popularity
+        if "brandEnabled" in v: m["brand_popularity"]["enabled"] = bool(v["brandEnabled"])
+        if "brandSeed" in v: m["brand_popularity"]["seed"] = int(v["brandSeed"])
+        if "brandWinnerBoost" in v: m["brand_popularity"]["winner_boost"] = float(v["brandWinnerBoost"])
+        if "brandWeights" in v and isinstance(v["brandWeights"], dict):
+            m["brand_popularity"]["brand_weights"] = {k: float(vv) for k, vv in v["brandWeights"].items()}
 
-    # Returns
-    if "retEnabled" in v: m["returns"]["enabled"] = bool(v["retEnabled"])
-    if "retLagDist" in v: m["returns"]["lag_days"]["distribution"] = v["retLagDist"]
-    if "retLagMode" in v: m["returns"]["lag_days"]["mode"] = int(v["retLagMode"])
-    if "retFullLinePct" in v: m["returns"]["quantity"]["full_line_probability"] = float(v["retFullLinePct"])
+        # Returns
+        if "retEnabled" in v: m["returns"]["enabled"] = bool(v["retEnabled"])
+        if "retLagDist" in v: m["returns"]["lag_days"]["distribution"] = v["retLagDist"]
+        if "retLagMode" in v: m["returns"]["lag_days"]["mode"] = int(v["retLagMode"])
+        if "retFullLinePct" in v: m["returns"]["quantity"]["full_line_probability"] = float(v["retFullLinePct"])
 
-    # Re-serialize to YAML text so the YAML editor stays in sync
-    _state._models_yaml_text = yaml.safe_dump(_state._models_cfg, sort_keys=False, default_flow_style=False)
-    return {"ok": True, "yaml_text": _state._models_yaml_text}
+        # Re-serialize to YAML text so the YAML editor stays in sync
+        _state._models_yaml_text = yaml.safe_dump(_state._models_cfg, sort_keys=False, default_flow_style=False)
+        return {"ok": True, "yaml_text": _state._models_yaml_text}

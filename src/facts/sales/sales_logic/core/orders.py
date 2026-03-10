@@ -155,6 +155,12 @@ def build_orders(
         )
 
     start = np.int64(order_id_start)
+    end_id = start + np.int64(order_count) + np.int64(1)
+    if end_id > np.iinfo(np.int32).max:
+        raise OverflowError(
+            f"Order IDs would overflow int32: start={order_id_start}, count={order_count}, "
+            f"max_id={end_id} > {np.iinfo(np.int32).max}"
+        )
     order_ids_int = (start + np.arange(order_count, dtype=np.int64) + np.int64(1)).astype(np.int32)
 
     # ------------------------------------------------------------

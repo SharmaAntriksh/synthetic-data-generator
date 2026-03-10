@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re as _re
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence, Tuple
@@ -31,6 +32,13 @@ _FACT_TABLE_NAMES = {
     TABLE_BUDGET_MONTHLY,
     TABLE_INVENTORY_SNAPSHOT,
 }
+
+_SAFE_IDENT_RE = _re.compile(r'^[A-Za-z_][A-Za-z0-9_ ]*$')
+
+
+def _validate_sql_identifier(name: str, label: str = "identifier") -> None:
+    if not _SAFE_IDENT_RE.match(name):
+        raise ValueError(f"Unsafe SQL {label}: {name!r}")
 
 
 def _sql_escape_literal(value: str) -> str:
@@ -106,6 +114,8 @@ def create_table_from_schema(
     drop_existing: bool = True,
     include_go: bool = True,
 ) -> str:
+    _validate_sql_identifier(table_name, "table name")
+    _validate_sql_identifier(schema, "schema name")
     fq_table = _qualify(schema, table_name)
     object_id_name = _sql_escape_literal(f"{schema}.{table_name}")
 
@@ -195,7 +205,7 @@ def generate_all_create_tables(
             continue
         if table_name in skip_tables:
             continue
-        
+
         if table_name == "Dates":
             dates_cfg = cfg.get("dates")
             if dates_cfg is None:

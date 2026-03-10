@@ -242,7 +242,7 @@ def _sample_products_per_store(
                 # --- CDF-cached weighted sampling ---
                 # Pool identity: (size, first, last) is a fast proxy.
                 # Collisions are harmless (same CDF reused — correct if pool content matches).
-                pool_key = (int(pool.size), int(pool[0]), int(pool[-1]))
+                pool_key = id(pool)
                 cache_key = (pool_key, _cal_month)
 
                 if _cdf_cache is not None and cache_key in _cdf_cache:

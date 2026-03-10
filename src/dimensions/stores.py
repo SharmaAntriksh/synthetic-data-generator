@@ -587,9 +587,11 @@ def generate_store_table(
     if geo_loc_short is None:
         loc_short = df["GeographyKey"].astype(np.int64).map(lambda k: f"Geo {int(k)}")
     else:
-        loc_short = df["GeographyKey"].astype(np.int64).map(
-            lambda k: geo_loc_short.get(int(k), f"Geo {int(k)}")
-        )
+        _gk = df["GeographyKey"].astype(np.int64)
+        loc_short = _gk.map(geo_loc_short)
+        _missing = loc_short.isna()
+        if _missing.any():
+            loc_short[_missing] = _gk[_missing].map(lambda k: f"Geo {int(k)}")
 
     if geo_loc_full is None:
         loc_full = loc_short
@@ -697,11 +699,11 @@ def generate_store_table(
         if late_openers:
             warn(
                 f"{late_openers} closed store(s) have OpeningDate after closing_end="
-                f"{closing_end}; their ClosingDate will equal OpeningDate (same-day close)"
+                f"{closing_end}; their ClosingDate will be set to one day after OpeningDate"
             )
 
-        effective_end = np.maximum(open_days, close_end_day)
-        close_days = rng.integers(open_days, effective_end + 1, dtype=np.int64)
+        effective_end = np.maximum(open_days + 1, close_end_day)
+        close_days = rng.integers(open_days + 1, effective_end + 1, dtype=np.int64)
         close_d = close_days.astype("datetime64[D]")
         df.loc[closed_mask, "ClosingDate"] = pd.to_datetime(
             close_d.astype("datetime64[ns]")

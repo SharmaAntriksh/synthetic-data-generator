@@ -41,12 +41,16 @@ def download_history(currency, start_date, end_date):
     fallback = f"{currency}{BASE}=X"  # may represent USD per 1 CUR, invert to get CUR per 1 USD
 
     def _download(ticker: str) -> pd.DataFrame:
+        import requests as _req
+        _sess = _req.Session()
+        _sess.timeout = 15
         data = yf.download(
             ticker,
             start=start_ts - timedelta(days=3),
             end=end_ts + timedelta(days=3),
             auto_adjust=False,
-            progress=False
+            progress=False,
+            session=_sess,
         )
         return data
 

@@ -42,7 +42,7 @@ class PipelineOverrides:
     customers: Optional[int] = None             # customers.total_customers
     stores: Optional[int] = None                # stores.num_stores
     products: Optional[int] = None              # products.num_products
-    promotions: Optional[int] = None            # “total” promotions, distributed across buckets when possible
+    promotions: Optional[int] = None            # "total" promotions, distributed across buckets when possible
 
 
 
@@ -259,7 +259,7 @@ def run_pipeline(
             "elapsed_sec": elapsed,
         }
 
-    except Exception as ex:
+    except (PipelineError, ConfigError, OSError, KeyError, ValueError, TypeError) as ex:
         fail(str(ex))
         raise
 
@@ -430,6 +430,10 @@ def _apply_promotions_total(promotions_cfg: Dict[str, Any], total: int) -> None:
     total = max(0, int(total))
 
     keys = ("num_seasonal", "num_clearance", "num_limited", "num_flash", "num_volume", "num_loyalty", "num_bundle", "num_new_customer")
+    for k in keys:
+        val = promotions_cfg.get(k)
+        if val is not None and int(val) < 0:
+            raise ValueError(f"promotions.{k} must be non-negative, got {val}")
     if all(k in promotions_cfg and isinstance(promotions_cfg[k], (int, float)) for k in keys):
         current = sum(int(promotions_cfg[k]) for k in keys)
         if current <= 0:

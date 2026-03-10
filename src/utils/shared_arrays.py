@@ -102,7 +102,17 @@ class SharedArrayGroup:
         arr = np.ascontiguousarray(arr)
         shm_name = f"{self._prefix}{name_hint}"
 
-        shm = SharedMemory(name=shm_name, create=True, size=arr.nbytes)
+        try:
+            shm = SharedMemory(name=shm_name, create=True, size=arr.nbytes)
+        except FileExistsError:
+            # Clean up stale shared memory from a previous run
+            try:
+                old = SharedMemory(name=shm_name, create=False)
+                old.close()
+                old.unlink()
+            except FileNotFoundError:
+                pass
+            shm = SharedMemory(name=shm_name, create=True, size=arr.nbytes)
         # Copy data into the shared block
         view = np.ndarray(arr.shape, dtype=arr.dtype, buffer=shm.buf)
         view[:] = arr

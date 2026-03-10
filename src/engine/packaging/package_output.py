@@ -29,7 +29,10 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     is_csv = file_format == "csv"
     # info(f"[DEBUG] package_output file_format={file_format!r} is_csv={is_csv}")
 
-    final_root = Path(unquote(str(cfg["final_output_folder"]))).resolve()
+    _raw_folder = unquote(str(cfg["final_output_folder"]))
+    if ".." in _raw_folder:
+        raise ValueError(f"final_output_folder must not contain '..': {_raw_folder}")
+    final_root = Path(_raw_folder).resolve()
 
     config_yaml_path = get_first_existing_path(
         cfg,
@@ -39,7 +42,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         cfg,
         keys=["model_yaml_path", "model_path", "model_file", "model_yaml", "model"],
     )
-    
+
     final_folder = create_final_output_folder(
         final_folder_root=final_root,
         parquet_dims=parquet_dims,

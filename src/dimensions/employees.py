@@ -203,7 +203,8 @@ def _enrich_employee_hr_columns(
             + df["LastName"].iloc[pick].to_numpy(dtype=object)
         )
     else:
-        df["EmergencyContactName"] = pd.Series(["Jane Doe"], dtype="object")
+        self_name = df["FirstName"].iloc[0] + " " + df["LastName"].iloc[0] + " (Self)"
+        df["EmergencyContactName"] = pd.Series([self_name], dtype="object")
     ec_raw = rng.integers(0, 10, size=n * 10, dtype=np.uint8) + np.uint8(48)
     df["EmergencyContactPhone"] = pd.Series(ec_raw.view("S10").astype("U10"), dtype="object")
 
@@ -377,7 +378,8 @@ def generate_employee_dimension(
         warn(
             "stores.parquet missing StoreDistrict/StoreRegion columns; "
             "computing employee hierarchy independently. "
-            "Regenerate stores to enable unified hierarchy."
+            "This may produce inconsistent hierarchies. "
+            "Run --regen-dimensions all to fix."
         )
         sort_cols = []
         has_continent = "Continent" in stores.columns
@@ -489,7 +491,7 @@ def generate_employee_dimension(
     )
 
     mgr_df = pd.DataFrame({
-        "EmployeeKey": (STORE_MGR_KEY_BASE + sk_arr).astype(np.int32),
+        "EmployeeKey": (STORE_MGR_KEY_BASE + sk_arr).astype(np.int64),
         "ParentEmployeeKey": mgr_parent_keys,
         "EmployeeName": "",
         "Title": "Store Manager",
@@ -540,8 +542,11 @@ def generate_employee_dimension(
             np.subtract.at(within_store_idx, offsets, staff_counts[:-1] - 1)
         within_store_idx = np.cumsum(within_store_idx)
 
-        staff_ek = (STAFF_KEY_BASE + staff_sk * STAFF_KEY_STORE_MULT + within_store_idx).astype(np.int32)
-        staff_parent = (STORE_MGR_KEY_BASE + staff_sk).astype(np.int32)
+        max_ek = int(STAFF_KEY_BASE) + int(staff_sk.max()) * int(STAFF_KEY_STORE_MULT) + int(within_store_idx.max())
+        if max_ek > np.iinfo(np.int64).max:
+            raise OverflowError(f"EmployeeKey would overflow int64: {max_ek}")
+        staff_ek = (STAFF_KEY_BASE + staff_sk * STAFF_KEY_STORE_MULT + within_store_idx).astype(np.int64)
+        staff_parent = (STORE_MGR_KEY_BASE + staff_sk).astype(np.int64)
 
         # Sample titles in bulk, then overwrite first k per store with primary sales role
         all_titles = rng.choice(_STAFF_TITLES, size=total_staff, p=_STAFF_TITLES_P).astype(object)
@@ -713,8 +718,10 @@ def _sync_stores_employee_count(emp_df: pd.DataFrame, stores_path: Path) -> None
     if "StoreDescription" in stores_full.columns:
         desc = stores_full["StoreDescription"].astype(str).to_numpy(dtype=object)
         sk_arr = stores_full["StoreKey"].to_numpy()
+        headcount_map = {int(sk): str(cnt) for sk, cnt in actual.items()}
         for i in range(len(stores_full)):
-            cnt = actual.get(int(sk_arr[i]), 0)
+            sk_val = int(sk_arr[i])
+            cnt = headcount_map.get(sk_val, "0")
             desc[i] = _re.sub(r"(headcount )\d+", rf"\g<1>{cnt}", str(desc[i]))
         stores_full["StoreDescription"] = desc
 

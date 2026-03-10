@@ -78,6 +78,7 @@ PIPELINE_START_TIME = time.time()
 # INTERNAL STATE
 # ============================================================================
 _PRINT_LOCK = threading.Lock()
+_LOG_FD_LOCK = threading.Lock()
 
 _LOG_DIR_READY = False
 _LOG_FD: Optional[int] = None
@@ -205,19 +206,20 @@ def _ensure_log_file_open() -> None:
     if not ENABLE_FILE_LOG:
         return
 
-    if _LOG_FILE_PATH is None:
-        _LOG_FILE_PATH = Path(LOG_FILE)
+    with _LOG_FD_LOCK:
+        if _LOG_FILE_PATH is None:
+            _LOG_FILE_PATH = Path(LOG_FILE)
 
-    if not _LOG_DIR_READY:
-        # Avoid repeated mkdir calls
-        parent = _LOG_FILE_PATH.parent
-        if str(parent) and str(parent) != ".":
-            parent.mkdir(parents=True, exist_ok=True)
-        _LOG_DIR_READY = True
+        if not _LOG_DIR_READY:
+            # Avoid repeated mkdir calls
+            parent = _LOG_FILE_PATH.parent
+            if str(parent) and str(parent) != ".":
+                parent.mkdir(parents=True, exist_ok=True)
+            _LOG_DIR_READY = True
 
-    if _LOG_FD is None:
-        # O_APPEND ensures each write is appended (best-effort atomicity per process)
-        _LOG_FD = os.open(str(_LOG_FILE_PATH), os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o644)
+        if _LOG_FD is None:
+            # O_APPEND ensures each write is appended (best-effort atomicity per process)
+            _LOG_FD = os.open(str(_LOG_FILE_PATH), os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o644)
 
 
 @atexit.register

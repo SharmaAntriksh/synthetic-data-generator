@@ -405,5 +405,31 @@ def _validate_probability_arrays() -> None:
                 f"defaults.{name} probabilities sum to {total}, expected 1.0"
             )
 
+    # Validate nested probability dicts (dict of arrays)
+    _NESTED_PROB_DICTS = {
+        "CUSTOMER_HOME_OWNERSHIP_PROBS_BY_INCOME": CUSTOMER_HOME_OWNERSHIP_PROBS_BY_INCOME,
+        "CUSTOMER_OCCUPATION_PROBS_BY_EDUCATION": CUSTOMER_OCCUPATION_PROBS_BY_EDUCATION,
+    }
+    for name, d in _NESTED_PROB_DICTS.items():
+        for key, arr in d.items():
+            total = float(arr.sum())
+            if abs(total - 1.0) > 1e-6:
+                raise ValueError(
+                    f"defaults.{name}[{key!r}] probabilities sum to {total}, expected 1.0"
+                )
+
+    # Validate lists of probability arrays
+    _PROB_LISTS = {
+        "CUSTOMER_MARITAL_PROBS_BY_AGE": CUSTOMER_MARITAL_PROBS_BY_AGE,
+        "CUSTOMER_EDUCATION_PROBS_BY_AGE": CUSTOMER_EDUCATION_PROBS_BY_AGE,
+    }
+    for name, lst in _PROB_LISTS.items():
+        for i, arr in enumerate(lst):
+            total = float(arr.sum())
+            if abs(total - 1.0) > 1e-6:
+                raise ValueError(
+                    f"defaults.{name}[{i}] probabilities sum to {total}, expected 1.0"
+                )
+
 
 _validate_probability_arrays()

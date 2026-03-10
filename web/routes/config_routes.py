@@ -206,7 +206,7 @@ def get_config():
 @router.post("")
 def update_config(body: ConfigUpdate):
     with _state._cfg_lock:
-        cfg = _state._cfg
+        cfg = copy.deepcopy(_state._cfg)
         v = body.values
 
         cfg.setdefault("defaults", {}).setdefault("dates", {})
@@ -369,6 +369,7 @@ def update_config(body: ConfigUpdate):
         if "inventoryShrinkageEnabled" in v: cfg["inventory"]["shrinkage"]["enabled"] = bool(v["inventoryShrinkageEnabled"])
         if "inventoryShrinkageRate" in v: cfg["inventory"]["shrinkage"]["rate"] = float(v["inventoryShrinkageRate"])
 
+        _state._cfg = cfg
         return {"ok": True}
 
 
@@ -402,6 +403,8 @@ def get_config_yaml_disk():
 def update_config_yaml(body: ConfigYamlUpdate):
     """Parse YAML, normalize, replace in-memory config. Original file untouched."""
     text = body.yaml_text
+    if len(text) > 1_048_576:
+        raise HTTPException(413, "YAML text exceeds 1 MB limit")
     try:
         parsed = yaml.safe_load(text)
         if not isinstance(parsed, dict):

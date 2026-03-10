@@ -49,6 +49,7 @@ function App() {
   const [presetBucket, setPresetBucket] = useState("");
   const [selectedPreset, setSelectedPreset] = useState(null);
   const [toast, setToast] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const [logs, setLogs] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -110,6 +111,7 @@ function App() {
       data.autoWorkers = !data.workers;
       setCfg(data);
     }).catch(() => {
+      setLoadError("Failed to load config from server");
       setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, profile: "steady", firstYearPct: .27, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, geoWeights: {"United States": .35, India: .2, "United Kingdom": .1, Germany: .1, France: .1, Australia: .07, Canada: .08}, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, csEnabled: false, csGenerateBridge: false, csSegmentCount: 10, csPerCustomerMin: 1, csPerCustomerMax: 2, csIncludeScore: true, csIncludePrimaryFlag: true, csIncludeValidity: true, csValidityGrain: "month", csChurnRateQtr: .08, csNewCustomerMonths: 2, csSeed: 123, spEnabled: false, spGenerateBridge: false, spPowersCount: 20, spPerCustomerMin: 1, spPerCustomerMax: 3, spIncludePowerLevel: true, spIncludePrimaryFlag: true, spIncludeAcquiredDate: true, spIncludeValidity: false, spSeed: 123, storeEnsureIsoCoverage: true, storeDistrictSize: 10, storeDistrictsPerRegion: 8, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, employeeMinStaff: 3, employeeMaxStaff: 5, employeeEmailDomain: "contoso.com", employeeStoreAssignments: true, erCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erVolatility: .02, erFutureDrift: .02, erUseGlobalDates: true, budgetEnabled: true, budgetReportCurrency: "USD", budgetDefaultGrowth: .05, budgetReturnRateCap: .30, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
     });
     fetch(API + "/presets").then(r => r.json()).then(data => { setPresets(data); setPresetBucket(Object.keys(data)[0] || ""); }).catch(() => {});
@@ -119,7 +121,7 @@ function App() {
 
   /* ─── Debounced config sync ─── */
   const syncToBackend = useDebounce((vals) => {
-    fetch(API + "/config", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({values: vals})}).catch(() => {});
+    fetch(API + "/config", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({values: vals})}).then(r => { if (!r.ok) console.warn("Config sync failed", r.status) }).catch(() => {});
   }, 400);
 
   const setConfigField = useCallback((key, value) => {
@@ -178,19 +180,25 @@ function App() {
         const start = Date.now();
         timerRef.current = setInterval(() => setElapsed((Date.now() - start) / 1000), 100);
         const eventSource = new EventSource(API + "/generate/stream");
+        const cleanup = () => {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+          setIsRunning(false);
+          eventSource.close();
+        };
         eventSource.onmessage = (event) => {
           const data = JSON.parse(event.data);
           if (data.type === "log") setLogs(prev => [...prev, data.line]);
           if (data.type === "status") setElapsed(data.elapsed);
           if (data.type === "end") {
-            clearInterval(timerRef.current); setIsRunning(false); setElapsed(data.elapsed); eventSource.close();
+            cleanup(); setElapsed(data.elapsed);
             const formattedElapsed = data.elapsed < 60 ? `${data.elapsed.toFixed(1)}s` : `${Math.floor(data.elapsed / 60)}m ${Math.floor(data.elapsed % 60)}s`;
             flash(data.status === "done" ? `Pipeline completed in ${formattedElapsed}` : `Pipeline failed after ${formattedElapsed}`);
             setRunHistory(prev => [{status: data.status, elapsed: data.elapsed, rows: cfg.salesRows, time: new Date().toLocaleTimeString()}, ...prev].slice(0, 10));
           }
-          if (data.type === "idle") { eventSource.close(); }
+          if (data.type === "idle") { cleanup(); }
         };
-        eventSource.onerror = () => { clearInterval(timerRef.current); setIsRunning(false); eventSource.close(); };
+        eventSource.onerror = () => { cleanup(); };
       }).catch(err => { setLogs(["Failed to start pipeline: " + err.message]); });
   };
 
@@ -258,7 +266,7 @@ function App() {
   };
 
   /* ─── Render ─── */
-  if (!cfg) return <div style={{padding: 40, textAlign: "center", color: "var(--muted)"}}>Loading configuration...</div>;
+  if (!cfg) return <div style={{padding: 40, textAlign: "center", color: "var(--muted)"}}>{loadError ? <div style={{color: "#e74c3c"}}>{loadError}</div> : "Loading configuration..."}</div>;
   const {errors, warnings} = validate(cfg);
   const showParquet = cfg.format === "parquet" || cfg.format === "deltaparquet";
   const showDelta = cfg.format === "deltaparquet";

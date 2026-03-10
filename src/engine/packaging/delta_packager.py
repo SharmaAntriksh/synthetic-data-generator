@@ -13,7 +13,7 @@ def looks_like_delta_table_dir(p: Path) -> bool:
     """Delta table root signature: has _delta_log/ (do not require parquet at root)."""
     try:
         return (p / "_delta_log").is_dir()
-    except Exception:
+    except (FileNotFoundError, PermissionError, OSError):
         return False
 
 

@@ -198,14 +198,13 @@ def build_dim_geography(cfg: Dict, *, _geo_cfg: Dict | None = None) -> pd.DataFr
             f"{sorted({r[4] for r in CURATED_ROWS})}"
         )
 
-    # Warn about currencies configured but not covered by any geography row
+    # Reject currencies configured but not covered by any geography row
     covered_iso = set(df["ISOCode"].unique())
     uncovered = sorted(allowed_iso - covered_iso)
     if uncovered:
-        warn(
-            f"exchange_rates.currencies includes {uncovered} but no geography "
-            f"rows use those currencies. Add cities to CURATED_ROWS or remove "
-            f"the currencies from exchange_rates.currencies."
+        raise DimensionError(
+            f"exchange_rates.currencies contains codes with no geography coverage: {uncovered}. "
+            f"Add geography entries or remove these currencies."
         )
 
     df.insert(0, "GeographyKey", np.arange(1, len(df) + 1, dtype=np.int32))

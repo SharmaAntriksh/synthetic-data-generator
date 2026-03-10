@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from src.facts.sales.sales_logic import State
+from src.utils.logging_utils import warn
 
 
 # ===============================================================
@@ -53,6 +54,7 @@ def _parse_bands(bands, default):
             try:
                 mx, st = float(b["max"]), float(b["step"])
             except (KeyError, TypeError, ValueError):
+                warn(f"Skipping invalid pricing band: {b}")
                 continue
             if mx > 0 and st > 0:
                 out.append((mx, st))

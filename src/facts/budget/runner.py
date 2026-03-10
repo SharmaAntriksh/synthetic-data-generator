@@ -103,7 +103,7 @@ def _write_budget(df: pd.DataFrame, out_dir: Path, name: str, file_format: str) 
         except ImportError:
             from deltalake.writer import write_deltalake
         write_deltalake(str(delta_dir), table, mode="overwrite")
-        info(f"Wrote {name}: {len(df):,} rows -> {short_path(delta_dir)}/")
+        info(f"Wrote {name}/ ({len(df):,} rows)")
         return
 
     # Parquet (always written for parquet and csv formats)
@@ -119,9 +119,9 @@ def _write_budget(df: pd.DataFrame, out_dir: Path, name: str, file_format: str) 
         csv_path = out_dir / f"{name}.csv"
         csv_df = _prepare_budget_csv(df, name)
         csv_df.to_csv(str(csv_path), index=False, float_format="%.6f")
-        info(f"Wrote {name}: {len(df):,} rows -> {short_path(csv_path)}")
+        info(f"Wrote {csv_path.name} ({len(df):,} rows)")
     else:
-        info(f"Wrote {name}: {len(df):,} rows -> {short_path(parquet_path)}")
+        info(f"Wrote {parquet_path.name} ({len(df):,} rows)")
 
 
 # ----------------------------------------------------------------

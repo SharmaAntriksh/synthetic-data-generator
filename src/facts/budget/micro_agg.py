@@ -62,6 +62,9 @@ def _extract_dimension_columns(
     stride_cat = n_cat * stride_y
     total_cells = n_country * stride_cat
 
+    if total_cells > 2**62:
+        raise OverflowError(f"Budget micro-aggregation stride would overflow: {total_cells} cells")
+
     flat_key = (
         country_id.astype(np.int64) * stride_cat
         + category_id.astype(np.int64) * stride_y

@@ -697,25 +697,26 @@ def generate_date_table(
     weekly_cfg = weekly_cfg or WeeklyFiscalConfig()
     df = _compute_weekly_fiscal_columns(df, first_fiscal_month=fy_start_month, cfg=weekly_cfg)
 
-    # Weekly fiscal offsets (reuse the same asof_row index if the column exists)
-    asof_row2 = df.loc[df["Date"] == as_of]
-    if not asof_row2.empty:
-        _asof2 = asof_row2.iloc[0]
-        as_of_fw_year_week_index = int(_asof2["FWYearWeekNumber"])
-        as_of_fw_year_month_index = int(_asof2["FWYearMonthNumber"])
-        as_of_fw_year_quarter_index = int(_asof2["FWYearQuarterNumber"])
+    # Weekly fiscal offsets (only if weekly fiscal columns exist)
+    if "FWYearWeekNumber" in df.columns:
+        asof_row2 = df.loc[df["Date"] == as_of]
+        if not asof_row2.empty:
+            _asof2 = asof_row2.iloc[0]
+            as_of_fw_year_week_index = int(_asof2["FWYearWeekNumber"])
+            as_of_fw_year_month_index = int(_asof2["FWYearMonthNumber"])
+            as_of_fw_year_quarter_index = int(_asof2["FWYearQuarterNumber"])
 
-        df = df.assign(
-            FWYearWeekOffset=(df["FWYearWeekNumber"].astype(int) - as_of_fw_year_week_index).astype(np.int32),
-            FWYearMonthOffset=(df["FWYearMonthNumber"].astype(int) - as_of_fw_year_month_index).astype(np.int32),
-            FWYearQuarterOffset=(df["FWYearQuarterNumber"].astype(int) - as_of_fw_year_quarter_index).astype(np.int32),
-        )
-    else:
-        df = df.assign(
-            FWYearWeekOffset=np.int32(0),
-            FWYearMonthOffset=np.int32(0),
-            FWYearQuarterOffset=np.int32(0),
-        )
+            df = df.assign(
+                FWYearWeekOffset=(df["FWYearWeekNumber"].astype(int) - as_of_fw_year_week_index).astype(np.int32),
+                FWYearMonthOffset=(df["FWYearMonthNumber"].astype(int) - as_of_fw_year_month_index).astype(np.int32),
+                FWYearQuarterOffset=(df["FWYearQuarterNumber"].astype(int) - as_of_fw_year_quarter_index).astype(np.int32),
+            )
+        else:
+            df = df.assign(
+                FWYearWeekOffset=np.int32(0),
+                FWYearMonthOffset=np.int32(0),
+                FWYearQuarterOffset=np.int32(0),
+            )
 
     df = df.assign(
         FiscalSystem="Monthly",

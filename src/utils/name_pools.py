@@ -107,7 +107,17 @@ def resolve_people_folder(
                 raise FileNotFoundError(f"names.people_folder does not exist: {p}")
             return str(p)
 
-    # If you want to hard-require the new config, fail here:
+    # Fall back to default_folder
+    default_path = Path(default_folder)
+    if default_path.exists():
+        return str(default_path)
+
+    # Try legacy folders
+    for lf in legacy_folders:
+        lp = Path(lf)
+        if lp.exists():
+            return str(lp)
+
     raise ValueError("Missing config: names.people_folder (expected a valid folder path)")
 
 # --- Org name pool -----------------------------------------------------
@@ -233,7 +243,7 @@ def load_list(path: str, *, normalize: bool = True) -> np.ndarray:
         raise FileNotFoundError(path)
 
     # read lines; tolerate BOM
-    raw = p.read_text(encoding="utf-8-sig", errors="ignore").splitlines()
+    raw = p.read_text(encoding="utf-8-sig", errors="replace").splitlines()
     out: list[str] = []
     seen: set[str] = set()
 

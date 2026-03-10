@@ -33,6 +33,11 @@ import web.shared_state as _state
 
 router = APIRouter(prefix="/api", tags=["generation"])
 
+_VALID_ONLY = {"dimensions", "sales"}
+_VALID_REGEN = {"all", "products", "customers", "stores", "employees", "dates",
+                "geography", "currency", "exchange_rates", "promotions", "suppliers",
+                "return_reasons", "customer_segments", "superpowers", "lookups", "time"}
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -129,6 +134,13 @@ def _run_pipeline_thread(job: dict, cfg_snapshot: dict, models_snapshot: dict, r
             with open(models_path, "w", encoding="utf-8") as f:
                 yaml.safe_dump(models_snapshot, f, sort_keys=False)
 
+            if req.only and req.only not in _VALID_ONLY:
+                raise HTTPException(400, f"Invalid 'only' value: {req.only}. Must be one of {_VALID_ONLY}")
+            if req.regen_dimensions:
+                invalid = set(req.regen_dimensions) - _VALID_REGEN
+                if invalid:
+                    raise HTTPException(400, f"Invalid regen_dimensions: {invalid}. Must be from {_VALID_REGEN}")
+
             cmd = [
                 sys.executable, "-u", str(REPO_ROOT / "main.py"),
                 "--config", str(cfg_path),
@@ -172,7 +184,7 @@ def start_generate(req: GenerateRequest):
             raise HTTPException(409, "A pipeline is already running.")
         job = {
             "id": str(uuid.uuid4())[:8], "status": "running",
-            "logs": deque(maxlen=10000), "process": None,
+            "logs": [], "process": None,
             "exit_code": None, "started": time.time(),
             "ended": None, "elapsed": 0, "command": "",
         }

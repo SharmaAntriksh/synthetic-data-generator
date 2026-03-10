@@ -386,9 +386,11 @@ def _assign_tier_by_score(
 
     p = _normalize_probs(tier_probs_low_to_high)
     cut = np.cumsum(p)[:-1]
+    cut = np.minimum(cut, 1.0 - 1e-12)
     cuts = np.quantile(score, cut)
 
     idx = np.searchsorted(cuts, score, side="right")
+    idx = np.clip(idx, 0, k - 1)
     return tier_keys_sorted_low_to_high[idx]
 
 
@@ -980,6 +982,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     geo_lookup = geography.set_index("GeographyKey")[["City", "State", "Country"]]
 
     N = int(total_customers)
+    if N <= 0:
+        raise ValueError("Customer count must be positive")
     CustomerKey = np.arange(1, N + 1, dtype="int64")
 
     active_count = int(np.floor(N * float(active_ratio)))
