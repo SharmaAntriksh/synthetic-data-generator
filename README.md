@@ -294,6 +294,27 @@ Each output includes a Power BI Project (`.pbip`) template with pre-configured f
 <img src="docs/assets/data-model-diagram-view.png" alt="Power BI model collapsed" width="600" />
 
 ---
+
+## Testing
+
+The project includes 186 unit tests covering config validation, pricing pipeline, quantity model, geography, customer profiles, version store, state management, and determinism guarantees.
+
+```bash
+# Run all tests
+pytest
+
+# Run a specific file or class
+pytest tests/test_geography.py
+pytest tests/test_config_loader.py::TestParseDate
+
+# Stop on first failure
+pytest -x
+
+# Rerun only previously failed tests
+pytest --lf
+```
+
+---
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
