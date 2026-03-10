@@ -65,9 +65,9 @@ class TestConfigYamlSizeLimit:
         assert resp.status_code == 413
 
     def test_yaml_just_under_1mb_accepted(self, client):
-        # Build valid YAML just under the limit
-        padding = "x" * (1_048_570)
-        text = f"key: \"{padding}\""
+        # Build valid YAML just under the limit (key: + space + padding = under 1MB)
+        padding = "x" * (1_048_576 - 10)
+        text = f"key: {padding}"
         # This may fail YAML parsing, but should NOT be 413
         resp = client.post("/api/config/yaml", json={"yaml_text": text})
         assert resp.status_code != 413

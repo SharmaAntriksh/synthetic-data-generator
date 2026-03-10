@@ -235,7 +235,7 @@ class TestPostConfigYaml:
         assert resp.json()["ok"] is True
 
     def test_reject_invalid_yaml(self, client):
-        resp = client.post("/api/config/yaml", json={"yaml_text": ":::invalid:::yaml:::"})
+        resp = client.post("/api/config/yaml", json={"yaml_text": "{[bad yaml"})
         assert resp.status_code == 400
 
     def test_reject_non_mapping(self, client):

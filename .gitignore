@@ -6,3 +6,4 @@ data/versioning/*
 data/parquet_dims/*
 cache.abf
 .claude
+.vscode
