@@ -5,7 +5,7 @@ import pandas as pd
 def _to_float(x, default=None):
     try:
         return float(x)
-    except Exception:
+    except (TypeError, ValueError):
         return default
 
 
@@ -222,7 +222,7 @@ def _apply_brand_price_normalization(
 
     try:
         min_count = int(brand_cfg.get("min_count", 10))
-    except Exception:
+    except (TypeError, ValueError):
         min_count = 10
     min_count = max(1, min_count)
 

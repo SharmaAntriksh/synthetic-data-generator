@@ -189,7 +189,13 @@ def run_pipeline(
         if reset_scratch:
             info(f"Resetting fact output folder: {fact_out}")
             if fact_out.exists():
-                shutil.rmtree(fact_out, ignore_errors=True)
+                try:
+                    shutil.rmtree(fact_out)
+                except OSError as e:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "Could not fully remove %s: %s", fact_out, e
+                    )
             fact_out.mkdir(parents=True, exist_ok=True)
         else:
             info(f"Keeping existing fact_out folder (packaging.reset_scratch_fact_out=false): {fact_out}")
@@ -354,13 +360,19 @@ def _clean_final_outputs(cfg: Dict[str, Any]) -> None:
         or cfg.get("final_output_root")
     )
     if gen_root:
-        shutil.rmtree(gen_root, ignore_errors=True)
+        try:
+            shutil.rmtree(gen_root)
+        except OSError as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Could not fully remove %s: %s", gen_root, e
+            )
 
 
 def _resolve_required_paths(sales_cfg: Dict[str, Any]) -> Tuple[Path, Path]:
     if "parquet_folder" not in sales_cfg or "out_folder" not in sales_cfg:
         fail("sales.parquet_folder and sales.out_folder must be set in config")
-        raise RuntimeError("Missing sales.parquet_folder/out_folder")
+        raise ConfigError("Missing sales.parquet_folder/out_folder")
 
     parquet_dims = Path(sales_cfg["parquet_folder"]).resolve()
     fact_out = Path(sales_cfg["out_folder"]).resolve()

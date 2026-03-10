@@ -209,7 +209,7 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
     if has_orders:
         # Any delayed line → order delayed
         delayed_any = (
-            np.bincount(inv_idx, weights=delayed_line.astype(np.int8), minlength=len(unique_orders)) > 0
+            np.bincount(inv_idx, weights=delayed_line.astype(np.float64), minlength=len(unique_orders)) > 0
         )
         is_order_delayed = delayed_any[inv_idx].astype(np.int8, copy=False)
     else:

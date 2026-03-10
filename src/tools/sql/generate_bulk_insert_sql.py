@@ -279,7 +279,7 @@ def generate_bulk_insert_script(
 
         lines.append(f"-- Source file: {rel_hint}")
         lines.append(f"BULK INSERT {quoted_table}")
-        lines.append(f"FROM '{csv_full_path_sql}'")
+        lines.append(f"FROM N'{csv_full_path_sql}'")
         lines.append("WITH (")
         lines.append(f"    {opts_sql}")
         lines.append(");")

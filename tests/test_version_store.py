@@ -55,6 +55,7 @@ class TestComputeHash:
         h = _compute_hash([1, 2, 3])
 
         assert isinstance(h, str)
+        assert len(h) == 64  # SHA-256 hex
 
 
 # ===================================================================

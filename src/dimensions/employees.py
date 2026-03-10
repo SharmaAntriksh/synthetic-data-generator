@@ -756,7 +756,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     ]
     try:
         stores = pd.read_parquet(stores_path, columns=_STORES_READ_COLS)
-    except Exception:
+    except (KeyError, ValueError):
         # Legacy stores.parquet may lack hierarchy/manager columns
         stores = pd.read_parquet(
             stores_path,

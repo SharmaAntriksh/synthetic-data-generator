@@ -50,7 +50,8 @@ class GenerateRequest(BaseModel):
 
 @router.get("/validate")
 def validate_config():
-    cfg = _state._cfg
+    with _state._cfg_lock:
+        cfg = copy.deepcopy(_state._cfg)
     errors: List[str] = []
     warnings: List[str] = []
 
@@ -171,13 +172,14 @@ def start_generate(req: GenerateRequest):
             raise HTTPException(409, "A pipeline is already running.")
         job = {
             "id": str(uuid.uuid4())[:8], "status": "running",
-            "logs": deque(maxlen=5000), "process": None,
+            "logs": deque(maxlen=10000), "process": None,
             "exit_code": None, "started": time.time(),
             "ended": None, "elapsed": 0, "command": "",
         }
         _state._current_job = job
-    cfg_snapshot = copy.deepcopy(_state._cfg)
-    models_snapshot = copy.deepcopy(_state._models_cfg)
+    with _state._cfg_lock:
+        cfg_snapshot = copy.deepcopy(_state._cfg)
+        models_snapshot = copy.deepcopy(_state._models_cfg)
     t = threading.Thread(target=_run_pipeline_thread, args=(job, cfg_snapshot, models_snapshot, req), daemon=True)
     t.start()
     return {"ok": True, "job_id": job["id"]}

@@ -153,10 +153,12 @@ def _parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
 
     try:
         defaults = cfg.get("defaults") or cfg.get("_defaults")
+        if not isinstance(defaults, dict):
+            raise KeyError("defaults")
         dcfg = defaults["dates"]
         start = pd.to_datetime(dcfg["start"]).normalize()
         end = pd.to_datetime(dcfg["end"]).normalize()
-    except Exception as e:
+    except (KeyError, TypeError, ValueError) as e:
         raise ValueError("Missing or invalid defaults.dates.start/end in config.yaml") from e
 
     if end < start:

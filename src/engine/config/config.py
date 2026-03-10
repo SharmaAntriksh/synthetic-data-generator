@@ -628,7 +628,14 @@ def _normalize_sections(
     if normalize_keys is None:
         keys_to_normalize = set(_SECTION_NORMALIZERS.keys())
     else:
-        keys_to_normalize = set(normalize_keys) & _SECTION_NORMALIZERS.keys()
+        requested = set(normalize_keys)
+        keys_to_normalize = requested & _SECTION_NORMALIZERS.keys()
+        unknown = requested - _SECTION_NORMALIZERS.keys()
+        if unknown:
+            import logging
+            logging.getLogger(__name__).warning(
+                "normalize_keys %s not in registry, skipping", unknown
+            )
 
     for key in keys_to_normalize:
         if key in cfg:

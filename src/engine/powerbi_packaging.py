@@ -155,7 +155,7 @@ def _rewrite_expression(
     Replacing <path> with final_folder.
     """
     text = expressions_file.read_text(encoding="utf-8")
-    new_path = str(final_folder)
+    new_path = str(final_folder).replace('"', '\\"')
 
     # Restrict match to a single line string literal to avoid spanning across expressions.
     pattern = rf'''

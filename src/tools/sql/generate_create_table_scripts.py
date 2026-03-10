@@ -33,6 +33,11 @@ _FACT_TABLE_NAMES = {
 }
 
 
+def _sql_escape_literal(value: str) -> str:
+    """Escape a string for use inside a single-quoted SQL literal."""
+    return value.replace("'", "''")
+
+
 def _quote_ident(name: str) -> str:
     return f"[{str(name).replace(']', ']]')}]"
 
@@ -102,7 +107,7 @@ def create_table_from_schema(
     include_go: bool = True,
 ) -> str:
     fq_table = _qualify(schema, table_name)
-    object_id_name = f"{schema}.{table_name}"
+    object_id_name = _sql_escape_literal(f"{schema}.{table_name}")
 
     lines: list[str] = []
     if drop_existing:

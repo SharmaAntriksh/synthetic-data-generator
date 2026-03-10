@@ -137,7 +137,7 @@ class TestResolveCustomerProfile:
 
         result_cfg, result_models = resolve_customer_profile(cfg, models)
 
-        assert result_cfg is cfg
+        assert result_cfg == cfg
 
     def test_gradual_injects_lifecycle(self):
         cfg = {"customers": {"profile": "gradual"}}

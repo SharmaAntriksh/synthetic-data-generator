@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+import copy
+
 import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -42,7 +44,8 @@ class ConfigYamlUpdate(BaseModel):
 
 @router.get("")
 def get_config():
-    cfg = _state._cfg
+    with _state._cfg_lock:
+        cfg = copy.deepcopy(_state._cfg)
     defaults = _g(cfg, "defaults", "dates", default={})
     sales = _g(cfg, "sales", default={})
     cust = _g(cfg, "customers", default={})
@@ -202,175 +205,177 @@ def get_config():
 
 @router.post("")
 def update_config(body: ConfigUpdate):
-    cfg = _state._cfg
-    v = body.values
+    with _state._cfg_lock:
+        cfg = _state._cfg
+        v = body.values
 
-    cfg.setdefault("defaults", {}).setdefault("dates", {})
-    cfg["defaults"].setdefault("seed", 42)
-    cfg.setdefault("sales", {}).setdefault("partitioning", {})
-    cfg.setdefault("customers", {})
-    cfg.setdefault("stores", {}).setdefault("opening", {})
-    cfg["stores"].setdefault("assortment", {})
-    cfg.setdefault("products", {}).setdefault("pricing", {}).setdefault("base", {})
-    cfg["products"]["pricing"].setdefault("cost", {})
-    cfg["products"]["pricing"].setdefault("brand_normalization", {})
-    cfg.setdefault("promotions", {})
-    cfg.setdefault("returns", {})
-    cfg.setdefault("geography", {}).setdefault("country_weights", {})
-    cfg.setdefault("dates", {}).setdefault("include", {}).setdefault("weekly_fiscal", {})
-    cfg.setdefault("customer_segments", {}).setdefault("validity", {})
-    cfg.setdefault("superpowers", {})
-    cfg.setdefault("employees", {}).setdefault("hr", {})
-    cfg["employees"].setdefault("store_assignments", {})
-    cfg.setdefault("exchange_rates", {})
-    cfg.setdefault("budget", {})
-    cfg.setdefault("inventory", {}).setdefault("shrinkage", {})
+        cfg.setdefault("defaults", {}).setdefault("dates", {})
+        cfg["defaults"].setdefault("seed", 42)
+        cfg.setdefault("sales", {}).setdefault("partitioning", {})
+        cfg.setdefault("customers", {})
+        cfg.setdefault("stores", {}).setdefault("opening", {})
+        cfg["stores"].setdefault("assortment", {})
+        cfg.setdefault("products", {}).setdefault("pricing", {}).setdefault("base", {})
+        cfg["products"]["pricing"].setdefault("cost", {})
+        cfg["products"]["pricing"].setdefault("brand_normalization", {})
+        cfg.setdefault("promotions", {})
+        cfg.setdefault("returns", {})
+        cfg.setdefault("geography", {}).setdefault("country_weights", {})
+        cfg.setdefault("dates", {}).setdefault("include", {}).setdefault("weekly_fiscal", {})
+        cfg.setdefault("customer_segments", {}).setdefault("validity", {})
+        cfg.setdefault("superpowers", {})
+        cfg.setdefault("employees", {}).setdefault("hr", {})
+        cfg["employees"].setdefault("store_assignments", {})
+        cfg.setdefault("exchange_rates", {})
+        cfg.setdefault("budget", {})
+        cfg.setdefault("inventory", {}).setdefault("shrinkage", {})
 
-    # Global
-    if "seed" in v: cfg["defaults"]["seed"] = int(v["seed"])
+        # Global
+        if "seed" in v: cfg["defaults"]["seed"] = int(v["seed"])
 
-    # Output
-    if "format" in v: cfg["sales"]["file_format"] = v["format"]
-    if "salesOutput" in v: cfg["sales"]["sales_output"] = v["salesOutput"]
-    if "skipOrderCols" in v: cfg["sales"]["skip_order_cols"] = bool(v["skipOrderCols"])
-    if "compression" in v: cfg["sales"]["compression"] = v["compression"]
-    if "rowGroupSize" in v: cfg["sales"]["row_group_size"] = int(v["rowGroupSize"])
-    if "mergeParquet" in v: cfg["sales"]["merge_parquet"] = bool(v["mergeParquet"])
-    if "partitionEnabled" in v: cfg["sales"]["partitioning"]["enabled"] = bool(v["partitionEnabled"])
-    if "maxLinesPerOrder" in v: cfg["sales"]["max_lines_per_order"] = int(v["maxLinesPerOrder"])
-    if "salesOptimize" in v: cfg["sales"]["optimize"] = bool(v["salesOptimize"])
+        # Output
+        if "format" in v: cfg["sales"]["file_format"] = v["format"]
+        if "salesOutput" in v: cfg["sales"]["sales_output"] = v["salesOutput"]
+        if "skipOrderCols" in v: cfg["sales"]["skip_order_cols"] = bool(v["skipOrderCols"])
+        if "compression" in v: cfg["sales"]["compression"] = v["compression"]
+        if "rowGroupSize" in v: cfg["sales"]["row_group_size"] = int(v["rowGroupSize"])
+        if "mergeParquet" in v: cfg["sales"]["merge_parquet"] = bool(v["mergeParquet"])
+        if "partitionEnabled" in v: cfg["sales"]["partitioning"]["enabled"] = bool(v["partitionEnabled"])
+        if "maxLinesPerOrder" in v: cfg["sales"]["max_lines_per_order"] = int(v["maxLinesPerOrder"])
+        if "salesOptimize" in v: cfg["sales"]["optimize"] = bool(v["salesOptimize"])
 
-    # Dates
-    if "startDate" in v: cfg["defaults"]["dates"]["start"] = v["startDate"]
-    if "endDate" in v: cfg["defaults"]["dates"]["end"] = v["endDate"]
-    if "fiscalMonthOffset" in v: cfg["dates"]["fiscal_month_offset"] = int(v["fiscalMonthOffset"])
-    if "asOfDate" in v: cfg["dates"]["as_of_date"] = v["asOfDate"] or None
-    if "includeIso" in v: cfg["dates"]["include"]["iso"] = bool(v["includeIso"])
-    if "includeFiscal" in v: cfg["dates"]["include"]["fiscal"] = bool(v["includeFiscal"])
-    if "includeWeeklyFiscal" in v: cfg["dates"]["include"]["weekly_fiscal"]["enabled"] = bool(v["includeWeeklyFiscal"])
-    if "wfFirstDay" in v: cfg["dates"]["include"]["weekly_fiscal"]["first_day_of_week"] = int(v["wfFirstDay"])
-    if "wfWeeklyType" in v: cfg["dates"]["include"]["weekly_fiscal"]["weekly_type"] = v["wfWeeklyType"]
-    if "wfQuarterType" in v: cfg["dates"]["include"]["weekly_fiscal"]["quarter_week_type"] = v["wfQuarterType"]
-    if "wfTypeStartFiscalYear" in v: cfg["dates"]["include"]["weekly_fiscal"]["type_start_fiscal_year"] = int(v["wfTypeStartFiscalYear"])
+        # Dates
+        if "startDate" in v: cfg["defaults"]["dates"]["start"] = v["startDate"]
+        if "endDate" in v: cfg["defaults"]["dates"]["end"] = v["endDate"]
+        if "fiscalMonthOffset" in v: cfg["dates"]["fiscal_month_offset"] = int(v["fiscalMonthOffset"])
+        if "asOfDate" in v: cfg["dates"]["as_of_date"] = v["asOfDate"] or None
+        if "includeIso" in v: cfg["dates"]["include"]["iso"] = bool(v["includeIso"])
+        if "includeFiscal" in v: cfg["dates"]["include"]["fiscal"] = bool(v["includeFiscal"])
+        if "includeWeeklyFiscal" in v: cfg["dates"]["include"]["weekly_fiscal"]["enabled"] = bool(v["includeWeeklyFiscal"])
+        if "wfFirstDay" in v: cfg["dates"]["include"]["weekly_fiscal"]["first_day_of_week"] = int(v["wfFirstDay"])
+        if "wfWeeklyType" in v: cfg["dates"]["include"]["weekly_fiscal"]["weekly_type"] = v["wfWeeklyType"]
+        if "wfQuarterType" in v: cfg["dates"]["include"]["weekly_fiscal"]["quarter_week_type"] = v["wfQuarterType"]
+        if "wfTypeStartFiscalYear" in v: cfg["dates"]["include"]["weekly_fiscal"]["type_start_fiscal_year"] = int(v["wfTypeStartFiscalYear"])
 
-    # Volume
-    if "salesRows" in v: cfg["sales"]["total_rows"] = int(v["salesRows"])
-    if "chunkSize" in v: cfg["sales"]["chunk_size"] = int(v["chunkSize"])
-    if "workers" in v: cfg["sales"]["workers"] = int(v["workers"])
+        # Volume
+        if "salesRows" in v: cfg["sales"]["total_rows"] = int(v["salesRows"])
+        if "chunkSize" in v: cfg["sales"]["chunk_size"] = int(v["chunkSize"])
+        if "workers" in v: cfg["sales"]["workers"] = int(v["workers"])
 
-    # Dimensions
-    if "customers" in v: cfg["customers"]["total_customers"] = int(v["customers"])
-    if "stores" in v: cfg["stores"]["num_stores"] = int(v["stores"])
-    if "products" in v: cfg["products"]["num_products"] = int(v["products"])
-    if "promotions" in v: _set_promotions_total(cfg["promotions"], int(v["promotions"]))
+        # Dimensions
+        if "customers" in v: cfg["customers"]["total_customers"] = int(v["customers"])
+        if "stores" in v: cfg["stores"]["num_stores"] = int(v["stores"])
+        if "products" in v: cfg["products"]["num_products"] = int(v["products"])
+        if "promotions" in v: _set_promotions_total(cfg["promotions"], int(v["promotions"]))
 
-    # Customers detail
-    if "pctIndia" in v: cfg["customers"]["pct_india"] = float(v["pctIndia"])
-    if "pctUs" in v: cfg["customers"]["pct_us"] = float(v["pctUs"])
-    if "pctEu" in v: cfg["customers"]["pct_eu"] = float(v["pctEu"])
-    if "pctAsia" in v: cfg["customers"]["pct_asia"] = float(v["pctAsia"])
-    if "pctOrg" in v: cfg["customers"]["pct_org"] = float(v["pctOrg"])
-    if "customerActiveRatio" in v: cfg["customers"]["active_ratio"] = float(v["customerActiveRatio"])
-    if "profile" in v: cfg["customers"]["profile"] = v["profile"]
-    if "firstYearPct" in v: cfg["customers"]["first_year_pct"] = float(v["firstYearPct"])
+        # Customers detail
+        if "pctIndia" in v: cfg["customers"]["pct_india"] = float(v["pctIndia"])
+        if "pctUs" in v: cfg["customers"]["pct_us"] = float(v["pctUs"])
+        if "pctEu" in v: cfg["customers"]["pct_eu"] = float(v["pctEu"])
+        if "pctAsia" in v: cfg["customers"]["pct_asia"] = float(v["pctAsia"])
+        if "pctOrg" in v: cfg["customers"]["pct_org"] = float(v["pctOrg"])
+        if "customerActiveRatio" in v: cfg["customers"]["active_ratio"] = float(v["customerActiveRatio"])
+        if "profile" in v: cfg["customers"]["profile"] = v["profile"]
+        if "firstYearPct" in v: cfg["customers"]["first_year_pct"] = float(v["firstYearPct"])
 
-    # Products detail
-    if "valueScale" in v: cfg["products"]["pricing"]["base"]["value_scale"] = float(v["valueScale"])
-    if "minPrice" in v: cfg["products"]["pricing"]["base"]["min_unit_price"] = float(v["minPrice"])
-    if "maxPrice" in v: cfg["products"]["pricing"]["base"]["max_unit_price"] = float(v["maxPrice"])
-    if "productActiveRatio" in v: cfg["products"]["active_ratio"] = float(v["productActiveRatio"])
-    if "marginMin" in v: cfg["products"]["pricing"]["cost"]["min_margin_pct"] = float(v["marginMin"])
-    if "marginMax" in v: cfg["products"]["pricing"]["cost"]["max_margin_pct"] = float(v["marginMax"])
-    if "brandNormalize" in v: cfg["products"]["pricing"]["brand_normalization"]["enabled"] = bool(v["brandNormalize"])
-    if "brandNormalizeAlpha" in v: cfg["products"]["pricing"]["brand_normalization"]["alpha"] = float(v["brandNormalizeAlpha"])
+        # Products detail
+        if "valueScale" in v: cfg["products"]["pricing"]["base"]["value_scale"] = float(v["valueScale"])
+        if "minPrice" in v: cfg["products"]["pricing"]["base"]["min_unit_price"] = float(v["minPrice"])
+        if "maxPrice" in v: cfg["products"]["pricing"]["base"]["max_unit_price"] = float(v["maxPrice"])
+        if "productActiveRatio" in v: cfg["products"]["active_ratio"] = float(v["productActiveRatio"])
+        if "marginMin" in v: cfg["products"]["pricing"]["cost"]["min_margin_pct"] = float(v["marginMin"])
+        if "marginMax" in v: cfg["products"]["pricing"]["cost"]["max_margin_pct"] = float(v["marginMax"])
+        if "brandNormalize" in v: cfg["products"]["pricing"]["brand_normalization"]["enabled"] = bool(v["brandNormalize"])
+        if "brandNormalizeAlpha" in v: cfg["products"]["pricing"]["brand_normalization"]["alpha"] = float(v["brandNormalizeAlpha"])
 
-    # Geography
-    if "geoWeights" in v and isinstance(v["geoWeights"], dict):
-        cfg["geography"]["country_weights"] = v["geoWeights"]
+        # Geography
+        if "geoWeights" in v and isinstance(v["geoWeights"], dict):
+            cfg["geography"]["country_weights"] = v["geoWeights"]
 
-    # Returns
-    if "returnsEnabled" in v: cfg["returns"]["enabled"] = bool(v["returnsEnabled"])
-    if "returnRate" in v: cfg["returns"]["return_rate"] = float(v["returnRate"])
-    if "returnMinDays" in v: cfg["returns"]["min_days_after_sale"] = int(v["returnMinDays"])
-    if "returnMaxDays" in v: cfg["returns"]["max_days_after_sale"] = int(v["returnMaxDays"])
+        # Returns
+        if "returnsEnabled" in v: cfg["returns"]["enabled"] = bool(v["returnsEnabled"])
+        if "returnRate" in v: cfg["returns"]["return_rate"] = float(v["returnRate"])
+        if "returnMinDays" in v: cfg["returns"]["min_days_after_sale"] = int(v["returnMinDays"])
+        if "returnMaxDays" in v: cfg["returns"]["max_days_after_sale"] = int(v["returnMaxDays"])
 
-    # Promotions
-    if "promoNewCustWindow" in v: cfg["promotions"]["new_customer_window_months"] = int(v["promoNewCustWindow"])
-    if "promoSeasonal" in v: cfg["promotions"]["num_seasonal"] = int(v["promoSeasonal"])
-    if "promoClearance" in v: cfg["promotions"]["num_clearance"] = int(v["promoClearance"])
-    if "promoLimited" in v: cfg["promotions"]["num_limited"] = int(v["promoLimited"])
-    if "promoFlash" in v: cfg["promotions"]["num_flash"] = int(v["promoFlash"])
-    if "promoVolume" in v: cfg["promotions"]["num_volume"] = int(v["promoVolume"])
-    if "promoLoyalty" in v: cfg["promotions"]["num_loyalty"] = int(v["promoLoyalty"])
-    if "promoBundle" in v: cfg["promotions"]["num_bundle"] = int(v["promoBundle"])
-    if "promoNewCustomer" in v: cfg["promotions"]["num_new_customer"] = int(v["promoNewCustomer"])
+        # Promotions
+        if "promoNewCustWindow" in v: cfg["promotions"]["new_customer_window_months"] = int(v["promoNewCustWindow"])
+        if "promoSeasonal" in v: cfg["promotions"]["num_seasonal"] = int(v["promoSeasonal"])
+        if "promoClearance" in v: cfg["promotions"]["num_clearance"] = int(v["promoClearance"])
+        if "promoLimited" in v: cfg["promotions"]["num_limited"] = int(v["promoLimited"])
+        if "promoFlash" in v: cfg["promotions"]["num_flash"] = int(v["promoFlash"])
+        if "promoVolume" in v: cfg["promotions"]["num_volume"] = int(v["promoVolume"])
+        if "promoLoyalty" in v: cfg["promotions"]["num_loyalty"] = int(v["promoLoyalty"])
+        if "promoBundle" in v: cfg["promotions"]["num_bundle"] = int(v["promoBundle"])
+        if "promoNewCustomer" in v: cfg["promotions"]["num_new_customer"] = int(v["promoNewCustomer"])
 
-    # Customer Segments
-    if "csEnabled" in v: cfg["customer_segments"]["enabled"] = bool(v["csEnabled"])
-    if "csGenerateBridge" in v: cfg["customer_segments"]["generate_bridge"] = bool(v["csGenerateBridge"])
-    if "csSegmentCount" in v: cfg["customer_segments"]["segment_count"] = int(v["csSegmentCount"])
-    if "csPerCustomerMin" in v: cfg["customer_segments"]["segments_per_customer_min"] = int(v["csPerCustomerMin"])
-    if "csPerCustomerMax" in v: cfg["customer_segments"]["segments_per_customer_max"] = int(v["csPerCustomerMax"])
-    if "csIncludeScore" in v: cfg["customer_segments"]["include_score"] = bool(v["csIncludeScore"])
-    if "csIncludePrimaryFlag" in v: cfg["customer_segments"]["include_primary_flag"] = bool(v["csIncludePrimaryFlag"])
-    if "csIncludeValidity" in v: cfg["customer_segments"]["include_validity"] = bool(v["csIncludeValidity"])
-    if "csValidityGrain" in v: cfg["customer_segments"]["validity"]["grain"] = v["csValidityGrain"]
-    if "csChurnRateQtr" in v: cfg["customer_segments"]["validity"]["churn_rate_qtr"] = float(v["csChurnRateQtr"])
-    if "csNewCustomerMonths" in v: cfg["customer_segments"]["validity"]["new_customer_months"] = int(v["csNewCustomerMonths"])
-    if "csSeed" in v: cfg["customer_segments"]["seed"] = int(v["csSeed"])
+        # Customer Segments
+        if "csEnabled" in v: cfg["customer_segments"]["enabled"] = bool(v["csEnabled"])
+        if "csGenerateBridge" in v: cfg["customer_segments"]["generate_bridge"] = bool(v["csGenerateBridge"])
+        if "csSegmentCount" in v: cfg["customer_segments"]["segment_count"] = int(v["csSegmentCount"])
+        if "csPerCustomerMin" in v: cfg["customer_segments"]["segments_per_customer_min"] = int(v["csPerCustomerMin"])
+        if "csPerCustomerMax" in v: cfg["customer_segments"]["segments_per_customer_max"] = int(v["csPerCustomerMax"])
+        if "csIncludeScore" in v: cfg["customer_segments"]["include_score"] = bool(v["csIncludeScore"])
+        if "csIncludePrimaryFlag" in v: cfg["customer_segments"]["include_primary_flag"] = bool(v["csIncludePrimaryFlag"])
+        if "csIncludeValidity" in v: cfg["customer_segments"]["include_validity"] = bool(v["csIncludeValidity"])
+        if "csValidityGrain" in v: cfg["customer_segments"]["validity"]["grain"] = v["csValidityGrain"]
+        if "csChurnRateQtr" in v: cfg["customer_segments"]["validity"]["churn_rate_qtr"] = float(v["csChurnRateQtr"])
+        if "csNewCustomerMonths" in v: cfg["customer_segments"]["validity"]["new_customer_months"] = int(v["csNewCustomerMonths"])
+        if "csSeed" in v: cfg["customer_segments"]["seed"] = int(v["csSeed"])
 
-    # Superpowers
-    if "spEnabled" in v: cfg["superpowers"]["enabled"] = bool(v["spEnabled"])
-    if "spGenerateBridge" in v: cfg["superpowers"]["generate_bridge"] = bool(v["spGenerateBridge"])
-    if "spPowersCount" in v: cfg["superpowers"]["powers_count"] = int(v["spPowersCount"])
-    if "spPerCustomerMin" in v: cfg["superpowers"]["powers_per_customer_min"] = int(v["spPerCustomerMin"])
-    if "spPerCustomerMax" in v: cfg["superpowers"]["powers_per_customer_max"] = int(v["spPerCustomerMax"])
-    if "spIncludePowerLevel" in v: cfg["superpowers"]["include_power_level"] = bool(v["spIncludePowerLevel"])
-    if "spIncludePrimaryFlag" in v: cfg["superpowers"]["include_primary_flag"] = bool(v["spIncludePrimaryFlag"])
-    if "spIncludeAcquiredDate" in v: cfg["superpowers"]["include_acquired_date"] = bool(v["spIncludeAcquiredDate"])
-    if "spIncludeValidity" in v: cfg["superpowers"]["include_validity"] = bool(v["spIncludeValidity"])
-    if "spSeed" in v: cfg["superpowers"]["seed"] = int(v["spSeed"])
+        # Superpowers
+        if "spEnabled" in v: cfg["superpowers"]["enabled"] = bool(v["spEnabled"])
+        if "spGenerateBridge" in v: cfg["superpowers"]["generate_bridge"] = bool(v["spGenerateBridge"])
+        if "spPowersCount" in v: cfg["superpowers"]["powers_count"] = int(v["spPowersCount"])
+        if "spPerCustomerMin" in v: cfg["superpowers"]["powers_per_customer_min"] = int(v["spPerCustomerMin"])
+        if "spPerCustomerMax" in v: cfg["superpowers"]["powers_per_customer_max"] = int(v["spPerCustomerMax"])
+        if "spIncludePowerLevel" in v: cfg["superpowers"]["include_power_level"] = bool(v["spIncludePowerLevel"])
+        if "spIncludePrimaryFlag" in v: cfg["superpowers"]["include_primary_flag"] = bool(v["spIncludePrimaryFlag"])
+        if "spIncludeAcquiredDate" in v: cfg["superpowers"]["include_acquired_date"] = bool(v["spIncludeAcquiredDate"])
+        if "spIncludeValidity" in v: cfg["superpowers"]["include_validity"] = bool(v["spIncludeValidity"])
+        if "spSeed" in v: cfg["superpowers"]["seed"] = int(v["spSeed"])
 
-    # Stores detail
-    if "storeEnsureIsoCoverage" in v: cfg["stores"]["ensure_iso_coverage"] = bool(v["storeEnsureIsoCoverage"])
-    if "storeDistrictSize" in v: cfg["stores"]["district_size"] = int(v["storeDistrictSize"])
-    if "storeDistrictsPerRegion" in v: cfg["stores"]["districts_per_region"] = int(v["storeDistrictsPerRegion"])
-    if "storeOpeningStart" in v: cfg["stores"]["opening"]["start"] = v["storeOpeningStart"]
-    if "storeOpeningEnd" in v: cfg["stores"]["opening"]["end"] = v["storeOpeningEnd"]
-    if "storeClosingEnd" in v: cfg["stores"]["closing_end"] = v["storeClosingEnd"]
-    if "storeAssortmentEnabled" in v: cfg["stores"]["assortment"]["enabled"] = bool(v["storeAssortmentEnabled"])
+        # Stores detail
+        if "storeEnsureIsoCoverage" in v: cfg["stores"]["ensure_iso_coverage"] = bool(v["storeEnsureIsoCoverage"])
+        if "storeDistrictSize" in v: cfg["stores"]["district_size"] = int(v["storeDistrictSize"])
+        if "storeDistrictsPerRegion" in v: cfg["stores"]["districts_per_region"] = int(v["storeDistrictsPerRegion"])
+        if "storeOpeningStart" in v: cfg["stores"]["opening"]["start"] = v["storeOpeningStart"]
+        if "storeOpeningEnd" in v: cfg["stores"]["opening"]["end"] = v["storeOpeningEnd"]
+        if "storeClosingEnd" in v: cfg["stores"]["closing_end"] = v["storeClosingEnd"]
+        if "storeAssortmentEnabled" in v: cfg["stores"]["assortment"]["enabled"] = bool(v["storeAssortmentEnabled"])
 
-    # Employees
-    if "employeeMinStaff" in v: cfg["employees"]["min_staff_per_store"] = int(v["employeeMinStaff"])
-    if "employeeMaxStaff" in v: cfg["employees"]["max_staff_per_store"] = int(v["employeeMaxStaff"])
-    if "employeeEmailDomain" in v: cfg["employees"]["hr"]["email_domain"] = v["employeeEmailDomain"]
-    if "employeeStoreAssignments" in v: cfg["employees"]["store_assignments"]["enabled"] = bool(v["employeeStoreAssignments"])
+        # Employees
+        if "employeeMinStaff" in v: cfg["employees"]["min_staff_per_store"] = int(v["employeeMinStaff"])
+        if "employeeMaxStaff" in v: cfg["employees"]["max_staff_per_store"] = int(v["employeeMaxStaff"])
+        if "employeeEmailDomain" in v: cfg["employees"]["hr"]["email_domain"] = v["employeeEmailDomain"]
+        if "employeeStoreAssignments" in v: cfg["employees"]["store_assignments"]["enabled"] = bool(v["employeeStoreAssignments"])
 
-    # Exchange Rates
-    if "erCurrencies" in v and isinstance(v["erCurrencies"], list): cfg["exchange_rates"]["currencies"] = v["erCurrencies"]
-    if "erBaseCurrency" in v: cfg["exchange_rates"]["base_currency"] = v["erBaseCurrency"]
-    if "erVolatility" in v: cfg["exchange_rates"]["volatility"] = float(v["erVolatility"])
-    if "erFutureDrift" in v: cfg["exchange_rates"]["future_annual_drift"] = float(v["erFutureDrift"])
-    if "erUseGlobalDates" in v: cfg["exchange_rates"]["use_global_dates"] = bool(v["erUseGlobalDates"])
+        # Exchange Rates
+        if "erCurrencies" in v and isinstance(v["erCurrencies"], list): cfg["exchange_rates"]["currencies"] = v["erCurrencies"]
+        if "erBaseCurrency" in v: cfg["exchange_rates"]["base_currency"] = v["erBaseCurrency"]
+        if "erVolatility" in v: cfg["exchange_rates"]["volatility"] = float(v["erVolatility"])
+        if "erFutureDrift" in v: cfg["exchange_rates"]["future_annual_drift"] = float(v["erFutureDrift"])
+        if "erUseGlobalDates" in v: cfg["exchange_rates"]["use_global_dates"] = bool(v["erUseGlobalDates"])
 
-    # Budget detail
-    if "budgetEnabled" in v: cfg["budget"]["enabled"] = bool(v["budgetEnabled"])
-    if "budgetReportCurrency" in v: cfg["budget"]["report_currency"] = v["budgetReportCurrency"]
-    if "budgetDefaultGrowth" in v: cfg["budget"]["default_backcast_growth"] = float(v["budgetDefaultGrowth"])
-    if "budgetReturnRateCap" in v: cfg["budget"]["return_rate_cap"] = float(v["budgetReturnRateCap"])
+        # Budget detail
+        if "budgetEnabled" in v: cfg["budget"]["enabled"] = bool(v["budgetEnabled"])
+        if "budgetReportCurrency" in v: cfg["budget"]["report_currency"] = v["budgetReportCurrency"]
+        if "budgetDefaultGrowth" in v: cfg["budget"]["default_backcast_growth"] = float(v["budgetDefaultGrowth"])
+        if "budgetReturnRateCap" in v: cfg["budget"]["return_rate_cap"] = float(v["budgetReturnRateCap"])
 
-    # Inventory detail
-    if "inventoryEnabled" in v: cfg["inventory"]["enabled"] = bool(v["inventoryEnabled"])
-    if "inventoryGrain" in v: cfg["inventory"]["grain"] = v["inventoryGrain"]
-    if "inventoryShrinkageEnabled" in v: cfg["inventory"]["shrinkage"]["enabled"] = bool(v["inventoryShrinkageEnabled"])
-    if "inventoryShrinkageRate" in v: cfg["inventory"]["shrinkage"]["rate"] = float(v["inventoryShrinkageRate"])
+        # Inventory detail
+        if "inventoryEnabled" in v: cfg["inventory"]["enabled"] = bool(v["inventoryEnabled"])
+        if "inventoryGrain" in v: cfg["inventory"]["grain"] = v["inventoryGrain"]
+        if "inventoryShrinkageEnabled" in v: cfg["inventory"]["shrinkage"]["enabled"] = bool(v["inventoryShrinkageEnabled"])
+        if "inventoryShrinkageRate" in v: cfg["inventory"]["shrinkage"]["rate"] = float(v["inventoryShrinkageRate"])
 
-    return {"ok": True}
+        return {"ok": True}
 
 
 @router.get("/download")
 def download_config():
-    return _state._cfg
+    with _state._cfg_lock:
+        return copy.deepcopy(_state._cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -380,14 +385,17 @@ def download_config():
 @router.get("/yaml")
 def get_config_yaml():
     """Return the current in-memory config serialized as YAML text."""
-    text = yaml.safe_dump(_state._cfg, sort_keys=False, default_flow_style=False)
+    with _state._cfg_lock:
+        text = yaml.safe_dump(_state._cfg, sort_keys=False, default_flow_style=False)
     return Response(content=text, media_type="text/plain")
 
 
 @router.get("/yaml/disk")
 def get_config_yaml_disk():
     """Return the original config.yaml from disk."""
-    return Response(content=_state._cfg_disk_yaml, media_type="text/plain")
+    with _state._cfg_lock:
+        text = _state._cfg_disk_yaml
+    return Response(content=text, media_type="text/plain")
 
 
 @router.post("/yaml")

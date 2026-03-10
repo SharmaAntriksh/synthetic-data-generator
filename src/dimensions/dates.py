@@ -487,7 +487,10 @@ def generate_date_table(
     start_date = pd.to_datetime(start_date).normalize()
     end_date = pd.to_datetime(end_date).normalize()
     if end_date < start_date:
-        start_date, end_date = end_date, start_date
+        raise ValueError(
+            f"end_date ({end_date}) must be >= start_date ({start_date}); "
+            "check defaults.dates.start/end in config.yaml"
+        )
 
     # pd.date_range with freq="D" already produces midnight-normalized dates.
     dates = pd.date_range(start_date, end_date, freq="D")

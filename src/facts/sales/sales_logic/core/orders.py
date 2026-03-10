@@ -154,8 +154,8 @@ def build_orders(
             "(caller must assign a disjoint range per chunk)."
         )
 
-    start = np.int32(order_id_start)
-    order_ids_int = (start + np.arange(order_count, dtype=np.int32) + np.int32(1))
+    start = np.int64(order_id_start)
+    order_ids_int = (start + np.arange(order_count, dtype=np.int64) + np.int64(1)).astype(np.int32)
 
     # ------------------------------------------------------------
     # Customers are pre-sampled at order level by chunk_builder

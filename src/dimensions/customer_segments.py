@@ -229,7 +229,7 @@ def _read_cfg(cfg: Dict[str, Any], global_dates: Dict[str, str]) -> CustomerSegm
     if override_seed is not None:
         try:
             override_seed = int(override_seed)
-        except Exception:
+        except (TypeError, ValueError):
             override_seed = None
 
     start = override_dates.get("start") or global_dates.get("start")

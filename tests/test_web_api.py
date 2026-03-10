@@ -124,7 +124,7 @@ class TestGetPresets:
 class TestApplyPreset:
     def test_unknown_preset_returns_404(self, client):
         resp = client.post("/api/presets/apply", json={"name": "nonexistent_preset_xyz"})
-        assert resp.status_code in (400, 404)
+        assert resp.status_code == 404
 
     def test_apply_requires_name(self, client):
         resp = client.post("/api/presets/apply", json={})

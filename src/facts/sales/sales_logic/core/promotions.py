@@ -135,6 +135,7 @@ def apply_promotions(
             else:
                 cdf = np.cumsum(w, dtype=np.float64)
                 cdf /= cdf[-1]
+                cdf[-1] = 1.0  # prevent fp rounding from leaving cdf[-1] < 1.0
                 u = rng.random(count)
                 j = np.searchsorted(cdf, u, side="right")
                 chosen = idx[np.minimum(j, idx.size - 1)]

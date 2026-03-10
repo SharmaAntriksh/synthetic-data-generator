@@ -63,7 +63,7 @@ def _safe_read_geography(geo_path: Path) -> pd.DataFrame:
     ]
     try:
         return pd.read_parquet(geo_path, columns=cols)
-    except Exception:
+    except (KeyError, ValueError):
         return pd.read_parquet(geo_path)
 
 
