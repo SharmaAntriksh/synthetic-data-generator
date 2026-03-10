@@ -696,8 +696,8 @@ def generate_store_table(
         late_openers = int((open_days > close_end_day).sum())
         if late_openers:
             warn(
-                f"{late_openers} closed store(s) have OpeningDate after "
-                f"closing_end={closing_end!r}; ClosingDate will equal OpeningDate for those stores."
+                f"{late_openers} closed store(s) have OpeningDate after closing_end="
+                f"{closing_end}; their ClosingDate will equal OpeningDate (same-day close)"
             )
 
         effective_end = np.maximum(open_days, close_end_day)

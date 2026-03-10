@@ -113,8 +113,8 @@ class TestGetPresets:
     def test_returns_dict_or_list(self, client):
         resp = client.get("/api/presets")
         data = resp.json()
-        # Presets endpoint returns a dict (keyed by category) or empty dict
-        assert isinstance(data, (dict, list))
+        # Presets endpoint always returns a dict (keyed by category) or empty dict
+        assert isinstance(data, dict)
 
 
 # ===================================================================
@@ -180,6 +180,7 @@ class TestValidateEndpoint:
         # Note: there may be warnings, but a well-formed default config
         # should not have blocking errors (unless parquet_folder/out_folder unset)
         assert isinstance(data["errors"], list)
+        assert len(data["errors"]) == 0, f"Expected no validation errors but got: {data['errors']}"
 
     def test_bad_dates_produce_error(self, client):
         """Set end before start and validate."""
@@ -188,7 +189,8 @@ class TestValidateEndpoint:
         })
         resp = client.get("/api/validate")
         data = resp.json()
-        assert any("date" in e.lower() for e in data["errors"])
+        assert any("date" in e.lower() and ("start" in e.lower() or "end" in e.lower() or "after" in e.lower() or "before" in e.lower()) for e in data["errors"]), \
+            f"Expected date-related error, got: {data['errors']}"
 
 
 # ===================================================================

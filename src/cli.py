@@ -177,6 +177,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             from src.integrations.fx_yahoo import refresh_fx_master
             with open(args.config) as f:
                 cfg = yaml.safe_load(f)
+            if not isinstance(cfg, dict):
+                cfg = {}
             master_path = (
                 cfg.get("paths", {}).get("fx_master")
                 or cfg.get("exchange_rates", {}).get("master_file")

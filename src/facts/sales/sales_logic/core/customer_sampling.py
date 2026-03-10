@@ -189,9 +189,12 @@ def _weights_for_indices(indices: np.ndarray, base_weight: Optional[np.ndarray])
     if base_weight is None:
         return None
     try:
-        w = base_weight[np.asarray(indices, dtype="int32")]
+        idx = np.asarray(indices, dtype="int32")
+        if idx.size > 0 and (idx.max() >= base_weight.shape[0] or idx.min() < 0):
+            return None  # Out-of-range indices; fall back to uniform
+        w = base_weight[idx]
         return _normalize_weights(w)
-    except Exception:
+    except (IndexError, ValueError, TypeError):
         return None
 
 
@@ -269,7 +272,9 @@ def _build_seen_mask(eligible_keys: np.ndarray, seen_set) -> np.ndarray:
     if isinstance(seen_set, np.ndarray):
         if seen_set.size == 0:
             return np.zeros(eligible_keys.size, dtype=bool)
-        # Eligible keys that exceed the lookup size are unseen by definition
+        # Eligible keys that exceed the lookup size are unseen by definition:
+        # out-of-range keys default to False (unseen), which is correct
+        # semantics since they have not been added to the seen_set yet.
         max_idx = seen_set.size - 1
         keys = np.asarray(eligible_keys, dtype=np.int32)
         in_range = keys <= max_idx
@@ -522,7 +527,7 @@ def _sample_customers(
         other = undiscovered
         other_idx = undiscovered_idx
         if distinct_pool.size > 0 and other.size > 0:
-            keep = ~np.isin(other, distinct_pool, assume_unique=True)
+            keep = ~np.isin(other, distinct_pool)
             other = other[keep]
             other_idx = other_idx[keep]
 

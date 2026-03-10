@@ -31,7 +31,7 @@ _DELTA_ONLY_KEYS: frozenset[str] = frozenset(
 )
 
 _VALID_FILE_FORMATS: frozenset[str] = frozenset(
-    {"csv", "parquet", "deltaparquet"}
+    {"csv", "parquet", "deltaparquet", "delta"}
 )
 
 _VALID_SEG_GRAINS: frozenset[str] = frozenset({"month", "day"})
@@ -85,10 +85,14 @@ def _parse_date(value: Any, label: str) -> _date:
     raise ValueError(f"Cannot parse {label} date '{value}' (expected YYYY-MM-DD)")
 
 
-def _coerce_optional_int(cfg: Dict[str, Any], key: str) -> None:
+def _coerce_optional_int(cfg: Dict[str, Any], key: str, section: str = "") -> None:
     """Cast *cfg[key]* to ``int`` in place if it is present and non-None."""
     if key in cfg and cfg[key] is not None:
-        cfg[key] = int(cfg[key])
+        try:
+            val = int(cfg[key])
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"{section}.{key} must be an integer, got {cfg[key]!r}") from exc
+        cfg[key] = val
 
 
 def _coerce_optional_positive_int(
@@ -96,7 +100,10 @@ def _coerce_optional_positive_int(
 ) -> None:
     """Cast and validate *cfg[key]* as a positive int if present and non-None."""
     if key in cfg and cfg[key] is not None:
-        val = int(cfg[key])
+        try:
+            val = int(cfg[key])
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"{section}.{key} must be an integer, got {cfg[key]!r}") from exc
         if val <= 0:
             raise ValueError(f"{section}.{key} must be a positive integer, got {val}")
         cfg[key] = val
@@ -177,9 +184,6 @@ def _load_and_normalize(
         raise FileNotFoundError(f"Config file not found: {path}")
 
     cfg: Dict[str, Any] = _load_any(path)
-
-    # Legacy tuning block handling (no-op; kept as comment for traceability)
-    # apply_acquisition_tuning(cfg) — removed: function is deprecated and has no effect
 
     # Distribute scale block into per-section keys (new config format)
     cfg = _distribute_scale(cfg)
@@ -522,6 +526,8 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     pr = products.get("price_range", [10, 3000])
     if not isinstance(pr, (list, tuple)) or len(pr) < 2:
+        import warnings
+        warnings.warn(f"products.price_range must be a 2-element list, got {pr!r}; using default [10, 3000]")
         pr = [10, 3000]
     min_price, max_price = float(pr[0]), float(pr[1])
     if min_price < 0:
@@ -533,6 +539,8 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     mr = products.get("margin_range", [0.20, 0.35])
     if not isinstance(mr, (list, tuple)) or len(mr) < 2:
+        import warnings
+        warnings.warn(f"products.margin_range must be a 2-element list, got {mr!r}; using default [0.20, 0.35]")
         mr = [0.20, 0.35]
     min_margin, max_margin = float(mr[0]), float(mr[1])
     if not (0.0 <= min_margin <= 1.0) or not (0.0 <= max_margin <= 1.0):
@@ -675,7 +683,8 @@ def _load_any(path: Path) -> dict:
 
 def _load_yaml(path: Path) -> dict:
     if _yaml is None:
-        raise RuntimeError(
+        from src.exceptions import ConfigError
+        raise ConfigError(
             "PyYAML is required to load .yaml/.yml config files"
         )
     with path.open("r", encoding="utf-8") as fh:
@@ -727,7 +736,7 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     raw_start = dates.get("start")
     raw_end = dates.get("end")
-    if not raw_start or not raw_end:
+    if raw_start is None or raw_end is None:
         raise KeyError("Missing defaults.dates.start or defaults.dates.end in config")
 
     try:
@@ -769,7 +778,7 @@ def get_global_dates(cfg: Dict[str, Any]) -> Dict[str, str]:
 
     raw_start = dates.get("start")
     raw_end = dates.get("end")
-    if not raw_start or not raw_end:
+    if raw_start is None or raw_end is None:
         raise KeyError("Missing defaults.dates.start/end")
 
     return {
@@ -790,6 +799,9 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
     if not file_format:
         raise KeyError("sales.file_format is required")
     file_format = str(file_format).lower()
+    if file_format == "delta":
+        file_format = "deltaparquet"
+        sales_cfg["file_format"] = file_format
     if file_format not in _VALID_FILE_FORMATS:
         raise ValueError(
             f"sales.file_format must be one of: {', '.join(sorted(_VALID_FILE_FORMATS))}"

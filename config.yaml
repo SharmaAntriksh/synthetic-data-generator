@@ -33,8 +33,8 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "csv"              # csv | parquet | deltaparquet
-  sales_output: "both"               # sales | sales_order | both
+  file_format: "parquet"              # csv | parquet | deltaparquet
+  sales_output: "sales"               # sales | sales_order | both
   skip_order_cols: false
 
   merge:

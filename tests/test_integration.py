@@ -306,6 +306,10 @@ class TestCrossSectionValidation:
         # skip_order_cols is a boolean and should not cause errors in validate()
         assert isinstance(errors, list)
         assert isinstance(warnings, list)
+        # Verify any warnings produced are related to returns or skip_order_cols
+        if warnings:
+            assert any("return" in w.lower() or "skip_order" in w.lower() for w in warnings), \
+                f"Expected warning about returns/skip_order_cols, got: {warnings}"
 
     def test_end_before_start_date_error(self):
         from web.validators import validate

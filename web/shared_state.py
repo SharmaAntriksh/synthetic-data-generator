@@ -161,7 +161,11 @@ def normalize_config_yaml(parsed: dict) -> dict:
                 tmp_path = tmp.name
             result = _load_pipeline_config(tmp_path)
             return result
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Config normalization failed, using raw parsed config: %s", exc
+            )
             return parsed
         finally:
             if tmp_path and os.path.exists(tmp_path):

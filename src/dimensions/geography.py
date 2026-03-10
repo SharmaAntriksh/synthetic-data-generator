@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import info, skip, stage, warn
 from src.versioning.version_store import should_regenerate, save_version
 
@@ -179,7 +180,8 @@ def build_dim_geography(cfg: Dict, *, _geo_cfg: Dict | None = None) -> pd.DataFr
 
     No sampling, no weighting, no duplicates.
     """
-    _geo_cfg if _geo_cfg is not None else _validate_cfg(cfg)
+    if _geo_cfg is None:
+        _validate_cfg(cfg)
 
     allowed_iso = set(map(str, cfg["exchange_rates"]["currencies"]))
 
@@ -190,7 +192,7 @@ def build_dim_geography(cfg: Dict, *, _geo_cfg: Dict | None = None) -> pd.DataFr
 
     df = df[df["ISOCode"].isin(allowed_iso)].reset_index(drop=True)
     if df.empty:
-        raise ValueError(
+        raise DimensionError(
             f"No geography rows remain after filtering by allowed currencies: {sorted(allowed_iso)}. "
             f"Ensure exchange_rates.currencies includes at least one of: "
             f"{sorted({r[4] for r in CURATED_ROWS})}"

@@ -130,6 +130,16 @@ _MD_CFG_VERSION: int = -1
 _MD_CFG_CACHE = None
 
 
+def _md_cfg_hash(models: dict) -> int:
+    """Content-based hash of the pricing config subset (handles nested structures)."""
+    import json
+    raw = models.get("pricing", {}) or {}
+    try:
+        return hash(json.dumps(raw, sort_keys=True, default=str))
+    except (TypeError, ValueError):
+        return id(raw)
+
+
 def _load_markdown_cfg():
     """
     Load markdown ladder config from models.pricing.markdown.
@@ -148,7 +158,7 @@ def _load_markdown_cfg():
     global _MD_CFG_VERSION, _MD_CFG_CACHE
 
     models = getattr(State, "models_cfg", None) or {}
-    version = id(models)
+    version = _md_cfg_hash(models)
     if version == _MD_CFG_VERSION and _MD_CFG_CACHE is not None:
         return _MD_CFG_CACHE
 
@@ -231,7 +241,7 @@ def _load_appearance_cfg() -> dict:
     global _APPEAR_CFG_VERSION, _APPEAR_CFG_CACHE
 
     models = getattr(State, "models_cfg", None) or {}
-    version = id(models)
+    version = _md_cfg_hash(models)
     if version == _APPEAR_CFG_VERSION and _APPEAR_CFG_CACHE is not None:
         return _APPEAR_CFG_CACHE
 
@@ -385,9 +395,14 @@ def _load_inflation_cfg():
     # NOTE: Default is False, matching models.yaml ("keep DiscountAmount in ladder buckets")
     scale_discount = bool(infl.get("scale_discount", False))
 
-    clip = infl.get("factor_clip", [1.00, 1.25])
+    clip = infl.get("factor_clip", None)
     if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
-        clip = [1.00, 1.25]
+        # Default range: allow deflation down to 0.50× if annual_rate < 0,
+        # otherwise floor at 1.0 (no price decrease).
+        if annual_rate < 0:
+            clip = [0.50, 1.25]
+        else:
+            clip = [1.00, 1.25]
     lo, hi = float(clip[0]), float(clip[1])
     if hi < lo:
         lo, hi = hi, lo
@@ -419,9 +434,14 @@ def _month_noise(month_int: int, seed: int, sigma: float) -> float:
     if cached is not None:
         return cached
 
-    # Evict cache if it grows too large (safety valve for long-running processes)
+    # LRU-style eviction: drop oldest half when cache is full.
+    # Full clear would discard entries that may be re-requested in
+    # the same run, forcing regeneration with the same seed (correct
+    # but wasteful).
     if len(_MONTH_NOISE_CACHE) >= _MONTH_NOISE_MAX_SIZE:
-        _MONTH_NOISE_CACHE.clear()
+        keys = list(_MONTH_NOISE_CACHE.keys())
+        for k in keys[: len(keys) // 2]:
+            del _MONTH_NOISE_CACHE[k]
 
     s = (int(seed) ^ (int(month_int) * 1000003)) & 0xFFFFFFFF
     rng = np.random.default_rng(s)

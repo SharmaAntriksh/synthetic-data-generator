@@ -270,6 +270,8 @@ def build_orders(
                     break
                 still_open = candidates[repeats[candidates] < max_lines]
                 if still_open.size == 0:
+                    import warnings
+                    warnings.warn(f"Could not allocate {remaining} remaining order lines; candidates exhausted at max_lines limit")
                     break
                 take = min(remaining, int(still_open.size))
                 chosen = rng.choice(still_open, size=take, replace=False)

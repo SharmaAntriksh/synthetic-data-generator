@@ -10,6 +10,7 @@ from src.dimensions.geography import (
     build_dim_geography,
     normalize_geography_config,
 )
+from src.exceptions import DimensionError
 
 
 # ===================================================================
@@ -85,7 +86,7 @@ class TestBuildDimGeography:
     def test_no_matching_currency_raises(self):
         cfg = self._cfg(["XYZ"])
 
-        with pytest.raises(ValueError, match="No geography rows remain"):
+        with pytest.raises(DimensionError, match="No geography rows remain"):
             build_dim_geography(cfg)
 
     def test_deterministic(self):

@@ -9,7 +9,7 @@ import pandas as pd
 import warnings
 
 from src.utils.logging_utils import info, skip, stage, warn
-from src.versioning.version_store import should_regenerate, save_version
+from src.versioning import should_regenerate, save_version
 
 
 # ---------------------------------------------------------

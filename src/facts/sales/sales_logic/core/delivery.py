@@ -174,9 +174,9 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
         early_days_per_order = rng.integers(1, 3, size=n_orders, dtype=np.int64)
 
         # Only some lines in an early order are early (~35%).
-        # Tighter threshold leaves room for On Time lines alongside
-        # Delayed and Early Delivery within the same order.
-        early_mask = early_order[inv_idx] & (line_seed < 35)
+        # Use an independent RNG draw so early-delivery is not coupled to
+        # product key (line_seed depends on product via hash).
+        early_mask = early_order[inv_idx] & (rng.random(n) < 0.35)
 
         if early_mask.any():
             early_days_rows = early_days_per_order[inv_idx]

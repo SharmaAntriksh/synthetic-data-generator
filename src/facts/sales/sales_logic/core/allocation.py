@@ -219,6 +219,7 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
 
     # Warn if growth compounding creates extreme weight skew
     if isinstance(g, np.ndarray):
+        g = np.where(g > 1e-9, g, 1e-9)  # Ensure positive growth factors
         g_finite = g[np.isfinite(g)]
         if g_finite.size > 0:
             ratio = g_finite.max() / max(g_finite.min(), 1e-30)

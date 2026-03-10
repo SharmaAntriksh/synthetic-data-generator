@@ -86,6 +86,7 @@ def _load_cfg() -> dict:
         raise ValueError("models.quantity.monthly_factors must be a list of 12 floats")
     factors_arr = np.asarray(factors, dtype=np.float64)
     factors_arr = np.where(np.isfinite(factors_arr), factors_arr, 1.0)
+    factors_arr = np.clip(factors_arr, 0.01, None)  # Prevent zero-factor months
 
     out = {
         "base_poisson_lambda": lam,
