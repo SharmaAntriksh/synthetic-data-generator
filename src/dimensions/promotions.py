@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -103,18 +104,20 @@ def _normalize_override_dates(promo_cfg: Dict) -> Dict:
     or:
       promotions.override: { start,end }
     """
-    override = (promo_cfg or {}).get("override", {}) or {}
-    if isinstance(override, dict) and isinstance(override.get("dates"), dict):
+    override = promo_cfg.override if hasattr(promo_cfg, "override") else ((promo_cfg or {}).get("override") if isinstance(promo_cfg, dict) else None)
+    override = override or {}
+    if isinstance(override, Mapping) and isinstance(override.get("dates"), Mapping):
         return override["dates"] or {}
-    return override if isinstance(override, dict) else {}
+    return override if isinstance(override, Mapping) else {}
 
 
 def _pick_seed(promo_cfg: Dict, default_seed: int = 42) -> int:
-    override = (promo_cfg or {}).get("override", {}) or {}
-    if not isinstance(override, dict):
+    override = promo_cfg.override if hasattr(promo_cfg, "override") else ((promo_cfg or {}).get("override") if isinstance(promo_cfg, dict) else None)
+    override = override or {}
+    if not isinstance(override, Mapping):
         override = {}
 
-    seed = (promo_cfg or {}).get("seed", None)
+    seed = promo_cfg.seed if hasattr(promo_cfg, "seed") else ((promo_cfg or {}).get("seed") if isinstance(promo_cfg, dict) else None)
     if seed is None:
         seed = override.get("seed", None)
     if seed is None:
@@ -527,15 +530,20 @@ def generate_promotions_catalog(
 def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
     out_path = parquet_folder / "promotions.parquet"
 
-    if not isinstance(cfg, dict) or "promotions" not in cfg:
+    if not isinstance(cfg, Mapping) or not hasattr(cfg, "promotions"):
         raise KeyError("Missing required config section: 'promotions'")
 
-    promo_cfg = cfg["promotions"] or {}
-    defaults_dates = (cfg.get("defaults", {}) or {}).get("dates") or (cfg.get("_defaults", {}) or {}).get("dates")
-    if not defaults_dates or "start" not in defaults_dates or "end" not in defaults_dates:
+    promo_cfg = cfg.promotions or {}
+    defaults_dates = (
+        getattr(cfg.defaults, "dates", None) if hasattr(cfg, "defaults") else None
+    ) or (
+        getattr(getattr(cfg, "_defaults", None), "dates", None)
+    )
+    if not defaults_dates or not getattr(defaults_dates, "start", None) or not getattr(defaults_dates, "end", None):
         raise ValueError("Promotions: missing defaults.dates.start/end (or _defaults.dates.start/end)")
 
-    version_cfg = {**promo_cfg, "global_dates": defaults_dates}
+    version_cfg = dict(promo_cfg)
+    version_cfg["global_dates"] = defaults_dates
 
     if not should_regenerate("promotions", version_cfg, out_path):
         skip("Promotions up-to-date")
@@ -547,29 +555,29 @@ def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
         start = pd.to_datetime(override_dates["start"])
         end = pd.to_datetime(override_dates["end"])
     else:
-        start = pd.to_datetime(defaults_dates["start"])
-        end = pd.to_datetime(defaults_dates["end"])
+        start = pd.to_datetime(defaults_dates.start)
+        end = pd.to_datetime(defaults_dates.end)
 
     years, windows = _build_year_windows(start, end)
     seed = _pick_seed(promo_cfg)
 
     # Optional parquet settings (safe defaults)
-    compression = promo_cfg.get("parquet_compression", "snappy")
-    compression_level = promo_cfg.get("parquet_compression_level", None)
-    force_date32 = bool(promo_cfg.get("force_date32", True))
+    compression = promo_cfg.parquet_compression
+    compression_level = promo_cfg.parquet_compression_level
+    force_date32 = bool(promo_cfg.force_date32)
 
     with stage("Generating Promotions"):
         df = generate_promotions_catalog(
             years=years,
             year_windows=windows,
-            num_seasonal=int(promo_cfg.get("num_seasonal", 20)),
-            num_clearance=int(promo_cfg.get("num_clearance", 8)),
-            num_limited=int(promo_cfg.get("num_limited", 12)),
-            num_flash=int(promo_cfg.get("num_flash", 6)),
-            num_volume=int(promo_cfg.get("num_volume", 4)),
-            num_loyalty=int(promo_cfg.get("num_loyalty", 3)),
-            num_bundle=int(promo_cfg.get("num_bundle", 3)),
-            num_new_customer=int(promo_cfg.get("num_new_customer", 3)),
+            num_seasonal=int(promo_cfg.num_seasonal or 20),
+            num_clearance=int(promo_cfg.num_clearance or 8),
+            num_limited=int(promo_cfg.num_limited or 12),
+            num_flash=int(promo_cfg.num_flash or 6),
+            num_volume=int(promo_cfg.num_volume or 4),
+            num_loyalty=int(promo_cfg.num_loyalty or 3),
+            num_bundle=int(promo_cfg.num_bundle or 3),
+            num_new_customer=int(promo_cfg.num_new_customer or 3),
             seed=seed,
         )
 

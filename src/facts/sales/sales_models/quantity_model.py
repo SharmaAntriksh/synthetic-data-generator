@@ -5,9 +5,11 @@ Generates per-order item counts using Poisson + monthly seasonality +
 multiplicative noise.
 
 Config source: models.yaml -> models.quantity
-Runtime state:  State.models_cfg  (the inner "models" dict)
+Runtime state:  State.models_cfg  (ModelsInnerConfig Pydantic model)
 """
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -62,7 +64,7 @@ def _load_cfg() -> dict:
         return _CFG_CACHE
 
     raw = models.get("quantity", {}) or {}
-    if not isinstance(raw, dict):
+    if not isinstance(raw, Mapping):
         raise ValueError("models.quantity must be a mapping")
 
     # --- scalar parameters ---

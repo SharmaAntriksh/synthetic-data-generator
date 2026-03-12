@@ -9,6 +9,8 @@ Runtime state:  State.models_cfg  (the inner "models" dict)
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 
 from src.facts.sales.sales_logic import State
@@ -49,7 +51,7 @@ def _parse_bands(bands, default):
     out = []
     if isinstance(bands, list):
         for b in bands:
-            if not isinstance(b, dict):
+            if not isinstance(b, Mapping):
                 continue
             try:
                 mx, st = float(b["max"]), float(b["step"])
@@ -86,7 +88,7 @@ def _parse_endings(endings, *, default_if_missing: bool):
 
     vals, wts = [], []
     for e in endings:
-        if not isinstance(e, dict):
+        if not isinstance(e, Mapping):
             continue
         try:
             v = float(e.get("value", 0.0))
@@ -132,10 +134,17 @@ _MD_CFG_VERSION: int = -1
 _MD_CFG_CACHE = None
 
 
-def _md_cfg_hash(models: dict) -> int:
+def _to_dict(obj):
+    """Convert Pydantic model or dict to plain dict for hashing."""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    return obj
+
+
+def _md_cfg_hash(models) -> int:
     """Content-based hash of the pricing config subset (handles nested structures)."""
     import json
-    raw = models.get("pricing", {}) or {}
+    raw = _to_dict(models.get("pricing", {}) or {})
     try:
         return hash(json.dumps(raw, sort_keys=True, default=str))
     except (TypeError, ValueError):
@@ -186,7 +195,7 @@ def _load_markdown_cfg():
     weights: list[float] = []
 
     for item in ladder:
-        if not isinstance(item, dict):
+        if not isinstance(item, Mapping):
             continue
         k = str(item.get("kind", "none")).strip().lower()
         w = float(item.get("weight", 0.0) or 0.0)

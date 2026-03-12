@@ -47,7 +47,10 @@ def get_first_existing_path(cfg: dict, keys: list[str]) -> Optional[Path]:
         return None
 
     for k in keys:
-        v = cfg.get(k)
+        if isinstance(cfg, dict):
+            v = cfg.get(k)
+        else:
+            v = getattr(cfg, k, None)
         if not v:
             continue
         resolved = _resolve_existing(v)
@@ -62,8 +65,8 @@ def to_snake(s: str) -> str:
     return s.lower()
 
 
-def tables_from_sales_cfg(sales_cfg: dict, cfg: Optional[dict] = None) -> list[str]:
-    sales_output = str(sales_cfg.get("sales_output", "sales")).lower().strip()
+def tables_from_sales_cfg(sales_cfg, cfg=None) -> list[str]:
+    sales_output = str(getattr(sales_cfg, "sales_output", "sales")).lower().strip()
     if sales_output not in {"sales", "sales_order", "both"}:
         raise ValueError(f"Invalid sales_output: {sales_output}")
 
@@ -75,11 +78,11 @@ def tables_from_sales_cfg(sales_cfg: dict, cfg: Optional[dict] = None) -> list[s
 
     # Returns (optional)
     returns_enabled = False
-    if isinstance(cfg, dict):
-        returns_cfg = cfg.get("returns") or {}
-        returns_enabled = bool(returns_cfg.get("enabled", False))
+    if cfg is not None:
+        returns_cfg = getattr(cfg, "returns", None)
+        returns_enabled = bool(getattr(returns_cfg, "enabled", False)) if returns_cfg is not None else False
         if returns_enabled:
-            skip_order = bool(sales_cfg.get("skip_order_cols", False))
+            skip_order = bool(getattr(sales_cfg, "skip_order_cols", False))
             if skip_order and sales_output == "sales":
                 returns_enabled = False
 

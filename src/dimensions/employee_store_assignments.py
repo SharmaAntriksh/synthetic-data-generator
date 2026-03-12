@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -32,15 +33,15 @@ from src.utils.config_helpers import (
 
 def _store_assignments_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Preferred path: ``cfg["employees"]["store_assignments"]``
-    Legacy path:    ``cfg["employee_store_assignments"]``
+    Preferred path: ``cfg.employees.store_assignments``
+    Legacy path:    ``cfg.employee_store_assignments``
 
     Merge rule: nested overrides legacy.
     """
     cfg = cfg or {}
-    emp_cfg = as_dict(cfg.get("employees"))
-    nested = as_dict(emp_cfg.get("store_assignments"))
-    legacy = as_dict(cfg.get("employee_store_assignments"))
+    emp_cfg = cfg.employees
+    nested = dict(emp_cfg.store_assignments) if emp_cfg.store_assignments is not None else {}
+    legacy = as_dict(cfg.employee_store_assignments)
 
     # The dimensions runner injects internal keys (global_dates)
     # into cfg["employee_store_assignments"]; exclude those when checking for
@@ -352,7 +353,7 @@ def generate_employee_store_assignments(
     default_profile = _normalize_profile_keys(as_dict(rp.get("default")))
     per_role_profile = {
         k: _normalize_profile_keys(dict(v))
-        for k, v in rp.items() if k != "default" and isinstance(v, dict)
+        for k, v in rp.items() if k != "default" and isinstance(v, Mapping)
     }
 
     sales_profile = dict(default_profile)
@@ -831,7 +832,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
     version_cfg = dict(a_cfg)
     version_cfg["schema_version"] = 10
-    version_cfg["_stores_cfg"] = dict(as_dict(cfg.get("stores")))
+    version_cfg["_stores_cfg"] = dict(cfg.stores)
     version_cfg["_rows_employees"] = int(len(employees))
     if "EmployeeKey" in employees.columns and len(employees) > 0:
         ek = pd.to_numeric(employees["EmployeeKey"], errors="coerce").dropna().astype(np.int32)

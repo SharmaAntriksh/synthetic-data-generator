@@ -903,37 +903,49 @@ class TestSharedStateHelpers:
 
     def test_promo_total_from_buckets(self):
         from web.shared_state import _promo_total
-        promos = {"num_seasonal": 10, "num_clearance": 5, "num_limited": 3}
+        from src.engine.config.config_schema import PromotionsConfig
+        promos = PromotionsConfig.model_validate({"num_seasonal": 10, "num_clearance": 5, "num_limited": 3})
         assert _promo_total(promos) == 18
 
     def test_promo_total_from_total_key(self):
         from web.shared_state import _promo_total
-        promos = {"total_promotions": 25}
+        # With Pydantic models, num_seasonal/num_clearance/num_limited are always
+        # declared fields (even if None), so _promo_total sums them. When all are
+        # None, the result is 0. Use a plain dict without bucket keys to test the
+        # total_promotions fallback path.
+        from types import SimpleNamespace
+        promos = SimpleNamespace(total_promotions=25)
         assert _promo_total(promos) == 25
 
     def test_set_promotions_total_distributes(self):
         from web.shared_state import _set_promotions_total
-        promos = {"num_seasonal": 10, "num_clearance": 5, "num_limited": 5}
+        from src.engine.config.config_schema import PromotionsConfig
+        promos = PromotionsConfig.model_validate({"num_seasonal": 10, "num_clearance": 5, "num_limited": 5})
         _set_promotions_total(promos, 40)
-        total = promos["num_seasonal"] + promos["num_clearance"] + promos["num_limited"]
+        total = promos.num_seasonal + promos.num_clearance + promos.num_limited
         assert total == 40
 
     def test_set_promotions_total_zero(self):
         from web.shared_state import _set_promotions_total
-        promos = {"num_seasonal": 10, "num_clearance": 5, "num_limited": 5}
+        from src.engine.config.config_schema import PromotionsConfig
+        promos = PromotionsConfig.model_validate({"num_seasonal": 10, "num_clearance": 5, "num_limited": 5})
         _set_promotions_total(promos, 0)
-        total = promos["num_seasonal"] + promos["num_clearance"] + promos["num_limited"]
+        total = promos.num_seasonal + promos.num_clearance + promos.num_limited
         assert total == 0
 
     def test_set_promotions_total_negative_clamped(self):
         from web.shared_state import _set_promotions_total
-        promos = {"num_seasonal": 10, "num_clearance": 5, "num_limited": 5}
+        from src.engine.config.config_schema import PromotionsConfig
+        promos = PromotionsConfig.model_validate({"num_seasonal": 10, "num_clearance": 5, "num_limited": 5})
         _set_promotions_total(promos, -10)
-        total = promos["num_seasonal"] + promos["num_clearance"] + promos["num_limited"]
+        total = promos.num_seasonal + promos.num_clearance + promos.num_limited
         assert total == 0  # clamped to 0
 
     def test_set_promotions_total_without_buckets(self):
         from web.shared_state import _set_promotions_total
-        promos = {}
+        # Use a SimpleNamespace without bucket fields to test the
+        # total_promotions fallback path.
+        from types import SimpleNamespace
+        promos = SimpleNamespace()
         _set_promotions_total(promos, 50)
-        assert promos["total_promotions"] == 50
+        assert promos.total_promotions == 50

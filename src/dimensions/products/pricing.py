@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
 
@@ -50,7 +52,7 @@ def _parse_bands(bands, default_bands):
 
     out = []
     for b in bands:
-        if not isinstance(b, dict):
+        if not isinstance(b, Mapping):
             continue
         mx = _to_float(b.get("max"), None)
         st = _to_float(b.get("step"), None)
@@ -192,7 +194,7 @@ def _apply_brand_price_normalization(
     """
     Brand-level price normalization in log space; low-count brands are left unchanged.
     """
-    if not isinstance(brand_cfg, dict) or not _to_bool(brand_cfg.get("enabled"), False):
+    if not isinstance(brand_cfg, Mapping) or not _to_bool(brand_cfg.get("enabled"), False):
         return
 
     brand_col = brand_cfg.get("brand_col")
@@ -357,7 +359,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     jitter_cfg = pricing_cfg.get("jitter", {}) or {}
 
     appearance_cfg = pricing_cfg.get("appearance", None)
-    if not isinstance(appearance_cfg, dict):
+    if not isinstance(appearance_cfg, Mapping):
         appearance_cfg = base_cfg.get("appearance", {}) or {}
 
     # ----------------------------

@@ -108,6 +108,7 @@ class SalesContext:
     date_pool: Any = None
     date_prob: Any = None
     store_keys: Any = None
+    store_eligible_by_month: Any = None
 
     # -- Promotions --
     promo_keys_all: Any = None
@@ -219,6 +220,7 @@ class State(metaclass=_SealableMeta):
     date_pool = None
     date_prob = None
     store_keys = None
+    store_eligible_by_month = None  # list[np.ndarray[int32]]: eligible store keys per month offset
 
     models_cfg = None
     # --------------------------------------------------------------

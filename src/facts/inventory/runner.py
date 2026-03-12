@@ -76,13 +76,13 @@ def run_inventory_pipeline(
     inv_out = fact_out / "inventory"
     inv_out.mkdir(parents=True, exist_ok=True)
 
-    inv_cfg = cfg.get("inventory", {})
-    sales_cfg = cfg.get("sales", {})
-    merge_enabled = bool(sales_cfg.get("merge_parquet", True))
+    inv_cfg = getattr(cfg, "inventory", None) or {}
+    sales_cfg = getattr(cfg, "sales", None) or {}
+    merge_enabled = bool(getattr(sales_cfg, "merge_parquet", True))
     merge_file = "inventory_snapshot.parquet"
-    delete_chunks = bool(sales_cfg.get("delete_chunks", True))
-    compression = str(sales_cfg.get("compression", "snappy"))
-    partition_by: List[str] = inv_cfg.get("partition_by") or []
+    delete_chunks = bool(getattr(sales_cfg, "delete_chunks", True))
+    compression = str(getattr(sales_cfg, "compression", "snappy"))
+    partition_by: List[str] = getattr(inv_cfg, "partition_by", None) or []
 
     # Load product attributes ONCE in the main process instead of per-worker
     product_attrs = _load_product_attrs(parquet_dims)

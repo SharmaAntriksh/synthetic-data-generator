@@ -25,11 +25,11 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
       - Copies fact outputs (Sales / SalesOrderHeader / SalesOrderDetail)
       - Generates SQL scripts (CSV only)
     """
-    file_format = str(sales_cfg["file_format"]).lower()
+    file_format = str(sales_cfg.file_format).lower()
     is_csv = file_format == "csv"
     # info(f"[DEBUG] package_output file_format={file_format!r} is_csv={is_csv}")
 
-    _raw_folder = unquote(str(cfg["final_output_folder"]))
+    _raw_folder = unquote(str(cfg.final_output_folder))
     if ".." in _raw_folder:
         raise ValueError(f"final_output_folder must not contain '..': {_raw_folder}")
     final_root = Path(_raw_folder).resolve()
@@ -49,7 +49,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         fact_folder=fact_out,
         sales_cfg=sales_cfg,
         file_format=file_format,
-        sales_rows_expected=sales_cfg["total_rows"],
+        sales_rows_expected=sales_cfg.total_rows,
         cfg=cfg,
         config_yaml_path=config_yaml_path,
         model_yaml_path=model_yaml_path,

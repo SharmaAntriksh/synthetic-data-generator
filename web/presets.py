@@ -99,19 +99,16 @@ def apply_preset(cfg, base_loader, preset_name: str) -> None:
     cfg.clear()
     cfg.update(base_loader())
 
-    cfg.setdefault("defaults", {}).setdefault("dates", {})
-    cfg.setdefault("sales", {})
-    cfg.setdefault("customers", {})
-    cfg.setdefault("products", {})
+    # Pydantic models have defaults for all sections, so setdefault is not needed.
+    # Use attribute access for reads and writes on Pydantic config models.
+    cfg.defaults.dates.start = preset["start"]
+    cfg.defaults.dates.end = preset["end"]
 
-    cfg["defaults"]["dates"]["start"] = preset["start"]
-    cfg["defaults"]["dates"]["end"] = preset["end"]
-
-    cfg["sales"]["total_rows"] = preset["sales_rows"]
-    cfg["customers"]["total_customers"] = preset["customers"]
+    cfg.sales.total_rows = preset["sales_rows"]
+    cfg.customers.total_customers = preset["customers"]
 
     if "products" in preset:
-        cfg["products"]["num_products"] = preset["products"]
+        cfg.products.num_products = preset["products"]
 
 
 def _extract_sales_bucket(name: str) -> str:

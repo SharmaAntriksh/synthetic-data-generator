@@ -3,6 +3,7 @@ from __future__ import annotations
 import glob
 import os
 import zlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from math import ceil
 from multiprocessing import cpu_count
@@ -90,9 +91,15 @@ def load_parquet_df(path: Union[str, Path], cols: Optional[Sequence[str]] = None
 def _cfg_get(cfg: Any, path: Sequence[str], default: Any = None) -> Any:
     cur = cfg
     for k in path:
-        if not isinstance(cur, dict) or k not in cur:
+        if not isinstance(cur, Mapping):
             return default
-        cur = cur[k]
+        # Prefer attribute access (Pydantic models) over dict access
+        if hasattr(cur, k):
+            cur = getattr(cur, k)
+        elif isinstance(cur, dict) and k in cur:
+            cur = cur[k]
+        else:
+            return default
     return cur
 
 
@@ -118,28 +125,28 @@ def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional
     if start_date is not None and end_date is not None:
         return str(start_date), str(end_date)
 
-    defaults_section = cfg.get("defaults") or cfg.get("_defaults")
-    defaults_dates = (defaults_section or {}).get("dates") if isinstance(defaults_section, dict) else None
-    if not isinstance(defaults_dates, dict):
+    defaults_section = getattr(cfg, "defaults", None) or getattr(cfg, "_defaults", None)
+    defaults_dates = getattr(defaults_section, "dates", None) if defaults_section is not None else None
+    if not isinstance(defaults_dates, Mapping):
         raise KeyError("Missing defaults.dates in config")
 
     ov_sales_dates = _cfg_get(cfg, ["sales", "override", "dates"], default={})
-    ov_sales_dates = ov_sales_dates if isinstance(ov_sales_dates, dict) else {}
+    ov_sales_dates = ov_sales_dates if isinstance(ov_sales_dates, Mapping) else {}
 
     ov_global_dates = _cfg_get(cfg, ["dates", "override", "dates"], default={})
-    ov_global_dates = ov_global_dates if isinstance(ov_global_dates, dict) else {}
+    ov_global_dates = ov_global_dates if isinstance(ov_global_dates, Mapping) else {}
 
     if start_date is None:
         start_date = (
             ov_sales_dates.get("start")
             or ov_global_dates.get("start")
-            or defaults_dates.get("start")
+            or getattr(defaults_dates, "start", None)
         )
     if end_date is None:
         end_date = (
             ov_sales_dates.get("end")
             or ov_global_dates.get("end")
-            or defaults_dates.get("end")
+            or getattr(defaults_dates, "end", None)
         )
 
     if not start_date or not end_date:
@@ -280,20 +287,24 @@ def _normalize_nullable_int_month(arr: Any, n: int) -> np.ndarray:
 
 
 def _resolve_partitioning(cfg: dict, partition_enabled: bool, partition_cols: Optional[Sequence[str]]) -> Tuple[bool, Optional[List[str]]]:
-    sales_cfg = cfg.get("sales") if isinstance(cfg, dict) else None
-    sales_cfg = sales_cfg if isinstance(sales_cfg, dict) else {}
+    sales_cfg = getattr(cfg, "sales", None) if isinstance(cfg, Mapping) else None
+    sales_cfg = sales_cfg if isinstance(sales_cfg, Mapping) else {}
 
     cfg_enabled = None
-    if "partition_enabled" in sales_cfg:
-        cfg_enabled = sales_cfg.get("partition_enabled")
-    elif "partitioning" in sales_cfg and isinstance(sales_cfg.get("partitioning"), dict):
-        cfg_enabled = sales_cfg["partitioning"].get("enabled")
+    if hasattr(sales_cfg, "partition_enabled"):
+        cfg_enabled = getattr(sales_cfg, "partition_enabled", None)
+    elif hasattr(sales_cfg, "partitioning"):
+        _part = getattr(sales_cfg, "partitioning", None)
+        if isinstance(_part, Mapping):
+            cfg_enabled = getattr(_part, "enabled", None)
 
     cfg_cols = None
-    if "partition_cols" in sales_cfg:
-        cfg_cols = sales_cfg.get("partition_cols")
-    elif "partitioning" in sales_cfg and isinstance(sales_cfg.get("partitioning"), dict):
-        cfg_cols = sales_cfg["partitioning"].get("columns")
+    if hasattr(sales_cfg, "partition_cols"):
+        cfg_cols = getattr(sales_cfg, "partition_cols", None)
+    elif hasattr(sales_cfg, "partitioning"):
+        _part = getattr(sales_cfg, "partitioning", None)
+        if isinstance(_part, Mapping):
+            cfg_cols = getattr(_part, "columns", None)
 
     partition_enabled = _apply_cfg_default(
         partition_enabled,
@@ -344,38 +355,39 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Normalize cfg defaults (cfg is source-of-truth when call-site omits)
     # ------------------------------------------------------------
-    cfg = cfg if isinstance(cfg, dict) else {}
-    sales_cfg = cfg.get("sales") if isinstance(cfg.get("sales"), dict) else {}
+    cfg = cfg if isinstance(cfg, Mapping) else {}
+    sales_cfg = getattr(cfg, "sales", None)
+    sales_cfg = sales_cfg if isinstance(sales_cfg, Mapping) else {}
 
-    file_format_cfg = sales_cfg.get("file_format")
+    file_format_cfg = getattr(sales_cfg, "file_format", None)
     if file_format_cfg is not None:
         file_format = _apply_cfg_default(file_format, "parquet", _str_or(file_format_cfg, "parquet").lower())
 
     merge_parquet = _apply_cfg_default(
         merge_parquet, False,
-        _bool_or(sales_cfg.get("merge_parquet"), merge_parquet) if "merge_parquet" in sales_cfg else None
+        _bool_or(getattr(sales_cfg, "merge_parquet", None), merge_parquet) if hasattr(sales_cfg, "merge_parquet") else None
     )
-    merged_file = _apply_cfg_default(merged_file, "sales.parquet", sales_cfg.get("merged_file") if "merged_file" in sales_cfg else None)
+    merged_file = _apply_cfg_default(merged_file, "sales.parquet", getattr(sales_cfg, "merged_file", None) if hasattr(sales_cfg, "merged_file") else None)
 
     delete_chunks = _apply_cfg_default(
         delete_chunks, False,
-        _bool_or(sales_cfg.get("delete_chunks"), delete_chunks) if "delete_chunks" in sales_cfg else None
+        _bool_or(getattr(sales_cfg, "delete_chunks", None), delete_chunks) if hasattr(sales_cfg, "delete_chunks") else None
     )
 
-    chunk_size = _apply_cfg_default(chunk_size, 2_000_000, _int_or(sales_cfg.get("chunk_size"), chunk_size) if "chunk_size" in sales_cfg else None)
-    row_group_size = _apply_cfg_default(row_group_size, 2_000_000, _int_or(sales_cfg.get("row_group_size"), row_group_size) if "row_group_size" in sales_cfg else None)
-    compression = _apply_cfg_default(compression, "snappy", sales_cfg.get("compression") if "compression" in sales_cfg else None)
-    workers = _apply_cfg_default(workers, None, sales_cfg.get("workers") if "workers" in sales_cfg else None)
-    tune_chunk = _apply_cfg_default(tune_chunk, False, _bool_or(sales_cfg.get("tune_chunk"), tune_chunk) if "tune_chunk" in sales_cfg else None)
-    write_pyarrow = _apply_cfg_default(write_pyarrow, True, _bool_or(sales_cfg.get("write_pyarrow"), write_pyarrow) if "write_pyarrow" in sales_cfg else None)
+    chunk_size = _apply_cfg_default(chunk_size, 2_000_000, _int_or(getattr(sales_cfg, "chunk_size", None), chunk_size) if hasattr(sales_cfg, "chunk_size") else None)
+    row_group_size = _apply_cfg_default(row_group_size, 2_000_000, _int_or(sales_cfg.row_group_size, row_group_size))
+    compression = _apply_cfg_default(compression, "snappy", sales_cfg.compression)
+    workers = _apply_cfg_default(workers, None, sales_cfg.workers)
+    tune_chunk = _apply_cfg_default(tune_chunk, False, _bool_or(sales_cfg.tune_chunk, tune_chunk))
+    write_pyarrow = _apply_cfg_default(write_pyarrow, True, _bool_or(sales_cfg.write_pyarrow, write_pyarrow))
     skip_order_cols = _apply_cfg_default(
         skip_order_cols,
         False,
-        _bool_or(sales_cfg.get("skip_order_cols"), skip_order_cols) if "skip_order_cols" in sales_cfg else None,
+        _bool_or(getattr(sales_cfg, "skip_order_cols", None), skip_order_cols) if hasattr(sales_cfg, "skip_order_cols") else None,
     )
 
     start_date, end_date = _resolve_date_range(cfg, start_date, end_date)
-    optimize_after_merge = _bool_or(sales_cfg.get("optimize"), False)
+    optimize_after_merge = _bool_or(getattr(sales_cfg, "optimize", None), False)
 
     seed = _resolve_seed(cfg, seed, default_seed=42)
     partition_enabled, partition_cols = _resolve_partitioning(cfg, partition_enabled, partition_cols)
@@ -399,7 +411,7 @@ def generate_sales_fact(
         delta_output_folder=(str(delta_output_folder) if file_format == "deltaparquet" else None),
     )
 
-    sales_output = _str_or(sales_cfg.get("sales_output"), "sales").lower()
+    sales_output = _str_or(getattr(sales_cfg, "sales_output", None), "sales").lower()
     if sales_output not in {"sales", "sales_order", "both"}:
         raise ValueError(f"Invalid sales_output: {sales_output}")
 
@@ -409,7 +421,8 @@ def generate_sales_fact(
     facts_enabled = _cfg_get(cfg, ["facts", "enabled"], default=[])
     facts_enabled = facts_enabled if isinstance(facts_enabled, list) else []
 
-    returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
+    _returns_obj = getattr(cfg, "returns", None)
+    returns_cfg = _returns_obj if isinstance(_returns_obj, Mapping) else {}
     returns_enabled = _bool_or(returns_cfg.get("enabled"), False)
 
     # If facts.enabled is used, treat it as an additional "feature gate"
@@ -554,7 +567,7 @@ def generate_sales_fact(
     brand_names = None
     product_subcat_key = None
     products_path = parquet_folder_p / "products.parquet"
-    assortment_cfg = (cfg.get("stores") or {}).get("assortment") or {}
+    assortment_cfg = (getattr(cfg, "stores", None) or {}).get("assortment") or {}
 
     def _brand_codes_from_series(s: pd.Series) -> tuple[np.ndarray, np.ndarray]:
         # Guarantee no NA => no -1 codes
@@ -669,7 +682,7 @@ def generate_sales_fact(
             product_popularity = None
             product_seasonality = None
 
-    # Stores: read ONCE (keys + geography + StoreType for assortment)
+    # Stores: read ONCE (keys + geography + StoreType + dates for eligibility)
     _store_cols = ["StoreKey", "GeographyKey"]
     _store_path = parquet_folder_p / "stores.parquet"
     if _store_path.exists():
@@ -677,9 +690,27 @@ def generate_sales_fact(
         _store_schema_names = set(_pq.read_schema(str(_store_path)).names)
         if "StoreType" in _store_schema_names:
             _store_cols.append("StoreType")
+        if "OpeningDate" in _store_schema_names:
+            _store_cols.append("OpeningDate")
+        if "ClosingDate" in _store_schema_names:
+            _store_cols.append("ClosingDate")
     store_df = load_parquet_df(_store_path, _store_cols)
     store_keys = _as_np(store_df["StoreKey"], np.int32)
     store_to_geo = dict(zip(_as_np(store_df["StoreKey"], np.int32), _as_np(store_df["GeographyKey"], np.int32)))
+
+    # Store open/close months for eligibility filtering (month-int: months since epoch)
+    store_open_month = None
+    store_close_month = None
+    if "OpeningDate" in store_df.columns:
+        _open_dt = pd.to_datetime(store_df["OpeningDate"]).values.astype("datetime64[M]")
+        store_open_month = _open_dt.astype("int64").astype(np.int64)
+    if "ClosingDate" in store_df.columns:
+        _close_dt = pd.to_datetime(store_df["ClosingDate"]).values
+        _close_nat_mask = np.isnat(_close_dt)
+        _close_m = _close_dt.astype("datetime64[M]").astype("int64").astype(np.int64)
+        # NaT → INT64_MAX means "never closed"
+        _close_m[_close_nat_mask] = np.iinfo(np.int64).max
+        store_close_month = _close_m
 
     # StoreType map for assortment (StoreKey -> "Supermarket" etc.)
     store_type_map = None
@@ -827,7 +858,7 @@ def generate_sales_fact(
     # SalesOrderNumber RunId:
     # - If configured: sales.order_id_run_id (0..999)
     # - Else derive a stable 0..999 id from output folder + seed (unique per run folder)
-    order_id_run_id_raw = sales_cfg.get("order_id_run_id", None)
+    order_id_run_id_raw = sales_cfg.order_id_run_id
     if order_id_run_id_raw is None:
         key = f"{out_folder_p.resolve()}|{int(seed)}".encode("utf-8")
         order_id_run_id = int(zlib.crc32(key) % 1000)
@@ -843,7 +874,7 @@ def generate_sales_fact(
     # without any sales.
     # ------------------------------------------------------------
     _models = State.models_cfg
-    if isinstance(_models, dict):
+    if isinstance(_models, Mapping):
         _cust_mdl = _models.get("customers", {}) or {}
         configured_share = float(_cust_mdl.get("new_customer_share", 0.10))
         configured_max_frac = float(_cust_mdl.get("max_new_fraction_per_month", 0.015))
@@ -906,11 +937,13 @@ def generate_sales_fact(
         product_brand_key=product_brand_key,
         brand_names=brand_names,
         store_keys=store_keys,
+        store_open_month=store_open_month,
+        store_close_month=store_close_month,
         promo_keys_all=promo_keys_all,
         promo_start_all=promo_start_all,
         promo_end_all=promo_end_all,
         new_customer_promo_keys=new_customer_promo_keys,
-        new_customer_window_months=int((cfg.get("promotions") or {}).get("new_customer_window_months", 3)),
+        new_customer_window_months=int((getattr(cfg, "promotions", None) or {}).get("new_customer_window_months", 3)),
 
         # Backward compat: keep 'customers' as keys array (no duplication)
         customers=customer_keys,
@@ -946,7 +979,7 @@ def generate_sales_fact(
         # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
         order_id_stride_orders=int(chunk_size),
         order_id_run_id=int(order_id_run_id),
-        max_lines_per_order=int(sales_cfg.get("max_lines_per_order", 5) or 5),
+        max_lines_per_order=int(getattr(sales_cfg, "max_lines_per_order", 5) or 5),
 
         sales_output=sales_output,
 
@@ -1001,7 +1034,8 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Budget streaming aggregation (optional)
     # ------------------------------------------------------------
-    budget_cfg = cfg.get("budget") if isinstance(cfg.get("budget"), dict) else {}
+    _budget_obj = getattr(cfg, "budget", None)
+    budget_cfg = _budget_obj if isinstance(_budget_obj, Mapping) else {}
     budget_enabled = _BUDGET_AVAILABLE and bool(budget_cfg.get("enabled", False))
     budget_acc = None  # type: Optional[BudgetAccumulator]
 
@@ -1030,7 +1064,8 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     # Inventory
     # ------------------------------------------------------------
-    inv_cfg = cfg.get("inventory") if isinstance(cfg.get("inventory"), dict) else {}
+    _inv_obj = getattr(cfg, "inventory", None)
+    inv_cfg = _inv_obj if isinstance(_inv_obj, Mapping) else {}
     inventory_enabled = _INVENTORY_AVAILABLE and bool(inv_cfg.get("enabled", False))
     inventory_acc = None
 
@@ -1148,9 +1183,8 @@ def generate_sales_fact(
     # 4) brand_prob_by_month — (T, B) float64 matrix, ~164MB for 72 months × 300K brands.
     #    Deterministic per seed, so build once and share instead of 8× in workers.
     models_cfg = worker_cfg.get("models_cfg")
-    if isinstance(models_cfg, dict):
-        _models_root = models_cfg.get("models") if isinstance(models_cfg.get("models"), dict) else models_cfg
-        _brand_cfg = _models_root.get("brand_popularity") if isinstance(_models_root, dict) else None
+    if isinstance(models_cfg, Mapping):
+        _brand_cfg = models_cfg.get("brand_popularity") if isinstance(models_cfg, Mapping) else None
         if _brand_cfg and product_brand_key is not None and product_brand_key.size > 0:
             _T = infer_T_from_date_pool(date_pool)
             _B = int(product_brand_key.max()) + 1
@@ -1162,7 +1196,7 @@ def generate_sales_fact(
             # Explicit brand weights from config
             _bp_explicit = None
             _cfg_weights = _brand_cfg.get("brand_weights")
-            if isinstance(_cfg_weights, dict) and _cfg_weights and brand_names is not None and len(brand_names) == _B:
+            if isinstance(_cfg_weights, Mapping) and _cfg_weights and brand_names is not None and len(brand_names) == _B:
                 _bp_explicit = np.zeros(_B, dtype=np.float64)
                 _name_to_idx = {str(n): i for i, n in enumerate(brand_names)}
                 _has_override = False
@@ -1216,11 +1250,11 @@ def generate_sales_fact(
         """
 
         # ---- Extract budget micro-aggregates (if present) ----
-        if budget_acc is not None and isinstance(r, dict):
+        if budget_acc is not None and isinstance(r, Mapping):
             budget_acc.add_sales(r.pop("_budget_agg", None))
             budget_acc.add_returns(r.pop("_returns_agg", None))
 
-        if inventory_acc is not None and isinstance(r, dict):
+        if inventory_acc is not None and isinstance(r, Mapping):
             inventory_acc.add(r.pop("_inventory_agg", None))
         def _chunk_tag(path_like: str) -> str:
             b = os.path.basename(path_like)
@@ -1245,7 +1279,7 @@ def generate_sales_fact(
             work(f"[{completed_units}/{total_units}] {_chunk_tag(r)} -> sales")
             return
 
-        if isinstance(r, dict):
+        if isinstance(r, Mapping):
             # stable display order: configured tables first, then any extras
             ordered_keys = [t for t in tables if t in r] + [k for k in r.keys() if k not in set(tables)]
 
@@ -1268,7 +1302,7 @@ def generate_sales_fact(
                 if isinstance(val, str):
                     created_files.append(val)
                     produced.append(short.get(table_name, table_name))
-                elif isinstance(val, dict) and "part" in val:
+                elif isinstance(val, Mapping) and "part" in val:
                     # delta mode: no file name spam; just note table produced a part
                     produced.append(short.get(table_name, table_name))
 

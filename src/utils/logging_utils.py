@@ -60,6 +60,7 @@ def _shorten_path_in_msg(msg: Any) -> Any:
 ENABLE_COLORS = True          # Console colors (effective only if terminal supports)
 ENABLE_FILE_LOG = False       # Save logs to file
 LOG_FILE = "logs/generator.log"
+LOG_VERBOSITY = "normal"      # "normal" (all messages) or "quiet" (top-level + warnings only)
 
 COLORS = {
     "INFO":  "\033[94m",   # Blue
@@ -106,11 +107,18 @@ def _activate_pending() -> None:
         if s._lazy and not s._activated:
             saved = _indent_level()
             _INDENT.level = s._depth
-            _flush(_line("INFO", s.msg))
+            line = _line("INFO", s.msg)
+            if _should_emit("INFO", depth=s._depth):
+                _flush(line)
+            else:
+                _write_to_file(line)
             _INDENT.level = saved
             s._activated = True
             for buffered_line in s._skip_buffer:
-                _flush(buffered_line)
+                if _should_emit("SKIP", depth=s._depth):
+                    _flush(buffered_line)
+                else:
+                    _write_to_file(buffered_line)
             s._skip_buffer.clear()
 
 
@@ -119,6 +127,21 @@ def _is_tty() -> bool:
         return sys.stdout.isatty()
     except Exception:
         return False
+
+
+def _should_emit(level: str, depth: Optional[int] = None) -> bool:
+    """Return True if a message at *level* and *depth* should print to console.
+
+    In ``quiet`` mode only top-level messages (depth 0) and WARN/FAIL are shown.
+    ``normal`` mode shows everything.
+    """
+    if LOG_VERBOSITY == "normal":
+        return True
+    # quiet mode: always show warnings and failures
+    if level in ("WARN", "FAIL"):
+        return True
+    d = depth if depth is not None else _indent_level()
+    return d == 0
 
 
 def _color_allowed() -> bool:
@@ -140,11 +163,16 @@ def configure_logging(
     enable_colors: Optional[bool] = None,
     enable_file_log: Optional[bool] = None,
     log_file: Optional[str] = None,
+    verbosity: Optional[str] = None,
 ) -> None:
     """
     Optional runtime configuration without touching import sites.
+
+    *verbosity* accepts ``"normal"`` (default, all messages) or ``"quiet"``
+    (only top-level stage messages, warnings, and failures).
     """
-    global ENABLE_COLORS, ENABLE_FILE_LOG, LOG_FILE, _LOG_FILE_PATH, _LOG_DIR_READY, _LOG_FD
+    global ENABLE_COLORS, ENABLE_FILE_LOG, LOG_FILE, LOG_VERBOSITY
+    global _LOG_FILE_PATH, _LOG_DIR_READY, _LOG_FD
 
     if enable_colors is not None:
         ENABLE_COLORS = bool(enable_colors)
@@ -162,6 +190,9 @@ def configure_logging(
             except Exception:
                 pass
             _LOG_FD = None
+
+    if verbosity is not None:
+        LOG_VERBOSITY = verbosity
 
 
 def fmt_sec(sec: float) -> str:
@@ -261,9 +292,13 @@ def _flush(line: str) -> None:
 # BASIC LOG LEVEL FUNCTIONS (same names)
 # ============================================================================
 def info(msg: Any) -> None:
-    _activate_pending()
     msg = _shorten_path_in_msg(msg)
-    _flush(_line("INFO", msg))
+    line = _line("INFO", msg)
+    if _should_emit("INFO"):
+        _activate_pending()
+        _flush(line)
+    else:
+        _write_to_file(line)
 
 
 def debug(msg: Any) -> None:
@@ -281,17 +316,25 @@ def fail(msg: Any) -> None:
 
 
 def skip(msg: Any) -> None:
+    line = _line("SKIP", msg)
+    if not _should_emit("SKIP"):
+        _write_to_file(line)
+        return
     stack = getattr(_LAZY_STACK, "stack", [])
     for s in reversed(stack):
         if s._lazy and not s._activated:
-            s._skip_buffer.append(_line("SKIP", msg))
+            s._skip_buffer.append(line)
             return
     _activate_pending()
-    _flush(_line("SKIP", msg))
+    _flush(line)
 
 
 def done(msg: Any) -> None:
-    _flush(_line("DONE", msg))
+    line = _line("DONE", msg)
+    if _should_emit("DONE"):
+        _flush(line)
+    else:
+        _write_to_file(line)
 
 
 # ============================================================================
@@ -363,7 +406,6 @@ def work(msg: str = "", *, outfile: Any = None, **_ignore: Any) -> None:
     - If msg is empty and outfile is provided, log outfile name
     - Keeps previous visible format (including arrow) for compatibility
     """
-    _activate_pending()
     if msg:
         final = msg
     elif outfile:
@@ -374,4 +416,9 @@ def work(msg: str = "", *, outfile: Any = None, **_ignore: Any) -> None:
     else:
         final = ""
 
-    _flush(_line("WORK", final))
+    line = _line("WORK", final)
+    if _should_emit("WORK"):
+        _activate_pending()
+        _flush(line)
+    else:
+        _write_to_file(line)

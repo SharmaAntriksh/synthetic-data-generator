@@ -46,6 +46,7 @@ Power BI:
 """
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -149,46 +150,47 @@ class SuperpowersCfg:
 
 
 def _read_cfg(cfg: Dict[str, Any]) -> SuperpowersCfg:
-    sp = cfg.get("superpowers") or {}
-    if not isinstance(sp, dict):
-        sp = {}
+    sp = cfg.superpowers
     return SuperpowersCfg(
-        enabled=bool(sp.get("enabled", True)),
-        generate_bridge=bool(sp.get("generate_bridge", True)),
-        powers_count=int(sp.get("powers_count", 40)),
-        per_customer_min=int(sp.get("powers_per_customer_min", 1)),
-        per_customer_max=int(sp.get("powers_per_customer_max", 4)),
-        include_power_level=bool(sp.get("include_power_level", True)),
-        include_primary_flag=bool(sp.get("include_primary_flag", True)),
-        include_acquired_date=bool(sp.get("include_acquired_date", True)),
-        seed=int(sp.get("seed", 123)),
-        write_chunk_rows=int(sp.get("write_chunk_rows", 250_000)),
+        enabled=bool(sp.enabled),
+        generate_bridge=bool(sp.generate_bridge),
+        powers_count=int(sp.powers_count),
+        per_customer_min=int(sp.powers_per_customer_min),
+        per_customer_max=int(sp.powers_per_customer_max),
+        include_power_level=bool(sp.include_power_level),
+        include_primary_flag=bool(sp.include_primary_flag),
+        include_acquired_date=bool(sp.include_acquired_date),
+        seed=int(sp.seed if sp.seed is not None else 123),
+        write_chunk_rows=int(sp.write_chunk_rows),
     )
 
 
 def _parse_global_dates(cfg: Dict[str, Any]) -> Tuple[pd.Timestamp, pd.Timestamp]:
     """
     Resolve timeline dates from (priority order):
-      1) cfg['superpowers']['global_dates']  (runner injected)
-      2) cfg['defaults']['dates']
-      3) cfg['_defaults']['dates']           (backward compatibility)
+      1) cfg.superpowers.global_dates  (runner injected)
+      2) cfg.defaults.dates
+      3) cfg._defaults.dates           (backward compatibility)
     """
-    sp = cfg.get("superpowers") or {}
-    if isinstance(sp, dict):
-        gd = sp.get("global_dates")
-        if isinstance(gd, dict) and gd.get("start") and gd.get("end"):
-            start = pd.to_datetime(gd["start"]).normalize()
-            end = pd.to_datetime(gd["end"]).normalize()
-            if end < start:
-                raise ValueError("defaults.dates.end must be >= defaults.dates.start")
-            return start, end
+    sp = cfg.superpowers
+    gd = sp.global_dates if sp is not None else None
+    if isinstance(gd, Mapping) and gd.get("start") and gd.get("end"):
+        start = pd.to_datetime(gd["start"]).normalize()
+        end = pd.to_datetime(gd["end"]).normalize()
+        if end < start:
+            raise ValueError("defaults.dates.end must be >= defaults.dates.start")
+        return start, end
 
-    defaults = cfg.get("defaults") or cfg.get("_defaults") or {}
-    d = defaults.get("dates") or {}
-    if not isinstance(d, dict) or not d.get("start") or not d.get("end"):
+    defaults = cfg.defaults if hasattr(cfg, "defaults") else getattr(cfg, "_defaults", None)
+    if defaults is None:
         raise ValueError("Missing defaults.dates.start/end (or _defaults.dates.start/end)")
-    start = pd.to_datetime(d["start"]).normalize()
-    end = pd.to_datetime(d["end"]).normalize()
+    d = defaults.dates
+    d_start = d.start if hasattr(d, "start") else None
+    d_end = d.end if hasattr(d, "end") else None
+    if not d_start or not d_end:
+        raise ValueError("Missing defaults.dates.start/end (or _defaults.dates.start/end)")
+    start = pd.to_datetime(d_start).normalize()
+    end = pd.to_datetime(d_end).normalize()
     if end < start:
         raise ValueError("defaults.dates.end must be >= defaults.dates.start")
     return start, end
@@ -558,7 +560,7 @@ def run_superpowers(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]
             )
 
     st = os.stat(customers_fp)
-    version_cfg = dict(cfg.get("superpowers") or {})
+    version_cfg = dict(cfg.superpowers)
     version_cfg["_schema_version"] = 4
     version_cfg["_upstream_customers_sig"] = {
         "path": str(customers_fp),

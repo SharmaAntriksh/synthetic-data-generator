@@ -210,11 +210,11 @@ class OutputPaths:
             os.makedirs(self.delta_parts_dir(table), exist_ok=True)
 
 
-def build_output_paths_from_sales_cfg(sales_cfg: dict) -> OutputPaths:
-    file_format = str(sales_cfg.get("file_format", "parquet")).lower()
-    out_folder = _norm(sales_cfg.get("out_folder", "")) or ""
-    merged_file = sales_cfg.get("merged_file")  # optional
-    delta_output_folder = _norm(sales_cfg.get("delta_output_folder"))
+def build_output_paths_from_sales_cfg(sales_cfg) -> OutputPaths:
+    file_format = str(getattr(sales_cfg, "file_format", "parquet")).lower()
+    out_folder = _norm(getattr(sales_cfg, "out_folder", "")) or ""
+    merged_file = getattr(sales_cfg, "merged_file", None)
+    delta_output_folder = _norm(getattr(sales_cfg, "delta_output_folder", None))
 
     # IMPORTANT: match sales.py defaulting behavior
     if file_format == "deltaparquet" and not delta_output_folder:

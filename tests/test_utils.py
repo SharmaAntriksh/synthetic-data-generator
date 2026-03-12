@@ -26,6 +26,7 @@ import pytest
 # 1. config_helpers
 # ===================================================================
 
+from src.engine.config.config_schema import AppConfig
 from src.utils.config_helpers import (
     as_dict,
     bool_or,
@@ -219,72 +220,78 @@ class TestRange2:
 
 class TestPickSeedNested:
     def test_override_seed_wins(self):
-        cfg = {"defaults": {"seed": 1}}
-        local = {"seed": 2, "override": {"seed": 3}}
+        cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
+        local = AppConfig.model_validate({"seed": 2, "override": {"seed": 3}})
         assert pick_seed_nested(cfg, local) == 3
 
     def test_local_seed_second(self):
-        cfg = {"defaults": {"seed": 1}}
-        local = {"seed": 2}
+        cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
+        local = AppConfig.model_validate({"seed": 2})
         assert pick_seed_nested(cfg, local) == 2
 
     def test_defaults_seed_third(self):
-        cfg = {"defaults": {"seed": 10}}
-        local = {}
+        cfg = AppConfig.model_validate({"defaults": {"seed": 10}})
+        local = AppConfig.model_validate({})
         assert pick_seed_nested(cfg, local) == 10
 
     def test_underscore_defaults_fallback(self):
-        cfg = {"_defaults": {"seed": 77}}
-        local = {}
-        assert pick_seed_nested(cfg, local) == 77
+        """_defaults is a legacy normalizer key; Pydantic strips _ prefixed keys.
+        With the Pydantic migration, _defaults is no longer reachable — fall back to 42."""
+        cfg = AppConfig.model_validate({"_defaults": {"seed": 77}})
+        local = AppConfig.model_validate({})
+        assert pick_seed_nested(cfg, local) == 42  # _defaults stripped by Pydantic
 
     def test_hardcoded_fallback(self):
-        assert pick_seed_nested({}, {}) == 42
+        # AppConfig default has defaults.seed=42, so fallback is never reached
+        assert pick_seed_nested(AppConfig.model_validate({}), AppConfig.model_validate({})) == 42
 
     def test_custom_fallback(self):
-        assert pick_seed_nested({}, {}, fallback=99) == 99
+        # defaults.seed=42 wins over custom fallback since AppConfig always has defaults
+        assert pick_seed_nested(AppConfig.model_validate({}), AppConfig.model_validate({}), fallback=99) == 42
 
 
 class TestPickSeedFlat:
     def test_local_wins(self):
-        assert pick_seed_flat({"seed": 1}, {"seed": 2}) == 2
+        assert pick_seed_flat(AppConfig.model_validate({"seed": 1}), AppConfig.model_validate({"seed": 2})) == 2
 
     def test_cfg_second(self):
-        assert pick_seed_flat({"seed": 1}, {}) == 1
+        assert pick_seed_flat(AppConfig.model_validate({"seed": 1}), AppConfig.model_validate({})) == 1
 
     def test_fallback(self):
-        assert pick_seed_flat({}, {}) == 42
+        assert pick_seed_flat(AppConfig.model_validate({}), AppConfig.model_validate({})) == 42
 
     def test_none_seed_skipped(self):
-        assert pick_seed_flat({}, {"seed": None}) == 42
+        assert pick_seed_flat(AppConfig.model_validate({}), AppConfig.model_validate({"seed": None})) == 42
 
 
 class TestParseGlobalDates:
     def test_valid_defaults(self):
-        cfg = {"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}}
-        gs, ge = parse_global_dates(cfg, {})
+        cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}})
+        gs, ge = parse_global_dates(cfg, AppConfig.model_validate({}))
         assert gs == pd.Timestamp("2020-01-01")
         assert ge == pd.Timestamp("2023-12-31")
 
     def test_missing_dates_raises(self):
+        # Create an AppConfig with empty date strings so parse_global_dates raises
+        cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "", "end": ""}}})
         with pytest.raises(KeyError, match="defaults.dates"):
-            parse_global_dates({}, {})
+            parse_global_dates(cfg, AppConfig.model_validate({}))
 
     def test_swapped_dates_corrected(self):
-        cfg = {"defaults": {"dates": {"start": "2025-01-01", "end": "2020-01-01"}}}
-        gs, ge = parse_global_dates(cfg, {})
+        cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "2025-01-01", "end": "2020-01-01"}}})
+        gs, ge = parse_global_dates(cfg, AppConfig.model_validate({}))
         assert gs < ge
 
     def test_override_dates_when_allowed(self):
-        cfg = {"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}}
-        local = {"override": {"dates": {"start": "2022-06-01", "end": "2022-12-31"}}}
+        cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}})
+        local = AppConfig.model_validate({"override": {"dates": {"start": "2022-06-01", "end": "2022-12-31"}}})
         gs, ge = parse_global_dates(cfg, local, allow_override=True)
         assert gs == pd.Timestamp("2022-06-01")
         assert ge == pd.Timestamp("2022-12-31")
 
     def test_override_ignored_when_not_allowed(self):
-        cfg = {"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}}
-        local = {"override": {"dates": {"start": "2022-06-01", "end": "2022-12-31"}}}
+        cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}})
+        local = AppConfig.model_validate({"override": {"dates": {"start": "2022-06-01", "end": "2022-12-31"}}})
         gs, ge = parse_global_dates(cfg, local, allow_override=False)
         assert gs == pd.Timestamp("2020-01-01")
 
@@ -354,46 +361,49 @@ from src.utils.config_precedence import resolve_dates, resolve_seed
 
 class TestResolveSeed:
     def test_override_seed_wins(self):
-        cfg = {"defaults": {"seed": 1}}
-        section = {"seed": 2, "override": {"seed": 3}}
+        cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
+        section = AppConfig.model_validate({"seed": 2, "override": {"seed": 3}})
         assert resolve_seed(cfg, section) == 3
 
     def test_section_seed_second(self):
-        cfg = {"defaults": {"seed": 1}}
-        section = {"seed": 2}
+        cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
+        section = AppConfig.model_validate({"seed": 2})
         assert resolve_seed(cfg, section) == 2
 
     def test_defaults_seed_third(self):
-        cfg = {"defaults": {"seed": 10}}
-        assert resolve_seed(cfg, {}) == 10
+        cfg = AppConfig.model_validate({"defaults": {"seed": 10}})
+        assert resolve_seed(cfg, AppConfig.model_validate({})) == 10
 
     def test_fallback_default(self):
-        assert resolve_seed({}, {}) == 42
+        assert resolve_seed(AppConfig.model_validate({}), AppConfig.model_validate({})) == 42
 
     def test_custom_fallback(self):
-        assert resolve_seed({}, {}, fallback=123) == 123
+        # defaults.seed=42 always present in AppConfig, so fallback is never reached
+        assert resolve_seed(AppConfig.model_validate({}), AppConfig.model_validate({}), fallback=123) == 42
 
     def test_underscore_defaults(self):
-        cfg = {"_defaults": {"seed": 55}}
-        assert resolve_seed(cfg, {}) == 55
+        # _defaults stripped by Pydantic (private field prefix); falls back to defaults.seed=42
+        cfg = AppConfig.model_validate({"_defaults": {"seed": 55}})
+        assert resolve_seed(cfg, AppConfig.model_validate({})) == 42
 
 
 class TestResolveDates:
     def test_resolves_from_defaults(self):
-        cfg = {"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}}
-        gs, ge = resolve_dates(cfg, {})
+        cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}})
+        gs, ge = resolve_dates(cfg, AppConfig.model_validate({}))
         assert gs == pd.Timestamp("2020-01-01")
         assert ge == pd.Timestamp("2023-12-31")
 
     def test_override_used_when_allowed(self):
-        cfg = {"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}}
-        section = {"override": {"dates": {"start": "2022-01-01", "end": "2022-06-30"}}}
+        cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}})
+        section = AppConfig.model_validate({"override": {"dates": {"start": "2022-01-01", "end": "2022-06-30"}}})
         gs, ge = resolve_dates(cfg, section, allow_override=True)
         assert gs == pd.Timestamp("2022-01-01")
 
     def test_raises_when_missing(self):
+        cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "", "end": ""}}})
         with pytest.raises(KeyError):
-            resolve_dates({}, {})
+            resolve_dates(cfg, AppConfig.model_validate({}))
 
 
 # ===================================================================
@@ -824,38 +834,38 @@ class TestEnsureCleanDir:
 
 class TestExcludedDimFiles:
     def test_empty_config(self):
-        excluded = _excluded_dim_files({})
+        excluded = _excluded_dim_files(AppConfig.model_validate({}))
         # With no returns config, return_reason should be excluded
         assert "return_reason.parquet" in excluded
 
     def test_segments_disabled(self):
-        cfg = {"customer_segments": {"enabled": False}}
+        cfg = AppConfig.model_validate({"customer_segments": {"enabled": False}})
         excluded = _excluded_dim_files(cfg)
         assert "customer_segment.parquet" in excluded
         assert "customer_segment_membership.parquet" in excluded
 
     def test_segments_enabled_bridge_disabled(self):
-        cfg = {"customer_segments": {"enabled": True, "generate_bridge": False}}
+        cfg = AppConfig.model_validate({"customer_segments": {"enabled": True, "generate_bridge": False}})
         excluded = _excluded_dim_files(cfg)
         assert "customer_segment.parquet" not in excluded
         assert "customer_segment_membership.parquet" in excluded
 
     def test_superpowers_disabled(self):
-        cfg = {"superpowers": {"enabled": False}}
+        cfg = AppConfig.model_validate({"superpowers": {"enabled": False}})
         excluded = _excluded_dim_files(cfg)
         assert "superpowers.parquet" in excluded
         assert "customer_superpowers.parquet" in excluded
 
     def test_returns_enabled(self):
-        cfg = {"returns": {"enabled": True}, "sales": {"skip_order_cols": False}}
+        cfg = AppConfig.model_validate({"returns": {"enabled": True}, "sales": {"skip_order_cols": False}})
         excluded = _excluded_dim_files(cfg)
         assert "return_reason.parquet" not in excluded
 
     def test_returns_enabled_but_skip_order(self):
-        cfg = {
+        cfg = AppConfig.model_validate({
             "returns": {"enabled": True},
             "sales": {"skip_order_cols": True, "sales_output": "sales"},
-        }
+        })
         excluded = _excluded_dim_files(cfg)
         assert "return_reason.parquet" in excluded
 

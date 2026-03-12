@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Dict, List
 
@@ -18,11 +19,12 @@ from src.defaults import CURRENCY_NAME_MAP
 # ---------------------------------------------------------
 
 def _require_section(cfg: Dict, name: str) -> Dict:
-    if not isinstance(cfg, dict):
+    if not isinstance(cfg, Mapping):
         raise TypeError("cfg must be a dict")
-    if name not in cfg or not isinstance(cfg[name], dict):
+    section = getattr(cfg, name, None) if hasattr(cfg, name) else (cfg[name] if isinstance(cfg, dict) and name in cfg else None)
+    if section is None or not isinstance(section, Mapping):
         raise KeyError(f"Missing required config section: '{name}'")
-    return cfg[name]
+    return section
 
 
 def _get_effective_dates(cfg: Dict, ex_cfg: Dict) -> Dict:
@@ -30,18 +32,18 @@ def _get_effective_dates(cfg: Dict, ex_cfg: Dict) -> Dict:
     Currency dimension itself doesn't *need* dates, but you intentionally
     tie versioning to the effective FX window, so we preserve that behavior.
     """
-    use_global = bool(ex_cfg.get("use_global_dates", True))
+    use_global = bool(getattr(ex_cfg, "use_global_dates", True))
 
     if use_global:
         defaults_dates = (
-            (cfg.get("defaults", {}) or {}).get("dates")
-            or (cfg.get("_defaults", {}) or {}).get("dates")
-            or {}
-        )
-        return defaults_dates if isinstance(defaults_dates, dict) else {}
+            getattr(cfg.defaults, "dates", None) if hasattr(cfg, "defaults") else None
+        ) or (
+            getattr(getattr(cfg, "_defaults", None), "dates", None)
+        ) or {}
+        return defaults_dates if isinstance(defaults_dates, Mapping) else {}
     else:
-        override_dates = ((ex_cfg.get("override", {}) or {}).get("dates")) or {}
-        return override_dates if isinstance(override_dates, dict) else {}
+        override_dates = (getattr(getattr(ex_cfg, "override", None) or {}, "dates", None)) or {}
+        return override_dates if isinstance(override_dates, Mapping) else {}
 
 
 def _normalize_currency_list(currencies: List[str]) -> List[str]:
@@ -94,19 +96,21 @@ def run_currency(cfg: Dict, parquet_folder: Path) -> None:
       - effective FX date window (global dates if use_global_dates=true, else override.dates)
     """
     ex_cfg = _require_section(cfg, "exchange_rates")
-    cur_cfg = _require_section(cfg, "currency")
+    # currency section is optional — only holds parquet knobs
+    from src.engine.config.config_schema import CurrencyConfig
+    cur_cfg = cfg.currency or CurrencyConfig()
 
     out_path = Path(parquet_folder) / "currency.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    currencies = _normalize_currency_list(ex_cfg.get("currencies"))
+    currencies = _normalize_currency_list(ex_cfg.currencies)
     effective_dates = _get_effective_dates(cfg, ex_cfg)
 
     # Minimal version_cfg: avoids regen churn when unrelated exchange_rates keys change
     version_cfg = {
         "currencies": currencies,
-        "base_currency": (ex_cfg.get("base_currency") or "").upper(),
-        "use_global_dates": bool(ex_cfg.get("use_global_dates", True)),
+        "base_currency": (getattr(ex_cfg, "base_currency", "") or "").upper(),
+        "use_global_dates": bool(getattr(ex_cfg, "use_global_dates", True)),
         "effective_dates": effective_dates,
     }
 
@@ -115,9 +119,9 @@ def run_currency(cfg: Dict, parquet_folder: Path) -> None:
         return
 
     # Optional parquet knobs (consistent with other dims)
-    compression = cur_cfg.get("parquet_compression", "snappy")
-    compression_level = cur_cfg.get("parquet_compression_level", None)
-    force_date32 = bool(cur_cfg.get("force_date32", True))
+    compression = cur_cfg.parquet_compression
+    compression_level = cur_cfg.parquet_compression_level
+    force_date32 = bool(cur_cfg.force_date32)
 
     with stage("Generating Currency"):
         df = build_dim_currency(currencies)

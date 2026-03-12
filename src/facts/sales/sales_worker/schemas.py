@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import List, Optional, Set
 
@@ -214,12 +215,12 @@ def build_worker_schemas(
         date_cols_by_table[TABLE_SALES_RETURN] = ["ReturnDate"]
 
     # Optional models.yaml override (preserve previous behavior)
-    if models_cfg and isinstance(models_cfg, dict):
-        models_root = models_cfg.get("models") if isinstance(models_cfg.get("models"), dict) else models_cfg
+    if models_cfg and isinstance(models_cfg, Mapping):
         overrides = None
-        if isinstance(models_root, dict) and isinstance(models_root.get("returns"), dict):
-            overrides = models_root["returns"].get("date_cols_by_table")
-        if isinstance(overrides, dict):
+        returns_cfg = models_cfg.get("returns")
+        if isinstance(returns_cfg, Mapping):
+            overrides = returns_cfg.get("date_cols_by_table")
+        if isinstance(overrides, Mapping):
             for k, v in overrides.items():
                 if isinstance(k, str) and isinstance(v, (list, tuple)) and v:
                     date_cols_by_table[k] = [str(x) for x in v]

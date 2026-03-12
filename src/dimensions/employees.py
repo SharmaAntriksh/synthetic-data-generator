@@ -743,7 +743,7 @@ def _sync_stores_employee_count(emp_df: pd.DataFrame, stores_path: Path) -> None
 
 def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     cfg = cfg or {}
-    emp_cfg = as_dict(cfg.get("employees"))
+    emp_cfg = cfg.employees
 
     parquet_folder = Path(parquet_folder)
     parquet_folder.mkdir(parents=True, exist_ok=True)
@@ -754,8 +754,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     if not stores_path.exists():
         raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
 
-    seed = pick_seed_nested(cfg, emp_cfg, fallback=42)
-    global_start, global_end = _parse_employee_dates(cfg, emp_cfg)
+    seed = pick_seed_nested(cfg, dict(emp_cfg), fallback=42)
+    global_start, global_end = _parse_employee_dates(cfg, dict(emp_cfg))
 
     _STORES_READ_COLS = [
         "StoreKey", "GeographyKey", "EmployeeCount", "StoreType",
@@ -773,7 +773,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     version_cfg = dict(emp_cfg)
     version_cfg["schema_version"] = 6
     version_cfg["_stores_sig"] = _stores_signature(stores)
-    version_cfg["_stores_cfg"] = dict(as_dict(cfg.get("stores")))
+    version_cfg["_stores_cfg"] = dict(cfg.stores)
     version_cfg["_global_dates"] = {
         "start": str(global_start.date()),
         "end": str(global_end.date()),
@@ -824,23 +824,23 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         stores = stores.drop(columns=["StoreManager"], errors="ignore")
 
     with stage("Generating Employees"):
-        sa_cfg = as_dict(emp_cfg.get("store_assignments"))
-        primary_sales_role = str(sa_cfg.get("primary_sales_role") or "Sales Associate")
-        min_primary_sales_per_store = int_or(sa_cfg.get("min_primary_sales_per_store"), 1)
-        ensure_store_sales_coverage = bool_or(sa_cfg.get("ensure_store_sales_coverage"), False)
+        sa_cfg = emp_cfg.store_assignments
+        primary_sales_role = str(sa_cfg.primary_sales_role or "Sales Associate")
+        min_primary_sales_per_store = sa_cfg.min_primary_sales_per_store
+        ensure_store_sales_coverage = sa_cfg.ensure_store_sales_coverage
 
         df = generate_employee_dimension(
             stores=stores,
             seed=seed,
             global_start=global_start,
             global_end=global_end,
-            district_size=int_or(emp_cfg.get("district_size"), 10),
-            districts_per_region=int_or(emp_cfg.get("districts_per_region"), 8),
-            max_staff_per_store=int_or(emp_cfg.get("max_staff_per_store"), 5),
-            termination_rate=float_or(emp_cfg.get("termination_rate"), 0.08),
-            use_store_employee_count=bool_or(emp_cfg.get("use_store_employee_count"), False),
-            min_staff_per_store=int_or(emp_cfg.get("min_staff_per_store"), 3),
-            staff_scale=float_or(emp_cfg.get("staff_scale"), 0.25),
+            district_size=emp_cfg.district_size,
+            districts_per_region=emp_cfg.districts_per_region,
+            max_staff_per_store=emp_cfg.max_staff_per_store,
+            termination_rate=emp_cfg.termination_rate,
+            use_store_employee_count=emp_cfg.use_store_employee_count,
+            min_staff_per_store=emp_cfg.min_staff_per_store,
+            staff_scale=emp_cfg.staff_scale,
             people_pools=people_pools,
             iso_by_geo=iso_by_geo,
             default_region="US",
@@ -850,8 +850,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             store_manager_names=store_manager_names,
         )
 
-        hr_cfg = as_dict(emp_cfg.get("hr"))
-        email_domain = hr_cfg.get("email_domain", "contoso.com")
+        hr_cfg = emp_cfg.hr
+        email_domain = hr_cfg.email_domain
 
         df = _enrich_employee_hr_columns(
             df,
@@ -877,8 +877,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         ]
         df = df[_SCHEMA_ORDER]
 
-        compression = emp_cfg.get("parquet_compression", "snappy")
-        compression_level = emp_cfg.get("parquet_compression_level", None)
+        compression = emp_cfg.parquet_compression
+        compression_level = emp_cfg.parquet_compression_level
 
         date_cols = ["HireDate", "TerminationDate", "BirthDate", "StartDate", "EndDate"]
         write_parquet_with_date32(

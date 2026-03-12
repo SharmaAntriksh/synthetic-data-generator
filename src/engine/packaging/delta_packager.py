@@ -6,6 +6,8 @@ from typing import Optional
 from src.utils.logging_utils import info, done
 from src.facts.sales.output_paths import TABLE_SALES
 
+from src.engine.config.config_schema import SalesConfig
+
 from .paths import table_dir_name, to_snake
 
 
@@ -34,7 +36,7 @@ def find_delta_table_dir(fact_out: Path, sales_cfg: dict, table: str) -> Optiona
     snake = to_snake(table)
 
     roots: list[Path] = []
-    cfg_root = sales_cfg.get("delta_output_folder")
+    cfg_root = getattr(sales_cfg, "delta_output_folder", None)
     if cfg_root:
         roots.append(Path(cfg_root))
 

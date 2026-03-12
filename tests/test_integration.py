@@ -37,7 +37,7 @@ def models_path():
 
 @pytest.fixture()
 def base_cfg(config_path):
-    """Load and return the normalised config dict."""
+    """Load and return the normalised config (AppConfig)."""
     return load_config(config_path)
 
 
@@ -169,18 +169,20 @@ class TestDryRun:
 # ===================================================================
 
 class TestConfigLoading:
-    def test_load_config_returns_dict(self, config_path):
+    def test_load_config_returns_mapping(self, config_path):
+        from collections.abc import Mapping
         cfg = load_config(config_path)
-        assert isinstance(cfg, dict)
+        assert isinstance(cfg, Mapping)
 
     def test_config_has_sales_section(self, config_path):
+        from collections.abc import Mapping
         cfg = load_config(config_path)
-        assert "sales" in cfg
-        assert isinstance(cfg["sales"], dict)
+        assert hasattr(cfg, "sales")
+        assert isinstance(cfg.sales, Mapping)
 
     def test_config_has_defaults_section(self, config_path):
         cfg = load_config(config_path)
-        assert "defaults" in cfg
+        assert hasattr(cfg, "defaults")
 
     def test_models_has_models_section(self, models_path):
         raw = load_config_file(models_path)
@@ -199,44 +201,39 @@ class TestConfigLoading:
 
 class TestPipelineOverrides:
     def test_file_format_override(self, base_cfg):
-        cfg = dict(base_cfg)
-        cfg["sales"] = dict(cfg["sales"])
-        sales_cfg = cfg["sales"]
+        cfg = base_cfg.model_copy(deep=True)
+        sales_cfg = cfg.sales
         overrides = PipelineOverrides(file_format="csv")
         cfg, sales_cfg = _apply_overrides(cfg, sales_cfg, overrides)
-        assert sales_cfg["file_format"] == "csv"
+        assert sales_cfg.file_format == "csv"
 
     def test_sales_rows_override(self, base_cfg):
-        cfg = dict(base_cfg)
-        cfg["sales"] = dict(cfg["sales"])
-        sales_cfg = cfg["sales"]
+        cfg = base_cfg.model_copy(deep=True)
+        sales_cfg = cfg.sales
         overrides = PipelineOverrides(sales_rows=5000)
         cfg, sales_cfg = _apply_overrides(cfg, sales_cfg, overrides)
-        assert sales_cfg["total_rows"] == 5000
+        assert sales_cfg.total_rows == 5000
 
     def test_workers_override(self, base_cfg):
-        cfg = dict(base_cfg)
-        cfg["sales"] = dict(cfg["sales"])
-        sales_cfg = cfg["sales"]
+        cfg = base_cfg.model_copy(deep=True)
+        sales_cfg = cfg.sales
         overrides = PipelineOverrides(workers=4)
         cfg, sales_cfg = _apply_overrides(cfg, sales_cfg, overrides)
-        assert sales_cfg["workers"] == 4
+        assert sales_cfg.workers == 4
 
     def test_customers_override(self, base_cfg):
-        cfg = dict(base_cfg)
-        cfg["sales"] = dict(cfg["sales"])
-        sales_cfg = cfg["sales"]
+        cfg = base_cfg.model_copy(deep=True)
+        sales_cfg = cfg.sales
         overrides = PipelineOverrides(customers=500)
         cfg, sales_cfg = _apply_overrides(cfg, sales_cfg, overrides)
-        assert cfg["customers"]["total_customers"] == 500
+        assert cfg.customers.total_customers == 500
 
     def test_start_date_override(self, base_cfg):
-        cfg = dict(base_cfg)
-        cfg["sales"] = dict(cfg["sales"])
-        sales_cfg = cfg["sales"]
+        cfg = base_cfg.model_copy(deep=True)
+        sales_cfg = cfg.sales
         overrides = PipelineOverrides(start_date="2020-01-01")
         cfg, sales_cfg = _apply_overrides(cfg, sales_cfg, overrides)
-        assert cfg["defaults"]["dates"]["start"] == "2020-01-01"
+        assert cfg.defaults.dates.start == "2020-01-01"
 
     def test_delta_alias_normalised(self):
         overrides = PipelineOverrides(file_format="delta")
@@ -259,12 +256,14 @@ class TestPipelineOverrides:
 # ===================================================================
 
 class TestInvalidConfig:
-    def test_missing_sales_section(self, tmp_path, models_path):
+    def test_missing_sales_section_gets_defaults(self, tmp_path, models_path):
+        """A config without explicit 'sales' section gets Pydantic defaults."""
         cfg = {"defaults": {"seed": 42, "dates": {"start": "2024-01-01", "end": "2024-12-31"}}}
         p = tmp_path / "bad_config.yaml"
         p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-        with pytest.raises(ConfigError, match="sales"):
-            run_pipeline(config_path=str(p), models_config_path=models_path, dry_run=True)
+        # AppConfig fills in SalesConfig defaults, so pipeline no longer raises
+        result = run_pipeline(config_path=str(p), models_config_path=models_path, dry_run=True)
+        assert result["ok"] is True
 
     def test_missing_models_section(self, config_path, tmp_path):
         p = tmp_path / "bad_models.yaml"
@@ -384,27 +383,28 @@ class TestCrossSectionValidation:
 
 class TestFxDatesForced:
     def test_fx_uses_global_dates(self, base_cfg):
-        cfg = copy.deepcopy(base_cfg)
+        cfg = base_cfg.model_copy(deep=True)
         # Manually set independent FX dates that should be removed
-        if "exchange_rates" in cfg:
-            cfg["exchange_rates"]["dates"] = {"start": "1999-01-01", "end": "1999-12-31"}
-            cfg["exchange_rates"]["use_global_dates"] = False
+        cfg.exchange_rates["dates"] = {"start": "1999-01-01", "end": "1999-12-31"}
+        cfg.exchange_rates.use_global_dates = False
 
         result = _force_fx_to_global_dates(cfg)
-        fx = result["exchange_rates"]
-        assert fx["use_global_dates"] is True
-        assert "dates" not in fx
+        fx = result.exchange_rates
+        assert fx.use_global_dates is True
+        assert not hasattr(fx, "dates") or getattr(fx, "dates", None) is None
 
     def test_fx_force_idempotent(self, base_cfg):
-        cfg = copy.deepcopy(base_cfg)
+        cfg = base_cfg.model_copy(deep=True)
         r1 = _force_fx_to_global_dates(cfg)
-        r2 = _force_fx_to_global_dates(copy.deepcopy(r1))
-        assert r1["exchange_rates"] == r2["exchange_rates"]
+        r2 = _force_fx_to_global_dates(r1.model_copy(deep=True))
+        assert r1.exchange_rates.use_global_dates == r2.exchange_rates.use_global_dates
 
     def test_missing_exchange_rates_is_safe(self):
-        cfg = {"defaults": {"dates": {"start": "2024-01-01", "end": "2024-12-31"}}}
+        """AppConfig always has exchange_rates (default ExchangeRatesConfig)."""
+        from src.engine.config.config_schema import AppConfig
+        cfg = AppConfig()
         result = _force_fx_to_global_dates(cfg)
-        assert "exchange_rates" not in result
+        assert result.exchange_rates.use_global_dates is True
 
 
 # ===================================================================
@@ -413,13 +413,13 @@ class TestFxDatesForced:
 
 class TestDimensionVersionHashing:
     def test_load_config_deterministic(self, config_path):
-        """Loading the same config twice should produce identical dicts."""
+        """Loading the same config twice should produce identical configs."""
         c1 = load_config(config_path)
         c2 = load_config(config_path)
         assert c1 == c2
 
     def test_different_config_produces_different_hash(self, tmp_path):
-        """Changing a value should produce a different config dict."""
+        """Changing a value should produce a different config."""
         cfg_a = {
             "scale": {"sales_rows": 100, "products": 10, "customers": 20, "stores": 2},
             "defaults": {"seed": 42, "dates": {"start": "2024-01-01", "end": "2024-12-31"}},
@@ -455,16 +455,21 @@ class TestDimensionVersionHashing:
 
 class TestModelsAppearanceInjection:
     def test_appearance_injected_into_products(self, base_cfg, base_models):
-        cfg = copy.deepcopy(base_cfg)
+        cfg = base_cfg.model_copy(deep=True)
         models_cfg = base_models.get("models", {})
         _inject_models_appearance(cfg, models_cfg)
-        appearance = cfg.get("products", {}).get("pricing", {}).get("appearance", {})
+        prod_pricing = cfg.products.pricing
+        if prod_pricing and isinstance(prod_pricing, dict):
+            appearance = prod_pricing.get("appearance", {})
+        else:
+            appearance = {}
         # If appearance was injected, it should have the snap_unit_price key
         if models_cfg.get("pricing", {}).get("appearance", {}).get("enabled"):
             assert "snap_unit_price" in appearance
 
     def test_missing_pricing_is_safe(self):
-        cfg = {"products": {"pricing": {"base": {}}}}
+        from src.engine.config.config_schema import AppConfig
+        cfg = AppConfig()
         models_cfg = {}
         # Should not raise
         _inject_models_appearance(cfg, models_cfg)

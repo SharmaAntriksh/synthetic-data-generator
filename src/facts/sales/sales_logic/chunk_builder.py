@@ -696,6 +696,7 @@ def build_chunk_table(
     date_pool = State.date_pool
     date_prob = State.date_prob
     store_keys = State.store_keys
+    store_eligible_by_month = State.store_eligible_by_month
 
     promo_keys_all = State.promo_keys_all
     promo_start_all = State.promo_start_all
@@ -1020,11 +1021,18 @@ def build_chunk_table(
             order_idx = None
             n_unique_orders = 0
 
+        # Use per-month eligible stores if available, else fall back to all stores
+        _month_stores = store_keys
+        if store_eligible_by_month is not None and m_offset < len(store_eligible_by_month):
+            _eligible = store_eligible_by_month[m_offset]
+            if _eligible is not None and len(_eligible) > 0:
+                _month_stores = _eligible
+
         if not skip_cols:
-            order_store = store_keys[rng.integers(0, len(store_keys), size=n_unique_orders)]
+            order_store = _month_stores[rng.integers(0, len(_month_stores), size=n_unique_orders)]
             store_key_arr = order_store[order_idx]
         else:
-            store_key_arr = store_keys[rng.integers(0, len(store_keys), size=n_lines)]
+            store_key_arr = _month_stores[rng.integers(0, len(_month_stores), size=n_lines)]
 
         # --------------------------------------------------------
         # PRODUCTS (PER LINE) — each line gets its own product

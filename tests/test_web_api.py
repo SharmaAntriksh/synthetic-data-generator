@@ -1,6 +1,8 @@
 """Tests for the FastAPI web API endpoints."""
 from __future__ import annotations
 
+import copy
+
 import pytest
 import yaml
 
@@ -8,6 +10,7 @@ httpx = pytest.importorskip("httpx", reason="httpx required for TestClient")
 from starlette.testclient import TestClient
 
 from web.api import app
+import web.shared_state as _state
 
 
 # ---------------------------------------------------------------------------
@@ -18,6 +21,18 @@ from web.api import app
 def client():
     """Create a TestClient for the FastAPI app."""
     return TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _restore_shared_state():
+    """Save and restore shared state so tests don't contaminate each other."""
+    with _state._cfg_lock:
+        orig_cfg = copy.deepcopy(_state._cfg)
+        orig_disk_yaml = _state._cfg_disk_yaml
+    yield
+    with _state._cfg_lock:
+        _state._cfg = orig_cfg
+        _state._cfg_disk_yaml = orig_disk_yaml
 
 
 # ===================================================================

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import date as _date
 from datetime import datetime as _datetime
 from pathlib import Path
@@ -113,21 +114,37 @@ def _coerce_optional_positive_int(
 # Public API
 # ---------------------------------------------------------------------------
 
-def load_pipeline_config(path: str | Path = "config.yaml") -> dict:
+def load_pipeline_config(path: str | Path = "config.yaml"):
     """Load the *pipeline* config (config.yaml) and normalize safely.
 
     This loader REQUIRES defaults (or _defaults) to exist because the pipeline
     depends on a global date window for lifecycle-aware generation.
+
+    Returns a typed :class:`AppConfig` Pydantic model that also supports
+    dict-style access (``cfg["key"]``, ``cfg.get()``, etc.) via the
+    dict-compatibility mixin.
     """
-    return _load_and_normalize(
+    from src.engine.config.config_schema import AppConfig
+
+    raw = _load_and_normalize(
         path=path,
         require_defaults=True,
         normalize_keys=None,  # normalize all registered sections
     )
+    return AppConfig.from_raw_dict(raw)
 
 
-def load_config(path: str | Path = "config.yaml") -> dict:
+def load_config(path: str | Path = "config.yaml"):
     """Backward-compatible alias of :func:`load_pipeline_config`."""
+    return load_pipeline_config(path)
+
+
+def load_config_typed(path: str | Path = "config.yaml"):
+    """Load and return a typed :class:`AppConfig` Pydantic model.
+
+    Alias of :func:`load_pipeline_config` (both now return ``AppConfig``).
+    Kept for call-site clarity during the migration period.
+    """
     return load_pipeline_config(path)
 
 
@@ -227,7 +244,7 @@ def _load_and_normalize(
 def _distribute_scale(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Copy ``scale`` counts into per-section keys (section-level values win)."""
     scale = cfg.get("scale")
-    if not isinstance(scale, dict):
+    if not isinstance(scale, Mapping):
         return cfg
 
     _map = [
@@ -240,14 +257,14 @@ def _distribute_scale(cfg: Dict[str, Any]) -> Dict[str, Any]:
         v = scale.get(scale_key)
         if v is not None:
             sec = cfg.setdefault(section, {})
-            if isinstance(sec, dict):
+            if isinstance(sec, Mapping):
                 sec.setdefault(target_key, v)
 
     # Promotions: { seasonal: N, clearance: N, limited: N }
     promos = scale.get("promotions")
-    if isinstance(promos, dict):
+    if isinstance(promos, Mapping):
         sec = cfg.setdefault("promotions", {})
-        if isinstance(sec, dict):
+        if isinstance(sec, Mapping):
             _promo_map = {
                 "seasonal": "num_seasonal",
                 "clearance": "num_clearance",
@@ -269,10 +286,10 @@ def _distribute_scale(cfg: Dict[str, Any]) -> Dict[str, Any]:
 def _flatten_sales_advanced(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Promote ``sales.advanced.*`` to ``sales.*`` for backward compatibility."""
     sales = cfg.get("sales")
-    if not isinstance(sales, dict):
+    if not isinstance(sales, Mapping):
         return cfg
     adv = sales.pop("advanced", None)
-    if isinstance(adv, dict):
+    if isinstance(adv, Mapping):
         for k, v in adv.items():
             sales.setdefault(k, v)
 
@@ -298,10 +315,10 @@ def _expand_merge_block(cfg: Dict[str, Any]) -> Dict[str, Any]:
     ``sales.delete_chunks``.  Old flat keys win if already present.
     """
     sales = cfg.get("sales")
-    if not isinstance(sales, dict):
+    if not isinstance(sales, Mapping):
         return cfg
     merge = sales.pop("merge", None)
-    if not isinstance(merge, dict):
+    if not isinstance(merge, Mapping):
         return cfg
 
     sales.setdefault("merge_parquet", bool(merge.get("enabled", True)))
@@ -322,7 +339,7 @@ def _expand_partition_by(cfg: Dict[str, Any]) -> Dict[str, Any]:
     The existing ``partitioning`` block wins if already present.
     """
     sales = cfg.get("sales")
-    if not isinstance(sales, dict):
+    if not isinstance(sales, Mapping):
         return cfg
     if "partitioning" in sales:
         return cfg
@@ -350,10 +367,10 @@ def _expand_region_mix(cfg: Dict[str, Any]) -> Dict[str, Any]:
     ``pct_org``.  Old flat keys win if already present.
     """
     cust = cfg.get("customers")
-    if not isinstance(cust, dict):
+    if not isinstance(cust, Mapping):
         return cfg
     region_mix = cust.pop("region_mix", None)
-    if not isinstance(region_mix, dict):
+    if not isinstance(region_mix, Mapping):
         return cfg
 
     _REGION_MAP = {
@@ -399,17 +416,17 @@ def _expand_role_profiles(cfg: Dict[str, Any]) -> Dict[str, Any]:
     Already-verbose entries (containing ``role_multiplier``) are left untouched.
     """
     emp = cfg.get("employees")
-    if not isinstance(emp, dict):
+    if not isinstance(emp, Mapping):
         return cfg
     assigns = emp.get("store_assignments")
-    if not isinstance(assigns, dict):
+    if not isinstance(assigns, Mapping):
         return cfg
     profiles = assigns.get("role_profiles")
-    if not isinstance(profiles, dict):
+    if not isinstance(profiles, Mapping):
         return cfg
 
     for role, prof in profiles.items():
-        if not isinstance(prof, dict):
+        if not isinstance(prof, Mapping):
             continue
         if "role_multiplier" in prof:
             continue
@@ -446,7 +463,7 @@ def _fold_facts_enabled(cfg: Dict[str, Any]) -> Dict[str, Any]:
     needs to check per-section ``enabled`` flags.
     """
     facts = cfg.get("facts")
-    if not isinstance(facts, dict):
+    if not isinstance(facts, Mapping):
         if isinstance(facts, list):
             facts = {"enabled": facts}
         else:
@@ -458,7 +475,7 @@ def _fold_facts_enabled(cfg: Dict[str, Any]) -> Dict[str, Any]:
         names = {str(x).strip().lower() for x in enabled_list}
 
         returns_cfg = cfg.get("returns")
-        if isinstance(returns_cfg, dict):
+        if isinstance(returns_cfg, Mapping):
             if "enabled" not in returns_cfg:
                 returns_cfg["enabled"] = "returns" in names
             elif returns_cfg.get("enabled"):
@@ -473,7 +490,7 @@ def _fold_facts_enabled(cfg: Dict[str, Any]) -> Dict[str, Any]:
 def _distribute_paths(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Populate per-section path keys from the consolidated ``paths`` block."""
     paths = cfg.get("paths")
-    if not isinstance(paths, dict):
+    if not isinstance(paths, Mapping):
         return cfg
 
     # final_output_folder (top-level)
@@ -493,7 +510,7 @@ def _distribute_paths(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     # exchange_rates.master_file (paths.fx_master → section-level)
     er = cfg.get("exchange_rates")
-    if isinstance(er, dict) and "master_file" not in er:
+    if isinstance(er, Mapping) and "master_file" not in er:
         er["master_file"] = paths.get(
             "fx_master", "./data/exchange_rates_master/fx_master.parquet"
         )
@@ -517,11 +534,11 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
     Section-level ``products.pricing`` wins if already present (backward compat).
     """
     products = cfg.get("products")
-    if not isinstance(products, dict):
+    if not isinstance(products, Mapping):
         return cfg
 
     # If full pricing block already exists, leave it alone
-    if isinstance(products.get("pricing"), dict) and products["pricing"]:
+    if isinstance(products.get("pricing"), Mapping) and products["pricing"]:
         return cfg
 
     pr = products.get("price_range", [10, 3000])
@@ -621,7 +638,7 @@ def _normalize_sections(
     # Validate mapping sections (mapping-only keys + all normalizer keys)
     mapping_keys = _SECTION_MAPPING_ONLY_KEYS | _SECTION_NORMALIZERS.keys()
     for key in mapping_keys:
-        if key in cfg and not isinstance(cfg[key], dict):
+        if key in cfg and not isinstance(cfg[key], Mapping):
             raise KeyError(f"Invalid '{key}' section in config (expected mapping)")
 
     # Decide which normalizers to run
@@ -670,7 +687,7 @@ def _load_any(path: Path) -> dict:
     if _yaml is not None:
         try:
             cfg = _yaml.safe_load(raw) or {}
-            if isinstance(cfg, dict):
+            if isinstance(cfg, Mapping):
                 return cfg
         except _yaml.YAMLError:
             # Content is not valid YAML – fall through to JSON attempt.
@@ -678,7 +695,7 @@ def _load_any(path: Path) -> dict:
 
     try:
         cfg = json.loads(raw) or {}
-        if isinstance(cfg, dict):
+        if isinstance(cfg, Mapping):
             return cfg
     except (json.JSONDecodeError, ValueError) as exc:
         raise ValueError(
@@ -696,7 +713,7 @@ def _load_yaml(path: Path) -> dict:
         )
     with path.open("r", encoding="utf-8") as fh:
         cfg = _yaml.safe_load(fh) or {}
-    if not isinstance(cfg, dict):
+    if not isinstance(cfg, Mapping):
         raise ValueError("Top-level YAML config must be a mapping/object")
     return cfg
 
@@ -704,7 +721,7 @@ def _load_yaml(path: Path) -> dict:
 def _load_json(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as fh:
         cfg = json.load(fh) or {}
-    if not isinstance(cfg, dict):
+    if not isinstance(cfg, Mapping):
         raise ValueError("Top-level JSON config must be an object")
     return cfg
 
@@ -734,11 +751,11 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     if defaults_section is None:
         raise KeyError("Missing 'defaults' (or '_defaults') section in config")
-    if not isinstance(defaults_section, dict):
+    if not isinstance(defaults_section, Mapping):
         raise KeyError("Invalid defaults section in config (expected mapping)")
 
     dates = defaults_section.get("dates")
-    if not isinstance(dates, dict):
+    if not isinstance(dates, Mapping):
         raise KeyError("Missing or invalid defaults.dates section in config")
 
     raw_start = dates.get("start")
@@ -776,11 +793,11 @@ def get_global_dates(cfg: Dict[str, Any]) -> Dict[str, str]:
     :func:`normalize_defaults` was called earlier.
     """
     defaults_section = cfg.get("defaults") or cfg.get("_defaults")
-    if not isinstance(defaults_section, dict):
+    if not isinstance(defaults_section, Mapping):
         raise KeyError("Missing defaults section")
 
     dates = defaults_section.get("dates")
-    if not isinstance(dates, dict):
+    if not isinstance(dates, Mapping):
         raise KeyError("Missing defaults.dates section")
 
     raw_start = dates.get("start")
@@ -832,7 +849,7 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     # --- nested partitioning block → flat keys ---
     part = sales_cfg.get("partitioning")
-    if isinstance(part, dict):
+    if isinstance(part, Mapping):
         if "partition_enabled" not in sales_cfg and part.get("enabled") is not None:
             sales_cfg["partition_enabled"] = bool(part["enabled"])
 
@@ -942,7 +959,7 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
     # --- validity block ---
     validity = seg_cfg.get("validity") or {}
     if seg_cfg["include_validity"]:
-        if not isinstance(validity, dict):
+        if not isinstance(validity, Mapping):
             raise KeyError("customer_segments.validity must be a mapping/object")
 
         grain = str(validity.get("grain", "month")).lower()
@@ -978,7 +995,7 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
 
     # --- override block ---
     override = seg_cfg.get("override") or {}
-    if not isinstance(override, dict):
+    if not isinstance(override, Mapping):
         raise KeyError("customer_segments.override must be a mapping/object")
     override.setdefault("seed", None)
     override.setdefault("dates", {})
@@ -987,9 +1004,9 @@ def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any
     if override["seed"] is not None:
         override["seed"] = int(override["seed"])
 
-    if not isinstance(override["dates"], dict):
+    if not isinstance(override["dates"], Mapping):
         raise KeyError("customer_segments.override.dates must be a mapping/object")
-    if not isinstance(override["paths"], dict):
+    if not isinstance(override["paths"], Mapping):
         raise KeyError("customer_segments.override.paths must be a mapping/object")
     seg_cfg["override"] = override
 
@@ -1018,7 +1035,7 @@ def prepare_paths(
     out_folder_override: Optional[str | Path] = None,
 ) -> Tuple[Path, Path]:
     sales_cfg = cfg.get("sales") or {}
-    if not isinstance(sales_cfg, dict):
+    if not isinstance(sales_cfg, Mapping):
         raise KeyError("Invalid sales section in config")
 
     parquet_folder = parquet_folder_override or sales_cfg.get("parquet_folder")
@@ -1074,7 +1091,7 @@ def validate_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
     returns_cfg = cfg.get("returns")
 
     # Rule 1: Returns require order columns
-    if isinstance(sales_cfg, dict) and isinstance(returns_cfg, dict):
+    if isinstance(sales_cfg, Mapping) and isinstance(returns_cfg, Mapping):
         returns_enabled = bool(returns_cfg.get("enabled", False))
         skip_order = bool(sales_cfg.get("skip_order_cols", False))
         sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
@@ -1093,7 +1110,7 @@ def validate_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
     # Rule 2: FX dates follow global dates (enforced here AND in pipeline_runner
     # for backward compat, but catching it at config time gives earlier feedback).
     fx_cfg = cfg.get("exchange_rates")
-    if isinstance(fx_cfg, dict):
+    if isinstance(fx_cfg, Mapping):
         fx_cfg = dict(fx_cfg)
         fx_cfg["use_global_dates"] = True
         fx_cfg.pop("dates", None)

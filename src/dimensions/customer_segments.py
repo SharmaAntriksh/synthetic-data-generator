@@ -46,6 +46,7 @@ Notes:
 - The bridge output always includes ValidFromDate/ValidToDate as datetime64[ns].
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -197,35 +198,28 @@ class CustomerSegmentsCfg:
 
 
 def _read_cfg(cfg: Dict[str, Any], global_dates: Dict[str, str]) -> CustomerSegmentsCfg:
-    seg = cfg.get("customer_segments") or {}
-    if not isinstance(seg, dict):
-        seg = {}
+    seg = cfg.customer_segments
 
-    mode = str(seg.get("mode", "scd2")).strip().lower()
+    mode = str(seg.mode).strip().lower()
     if mode not in ("scd2", "simple"):
         mode = "scd2"
 
-    override = seg.get("override") or {}
-    if not isinstance(override, dict):
-        override = {}
+    override = seg.override
+    override_dates: Dict[str, Any] = {}
+    if override is not None:
+        override_dates = override.dates or {}
 
-    override_dates = override.get("dates") or {}
-    if not isinstance(override_dates, dict):
-        override_dates = {}
-
-    validity = seg.get("validity") or {}
-    if not isinstance(validity, dict):
-        validity = {}
+    validity = seg.validity
 
     # Keep backwards compatibility: if include_validity not specified, default to True (since the cfg block usually includes it)
-    include_validity = bool(seg.get("include_validity", True))
+    include_validity = bool(seg.include_validity)
 
-    grain = str(validity.get("grain", "month")).lower()
+    grain = str(validity.grain if validity is not None else "month").lower()
     if grain not in ("month", "day"):
         grain = "month"
 
-    seed = int(seg.get("seed", 123))
-    override_seed = override.get("seed")
+    seed = int(seg.seed if seg.seed is not None else 123)
+    override_seed = override.seed if override is not None else None
     if override_seed is not None:
         try:
             override_seed = int(override_seed)
@@ -245,17 +239,17 @@ def _read_cfg(cfg: Dict[str, Any], global_dates: Dict[str, str]) -> CustomerSegm
         )
 
     return CustomerSegmentsCfg(
-        enabled=bool(seg.get("enabled", True)),
+        enabled=bool(seg.enabled),
         mode=mode,
-        segment_count=int(seg.get("segment_count", 12)),
-        segs_per_cust_min=int(seg.get("segments_per_customer_min", 1)),
-        segs_per_cust_max=int(seg.get("segments_per_customer_max", 4)),
-        include_score=bool(seg.get("include_score", True)),
-        include_primary_flag=bool(seg.get("include_primary_flag", True)),
+        segment_count=int(seg.segment_count),
+        segs_per_cust_min=int(seg.segments_per_customer_min),
+        segs_per_cust_max=int(seg.segments_per_customer_max),
+        include_score=bool(seg.include_score),
+        include_primary_flag=bool(seg.include_primary_flag),
         include_validity=include_validity,
         grain=grain,
-        churn_rate_qtr=float(validity.get("churn_rate_qtr", 0.08)),
-        new_customer_months=int(validity.get("new_customer_months", 2)),
+        churn_rate_qtr=float(validity.churn_rate_qtr if validity is not None else 0.08),
+        new_customer_months=int(validity.new_customer_months if validity is not None else 2),
         seed=seed,
         override_seed=override_seed,
         override_start=str(start),
@@ -272,12 +266,10 @@ def build_dim_customer_segment(cfg: Dict[str, Any]) -> pd.DataFrame:
     Output columns:
       SegmentKey (int), SegmentName (str), SegmentType (str), Definition (str), IsActiveFlag (int8)
     """
-    seg_cfg = cfg.get("customer_segments") or {}
-    if not isinstance(seg_cfg, dict):
-        seg_cfg = {}
+    seg_cfg = cfg.customer_segments
 
-    mode = str(seg_cfg.get("mode", "scd2")).strip().lower()
-    segment_count = int(seg_cfg.get("segment_count", 12))
+    mode = str(seg_cfg.mode).strip().lower()
+    segment_count = int(seg_cfg.segment_count)
 
     base = SIMPLE_SEGMENTS if mode == "simple" else DEFAULT_SEGMENTS
     segs = list(base[:segment_count])
@@ -312,8 +304,9 @@ def build_bridge_customer_segment_membership(customers: pd.DataFrame, cfg: Dict[
     if "CustomerKey" not in customers.columns:
         raise KeyError("customers DataFrame must contain 'CustomerKey'")
 
-    global_dates = (cfg.get("defaults", {}) or {}).get("dates", {})
-    if not isinstance(global_dates, dict) or not global_dates.get("start") or not global_dates.get("end"):
+    defaults_dates = cfg.defaults.dates
+    global_dates = {"start": defaults_dates.start, "end": defaults_dates.end}
+    if not global_dates.get("start") or not global_dates.get("end"):
         raise KeyError("cfg.defaults.dates.start/end required")
 
     c = _read_cfg(cfg, global_dates)
@@ -856,16 +849,19 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
     """
     parquet_dims_folder = Path(parquet_dims_folder)
 
-    seg_cfg = cfg.get("customer_segments") if isinstance(cfg.get("customer_segments"), dict) else {}
-    enabled = bool(seg_cfg.get("enabled", False))
-    generate_bridge = bool(seg_cfg.get("generate_bridge", True))
+    seg_cfg = cfg.customer_segments
+    enabled = bool(seg_cfg.enabled)
+    generate_bridge = bool(seg_cfg.generate_bridge)
 
     if not enabled:
         skip("Customer segments disabled; skipping.")
         return {"_regenerated": False, "reason": "disabled"}
 
-    override = seg_cfg.get("override") if isinstance(seg_cfg.get("override"), dict) else {}
-    override_paths = override.get("paths") if isinstance(override.get("paths"), dict) else {}
+    override = seg_cfg.override
+    if override is not None:
+        override_paths = override.paths or {}
+    else:
+        override_paths = {}
 
     customers_path = override_paths.get("customers")
     if customers_path:
@@ -905,9 +901,8 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
     seg_cfg_for_version = dict(seg_cfg)
     st = os.stat(customers_fp)
     seg_cfg_for_version["upstream_customers_sig"] = {"path": str(customers_fp), "size": int(st.st_size), "mtime_ns": int(st.st_mtime_ns)}
-    defaults_dates = (cfg.get("defaults") or {}).get("dates") or {}
-    if isinstance(defaults_dates, dict):
-        seg_cfg_for_version["upstream_global_dates"] = {"start": defaults_dates.get("start"), "end": defaults_dates.get("end")}
+    dd = cfg.defaults.dates
+    seg_cfg_for_version["upstream_global_dates"] = {"start": dd.start, "end": dd.end}
     seg_cfg_for_version["_schema_version"] = 2  # mode support + scd2 fast-path + simple mode
 
     # --- Version skip (bridge-aware) ---
@@ -921,8 +916,9 @@ def run_customer_segments(cfg: dict, parquet_dims_folder: Path) -> dict:
         return {"_regenerated": False, "reason": "version"}
 
     # Parse global dates + cfg to decide which customer columns to read
-    global_dates = (cfg.get("defaults", {}) or {}).get("dates", {})
-    if not isinstance(global_dates, dict) or not global_dates.get("start") or not global_dates.get("end"):
+    gd = cfg.defaults.dates
+    global_dates = {"start": gd.start, "end": gd.end}
+    if not global_dates.get("start") or not global_dates.get("end"):
         raise KeyError("cfg.defaults.dates.start/end required")
 
     c = _read_cfg(cfg, global_dates)

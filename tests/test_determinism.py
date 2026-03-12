@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from src.dimensions.geography import CURATED_ROWS, build_dim_geography
+from src.engine.config.config_schema import AppConfig
 
 
 # ===================================================================
@@ -18,10 +19,10 @@ from src.dimensions.geography import CURATED_ROWS, build_dim_geography
 
 class TestGeographyDeterminism:
     def _cfg(self, currencies):
-        return {
+        return AppConfig.model_validate({
             "geography": {},
             "exchange_rates": {"currencies": currencies},
-        }
+        })
 
     def test_same_config_same_output(self):
         cfg = self._cfg(["USD", "EUR", "GBP", "INR"])

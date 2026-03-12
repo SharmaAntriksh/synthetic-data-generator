@@ -860,6 +860,13 @@ _DATES_FISCAL_INTERNAL = [
 ]
 
 
+def _cfg_get(obj, key, default=None):
+    """Get a config value from either a dict or a Pydantic model."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def _wf_is_enabled(wf_cfg) -> bool:
     """Return True if the weekly_fiscal config block is present and enabled.
 
@@ -868,8 +875,8 @@ def _wf_is_enabled(wf_cfg) -> bool:
     """
     if isinstance(wf_cfg, bool):
         return wf_cfg
-    if isinstance(wf_cfg, dict):
-        return bool(wf_cfg.get("enabled", True))
+    if wf_cfg is not None:
+        return bool(_cfg_get(wf_cfg, "enabled", True))
     return False
 
 
@@ -892,16 +899,16 @@ def _dates_internal_columns(dates_cfg: Mapping) -> list[str]:
     so that the parquet output and SQL schema stay in sync.
     """
     dates_cfg = dates_cfg or {}
-    include = (dates_cfg.get("include", {}) or {}) if isinstance(dates_cfg, Mapping) else {}
-    wf_cfg = include.get("weekly_fiscal", {}) or {}
+    include = _cfg_get(dates_cfg, "include", {}) or {}
+    wf_cfg = _cfg_get(include, "weekly_fiscal", {}) or {}
 
     cols: list[str] = list(_DATES_BASE_INTERNAL)
 
-    if include.get("calendar", True):
+    if _cfg_get(include, "calendar", True):
         cols += _DATES_CALENDAR_INTERNAL
-    if include.get("iso", True):
+    if _cfg_get(include, "iso", True):
         cols += _DATES_ISO_INTERNAL
-    if include.get("fiscal", True):
+    if _cfg_get(include, "fiscal", True):
         cols += _DATES_FISCAL_INTERNAL
 
     if _wf_is_enabled(wf_cfg):

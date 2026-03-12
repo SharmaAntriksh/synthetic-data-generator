@@ -33,7 +33,7 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "csv"              # csv | parquet | deltaparquet
+  file_format: "parquet"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   skip_order_cols: false
 
@@ -147,8 +147,8 @@ stores:
   districts_per_region: 8
 
   opening:
-    start: "1995-01-01"
-    end:   "2023-12-31"
+    start: "2018-01-01"
+    end:   "2025-12-31"
   closing_end: "2028-12-31"
 
   # Product assortment per store type (which subcategories each store carries)

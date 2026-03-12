@@ -40,29 +40,29 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def _sales_mode(sales_cfg: dict) -> str:
-    mode = str(sales_cfg.get("sales_output") or "").strip().lower()
+def _sales_mode(sales_cfg) -> str:
+    mode = str(getattr(sales_cfg, "sales_output", "") or "").strip().lower()
     return mode or "sales"
 
 
-def _budget_enabled(cfg: dict | None) -> bool:
+def _budget_enabled(cfg) -> bool:
     """Return True if budget generation is enabled in the top-level config."""
     if cfg is None:
         return False
-    budget = cfg.get("budget")
-    if not isinstance(budget, dict):
+    budget = getattr(cfg, "budget", None)
+    if budget is None:
         return False
-    return bool(budget.get("enabled", False))
+    return bool(getattr(budget, "enabled", False))
 
 
-def _inventory_enabled(cfg: dict | None) -> bool:
+def _inventory_enabled(cfg) -> bool:
     """Return True if inventory snapshot generation is enabled in the top-level config."""
     if cfg is None:
         return False
-    inv = cfg.get("inventory")
-    if not isinstance(inv, dict):
+    inv = getattr(cfg, "inventory", None)
+    if inv is None:
         return False
-    return bool(inv.get("enabled", False))
+    return bool(getattr(inv, "enabled", False))
 
 
 # ------------------------------------------------------------

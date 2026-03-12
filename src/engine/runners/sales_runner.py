@@ -7,6 +7,7 @@ pipeline.
 from __future__ import annotations
 
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -32,8 +33,8 @@ def _require_key(d: Dict[str, Any], key: str, ctx: str) -> Any:
     return d[key]
 
 
-def _normalize_file_format(sales_cfg: Dict[str, Any]) -> str:
-    fmt = str(_require_key(sales_cfg, "file_format", "sales")).strip().lower()
+def _normalize_file_format(sales_cfg) -> str:
+    fmt = str(sales_cfg.file_format).strip().lower()
     if fmt not in {"csv", "parquet", "deltaparquet"}:
         raise ConfigError("sales.file_format must be one of: csv | parquet | deltaparquet")
     return fmt
@@ -54,18 +55,18 @@ def _safe_clean_folder(path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def _compute_returns_effective(cfg: Dict[str, Any], sales_cfg: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+def _compute_returns_effective(cfg, sales_cfg) -> Tuple[Any, bool]:
     """
     Apply your rule:
       - returns.enabled can be requested at top-level cfg
       - but if sales_output == 'sales' AND skip_order_cols == True -> warn and skip returns (do not fail)
     Returns (cfg_for_run, returns_enabled_effective)
     """
-    returns_cfg = cfg.get("returns", {}) if isinstance(cfg, dict) else {}
-    requested = bool(returns_cfg.get("enabled", False))
+    returns_cfg = cfg.returns if hasattr(cfg, "returns") else None
+    requested = bool(getattr(returns_cfg, "enabled", False)) if returns_cfg else False
 
-    sales_output = str(_require_key(sales_cfg, "sales_output", "sales")).strip().lower()
-    skip_order_cols = bool(_require_key(sales_cfg, "skip_order_cols", "sales"))
+    sales_output = str(sales_cfg.sales_output).strip().lower()
+    skip_order_cols = bool(sales_cfg.skip_order_cols)
 
     effective = requested
     if requested and sales_output == "sales" and skip_order_cols:
@@ -76,12 +77,11 @@ def _compute_returns_effective(cfg: Dict[str, Any], sales_cfg: Dict[str, Any]) -
         )
         effective = False
 
-    # If we changed effective value, copy cfg and override returns.enabled so downstream sees consistent truth
-    if isinstance(cfg, dict) and (effective != requested):
-        cfg_for_run = dict(cfg)
-        rr = dict(cfg.get("returns", {}) or {})
-        rr["enabled"] = effective
-        cfg_for_run["returns"] = rr
+    # If we changed effective value, deep-copy cfg and override returns.enabled
+    if effective != requested:
+        cfg_for_run = cfg.model_copy(deep=True) if hasattr(cfg, "model_copy") else dict(cfg)
+        if hasattr(cfg_for_run, "returns") and cfg_for_run.returns is not None:
+            cfg_for_run.returns.enabled = effective
         return cfg_for_run, effective
 
     return cfg, effective
@@ -131,12 +131,12 @@ def _bind_runner_globals(skip_order_cols: bool, active_product_np: Any) -> None:
     )
 
 
-def _normalize_partitioning(sales_cfg: Dict[str, Any]) -> Tuple[bool, Optional[list]]:
-    partition_enabled = bool(sales_cfg.get("partition_enabled", False))
+def _normalize_partitioning(sales_cfg) -> Tuple[bool, Optional[list]]:
+    partition_enabled = bool(sales_cfg.partition_enabled)
     if not partition_enabled:
         return False, None
 
-    partition_cols = sales_cfg.get("partition_cols")
+    partition_cols = sales_cfg.partition_cols
     if partition_cols is None:
         partition_cols = ["Year", "Month"]
     return True, partition_cols
@@ -188,15 +188,10 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     fact_out_p.mkdir(parents=True, exist_ok=True)
 
     fmt = _normalize_file_format(sales_cfg)
-    merge_enabled = bool(sales_cfg.get("merge_parquet", False))
+    merge_enabled = bool(sales_cfg.merge_parquet)
     sales_out_folder = _resolve_sales_out_folder(fact_out_p, fmt, merge_enabled=merge_enabled)
 
-    # --- Validate critical config early (same semantics, clearer errors)
-    _require_key(sales_cfg, "skip_order_cols", "sales")
-    _require_key(sales_cfg, "sales_output", "sales")
-    _require_key(sales_cfg, "total_rows", "sales")
-
-    skip_order_cols = bool(sales_cfg["skip_order_cols"])
+    skip_order_cols = bool(sales_cfg.skip_order_cols)
 
     if force_regenerate:
         info("Sales will regenerate (forced).")
@@ -247,16 +242,16 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             ctx.cfg_for_run,
             parquet_folder=str(ctx.parquet_dims),
             out_folder=str(ctx.sales_out_folder),
-            total_rows=ctx.sales_cfg["total_rows"],
-            file_format=ctx.sales_cfg["file_format"],
+            total_rows=ctx.sales_cfg.total_rows,
+            file_format=ctx.sales_cfg.file_format,
             # Parquet merge options
-            merge_parquet=ctx.sales_cfg.get("merge_parquet", False),
-            merged_file=ctx.sales_cfg.get("merged_file", "sales.parquet"),
+            merge_parquet=ctx.sales_cfg.merge_parquet,
+            merged_file=ctx.sales_cfg.merged_file,
             # Performance / execution
-            row_group_size=ctx.sales_cfg.get("row_group_size", 2_000_000),
-            compression=ctx.sales_cfg.get("compression", "snappy"),
-            chunk_size=ctx.sales_cfg.get("chunk_size", 1_000_000),
-            workers=ctx.sales_cfg.get("workers"),
+            row_group_size=ctx.sales_cfg.row_group_size,
+            compression=ctx.sales_cfg.compression,
+            chunk_size=ctx.sales_cfg.chunk_size,
+            workers=ctx.sales_cfg.workers,
             # Partitioning / delta
             partition_enabled=ctx.partition_enabled,
             partition_cols=ctx.partition_cols,
@@ -299,7 +294,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
                 fact_out=ctx.fact_out,
                 cfg=ctx.cfg,
                 file_format=ctx.fmt,
-                workers=ctx.sales_cfg.get("workers"),
+                workers=ctx.sales_cfg.workers,
             )
 
         _run_step("Generating Inventory Snapshots", _do_inventory)
@@ -316,8 +311,8 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
         # deltaparquet intentionally skips PBIP.
         maybe_attach_pbip_project(
             final_folder=final_folder_result,
-            file_format=ctx.sales_cfg["file_format"],
-            sales_output=ctx.sales_cfg["sales_output"],
+            file_format=ctx.sales_cfg.file_format,
+            sales_output=ctx.sales_cfg.sales_output,
         )
 
     _run_step("Packaging Output", _do_package)

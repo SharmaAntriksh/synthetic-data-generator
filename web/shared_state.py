@@ -111,41 +111,76 @@ _current_job: Optional[Dict[str, Any]] = None
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _g(d: dict, *keys, default=None):
-    """Nested dict get."""
+def _g(d, *keys, default=None):
+    """Nested dict/Mapping get (supports both plain dicts and Pydantic models)."""
+    from collections.abc import Mapping
     cur = d
     for k in keys:
-        if not isinstance(cur, dict):
+        if cur is None:
             return default
-        cur = cur.get(k, default)
+        if isinstance(cur, dict):
+            cur = cur.get(k, default)
+        elif isinstance(cur, Mapping) or hasattr(cur, k):
+            cur = getattr(cur, k, default)
+        else:
+            return default
     return cur if cur is not None else default
 
 
-def _promo_total(promos: dict) -> int:
+def _promo_total(promos) -> int:
     keys = ("num_seasonal", "num_clearance", "num_limited")
-    if all(k in promos for k in keys):
-        return sum(int(promos.get(k, 0) or 0) for k in keys)
-    return int(promos.get("total_promotions", 0) or 0)
+    if isinstance(promos, dict):
+        if all(k in promos for k in keys):
+            return sum(int(promos.get(k, 0) or 0) for k in keys)
+        return int(promos.get("total_promotions", 0) or 0)
+    # Pydantic model path
+    if all(hasattr(promos, k) for k in keys):
+        return sum(int(getattr(promos, k, 0) or 0) for k in keys)
+    return int(getattr(promos, "total_promotions", 0) or 0)
 
 
-def _set_promotions_total(promos: dict, total: int):
+def _set_promotions_total(promos, total: int):
     """Distribute total across buckets proportionally."""
     total = max(0, int(total))
     keys = ["num_seasonal", "num_clearance", "num_limited"]
-    if all(k in promos for k in keys):
-        cur = [int(promos.get(k, 0) or 0) for k in keys]
-        s = sum(cur) or 3
-        base = cur if sum(cur) > 0 else [1, 1, 1]
-        scaled = [b * total / s for b in base]
-        floors = [int(x) for x in scaled]
-        remainder = total - sum(floors)
-        fracs = sorted(range(3), key=lambda i: scaled[i] - floors[i], reverse=True)
-        for i in range(remainder):
-            floors[fracs[i % 3]] += 1
-        for i, k in enumerate(keys):
-            promos[k] = floors[i]
+    if isinstance(promos, dict):
+        if all(k in promos for k in keys):
+            cur = [int(promos.get(k, 0) or 0) for k in keys]
+            s = sum(cur) or 3
+            base = cur if sum(cur) > 0 else [1, 1, 1]
+            scaled = [b * total / s for b in base]
+            floors = [int(x) for x in scaled]
+            remainder = total - sum(floors)
+            fracs = sorted(range(3), key=lambda i: scaled[i] - floors[i], reverse=True)
+            for i in range(remainder):
+                floors[fracs[i % 3]] += 1
+            for i, k in enumerate(keys):
+                promos[k] = floors[i]
+        else:
+            promos["total_promotions"] = total
     else:
-        promos["total_promotions"] = total
+        # Pydantic model path
+        if all(hasattr(promos, k) for k in keys):
+            cur = [int(getattr(promos, k, 0) or 0) for k in keys]
+            s = sum(cur) or 3
+            base = cur if sum(cur) > 0 else [1, 1, 1]
+            scaled = [b * total / s for b in base]
+            floors = [int(x) for x in scaled]
+            remainder = total - sum(floors)
+            fracs = sorted(range(3), key=lambda i: scaled[i] - floors[i], reverse=True)
+            for i in range(remainder):
+                floors[fracs[i % 3]] += 1
+            for i, k in enumerate(keys):
+                setattr(promos, k, floors[i])
+        else:
+            setattr(promos, "total_promotions", total)
+
+
+def cfg_to_dict(obj) -> dict:
+    """Convert an AppConfig (or plain dict) to a plain dict for YAML serialization."""
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    return obj if isinstance(obj, dict) else dict(obj)
 
 
 def normalize_config_yaml(parsed: dict) -> dict:

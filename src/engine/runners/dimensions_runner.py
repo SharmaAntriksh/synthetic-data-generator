@@ -3,6 +3,7 @@
 # ---------------------------------------------------------
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
@@ -39,58 +40,60 @@ from src.dimensions.superpowers import run_superpowers
 # Helpers (keep backward-compatible config behavior)
 # =========================================================
 
-def _get_defaults_dates(cfg: Dict[str, Any]):
-    """
-    Return defaults.dates from cfg.
-    Supports both 'defaults' and '_defaults' (backward compatibility).
-    """
-    defaults_section = cfg.get("defaults") or cfg.get("_defaults")
+def _get_defaults_dates(cfg):
+    """Return defaults.dates from cfg."""
+    defaults_section = getattr(cfg, "defaults", None)
     if not defaults_section:
         return None
-    return defaults_section.get("dates")
+    return getattr(defaults_section, "dates", None)
 
 
-def _cfg_with_global_dates(cfg: Dict[str, Any], dim_key: str, global_dates) -> Dict[str, Any]:
+def _cfg_with_global_dates(cfg, dim_key: str, global_dates):
     """
-    Return a shallow-copied cfg where cfg[dim_key] is augmented with global_dates.
-    Root cfg is never mutated.
+    Return a deep-copied cfg where the dim section has global_dates injected.
     """
     if global_dates is None:
         return cfg
-    cfg_for = cfg.copy()
-    dim_section = dict(cfg.get(dim_key, {}))
-    dim_section["global_dates"] = global_dates
-    cfg_for[dim_key] = dim_section
+    cfg_for = cfg.model_copy(deep=True) if hasattr(cfg, "model_copy") else dict(cfg)
+    dim_section = getattr(cfg_for, dim_key, None)
+    if dim_section is not None:
+        object.__setattr__(dim_section, "global_dates", global_dates)
     return cfg_for
 
 
-def _cfg_for_dimension(cfg: Dict[str, Any], dim_key: str) -> Dict[str, Any]:
-    """Return a cfg where ONLY cfg[dim_key] is shallow-copied."""
-    cfg_for = cfg.copy()
-    cfg_for[dim_key] = dict(cfg.get(dim_key, {}))
-    return cfg_for
+def _cfg_for_dimension(cfg, dim_key: str):
+    """Return a deep-copied cfg (mutations won't affect original)."""
+    return cfg.model_copy(deep=True) if hasattr(cfg, "model_copy") else dict(cfg)
 
 
-def _returns_enabled(cfg: Dict[str, Any]) -> bool:
-    returns_cfg = cfg.get("returns") if isinstance(cfg.get("returns"), dict) else {}
-    if not bool(returns_cfg.get("enabled", False)):
+def _returns_enabled(cfg) -> bool:
+    returns_cfg = cfg.returns if hasattr(cfg, "returns") else None
+    if not returns_cfg or not isinstance(returns_cfg, Mapping):
         return False
-    sales_cfg = cfg.get("sales") if isinstance(cfg.get("sales"), dict) else {}
-    skip_order = bool(sales_cfg.get("skip_order_cols", False))
-    sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+    if not bool(getattr(returns_cfg, "enabled", False)):
+        return False
+    sales_cfg = cfg.sales if hasattr(cfg, "sales") else None
+    if not sales_cfg or not isinstance(sales_cfg, Mapping):
+        return False
+    skip_order = bool(getattr(sales_cfg, "skip_order_cols", False))
+    sales_output = str(getattr(sales_cfg, "sales_output", "sales")).strip().lower()
     if skip_order and sales_output == "sales":
         return False
     return True
 
 
-def _customer_segments_enabled(cfg: Dict[str, Any]) -> bool:
-    seg_cfg = cfg.get("customer_segments") if isinstance(cfg.get("customer_segments"), dict) else {}
-    return bool(seg_cfg.get("enabled", False))
+def _customer_segments_enabled(cfg) -> bool:
+    seg_cfg = getattr(cfg, "customer_segments", None)
+    if not seg_cfg or not isinstance(seg_cfg, Mapping):
+        return False
+    return bool(getattr(seg_cfg, "enabled", False))
 
 
-def _superpowers_enabled(cfg: Dict[str, Any]) -> bool:
-    sp_cfg = cfg.get("superpowers") if isinstance(cfg.get("superpowers"), dict) else {}
-    return bool(sp_cfg.get("enabled", False))
+def _superpowers_enabled(cfg) -> bool:
+    sp_cfg = getattr(cfg, "superpowers", None)
+    if not sp_cfg or not isinstance(sp_cfg, Mapping):
+        return False
+    return bool(getattr(sp_cfg, "enabled", False))
 
 
 # =========================================================
@@ -416,7 +419,7 @@ def generate_dimensions(
 
     global_dates = _get_defaults_dates(cfg)
     if global_dates is not None:
-        info(f"Using global dates: start={global_dates.get('start')} end={global_dates.get('end')}")
+        info(f"Using global dates: start={getattr(global_dates, 'start', None)} end={getattr(global_dates, 'end', None)}")
 
     specs_ordered = _stable_toposort(DIM_SPECS)
     by_name = {s.name: s for s in DIM_SPECS}
@@ -476,7 +479,7 @@ def generate_dimensions(
             out = spec.run_fn(cfg_run, parquet_dims_folder)
             after = _snapshot(parquet_dims_folder, spec)
 
-            if spec.regenerated_from_return_key and isinstance(out, dict):
+            if spec.regenerated_from_return_key and isinstance(out, Mapping):
                 regen = bool(out.get(spec.regenerated_from_return_key))
             else:
                 io_regen = _detect_regen_from_io(before, after)

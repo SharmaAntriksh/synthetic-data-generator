@@ -55,26 +55,27 @@ def _qualify(schema: str, table: str) -> str:
 
 
 def _sales_output_mode(cfg: Mapping) -> str:
-    mode = str((cfg.get("sales") or {}).get("sales_output", "sales")).lower().strip()
+    sales_cfg = getattr(cfg, "sales", None)
+    mode = str(getattr(sales_cfg, "sales_output", "sales") if sales_cfg else "sales").lower().strip()
     if mode not in {"sales", "sales_order", "both"}:
         raise ValueError(f"Invalid sales.sales_output: {mode!r}. Expected sales|sales_order|both.")
     return mode
 
 
 def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
-    sales_cfg = cfg.get("sales") or {}
-    return bool(sales_cfg.get("skip_order_cols", default))
+    sales_cfg = getattr(cfg, "sales", None)
+    return bool(getattr(sales_cfg, "skip_order_cols", default) if sales_cfg else default)
 
 
 def _returns_enabled(cfg: Mapping) -> bool:
     """Return True if returns are effectively enabled (not disabled by config or skip_order_cols)."""
-    returns_cfg = cfg.get("returns")
-    if isinstance(returns_cfg, Mapping) and isinstance(returns_cfg.get("enabled"), (bool, int)):
-        if not bool(returns_cfg["enabled"]):
+    returns_cfg = getattr(cfg, "returns", None)
+    if isinstance(returns_cfg, Mapping) and isinstance(getattr(returns_cfg, "enabled", None), (bool, int)):
+        if not bool(returns_cfg.enabled):
             return False
-    sales_cfg = cfg.get("sales") or {}
-    skip_order = bool(sales_cfg.get("skip_order_cols", False))
-    sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+    sales_cfg = getattr(cfg, "sales", None)
+    skip_order = bool(getattr(sales_cfg, "skip_order_cols", False) if sales_cfg else False)
+    sales_output = str(getattr(sales_cfg, "sales_output", "sales") if sales_cfg else "sales").strip().lower()
     if skip_order and sales_output == "sales":
         return False
     return True
@@ -82,18 +83,18 @@ def _returns_enabled(cfg: Mapping) -> bool:
 
 def _budget_enabled(cfg: Mapping) -> bool:
     """Return True if budget generation is enabled in config."""
-    budget_cfg = cfg.get("budget")
+    budget_cfg = getattr(cfg, "budget", None)
     if budget_cfg is None or not isinstance(budget_cfg, Mapping):
         return False
-    return bool(budget_cfg.get("enabled", False))
+    return bool(getattr(budget_cfg, "enabled", False))
 
 
 def _inventory_enabled(cfg: Mapping) -> bool:
     """Return True if inventory snapshot generation is enabled in config."""
-    inv_cfg = cfg.get("inventory")
+    inv_cfg = getattr(cfg, "inventory", None)
     if inv_cfg is None or not isinstance(inv_cfg, Mapping):
         return False
-    return bool(inv_cfg.get("enabled", False))
+    return bool(getattr(inv_cfg, "enabled", False))
 
 
 def _require_static_schema(table_name: str) -> ColumnSpec:
@@ -179,20 +180,20 @@ def generate_all_create_tables(
     ]
 
     skip_tables: set[str] = set()
-    seg_cfg = (cfg.get("customer_segments") or {})
-    if isinstance(seg_cfg, dict):
-        if not bool(seg_cfg.get("enabled", True)):
+    seg_cfg = getattr(cfg, "customer_segments", None) or {}
+    if isinstance(seg_cfg, Mapping):
+        if not bool(getattr(seg_cfg, "enabled", True)):
             skip_tables.add("CustomerSegment")
             skip_tables.add("CustomerSegmentMembership")
-        elif not bool(seg_cfg.get("generate_bridge", True)):
+        elif not bool(getattr(seg_cfg, "generate_bridge", True)):
             skip_tables.add("CustomerSegmentMembership")
 
-    sp_cfg = (cfg.get("superpowers") or {})
-    if isinstance(sp_cfg, dict):
-        if not bool(sp_cfg.get("enabled", True)):
+    sp_cfg = getattr(cfg, "superpowers", None) or {}
+    if isinstance(sp_cfg, Mapping):
+        if not bool(getattr(sp_cfg, "enabled", True)):
             skip_tables.add("Superpowers")
             skip_tables.add("CustomerSuperpowers")
-        elif not bool(sp_cfg.get("generate_bridge", True)):
+        elif not bool(getattr(sp_cfg, "generate_bridge", True)):
             skip_tables.add("CustomerSuperpowers")
 
     if not _returns_enabled(cfg):
@@ -207,9 +208,9 @@ def generate_all_create_tables(
             continue
 
         if table_name == "Dates":
-            dates_cfg = cfg.get("dates")
+            dates_cfg = getattr(cfg, "dates", None)
             if dates_cfg is None:
-                raise KeyError("cfg['dates'] is required to generate Dates schema.")
+                raise KeyError("cfg.dates is required to generate Dates schema.")
             cols = get_dates_schema(dates_cfg)
         else:
             cols = STATIC_SCHEMAS[table_name]

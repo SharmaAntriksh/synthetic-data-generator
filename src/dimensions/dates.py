@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -48,11 +49,16 @@ def _normalize_override_dates(dates_cfg: Dict[str, Any]) -> Dict[str, Any]:
     both are present.  This lets internal tooling inject overrides without
     touching the user-facing ``override`` block.
     """
-    override = dates_cfg.get("override") or {}
-    override2 = dates_cfg.get("_override") or {}
+    if isinstance(dates_cfg, dict):
+        override = dates_cfg.get("override") or {}
+        override2 = dates_cfg.get("_override") or {}
+    else:
+        override = dates_cfg.override or {}
+        override2 = getattr(dates_cfg, "_override", None) or {}
+
     out: Dict[str, Any] = {}
-    out.update(override if isinstance(override, dict) else {})
-    out.update(override2 if isinstance(override2, dict) else {})
+    out.update(override if isinstance(override, Mapping) else {})
+    out.update(override2 if isinstance(override2, Mapping) else {})
     return out
 
 
@@ -343,6 +349,8 @@ def _wf_is_enabled(wf_cfg) -> bool:
         return wf_cfg
     if isinstance(wf_cfg, dict):
         return bool(wf_cfg.get("enabled", True))
+    if isinstance(wf_cfg, Mapping):
+        return bool(getattr(wf_cfg, "enabled", True))
     return False
 
 
@@ -372,8 +380,14 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
     ``include`` flags.  The ``include.calendar`` flag controls only calendar-
     specific flags and offsets (IsYearStart, IsToday, CurrentDayOffset, etc.).
     """
-    include = (dates_cfg or {}).get("include", {}) or {}
-    wf_cfg = include.get("weekly_fiscal", {}) or {}
+    if dates_cfg and hasattr(dates_cfg, "include"):
+        include = dates_cfg.include or {}
+    else:
+        include = ((dates_cfg or {}).get("include", {}) if isinstance(dates_cfg, dict) else {}) or {}
+    if hasattr(include, "weekly_fiscal"):
+        wf_cfg = include.weekly_fiscal or {}
+    else:
+        wf_cfg = (include.get("weekly_fiscal", {}) if isinstance(include, dict) else {}) or {}
 
     # Always present: primary keys + fundamental date-part attributes.
     base_cols = [
@@ -459,11 +473,12 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
 
     cols: List[str] = list(base_cols)
 
-    if include.get("calendar", True):
+    _get = (lambda k, d: getattr(include, k, d)) if not isinstance(include, dict) else (lambda k, d: include.get(k, d))
+    if _get("calendar", True):
         cols += calendar_cols
-    if include.get("iso", True):
+    if _get("iso", True):
         cols += iso_cols
-    if include.get("fiscal", True):
+    if _get("fiscal", True):
         cols += fiscal_cols
 
     if _wf_is_enabled(wf_cfg):
@@ -731,18 +746,19 @@ def generate_date_table(
 
 def run_dates(cfg: Dict, parquet_folder: Path) -> None:
     out_path = parquet_folder / "dates.parquet"
-    if "dates" not in cfg:
+    if not hasattr(cfg, "dates"):
         raise KeyError("Missing required config section: 'dates'")
 
-    dates_cfg = cfg["dates"] or {}
+    dates_cfg = cfg.dates or {}
 
     defaults_dates = (
-        (cfg.get("defaults", {}) or {}).get("dates")
-        or (cfg.get("_defaults", {}) or {}).get("dates")
-        or {}
-    )
+        getattr(cfg.defaults, "dates", None) if hasattr(cfg, "defaults") else None
+    ) or (
+        getattr(getattr(cfg, "_defaults", None), "dates", None)
+    ) or {}
 
-    version_cfg = {**dates_cfg, "global_dates": defaults_dates}
+    version_cfg = dict(dates_cfg)
+    version_cfg["global_dates"] = defaults_dates
 
     if not should_regenerate("dates", version_cfg, out_path):
         skip("Dates up-to-date")
@@ -750,37 +766,47 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
 
     override_dates = _normalize_override_dates(dates_cfg)
 
-    raw_start = override_dates.get("start") or defaults_dates.get("start")
-    raw_end = override_dates.get("end") or defaults_dates.get("end")
+    raw_start = override_dates.get("start") or getattr(defaults_dates, "start", None)
+    raw_end = override_dates.get("end") or getattr(defaults_dates, "end", None)
     raw_start_ts, raw_end_ts = _require_start_end(raw_start, raw_end)
 
-    buffer_years = max(0, _int_or(dates_cfg.get("buffer_years", 1), 1))
+    buffer_years = max(0, _int_or(dates_cfg.buffer_years, 1))
     start_date = pd.Timestamp(raw_start_ts.year - buffer_years, 1, 1)
     end_date = pd.Timestamp(raw_end_ts.year + buffer_years, 12, 31)
     info(f"Dates window: requested [{raw_start_ts.date()}..{raw_end_ts.date()}], generated [{start_date.date()}..{end_date.date()}] (buffer_years={buffer_years})")
 
-    fiscal_start_month = _int_or(dates_cfg.get("fiscal_start_month") or dates_cfg.get("fiscal_month_offset", 5), 5)
-    if dates_cfg.get("fiscal_start_month") is None and "fiscal_month_offset" in dates_cfg:
+    fiscal_start_month = _int_or(dates_cfg.fiscal_start_month or dates_cfg.fiscal_month_offset or 5, 5)
+    if dates_cfg.fiscal_start_month is None and dates_cfg.fiscal_month_offset is not None:
         warn("Dates: fiscal_month_offset is deprecated, use fiscal_start_month instead")
     fiscal_start_month = _clamp_month(fiscal_start_month)
 
-    as_of_date = dates_cfg.get("as_of_date") or str(raw_end_ts.date())
+    as_of_date = dates_cfg.as_of_date or str(raw_end_ts.date())
 
-    compression = dates_cfg.get("parquet_compression", "snappy")
-    compression_level = dates_cfg.get("parquet_compression_level", None)
-    force_date32 = _bool_or(dates_cfg.get("force_date32", True), True)
+    compression = dates_cfg.parquet_compression
+    compression_level = dates_cfg.parquet_compression_level
+    force_date32 = _bool_or(dates_cfg.force_date32, True)
 
-    include = dates_cfg.get("include", {}) or {}
-    wf_block = include.get("weekly_fiscal", {}) or {}
+    include = dates_cfg.include or {}
+    wf_block = getattr(include, "weekly_fiscal", None) or {}
     if isinstance(wf_block, bool):
         wf_block = {"enabled": wf_block}
-    wf_cfg = WeeklyFiscalConfig(
-        enabled=_bool_or(wf_block.get("enabled", True), True),
-        first_day_of_week=_int_or(wf_block.get("first_day_of_week", 0), 0),
-        weekly_type=str(wf_block.get("weekly_type", "Last")),
-        quarter_week_type=str(wf_block.get("quarter_week_type", "445")),
-        type_start_fiscal_year=_int_or(wf_block.get("type_start_fiscal_year", 1), 1),
-    )
+    if isinstance(wf_block, Mapping):
+        wf_cfg = WeeklyFiscalConfig(
+            enabled=_bool_or(wf_block.get("enabled", True), True),
+            first_day_of_week=_int_or(wf_block.get("first_day_of_week", 0), 0),
+            weekly_type=str(wf_block.get("weekly_type", "Last")),
+            quarter_week_type=str(wf_block.get("quarter_week_type", "445")),
+            type_start_fiscal_year=_int_or(wf_block.get("type_start_fiscal_year", 1), 1),
+        )
+    else:
+        # wf_block is a Pydantic model (WeeklyFiscalConfig from config_schema)
+        wf_cfg = WeeklyFiscalConfig(
+            enabled=_bool_or(getattr(wf_block, "enabled", True), True),
+            first_day_of_week=_int_or(getattr(wf_block, "first_day_of_week", 0), 0),
+            weekly_type=str(getattr(wf_block, "weekly_type", "Last")),
+            quarter_week_type=str(getattr(wf_block, "quarter_week_type", "445")),
+            type_start_fiscal_year=_int_or(getattr(wf_block, "type_start_fiscal_year", 1), 1),
+        )
 
     with stage("Generating Dates"):
         df = generate_date_table(

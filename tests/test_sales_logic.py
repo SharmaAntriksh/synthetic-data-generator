@@ -53,6 +53,7 @@ from src.facts.sales.sales_logic.core.customer_sampling import (
 )
 from src.facts.sales.sales_logic.globals import State
 from src.facts.budget.accumulator import BudgetAccumulator
+from src.engine.config.config_schema import AppConfig
 from src.facts.budget.engine import (
     BudgetConfig,
     _jitter_pct,
@@ -1368,14 +1369,15 @@ class TestBudgetConfig:
         assert cfg.weight_local == 0.60
 
     def test_load_from_dict(self):
-        raw = {
+        from src.engine.config.config_schema import AppConfig
+        raw = AppConfig.model_validate({
             "budget": {
                 "enabled": True,
                 "report_currency": "EUR",
                 "growth_caps": {"high": 0.50, "low": -0.10},
                 "weights": {"local": 0.70, "category": 0.20, "global": 0.10},
             }
-        }
+        })
         cfg = load_budget_config(raw)
         assert cfg.enabled is True
         assert cfg.report_currency == "EUR"
@@ -1465,14 +1467,15 @@ class TestInventoryConfig:
         assert cfg.shrinkage_rate == 0.02
 
     def test_load_from_dict(self):
-        raw = {
+        from src.engine.config.config_schema import AppConfig
+        raw = AppConfig.model_validate({
             "inventory": {
                 "enabled": True,
                 "seed": 99,
                 "shrinkage": {"enabled": True, "rate": 0.05},
                 "initial_stock_multiplier": 5.0,
             }
-        }
+        })
         cfg = load_inventory_config(raw)
         assert cfg.enabled is True
         assert cfg.seed == 99

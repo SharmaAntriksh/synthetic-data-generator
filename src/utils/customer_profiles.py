@@ -18,6 +18,8 @@ over profile defaults (merge, not replace).
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from typing import Any, Dict, Optional, Tuple
 
 from src.utils.logging_utils import info
@@ -232,11 +234,33 @@ VALID_PROFILES = frozenset(_PROFILES.keys())
 # Resolver
 # ================================================================
 
+def _pydantic_to_explicit_dict(obj) -> dict:
+    """Convert a Pydantic model to a dict of only explicitly-set fields (recursive).
+
+    Pydantic models expose ALL fields (including defaults) when iterated.
+    This strips defaults so that only YAML-explicit values act as overrides
+    in ``_deep_merge``, preventing Pydantic's zero-defaults from clobbering
+    profile-injected values.
+    """
+    fields_set = getattr(obj, "model_fields_set", None)
+    if fields_set is None:
+        # Not a Pydantic model — return as-is (dict or similar)
+        return dict(obj) if isinstance(obj, Mapping) else {}
+    out = {}
+    for k in fields_set:
+        v = getattr(obj, k)
+        # Recurse into nested Pydantic sub-models
+        if hasattr(v, "model_fields_set"):
+            v = _pydantic_to_explicit_dict(v)
+        out[k] = v
+    return out
+
+
 def _deep_merge(base: dict, overrides: dict) -> dict:
     """Recursively merge overrides into base. Overrides win for non-dict values."""
     result = dict(base)
     for k, v in overrides.items():
-        if isinstance(v, dict) and isinstance(result.get(k), dict):
+        if isinstance(v, Mapping) and isinstance(result.get(k), Mapping):
             result[k] = _deep_merge(result[k], v)
         else:
             result[k] = v
@@ -281,11 +305,11 @@ def resolve_customer_profile(
     Returns:
         (cfg, models_cfg) — mutated in place and returned for convenience.
     """
-    cust_cfg = cfg.get("customers")
-    if not isinstance(cust_cfg, dict):
+    cust_cfg = getattr(cfg, "customers", None)
+    if cust_cfg is None:
         return cfg, models_cfg
 
-    profile_name = cust_cfg.get("profile")
+    profile_name = getattr(cust_cfg, "profile", None)
     if profile_name is None:
         return cfg, models_cfg
 
@@ -298,30 +322,39 @@ def resolve_customer_profile(
 
     profile = _PROFILES[profile_name]
 
-    # --- Inject lifecycle into cfg["customers"]["lifecycle"] ---
-    existing_lifecycle = cust_cfg.get("lifecycle", {}) or {}
+    # --- Inject lifecycle into cfg.customers.lifecycle ---
+    existing_lifecycle = getattr(cust_cfg, "lifecycle", None) or {}
+    # Strip Pydantic defaults so only YAML-explicit values override profile defaults
+    if hasattr(existing_lifecycle, "model_fields_set"):
+        existing_lifecycle = _pydantic_to_explicit_dict(existing_lifecycle)
     merged_lifecycle = _deep_merge(profile["lifecycle"], existing_lifecycle)
-    cust_cfg["lifecycle"] = merged_lifecycle
+    cust_cfg.lifecycle = merged_lifecycle  # noqa: E501
 
-    # --- Inject demand into models_cfg["customers"] ---
-    existing_demand = models_cfg.get("customers", {}) or {}
+    # --- Inject demand into models_cfg["customers"] (replaces Pydantic sub-model with plain dict) ---
+    existing_demand = models_cfg.get("customers", None) or {}
+    # Strip Pydantic defaults so only YAML-explicit values override profile defaults
+    if hasattr(existing_demand, "model_fields_set"):
+        existing_demand = _pydantic_to_explicit_dict(existing_demand)
     merged_demand = _deep_merge(profile["demand"], existing_demand)
     models_cfg["customers"] = merged_demand
 
-    # --- Inject macro_demand into models_cfg["macro_demand"] ---
-    existing_macro = models_cfg.get("macro_demand", {}) or {}
+    # --- Inject macro_demand into models_cfg["macro_demand"] (replaces Pydantic sub-model with plain dict) ---
+    existing_macro = models_cfg.get("macro_demand", None) or {}
+    # Strip Pydantic defaults so only YAML-explicit values override profile defaults
+    if hasattr(existing_macro, "model_fields_set"):
+        existing_macro = _pydantic_to_explicit_dict(existing_macro)
     merged_macro = _deep_merge(profile["macro_demand"], existing_macro)
     models_cfg["macro_demand"] = merged_macro
 
     # --- Apply first_year_pct override (after profile, before return) ---
-    first_year_pct = cust_cfg.get("first_year_pct")
+    first_year_pct = getattr(cust_cfg, "first_year_pct", None)
     if first_year_pct is not None:
         fyr = float(first_year_pct)
         if not 0.05 <= fyr <= 1.0:
             raise ValueError(
                 f"customers.first_year_pct must be between 0.05 and 1.0, got {fyr}"
             )
-        _apply_first_year_pct(fyr, cust_cfg["lifecycle"], models_cfg["customers"])
+        _apply_first_year_pct(fyr, cust_cfg.lifecycle, models_cfg["customers"])
 
     info(f"Customer profile: '{profile_name}' applied"
          + (f" (first_year_pct={first_year_pct})" if first_year_pct is not None else ""))

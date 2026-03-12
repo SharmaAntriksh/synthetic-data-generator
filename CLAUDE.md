@@ -69,7 +69,7 @@ src/
     budget/                      # Budget fact (accumulator + engine, Low/Medium/High scenarios)
     inventory/                   # Inventory snapshots (monthly grain, ABC classification, shrinkage)
   engine/
-    config/                      # config_loader.py, config.py (normalizer registry, strict validation)
+    config/                      # config_loader.py, config.py (normalizer registry), config_schema.py (Pydantic models)
     packaging/                   # csv_packager, parquet_packager, delta_packager, SQL script gen
     runners/
       pipeline_runner.py         # Main orchestrator (override precedence, config injection)
@@ -109,6 +109,9 @@ Controls row counts, entity counts, date ranges, output format, parallelism, fea
 ### models.yaml -- Sales Behavior
 Controls demand curves, pricing dynamics, quantity distribution, markdown rules, return reasons.
 - Key sections: `models.macro_demand`, `models.quantity`, `models.pricing`, `models.brand_popularity`, `models.returns`
+- Validated through Pydantic at pipeline startup: `ModelsConfig.from_raw_dict()` → `ModelsInnerConfig` (typed sub-models for each section)
+- `State.models_cfg` holds the validated `ModelsInnerConfig` instance (not a raw dict)
+- `resolve_customer_profile()` may replace `macro_demand` and `customers` sub-models with plain dicts at runtime — downstream code must handle both via `.get()` shims
 - Not overridable via CLI; edit directly or use web UI
 
 ### Override Precedence
@@ -132,7 +135,7 @@ CLI flags > config.yaml values (one-time, not persisted).
 
 8. **Exception hierarchy & specificity:** Use exceptions from `src/exceptions.py` (`ConfigError`, `DimensionError`, `SalesError`, `PackagingError`, `ValidationError`) instead of generic `RuntimeError`/`ValueError`. All inherit from `PipelineError`. Avoid bare `except Exception`— always catch specific types (e.g., `except (KeyError, ValueError, OSError)`).
 
-9. **Type coercion helpers:** Always import `bool_or`, `int_or`, `float_or`, `str_or` from `src.utils.config_helpers`. Do not define local variants in dimension/fact generators.
+9. **Type coercion helpers:** Import `bool_or`, `int_or`, `float_or`, `str_or` from `src.utils.config_helpers`. Do not define local variants. These are still required for plain dict accesses (worker configs, nested profile dicts) and function parameters that might be None. For Pydantic model attributes with typed defaults, they're redundant but harmless — new code accessing Pydantic fields can skip them.
 
 10. **Hardcoded constants:** Domain constants (store types, customer demographics, promo categories, currency maps, etc.) live in `src/defaults.py`. Dimension generators import from there — do not inline large constant dicts. Probability arrays are validated at import time to sum to 1.0.
 
@@ -162,6 +165,18 @@ CLI flags > config.yaml values (one-time, not persisted).
 
 23. **Log file descriptor thread safety:** `_ensure_log_file_open()` in `logging_utils.py` is guarded by `_LOG_FD_LOCK` to prevent races when multiple threads open the log file simultaneously.
 
+24. **Both configs are Pydantic, not dicts:** `cfg` is `AppConfig` and `models_cfg` (aka `State.models_cfg`) is `ModelsInnerConfig` — both Pydantic models from `src/engine/config/config_schema.py`. Access fields via attribute syntax, not dict syntax. Key rules:
+    - **Read config:** `cfg.sales.file_format` or `models_cfg.pricing.inflation` — attribute access, not `cfg["field"]`
+    - **Write config:** `cfg.sales.file_format = "csv"` (attribute assignment) — bracket write (`cfg["key"] = val`) works via `_MutationMixin.__setitem__`
+    - **`.get()` shim:** `_MutationMixin.get(key, default)` delegates to `getattr()`, so existing `.get()` chains work on Pydantic models. This is intentional for backward compatibility with code that handles both dicts and models
+    - **`resolve_customer_profile` caveat:** After profile resolution, `models_cfg.macro_demand` and `models_cfg.customers` may be plain dicts (replaced via `__setitem__`). Code accessing these must handle both Pydantic models and dicts — `.get()` works on both
+    - **`_`-prefixed keys are stripped:** Pydantic v2 treats `_`-prefixed keys as private fields. `_strip_internal_keys()` in `config_schema.py` removes normalizer metadata before validation
+    - **`extra="forbid"` on sub-models:** All config sub-models (via `_Base`) reject unknown keys. `AppConfig` and `ModelsConfig` use `extra="allow"` for runtime-injected keys. Add new fields to the schema class if needed
+    - **Worker configs are plain dicts:** `worker_cfg`, `acfg`, and sales worker internals remain plain dicts for multiprocessing pickling — these correctly use dict access
+    - **Copying configs:** Use `cfg.model_copy(deep=True)` instead of `dict(cfg)` or `copy.deepcopy(cfg)`
+    - **Hash functions:** Use `_to_dict(obj)` helper (calls `model_dump()` on Pydantic, pass-through for dicts) before `json.dumps()` for config hashing
+    - **Schema location:** All Pydantic models live in `src/engine/config/config_schema.py`. `AppConfig.from_raw_dict(d)` and `ModelsConfig.from_raw_dict(d)` are the canonical constructors
+
 ## Testing
 
 ```bash
@@ -189,7 +204,7 @@ pytest --lf            # rerun only last-failed tests
 pytest --co            # list tests without running
 ```
 
-Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py`, `test_dimensions.py`, `test_packaging.py`, `test_sales_logic.py`, `test_utils.py`, `test_web_routes.py` (966 tests total; web API/route tests require `httpx` and are skipped without it).
+Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py`, `test_dimensions.py`, `test_packaging.py`, `test_sales_logic.py`, `test_utils.py`, `test_web_routes.py`, `test_schema.py` (1021+ tests; web API/route tests require `httpx` and are skipped without it).
 
 ## Output Formats
 

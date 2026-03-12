@@ -27,7 +27,7 @@ def _write_parquet(df: pd.DataFrame, out_path: Path, compression: str = "snappy"
 
 
 def _build_version_cfg(cfg: Dict[str, Any], dim_key: str, df: pd.DataFrame, schema_version: int = 1) -> Dict[str, Any]:
-    dim_cfg = _as_dict(cfg.get(dim_key))
+    dim_cfg = _as_dict(getattr(cfg, dim_key, None))
     base = _strip_force(dim_cfg)
 
     # Keep version cfg small + stable; include row count and schema version.
@@ -66,7 +66,7 @@ def _run_lookup_dim(
     build_df: Callable[[Dict[str, Any]], pd.DataFrame],
     parquet_folder: Path,
 ) -> None:
-    dim_cfg = _as_dict(cfg.get(dim_key))
+    dim_cfg = _as_dict(getattr(cfg, dim_key, None))
     parquet_folder = Path(parquet_folder)
     parquet_folder.mkdir(parents=True, exist_ok=True)
     out_path = parquet_folder / out_name

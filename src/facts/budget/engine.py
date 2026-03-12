@@ -10,6 +10,7 @@ Output: (yearly, monthly) budget DataFrames
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -66,25 +67,25 @@ class BudgetConfig:
 
 def load_budget_config(cfg: Dict[str, Any]) -> BudgetConfig:
     """Extract budget config from the main config dict."""
-    raw = cfg.get("budget", {}) or {}
-    if not isinstance(raw, dict):
+    raw = getattr(cfg, "budget", None) or {}
+    if not isinstance(raw, Mapping):
         return BudgetConfig()
 
-    # Nested sub-dicts in config.yaml
-    growth_caps = raw.get("growth_caps", {}) or {}
-    weights = raw.get("weights", {}) or {}
+    # Typed access: raw is BudgetConfig (schema) when cfg is AppConfig
+    growth_caps = getattr(raw, "growth_caps", None) or {}
+    weights = getattr(raw, "weights", None) or {}
 
     return BudgetConfig(
-        enabled=bool(raw.get("enabled", False)),
-        scenarios=raw.get("scenarios", {"Low": -0.03, "Medium": 0.00, "High": 0.05}),
-        report_currency=raw.get("report_currency", "USD"),
-        growth_cap_high=float(growth_caps.get("high", 0.30)),
-        growth_cap_low=float(growth_caps.get("low", -0.20)),
-        weight_local=float(weights.get("local", 0.60)),
-        weight_category=float(weights.get("category", 0.30)),
-        weight_global=float(weights.get("global", 0.10)),
-        default_backcast_growth=float(raw.get("default_backcast_growth", 0.05)),
-        return_rate_cap=float(raw.get("return_rate_cap", 0.30)),
+        enabled=bool(getattr(raw, "enabled", False)),
+        scenarios=getattr(raw, "scenarios", {"Low": -0.03, "Medium": 0.00, "High": 0.05}),
+        report_currency=str(getattr(raw, "report_currency", "USD")),
+        growth_cap_high=float(getattr(growth_caps, "high", 0.30)),
+        growth_cap_low=float(getattr(growth_caps, "low", -0.20)),
+        weight_local=float(getattr(weights, "local", 0.60)),
+        weight_category=float(getattr(weights, "category", 0.30)),
+        weight_global=float(getattr(weights, "global_", getattr(weights, "global", 0.10))),
+        default_backcast_growth=float(getattr(raw, "default_backcast_growth", 0.05)),
+        return_rate_cap=float(getattr(raw, "return_rate_cap", 0.30)),
     )
 
 # ================================================================

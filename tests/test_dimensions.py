@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.engine.config.config_schema import AppConfig
+
 # ---------------------------------------------------------------------------
 # Stores
 # ---------------------------------------------------------------------------
@@ -872,7 +874,7 @@ class TestCustomerGenerator:
     """
 
     def _minimal_cfg(self, n=50):
-        return {
+        return AppConfig.model_validate({
             "defaults": {"seed": 42, "dates": {"start": "2023-01-01", "end": "2024-12-31"}},
             "customers": {
                 "total_customers": n,
@@ -882,14 +884,10 @@ class TestCustomerGenerator:
                 "pct_eu": 40,
                 "pct_asia": 0.0,
                 "pct_org": 5,
-                "lifecycle": {
-                    "initial_active_customers": 0.4,
-                    "acquisition_curve": "uniform",
-                },
             },
             "geography": {},
             "paths": {"names_folder": "./data/name_pools/people"},
-        }
+        })
 
     def _fake_geography(self, n=10):
         return pd.DataFrame({
@@ -937,7 +935,8 @@ class TestCustomerGenerator:
         geo_df = self._fake_geography()
 
         # Load real people pools from disk (they exist in ./data/name_pools/people)
-        people_folder = cfg.get("paths", {}).get("names_folder", "./data/name_pools/people")
+        paths = getattr(cfg, "paths", None)
+        people_folder = getattr(paths, "names_folder", "./data/name_pools/people") if paths else "./data/name_pools/people"
         pf = Path(people_folder)
         if not pf.exists():
             pytest.skip("Name pool data not available")
@@ -1091,9 +1090,14 @@ class TestBuildYearWindows:
 # ===================================================================
 
 class TestResolveFxDates:
+    def _fx_cfg(self, **kwargs):
+        """Create a simple namespace for FX config (supports attribute access)."""
+        from types import SimpleNamespace
+        return SimpleNamespace(**kwargs)
+
     def test_global_dates_mode(self):
         from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = {"use_global_dates": True}
+        fx_cfg = self._fx_cfg(use_global_dates=True)
         global_defaults = {"start": "2021-01-01", "end": "2025-12-31"}
         start, end = resolve_fx_dates(fx_cfg, global_defaults)
         assert start == "2021-01-01"
@@ -1101,34 +1105,34 @@ class TestResolveFxDates:
 
     def test_local_dates_mode(self):
         from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = {
-            "use_global_dates": False,
-            "dates": {"start": "2022-01-01", "end": "2023-12-31"},
-        }
+        fx_cfg = self._fx_cfg(
+            use_global_dates=False,
+            dates={"start": "2022-01-01", "end": "2023-12-31"},
+        )
         start, end = resolve_fx_dates(fx_cfg, {})
         assert start == "2022-01-01"
         assert end == "2023-12-31"
 
     def test_override_dates(self):
         from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = {
-            "use_global_dates": False,
-            "dates": {"start": "2020-01-01", "end": "2020-12-31"},
-            "override": {"dates": {"start": "2021-01-01", "end": "2021-12-31"}},
-        }
+        fx_cfg = self._fx_cfg(
+            use_global_dates=False,
+            dates={"start": "2020-01-01", "end": "2020-12-31"},
+            override={"dates": {"start": "2021-01-01", "end": "2021-12-31"}},
+        )
         start, end = resolve_fx_dates(fx_cfg, {})
         assert start == "2021-01-01"
         assert end == "2021-12-31"
 
     def test_missing_global_dates_raises(self):
         from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = {"use_global_dates": True}
+        fx_cfg = self._fx_cfg(use_global_dates=True)
         with pytest.raises(ValueError, match="global defaults"):
             resolve_fx_dates(fx_cfg, None)
 
     def test_missing_local_dates_raises(self):
         from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = {"use_global_dates": False}
+        fx_cfg = self._fx_cfg(use_global_dates=False)
         with pytest.raises(ValueError, match="missing start/end"):
             resolve_fx_dates(fx_cfg, {})
 

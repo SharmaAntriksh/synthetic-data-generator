@@ -10,6 +10,7 @@ from src.dimensions.geography import (
     build_dim_geography,
     normalize_geography_config,
 )
+from src.engine.config.config_schema import AppConfig
 from src.exceptions import DimensionError
 
 
@@ -47,10 +48,10 @@ class TestCuratedRows:
 
 class TestBuildDimGeography:
     def _cfg(self, currencies):
-        return {
+        return AppConfig.model_validate({
             "geography": {},
             "exchange_rates": {"currencies": currencies},
-        }
+        })
 
     def test_basic_output(self):
         cfg = self._cfg(["USD", "EUR", "GBP", "INR", "CAD"])

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -16,14 +17,15 @@ def _sched_mode_and_values(node: dict, name: str) -> tuple[str, list[float]]:
     Validate schedule node:
       { mode: "repeat"|"once", values: [..numbers..] }
     """
-    if not isinstance(node, dict):
+    if not isinstance(node, Mapping):
         raise ValueError(f"{name} must be a mapping with keys: mode, values")
 
     mode = str(node.get("mode", "repeat")).strip().lower()
     if mode not in ("repeat", "once"):
         raise ValueError(f"{name}.mode must be 'repeat' or 'once'")
 
-    values = node.get("values")
+    # Pydantic renames "values" → "factor_values"; accept both keys
+    values = node.get("factor_values") or node.get("values")
     if not isinstance(values, list) or len(values) == 0:
         raise ValueError(f"{name}.values must be a non-empty list")
 
@@ -318,7 +320,7 @@ def build_rows_per_month(
         # eligible counts into the weights double-penalises early months.
         cap_cfg_peek = macro_cfg.get("early_month_cap", None)
         cap_active = (
-            isinstance(cap_cfg_peek, dict)
+            isinstance(cap_cfg_peek, Mapping)
             and cap_cfg_peek
             and bool(cap_cfg_peek.get("enabled", True))
         )
@@ -345,7 +347,7 @@ def build_rows_per_month(
         # IMPORTANT semantic fix: cap is only applied if block exists.
         # --------------------------------------------------------------
         cap_cfg = macro_cfg.get("early_month_cap", None)
-        if isinstance(cap_cfg, dict) and cap_cfg:
+        if isinstance(cap_cfg, Mapping) and cap_cfg:
             cap_enabled = bool(cap_cfg.get("enabled", True))
             raw_cap = cap_cfg.get("max_rows_per_customer", 12)
             per_customer_cap = int(round(float(raw_cap)))

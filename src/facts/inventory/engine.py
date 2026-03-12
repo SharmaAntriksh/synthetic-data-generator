@@ -9,6 +9,7 @@ product-store pairs simultaneously via numpy. Typical runtime: <2s for
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -45,27 +46,27 @@ class InventoryConfig:
 
 
 def load_inventory_config(cfg: Dict[str, Any]) -> InventoryConfig:
-    raw = cfg.get("inventory", {}) or {}
-    if not isinstance(raw, dict):
+    raw = getattr(cfg, "inventory", None) or {}
+    if not isinstance(raw, Mapping):
         return InventoryConfig()
 
-    shrinkage = raw.get("shrinkage", {}) or {}
-    abc = raw.get("abc_stock_multiplier", {
+    shrinkage = getattr(raw, "shrinkage", None) or {}
+    abc = getattr(raw, "abc_stock_multiplier", {
         "A": 1.30, "B": 1.00, "C": 0.70,
     })
 
     return InventoryConfig(
-        enabled=bool(raw.get("enabled", False)),
-        seed=int(raw.get("seed", 42)),
-        grain=str(raw.get("grain", "monthly")).lower(),
-        initial_stock_multiplier=float(raw.get("initial_stock_multiplier", 3.0)),
-        reorder_compliance=float(raw.get("reorder_compliance", 0.85)),
-        lead_time_variance=float(raw.get("lead_time_variance", 0.20)),
-        overstock_bias=float(raw.get("overstock_bias", 1.15)),
-        shrinkage_enabled=bool(shrinkage.get("enabled", True)),
-        shrinkage_rate=float(shrinkage.get("rate", 0.02)),
+        enabled=bool(getattr(raw, "enabled", False)),
+        seed=int(getattr(raw, "seed", 42)),
+        grain=str(getattr(raw, "grain", "monthly")).lower(),
+        initial_stock_multiplier=float(getattr(raw, "initial_stock_multiplier", 3.0)),
+        reorder_compliance=float(getattr(raw, "reorder_compliance", 0.85)),
+        lead_time_variance=float(getattr(raw, "lead_time_variance", 0.20)),
+        overstock_bias=float(getattr(raw, "overstock_bias", 1.15)),
+        shrinkage_enabled=bool(getattr(shrinkage, "enabled", True)),
+        shrinkage_rate=float(getattr(shrinkage, "rate", 0.02)),
         abc_stock_multiplier=dict(abc),
-        min_demand_months=int(raw.get("min_demand_months", 3)),
+        min_demand_months=int(getattr(raw, "min_demand_months", 3)),
     )
 
 

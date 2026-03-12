@@ -16,7 +16,7 @@ models:
 
   macro_demand:
     year_level_factors:
-      mode: "once"  # once | repeat - 2020 - 2028, from 2026 onwards repeat will start from the begining of the list(values)
+      mode: "once"  # once | repeat - 2021 onwards, from end of list repeat will start from the beginning
       values: [1.0, 1.12, 1.18, 1.35, 1.5, 1.7, 1.95, 2.2]
   # ================================================================
   # QUANTITY — items per order (basket size)

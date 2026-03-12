@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -150,20 +151,20 @@ def _curated_signature() -> str:
 
 
 def _validate_cfg(cfg: Dict) -> Dict:
-    if not isinstance(cfg, dict):
+    if not isinstance(cfg, Mapping):
         raise TypeError("cfg must be a dict")
 
-    if "geography" not in cfg or not isinstance(cfg["geography"], dict):
+    if not hasattr(cfg, "geography") or not isinstance(cfg.geography, Mapping):
         raise KeyError("Missing required config section: 'geography'")
 
-    if "exchange_rates" not in cfg or not isinstance(cfg["exchange_rates"], dict):
+    if not hasattr(cfg, "exchange_rates") or not isinstance(cfg.exchange_rates, Mapping):
         raise KeyError("Missing required config section: 'exchange_rates'")
 
-    currencies = cfg["exchange_rates"].get("currencies")
+    currencies = cfg.exchange_rates.currencies
     if not isinstance(currencies, (list, tuple)) or not currencies:
         raise ValueError("exchange_rates.currencies must be a non-empty list of currency ISO codes")
 
-    return cfg["geography"]
+    return cfg.geography
 
 
 # =============================================================
@@ -183,7 +184,7 @@ def build_dim_geography(cfg: Dict, *, _geo_cfg: Dict | None = None) -> pd.DataFr
     if _geo_cfg is None:
         _validate_cfg(cfg)
 
-    allowed_iso = set(map(str, cfg["exchange_rates"]["currencies"]))
+    allowed_iso = set(map(str, cfg.exchange_rates.currencies))
 
     df = pd.DataFrame(
         CURATED_ROWS,
@@ -230,16 +231,16 @@ def normalize_geography_config(geo_cfg: Dict) -> Dict:
 
     # override sub-block (kept for seed/dates/paths compatibility)
     override = geo_cfg.get("override") or {}
-    if not isinstance(override, dict):
+    if not isinstance(override, Mapping):
         raise TypeError("geography.override must be a mapping")
     override.setdefault("seed", None)
     override.setdefault("dates", {})
     override.setdefault("paths", {})
     if override["seed"] is not None:
         override["seed"] = int(override["seed"])
-    if not isinstance(override["dates"], dict):
+    if not isinstance(override["dates"], Mapping):
         raise TypeError("geography.override.dates must be a mapping")
-    if not isinstance(override["paths"], dict):
+    if not isinstance(override["paths"], Mapping):
         raise TypeError("geography.override.paths must be a mapping")
     geo_cfg["override"] = override
 
@@ -256,7 +257,7 @@ def run_geography(cfg: Dict, parquet_folder: Path) -> None:
     out_path = parquet_folder / "geography.parquet"
 
     version_cfg = {
-        "exchange_rates": {"currencies": list(map(str, cfg["exchange_rates"]["currencies"]))},
+        "exchange_rates": {"currencies": list(map(str, cfg.exchange_rates.currencies))},
         "_curated_sig": _curated_signature(),
     }
 

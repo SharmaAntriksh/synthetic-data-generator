@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any, List, Optional
 
 import numpy as np
@@ -556,7 +557,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         salesperson_roles = worker_cfg.get("salesperson_roles", ["Sales Associate"])
 
         op = worker_cfg["output_paths"]
-        if not isinstance(op, dict):
+        if not isinstance(op, Mapping):
             raise RuntimeError("output_paths must be a dict")
 
         file_format = worker_cfg.get("file_format") or op.get("file_format")
@@ -651,6 +652,34 @@ def init_sales_worker(worker_cfg: dict) -> None:
     store_keys = as_int32(store_keys)
 
     # ------------------------------------------------------------
+    # Per-month eligible stores (based on OpeningDate / ClosingDate)
+    # ------------------------------------------------------------
+    store_open_month = worker_cfg.get("store_open_month")
+    store_close_month = worker_cfg.get("store_close_month")
+    store_eligible_by_month = None
+    if store_open_month is not None:
+        store_open_month = np.asarray(store_open_month, dtype=np.int64)
+        _INT64_MAX = np.iinfo(np.int64).max
+        if store_close_month is not None:
+            store_close_month = np.asarray(store_close_month, dtype=np.int64)
+        else:
+            store_close_month = np.full(store_keys.shape[0], _INT64_MAX, dtype=np.int64)
+        # Build month_ints from date_pool (unique months as int64)
+        dp = np.asarray(date_pool, dtype="datetime64[D]")
+        _unique_months = np.unique(dp.astype("datetime64[M]"))
+        _month_ints = _unique_months.astype("int64")
+        store_eligible_by_month = []
+        for mi in _month_ints:
+            # Store is eligible if it opened on or before this month
+            # and has not closed before this month
+            eligible_mask = (store_open_month <= mi) & (store_close_month >= mi)
+            store_eligible_by_month.append(store_keys[eligible_mask])
+        # Warn if any month has zero eligible stores
+        for idx, arr in enumerate(store_eligible_by_month):
+            if arr.size == 0:
+                store_eligible_by_month[idx] = store_keys  # fallback: all stores
+
+    # ------------------------------------------------------------
     # Store-product assortment (optional)
     # ------------------------------------------------------------
     _prebuilt_assortment = worker_cfg.get("_prebuilt_store_to_product_rows")
@@ -660,7 +689,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
     else:
         store_to_product_rows = None
         assortment_cfg = worker_cfg.get("assortment")
-        if isinstance(assortment_cfg, dict) and assortment_cfg.get("enabled"):
+        if isinstance(assortment_cfg, Mapping) and assortment_cfg.get("enabled"):
             product_subcat_key = worker_cfg.get("product_subcat_key")
             store_type_map = worker_cfg.get("store_type_map")
             if product_subcat_key is not None and store_type_map is not None:
@@ -783,9 +812,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
         brand_prob_by_month = resolve_array(_prebuilt_bp)
     else:
         brand_prob_by_month = None
-        if isinstance(models_cfg, dict):
-            models_root = models_cfg.get("models") if isinstance(models_cfg.get("models"), dict) else models_cfg
-            brand_cfg = models_root.get("brand_popularity") if isinstance(models_root, dict) else None
+        if isinstance(models_cfg, Mapping):
+            brand_cfg = models_cfg.get("brand_popularity") if isinstance(models_cfg, Mapping) else None
             if brand_cfg:
                 T = infer_T_from_date_pool(date_pool)
                 B = int(product_brand_key.max()) + 1 if product_brand_key is not None and product_brand_key.size else 0
@@ -801,7 +829,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
                 bp_explicit = None
                 cfg_weights = brand_cfg.get("brand_weights")
                 bp_brand_names = worker_cfg.get("brand_names")
-                if isinstance(cfg_weights, dict) and cfg_weights and bp_brand_names is not None and len(bp_brand_names) == B:
+                if isinstance(cfg_weights, Mapping) and cfg_weights and bp_brand_names is not None and len(bp_brand_names) == B:
                     bp_explicit = np.zeros(B, dtype=np.float64)
                     name_to_idx = {str(n): i for i, n in enumerate(bp_brand_names)}
                     has_override = False
@@ -838,8 +866,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
                     explicit_weights=bp_explicit,
                 )
 
-    store_to_geo_arr = dense_map(store_to_geo) if isinstance(store_to_geo, dict) else None
-    geo_to_currency_arr = dense_map(geo_to_currency) if isinstance(geo_to_currency, dict) else None
+    store_to_geo_arr = dense_map(store_to_geo) if isinstance(store_to_geo, Mapping) else None
+    geo_to_currency_arr = dense_map(geo_to_currency) if isinstance(geo_to_currency, Mapping) else None
 
     output_paths = OutputPaths(
         out_folder=out_folder,
@@ -864,7 +892,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         skip_order_cols_requested=bool(skip_order_cols_requested),
         returns_enabled=bool(returns_enabled),
         parquet_dict_exclude=set(parquet_dict_exclude) if parquet_dict_exclude else None,
-        models_cfg=models_cfg if isinstance(models_cfg, dict) else None,
+        models_cfg=models_cfg if isinstance(models_cfg, Mapping) else None,
     )
 
     # ---- Budget lookups (already built in main process, passed as flat keys) ----
@@ -879,6 +907,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "product_brand_key": product_brand_key,
             "brand_prob_by_month": brand_prob_by_month,
             "store_keys": store_keys,
+            "store_eligible_by_month": store_eligible_by_month,
             "promo_keys_all": promo_keys_all,
             "promo_start_all": promo_start_all,
             "promo_end_all": promo_end_all,

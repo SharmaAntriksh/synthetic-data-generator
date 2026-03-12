@@ -19,18 +19,20 @@ def resolve_fx_dates(fx_cfg, global_defaults):
     - If use_global_dates = true → use global defaults
     - If use_global_dates = false → use section dates, then apply override
     """
-    if fx_cfg.get("use_global_dates", False):
+    if fx_cfg.use_global_dates:
         if not global_defaults or "start" not in global_defaults or "end" not in global_defaults:
             raise ValueError("use_global_dates=true but global defaults dates are missing (cfg.defaults.dates or cfg._defaults.dates).")
         return global_defaults["start"], global_defaults["end"]
 
-    base_dates = fx_cfg.get("dates", {})
-    start = base_dates.get("start")
-    end = base_dates.get("end")
+    base_dates = getattr(fx_cfg, "dates", {}) or {}
+    start = base_dates.get("start") if isinstance(base_dates, dict) else getattr(base_dates, "start", None)
+    end = base_dates.get("end") if isinstance(base_dates, dict) else getattr(base_dates, "end", None)
 
-    override_dates = fx_cfg.get("override", {}).get("dates", {})
-    start = override_dates.get("start", start)
-    end = override_dates.get("end", end)
+    override = getattr(fx_cfg, "override", {}) or {}
+    override_dates = override.get("dates", {}) if isinstance(override, dict) else getattr(override, "dates", {})
+    if isinstance(override_dates, dict):
+        start = override_dates.get("start", start)
+        end = override_dates.get("end", end)
 
     if start is None or end is None:
         raise ValueError("FX dates could not be resolved (missing start/end).")
@@ -52,23 +54,25 @@ def run_exchange_rates(cfg, parquet_folder: Path):
       Rate = units of ToCurrency per 1 USD  (USD -> Curr)
     """
     out_path = parquet_folder / "exchange_rates.parquet"
-    fx_cfg = cfg["exchange_rates"]
+    fx_cfg = cfg.exchange_rates
 
     # GLOBAL DEFAULTS (supports both `defaults` and `_defaults`)
-    global_defaults = (
-        cfg.get("defaults", {}).get("dates")
-        or cfg.get("_defaults", {}).get("dates")
-    )
+    defaults = cfg.defaults if hasattr(cfg, "defaults") else getattr(cfg, "_defaults", None)
+    if defaults is not None and hasattr(defaults, "dates") and defaults.dates is not None:
+        dates_obj = defaults.dates
+        global_defaults = {"start": dates_obj.start, "end": dates_obj.end}
+    else:
+        global_defaults = None
 
     # Resolve effective FX date window
     start_str, end_str = resolve_fx_dates(fx_cfg, global_defaults)
     start = pd.to_datetime(start_str, errors="raise").date()
     end = pd.to_datetime(end_str, errors="raise").date()
 
-    currencies = fx_cfg["currencies"]
-    base = fx_cfg["base_currency"]
-    master = fx_cfg["master_file"]
-    annual_drift = fx_cfg.get("future_annual_drift", 0.02)
+    currencies = fx_cfg.currencies
+    base = fx_cfg.base_currency
+    master = fx_cfg.master_file
+    annual_drift = fx_cfg.future_annual_drift
 
     # Enforce current supported invariant
     if base != CURRENCY_BASE:
@@ -82,7 +86,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         "currencies": currencies,
         "base": base,
         "master_file": master,
-        "use_global_dates": fx_cfg.get("use_global_dates", False),
+        "use_global_dates": fx_cfg.use_global_dates,
         "start": start_str,
         "end": end_str,
         "future_annual_drift": annual_drift,

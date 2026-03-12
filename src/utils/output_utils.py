@@ -285,28 +285,28 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
     """
     excluded: set[str] = set()
 
-    seg_cfg = cfg.get("customer_segments")
-    if isinstance(seg_cfg, dict):
-        if not bool(seg_cfg.get("enabled", True)):
+    seg_cfg = getattr(cfg, "customer_segments", None)
+    if seg_cfg is not None:
+        if not bool(getattr(seg_cfg, "enabled", True)):
             excluded.add(_DIM_FILE_CUSTOMER_SEGMENT)
             excluded.add(_DIM_FILE_CUSTOMER_SEGMENT_BRIDGE)
-        elif not bool(seg_cfg.get("generate_bridge", True)):
+        elif not bool(getattr(seg_cfg, "generate_bridge", True)):
             excluded.add(_DIM_FILE_CUSTOMER_SEGMENT_BRIDGE)
 
-    sp_cfg = cfg.get("superpowers")
-    if isinstance(sp_cfg, dict):
-        if not bool(sp_cfg.get("enabled", True)):
+    sp_cfg = getattr(cfg, "superpowers", None)
+    if sp_cfg is not None:
+        if not bool(getattr(sp_cfg, "enabled", True)):
             excluded.add(_DIM_FILE_SUPERPOWERS)
             excluded.add(_DIM_FILE_SUPERPOWERS_BRIDGE)
-        elif not bool(sp_cfg.get("generate_bridge", True)):
+        elif not bool(getattr(sp_cfg, "generate_bridge", True)):
             excluded.add(_DIM_FILE_SUPERPOWERS_BRIDGE)
 
-    returns_cfg = cfg.get("returns")
-    returns_on = bool(returns_cfg.get("enabled", False)) if isinstance(returns_cfg, dict) else False
+    returns_cfg = getattr(cfg, "returns", None)
+    returns_on = bool(getattr(returns_cfg, "enabled", False)) if returns_cfg is not None else False
     if returns_on:
-        sales_cfg = cfg.get("sales") or {}
-        skip_order = bool(sales_cfg.get("skip_order_cols", False))
-        sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+        sales_cfg = getattr(cfg, "sales", None) or {}
+        skip_order = bool(getattr(sales_cfg, "skip_order_cols", False))
+        sales_output = str(getattr(sales_cfg, "sales_output", "sales")).strip().lower()
         if skip_order and sales_output == "sales":
             returns_on = False
     if not returns_on:
@@ -370,8 +370,9 @@ def create_final_output_folder(
         now = datetime.now()
         timestamp = now.strftime("%Y-%m-%d %I_%M_%S %p")  # windows-safe
 
-        customer_total = int(cfg.get("customers", {}).get("total_customers", 0) or 0)
-        sales_total = int(sales_cfg.get("total_rows") or 0)
+        _cust = getattr(cfg, "customers", None) or {}
+        customer_total = int(getattr(_cust, "total_customers", 0) or 0)
+        sales_total = int(getattr(sales_cfg, "total_rows", 0) or 0)
 
         dataset_name = (
             f"{timestamp} Customers {format_number_short(customer_total)} "
@@ -395,12 +396,10 @@ def create_final_output_folder(
         # --------------------------------------------------------
         # DIMENSIONS
         # --------------------------------------------------------
-        packaging_cfg = cfg.get("packaging", {}) if isinstance(cfg, dict) else {}
-        dim_parquet_compression: str = packaging_cfg.get("dim_parquet_compression", "snappy")
-        dim_parquet_compression_level: Optional[int] = packaging_cfg.get(
-            "dim_parquet_compression_level", None
-        )
-        dim_force_date32: bool = bool(packaging_cfg.get("dim_force_date32", True))
+        packaging_cfg = cfg.packaging
+        dim_parquet_compression: str = packaging_cfg.dim_parquet_compression
+        dim_parquet_compression_level: Optional[int] = packaging_cfg.dim_parquet_compression_level
+        dim_force_date32: bool = bool(packaging_cfg.dim_force_date32)
 
         parquet_dims = Path(parquet_dims)
         excluded_dims = _excluded_dim_files(cfg)

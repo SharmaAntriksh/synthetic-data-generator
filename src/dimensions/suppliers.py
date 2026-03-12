@@ -20,12 +20,12 @@ def _pick_seed(cfg: Dict[str, Any], sup_cfg: Dict[str, Any], fallback: int = 42)
     Seed precedence (robust to nulls):
       suppliers.override.seed -> suppliers.seed -> defaults.seed -> fallback
     """
-    override = _as_dict(sup_cfg.get("override"))
+    override = _as_dict(getattr(sup_cfg, "override", None))
     seed = override.get("seed")
     if seed is None:
-        seed = sup_cfg.get("seed")
+        seed = getattr(sup_cfg, "seed", None)
     if seed is None:
-        seed = _as_dict(cfg.get("defaults")).get("seed")
+        seed = getattr(getattr(cfg, "defaults", None), "seed", None)
     return _int_or(seed, fallback)
 
 
@@ -172,7 +172,7 @@ def run_suppliers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     - Parquet write
     """
     cfg = cfg or {}
-    sup_cfg = _as_dict(cfg.get("suppliers"))
+    sup_cfg = _as_dict(getattr(cfg, "suppliers", None))
 
     parquet_folder = Path(parquet_folder)
     parquet_folder.mkdir(parents=True, exist_ok=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -126,8 +127,8 @@ def _build_location_maps(geo: pd.DataFrame) -> tuple[dict[int, str], dict[int, s
 
 
 def _require_cfg(cfg: Dict) -> Dict:
-    stores_cfg = cfg.get("stores")
-    if not isinstance(stores_cfg, dict):
+    stores_cfg = cfg.stores if hasattr(cfg, "stores") else None
+    if not isinstance(stores_cfg, Mapping):
         raise ValueError("config missing required block: stores")
     return stores_cfg
 
@@ -858,7 +859,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     geo_keys = geo["GeographyKey"].astype(np.int64).to_numpy()
     loc_short_map, loc_full_map = _build_location_maps(geo)
 
-    ensure_iso_coverage = bool(store_cfg.get("ensure_iso_coverage", False))
+    ensure_iso_coverage = bool(store_cfg.ensure_iso_coverage)
 
     iso_by_geo: Optional[dict[int, str]] = None
     if "ISOCode" in geo.columns:
@@ -885,8 +886,8 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             )
         )
 
-    sqft_cfg = as_dict(store_cfg.get("square_footage"))
-    emp_cfg  = as_dict(store_cfg.get("employee_count"))
+    sqft_cfg = as_dict(store_cfg.square_footage)
+    emp_cfg  = as_dict(store_cfg.employee_count)
 
     version_cfg = dict(store_cfg)
     version_cfg["schema_version"] = 3
@@ -896,13 +897,13 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
         skip("Stores up-to-date")
         return
 
-    compression       = store_cfg.get("parquet_compression", "snappy")
-    compression_level = store_cfg.get("parquet_compression_level", None)
-    force_date32      = bool(store_cfg.get("force_date32", True))
+    compression       = store_cfg.parquet_compression
+    compression_level = store_cfg.parquet_compression_level
+    force_date32      = bool(store_cfg.force_date32)
 
-    opening_cfg = as_dict(store_cfg.get("opening"))
+    opening_cfg = as_dict(store_cfg.opening)
 
-    use_name_pools = bool(store_cfg.get("use_name_pools", True))
+    use_name_pools = bool(store_cfg.use_name_pools)
     people_pools = None
     if use_name_pools:
         people_folder = resolve_people_folder(cfg)
@@ -919,10 +920,10 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     with stage("Generating Stores"):
         df = generate_store_table(
             geo_keys=geo_keys,
-            num_stores=int_or(store_cfg.get("num_stores"), 200),
+            num_stores=int_or(store_cfg.num_stores, 200),
             opening_start=opening_cfg.get("start") or "1995-01-01",
             opening_end=opening_cfg.get("end") or "2020-12-31",
-            closing_end=store_cfg.get("closing_end") or "2025-12-31",
+            closing_end=store_cfg.closing_end or "2025-12-31",
             seed=pick_seed_flat(cfg, store_cfg, fallback=42),
             square_footage_cfg=sqft_cfg,
             employee_count_cfg=emp_cfg,
@@ -932,8 +933,8 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             country_by_geo=country_by_geo,
             ensure_iso_coverage=ensure_iso_coverage,
             people_pools=people_pools,
-            district_size=int_or(store_cfg.get("district_size"), 10),
-            districts_per_region=int_or(store_cfg.get("districts_per_region"), 8),
+            district_size=store_cfg.district_size,
+            districts_per_region=store_cfg.districts_per_region,
         )
 
         write_parquet_with_date32(

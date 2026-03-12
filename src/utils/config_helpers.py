@@ -4,6 +4,7 @@ Shared config-parsing and date-generation helpers used by dimension generators
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Dict, Tuple
 
 import pandas as pd
@@ -24,8 +25,16 @@ from src.utils.logging_utils import warn
 # ---------------------------------------------------------------------------
 
 def as_dict(x: Any) -> Dict[str, Any]:
-    """Return *x* if it is a dict, else an empty dict."""
-    return x if isinstance(x, dict) else {}
+    """Return *x* as a dict. Pydantic models are dumped; Mappings returned as-is; else empty dict."""
+    if x is None:
+        return {}
+    if isinstance(x, dict):
+        return x
+    if hasattr(x, "model_dump"):
+        return x.model_dump()
+    if isinstance(x, Mapping):
+        return dict(x)
+    return {}
 
 
 def int_or(value: Any, default: int) -> int:
@@ -105,14 +114,16 @@ def pick_seed_nested(
 
     Also checks ``_defaults.seed`` for backward compatibility.
     """
-    override = as_dict(local_cfg.get("override"))
-    seed = override.get("seed")
+    override = as_dict(getattr(local_cfg, "override", None))
+    seed = override.get("seed") if isinstance(override, dict) else getattr(override, "seed", None)
     if seed is None:
-        seed = local_cfg.get("seed")
+        seed = getattr(local_cfg, "seed", None)
     if seed is None:
-        seed = as_dict(cfg.get("defaults")).get("seed")
+        defaults = getattr(cfg, "defaults", None)
+        seed = getattr(defaults, "seed", None) if defaults is not None else None
     if seed is None:
-        seed = as_dict(cfg.get("_defaults")).get("seed")
+        _defaults = getattr(cfg, "_defaults", None)
+        seed = getattr(_defaults, "seed", None) if _defaults is not None else None
     return int_or(seed, fallback)
 
 
@@ -122,10 +133,12 @@ def pick_seed_flat(
     fallback: int = 42,
 ) -> int:
     """Resolve seed: ``local_cfg.seed → cfg.seed → fallback``."""
-    if "seed" in local_cfg and local_cfg["seed"] is not None:
-        return int_or(local_cfg["seed"], fallback)
-    if "seed" in cfg and cfg["seed"] is not None:
-        return int_or(cfg["seed"], fallback)
+    local_seed = getattr(local_cfg, "seed", None)
+    if local_seed is not None:
+        return int_or(local_seed, fallback)
+    cfg_seed = getattr(cfg, "seed", None)
+    if cfg_seed is not None:
+        return int_or(cfg_seed, fallback)
     return fallback
 
 
@@ -149,7 +162,12 @@ def parse_global_dates(
     ``local_cfg.override.dates.{start, end}`` (testing escape-hatch).
     """
     if allow_override:
-        ov = as_dict(as_dict(local_cfg.get("override")).get("dates"))
+        _override = getattr(local_cfg, "override", None)
+        if isinstance(_override, dict):
+            _ov_dates = _override.get("dates")
+        else:
+            _ov_dates = getattr(_override, "dates", None) if _override is not None else None
+        ov = as_dict(_ov_dates)
         if ov and ov.get("start") and ov.get("end"):
             gs = pd.to_datetime(ov["start"]).normalize()
             ge = pd.to_datetime(ov["end"]).normalize()
@@ -161,7 +179,9 @@ def parse_global_dates(
                 gs, ge = ge, gs
             return gs, ge
 
-    dd = as_dict(as_dict(cfg.get("defaults")).get("dates"))
+    _defaults = getattr(cfg, "defaults", None)
+    _dates = getattr(_defaults, "dates", None) if _defaults is not None else None
+    dd = as_dict(_dates)
     if dd and dd.get("start") and dd.get("end"):
         gs = pd.to_datetime(dd["start"]).normalize()
         ge = pd.to_datetime(dd["end"]).normalize()

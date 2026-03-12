@@ -101,9 +101,17 @@ def _extract_reasons_from_cfg(cfg: Mapping[str, Any]) -> Optional[Sequence[Any]]
     def _get(path: Sequence[str]) -> Any:
         cur: Any = cfg
         for p in path:
-            if not isinstance(cur, Mapping) or p not in cur:
+            if isinstance(cur, dict):
+                if p not in cur:
+                    return None
+                cur = cur[p]
+            elif isinstance(cur, Mapping):
+                val = getattr(cur, p, None)
+                if val is None:
+                    return None
+                cur = val
+            else:
                 return None
-            cur = cur[p]
         return cur
 
     for path in (
@@ -158,7 +166,7 @@ def run_return_reasons(cfg: Mapping[str, Any], parquet_dims_folder: Path) -> Non
     parquet_dims_folder = Path(parquet_dims_folder)
     parquet_dims_folder.mkdir(parents=True, exist_ok=True)
 
-    dim_cfg = cfg.get("return_reason") if isinstance(cfg, Mapping) else None
+    dim_cfg = getattr(cfg, "return_reason", None) if isinstance(cfg, Mapping) else None
     dim_cfg = dim_cfg if isinstance(dim_cfg, Mapping) else {}
     # Determine reasons + stable expected_config
     raw_reasons = _extract_reasons_from_cfg(cfg) if isinstance(cfg, Mapping) else None

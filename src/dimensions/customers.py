@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Dict, Tuple
 
@@ -141,23 +142,23 @@ def _parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
 
     Returns normalized pandas Timestamps (midnight).
     """
-    cust = cfg.get("customers") or {}
-    if isinstance(cust, dict):
-        gd = cust.get("global_dates")
-        if isinstance(gd, dict) and gd.get("start") and gd.get("end"):
-            start = pd.to_datetime(gd["start"]).normalize()
-            end = pd.to_datetime(gd["end"]).normalize()
+    cust = cfg.customers if hasattr(cfg, "customers") else {}
+    if isinstance(cust, Mapping):
+        gd = cust.global_dates if hasattr(cust, "global_dates") else None
+        if isinstance(gd, Mapping) and getattr(gd, "start", None) and getattr(gd, "end", None):
+            start = pd.to_datetime(gd.start).normalize()
+            end = pd.to_datetime(gd.end).normalize()
             if end < start:
                 raise ValueError("defaults.dates.end must be >= defaults.dates.start")
             return start, end
 
     try:
-        defaults = cfg.get("defaults") or cfg.get("_defaults")
-        if not isinstance(defaults, dict):
+        defaults = cfg.defaults if hasattr(cfg, "defaults") else getattr(cfg, "_defaults", None)
+        if not isinstance(defaults, Mapping):
             raise KeyError("defaults")
-        dcfg = defaults["dates"]
-        start = pd.to_datetime(dcfg["start"]).normalize()
-        end = pd.to_datetime(dcfg["end"]).normalize()
+        dcfg = defaults.dates
+        start = pd.to_datetime(dcfg.start).normalize()
+        end = pd.to_datetime(dcfg.end).normalize()
     except (KeyError, TypeError, ValueError) as e:
         raise ValueError("Missing or invalid defaults.dates.start/end in config.yaml") from e
 
@@ -943,28 +944,28 @@ def _generate_org_profile(
 # Main generator
 # ---------------------------------------------------------
 def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
-    cust_cfg = cfg["customers"]
-    total_customers = int(cust_cfg["total_customers"])
+    cust_cfg = cfg.customers
+    total_customers = int(cust_cfg.total_customers)
     if total_customers <= 0:
         raise ValueError("customers.total_customers must be > 0")
 
-    default_seed = cfg.get("defaults", {}).get("seed", 42)
-    override_seed = (cust_cfg.get("override") or {}).get("seed")
+    default_seed = cfg.defaults.seed if hasattr(cfg, "defaults") else 42
+    override_seed = (cust_cfg.override or {}).get("seed")
     seed = override_seed if override_seed is not None else default_seed
     rng = np.random.default_rng(int(seed))
 
     start_date, end_date = _parse_cfg_dates(cfg)
     start_month0, _end_month0, T = _month_index_space(start_date, end_date)
 
-    active_ratio = cust_cfg.get("active_ratio", 1.0)
+    active_ratio = getattr(cust_cfg, "active_ratio", 1.0)
     if not isinstance(active_ratio, (int, float)) or not (0 < float(active_ratio) <= 1):
         raise ValueError("customers.active_ratio must be a number in the range (0, 1]")
 
-    pct_india = float(cust_cfg["pct_india"])
-    pct_us = float(cust_cfg["pct_us"])
-    pct_eu = float(cust_cfg["pct_eu"])
-    pct_asia = float(cust_cfg.get("pct_asia", 0.0))  # optional; defaults to 0
-    pct_org = float(cust_cfg["pct_org"])
+    pct_india = float(cust_cfg.pct_india)
+    pct_us = float(cust_cfg.pct_us)
+    pct_eu = float(cust_cfg.pct_eu)
+    pct_asia = float(getattr(cust_cfg, "pct_asia", 0.0))  # optional; defaults to 0
+    pct_org = float(cust_cfg.pct_org)
 
     if not np.isfinite(pct_org) or pct_org < 0 or pct_org > 100:
         raise ValueError("customers.pct_org must be a finite number in [0, 100]")
@@ -976,7 +977,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     enable_asia = p_as > 0.0
     people_pools = load_people_pools(names_folder, enable_asia=enable_asia, legacy_support=True)
 
-    geography, _ = load_dimension("geography", parquet_dims_folder, cfg["geography"])
+    geography, _ = load_dimension("geography", parquet_dims_folder, cfg.geography)
     geo_keys = geography["GeographyKey"].to_numpy()
 
     geo_lookup = geography.set_index("GeographyKey")[["City", "State", "Country"]]
@@ -1223,7 +1224,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     # Lifecycle + behavioral knobs
     # -----------------------------------------------------
-    lifecycle_cfg = cust_cfg.get("lifecycle", {}) or {}
+    lifecycle_cfg = getattr(cust_cfg, "lifecycle", {}) or {}
 
     initial_active_raw = lifecycle_cfg.get("initial_active_customers", 0.45) or 0
     initial_active_raw = float(initial_active_raw)
@@ -1286,9 +1287,9 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # -----------------------------------------------------
     # Loyalty tier + acquisition channel
     # -----------------------------------------------------
-    enrich_cfg = (cust_cfg.get("enrichment") or {}) if isinstance(cust_cfg, dict) else {}
-    loyalty_cfg = (enrich_cfg.get("loyalty_tier") or {}) if isinstance(enrich_cfg, dict) else {}
-    acq_cfg = (enrich_cfg.get("acquisition_channel") or {}) if isinstance(enrich_cfg, dict) else {}
+    enrich_cfg = cust_cfg.enrichment or {}
+    loyalty_cfg = (enrich_cfg.get("loyalty_tier") or {}) if isinstance(enrich_cfg, Mapping) else {}
+    acq_cfg = (enrich_cfg.get("acquisition_channel") or {}) if isinstance(enrich_cfg, Mapping) else {}
 
     loyalty_dim = _read_parquet_dim(parquet_dims_folder, "loyalty_tiers")
     acq_dim = _read_parquet_dim(parquet_dims_folder, "customer_acquisition_channels")
@@ -1657,7 +1658,7 @@ def run_customers(cfg: Dict, parquet_folder: Path):
     profile_out_path = parquet_folder / "customer_profile.parquet"
     org_profile_out_path = parquet_folder / "organization_profile.parquet"
 
-    cust_cfg = cfg["customers"]
+    cust_cfg = cfg.customers
 
     version_cfg = dict(cust_cfg)
     version_cfg["_schema_version"] = 5

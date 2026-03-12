@@ -8,6 +8,7 @@ from typing import Mapping
 
 import pytest
 
+from src.engine.config.config_schema import AppConfig, SalesConfig
 from src.utils.static_schemas import (
     STATIC_SCHEMAS,
     DIM_SCHEMAS,
@@ -237,10 +238,10 @@ class TestSQLDDLGeneration:
 
     def test_generate_all_create_tables_files(self, tmp_path):
         """generate_all_create_tables writes two SQL files."""
-        cfg = {
+        cfg = AppConfig.model_validate({
             "sales": {"sales_output": "sales"},
             "dates": {"include": {"calendar": True, "iso": True, "fiscal": True}},
-        }
+        })
         dim_out, fact_out = generate_all_create_tables(
             dim_folder=tmp_path / "dims",
             fact_folder=tmp_path / "facts",
@@ -258,10 +259,10 @@ class TestSQLDDLGeneration:
         assert "[Sales]" in fact_sql
 
     def test_generate_all_create_tables_sales_order_mode(self, tmp_path):
-        cfg = {
+        cfg = AppConfig.model_validate({
             "sales": {"sales_output": "sales_order"},
             "dates": {},
-        }
+        })
         _, fact_out = generate_all_create_tables(
             dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
@@ -271,10 +272,10 @@ class TestSQLDDLGeneration:
         assert "[SalesOrderDetail]" in fact_sql
 
     def test_generate_all_create_tables_both_mode(self, tmp_path):
-        cfg = {
+        cfg = AppConfig.model_validate({
             "sales": {"sales_output": "both"},
             "dates": {},
-        }
+        })
         _, fact_out = generate_all_create_tables(
             dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
@@ -285,11 +286,11 @@ class TestSQLDDLGeneration:
         assert "[SalesOrderDetail]" in fact_sql
 
     def test_generate_all_budget_enabled(self, tmp_path):
-        cfg = {
+        cfg = AppConfig.model_validate({
             "sales": {"sales_output": "sales"},
             "dates": {},
             "budget": {"enabled": True},
-        }
+        })
         _, fact_out = generate_all_create_tables(
             dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
@@ -299,11 +300,11 @@ class TestSQLDDLGeneration:
         assert "[BudgetMonthly]" in fact_sql
 
     def test_generate_all_budget_disabled(self, tmp_path):
-        cfg = {
+        cfg = AppConfig.model_validate({
             "sales": {"sales_output": "sales"},
             "dates": {},
             "budget": {"enabled": False},
-        }
+        })
         _, fact_out = generate_all_create_tables(
             dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
@@ -312,11 +313,11 @@ class TestSQLDDLGeneration:
         assert "BudgetYearly" not in fact_sql
 
     def test_generate_all_inventory_enabled(self, tmp_path):
-        cfg = {
+        cfg = AppConfig.model_validate({
             "sales": {"sales_output": "sales"},
             "dates": {},
             "inventory": {"enabled": True},
-        }
+        })
         _, fact_out = generate_all_create_tables(
             dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
@@ -325,11 +326,11 @@ class TestSQLDDLGeneration:
         assert "[InventorySnapshot]" in fact_sql
 
     def test_generate_all_skips_segments_when_disabled(self, tmp_path):
-        cfg = {
+        cfg = AppConfig.model_validate({
             "sales": {"sales_output": "sales"},
             "dates": {},
             "customer_segments": {"enabled": False},
-        }
+        })
         dim_out, _ = generate_all_create_tables(
             dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
@@ -549,7 +550,7 @@ class TestBulkInsert:
         (sales_dir / "sales_chunk0001.csv").write_text("col1\n1\n")
 
         load_dir = tmp_path / "load"
-        cfg = {"sales": {"sales_output": "sales"}}
+        cfg = AppConfig.model_validate({"sales": {"sales_output": "sales"}})
 
         dims_sql, facts_sql = generate_dims_and_facts_bulk_insert_scripts(
             dims_folder=str(dims_dir),
@@ -723,7 +724,7 @@ class TestDeltaPackager:
         (custom_sales / "_delta_log").mkdir(parents=True)
 
         result = find_delta_table_dir(
-            tmp_path, {"delta_output_folder": str(custom_root)}, "Sales",
+            tmp_path, SalesConfig.model_validate({"delta_output_folder": str(custom_root)}), "Sales",
         )
         assert result == custom_sales
 
@@ -763,14 +764,14 @@ class TestPackageOutputSecurity:
         """final_output_folder with '..' should raise ValueError."""
         from src.engine.packaging.package_output import package_output
 
-        cfg = {
+        cfg = AppConfig.model_validate({
             "final_output_folder": "../../../etc/evil",
             "sales": {"sales_output": "sales"},
-        }
-        sales_cfg = {
+        })
+        sales_cfg = SalesConfig.model_validate({
             "file_format": "csv",
             "total_rows": 100,
-        }
+        })
         with pytest.raises(ValueError, match="must not contain"):
             package_output(cfg, sales_cfg, Path("/tmp/dims"), Path("/tmp/facts"))
 
@@ -778,14 +779,14 @@ class TestPackageOutputSecurity:
         """URL-encoded path traversal should also be caught."""
         from src.engine.packaging.package_output import package_output
 
-        cfg = {
+        cfg = AppConfig.model_validate({
             "final_output_folder": "..%2F..%2Fetc%2Fevil",
             "sales": {"sales_output": "sales"},
-        }
-        sales_cfg = {
+        })
+        sales_cfg = SalesConfig.model_validate({
             "file_format": "csv",
             "total_rows": 100,
-        }
+        })
         # urllib.parse.unquote will decode %2F to / and %2E to .,
         # so "..%2F.." decodes to "../../" which contains ".."
         with pytest.raises(ValueError, match="must not contain"):
@@ -852,45 +853,45 @@ class TestPathUtilities:
         assert result.name == "model.yaml"
 
     def test_tables_from_sales_cfg_sales_mode(self):
-        tables = tables_from_sales_cfg({"sales_output": "sales"})
+        tables = tables_from_sales_cfg(SalesConfig.model_validate({"sales_output": "sales"}))
         assert "Sales" in tables
         assert "SalesOrderDetail" not in tables
 
     def test_tables_from_sales_cfg_sales_order_mode(self):
-        tables = tables_from_sales_cfg({"sales_output": "sales_order"})
+        tables = tables_from_sales_cfg(SalesConfig.model_validate({"sales_output": "sales_order"}))
         assert "Sales" not in tables
         assert "SalesOrderDetail" in tables
         assert "SalesOrderHeader" in tables
 
     def test_tables_from_sales_cfg_both_mode(self):
-        tables = tables_from_sales_cfg({"sales_output": "both"})
+        tables = tables_from_sales_cfg(SalesConfig.model_validate({"sales_output": "both"}))
         assert "Sales" in tables
         assert "SalesOrderDetail" in tables
         assert "SalesOrderHeader" in tables
 
     def test_tables_from_sales_cfg_invalid_mode(self):
         with pytest.raises(ValueError, match="Invalid sales_output"):
-            tables_from_sales_cfg({"sales_output": "invalid"})
+            tables_from_sales_cfg(SalesConfig.model_validate({"sales_output": "invalid"}))
 
     def test_tables_from_sales_cfg_returns_enabled(self):
         tables = tables_from_sales_cfg(
-            {"sales_output": "sales"},
-            cfg={"returns": {"enabled": True}},
+            SalesConfig.model_validate({"sales_output": "sales"}),
+            cfg=AppConfig.model_validate({"returns": {"enabled": True}}),
         )
         assert "SalesReturn" in tables
 
     def test_tables_from_sales_cfg_returns_disabled(self):
         tables = tables_from_sales_cfg(
-            {"sales_output": "sales"},
-            cfg={"returns": {"enabled": False}},
+            SalesConfig.model_validate({"sales_output": "sales"}),
+            cfg=AppConfig.model_validate({"returns": {"enabled": False}}),
         )
         assert "SalesReturn" not in tables
 
     def test_tables_from_sales_cfg_returns_blocked_by_skip_order(self):
         """Returns disabled when skip_order_cols=True and sales_output=sales."""
         tables = tables_from_sales_cfg(
-            {"sales_output": "sales", "skip_order_cols": True},
-            cfg={"returns": {"enabled": True}},
+            SalesConfig.model_validate({"sales_output": "sales", "skip_order_cols": True}),
+            cfg=AppConfig.model_validate({"returns": {"enabled": True}}),
         )
         assert "SalesReturn" not in tables
 
@@ -1041,28 +1042,26 @@ class TestSQLScriptsHelpers:
 
     def test_sales_mode_default(self):
         from src.engine.packaging.sql_scripts import _sales_mode
-        assert _sales_mode({}) == "sales"
+        assert _sales_mode(SalesConfig.model_validate({})) == "sales"
 
     def test_sales_mode_explicit(self):
         from src.engine.packaging.sql_scripts import _sales_mode
-        assert _sales_mode({"sales_output": "sales_order"}) == "sales_order"
+        assert _sales_mode(SalesConfig.model_validate({"sales_output": "sales_order"})) == "sales_order"
 
     def test_budget_enabled_true(self):
         from src.engine.packaging.sql_scripts import _budget_enabled
-        assert _budget_enabled({"budget": {"enabled": True}}) is True
+        assert _budget_enabled(AppConfig.model_validate({"budget": {"enabled": True}})) is True
 
     def test_budget_enabled_false(self):
         from src.engine.packaging.sql_scripts import _budget_enabled
-        assert _budget_enabled({"budget": {"enabled": False}}) is False
+        assert _budget_enabled(AppConfig.model_validate({"budget": {"enabled": False}})) is False
         assert _budget_enabled(None) is False
-        assert _budget_enabled({}) is False
 
     def test_inventory_enabled_true(self):
         from src.engine.packaging.sql_scripts import _inventory_enabled
-        assert _inventory_enabled({"inventory": {"enabled": True}}) is True
+        assert _inventory_enabled(AppConfig.model_validate({"inventory": {"enabled": True}})) is True
 
     def test_inventory_enabled_false(self):
         from src.engine.packaging.sql_scripts import _inventory_enabled
-        assert _inventory_enabled({"inventory": {"enabled": False}}) is False
+        assert _inventory_enabled(AppConfig.model_validate({"inventory": {"enabled": False}})) is False
         assert _inventory_enabled(None) is False
-        assert _inventory_enabled({}) is False
