@@ -109,6 +109,8 @@ class SalesContext:
     date_prob: Any = None
     store_keys: Any = None
     store_eligible_by_month: Any = None
+    store_open_day: Any = None   # np.ndarray[datetime64[D]] indexed by store position
+    store_close_day: Any = None  # np.ndarray[datetime64[D]] indexed by store position
 
     # -- Promotions --
     promo_keys_all: Any = None
@@ -221,6 +223,8 @@ class State(metaclass=_SealableMeta):
     date_prob = None
     store_keys = None
     store_eligible_by_month = None  # list[np.ndarray[int32]]: eligible store keys per month offset
+    store_open_day = None   # np.ndarray[datetime64[D]] indexed by store position
+    store_close_day = None  # np.ndarray[datetime64[D]] indexed by store position
 
     models_cfg = None
     # --------------------------------------------------------------

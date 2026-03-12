@@ -680,6 +680,30 @@ def init_sales_worker(worker_cfg: dict) -> None:
                 store_eligible_by_month[idx] = store_keys  # fallback: all stores
 
     # ------------------------------------------------------------
+    # Day-level store open/close for exact eligibility filtering
+    # Build dense lookup: store_key -> opening/closing day
+    # ------------------------------------------------------------
+    _store_open_day_dense = None
+    _store_close_day_dense = None
+    _raw_open_day = worker_cfg.get("store_open_day")
+    _raw_close_day = worker_cfg.get("store_close_day")
+    if _raw_open_day is not None:
+        _open_d = np.asarray(_raw_open_day, dtype="datetime64[D]")
+        _max_sk = int(store_keys.max()) + 1
+        _FAR_PAST = np.datetime64("1900-01-01", "D")
+        _FAR_FUTURE = np.datetime64("2262-04-11", "D")
+        _store_open_day_dense = np.full(_max_sk, _FAR_PAST, dtype="datetime64[D]")
+        for i, sk in enumerate(store_keys):
+            _store_open_day_dense[int(sk)] = _open_d[i]
+    if _raw_close_day is not None:
+        _close_d = np.asarray(_raw_close_day, dtype="datetime64[D]")
+        _max_sk = int(store_keys.max()) + 1
+        _FAR_FUTURE = np.datetime64("2262-04-11", "D")
+        _store_close_day_dense = np.full(_max_sk, _FAR_FUTURE, dtype="datetime64[D]")
+        for i, sk in enumerate(store_keys):
+            _store_close_day_dense[int(sk)] = _close_d[i]
+
+    # ------------------------------------------------------------
     # Store-product assortment (optional)
     # ------------------------------------------------------------
     _prebuilt_assortment = worker_cfg.get("_prebuilt_store_to_product_rows")
@@ -908,6 +932,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "brand_prob_by_month": brand_prob_by_month,
             "store_keys": store_keys,
             "store_eligible_by_month": store_eligible_by_month,
+            "store_open_day": _store_open_day_dense,
+            "store_close_day": _store_close_day_dense,
             "promo_keys_all": promo_keys_all,
             "promo_start_all": promo_start_all,
             "promo_end_all": promo_end_all,

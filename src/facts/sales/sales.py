@@ -701,9 +701,19 @@ def generate_sales_fact(
     # Store open/close months for eligibility filtering (month-int: months since epoch)
     store_open_month = None
     store_close_month = None
+    # Day-level arrays for exact eligibility (indexed by position in store_keys)
+    store_open_day = None
+    store_close_day = None
+    _FAR_PAST_DAY = np.datetime64("1900-01-01", "D")
+    _FAR_FUTURE_DAY = np.datetime64("2262-04-11", "D")
     if "OpeningDate" in store_df.columns:
         _open_dt = pd.to_datetime(store_df["OpeningDate"]).values.astype("datetime64[M]")
         store_open_month = _open_dt.astype("int64").astype(np.int64)
+        # Day-level: NaT → FAR_PAST (always open)
+        _open_dt_d = pd.to_datetime(store_df["OpeningDate"]).values.astype("datetime64[D]")
+        _open_nat = np.isnat(_open_dt_d)
+        _open_dt_d[_open_nat] = _FAR_PAST_DAY
+        store_open_day = _open_dt_d
     if "ClosingDate" in store_df.columns:
         _close_dt = pd.to_datetime(store_df["ClosingDate"]).values
         _close_nat_mask = np.isnat(_close_dt)
@@ -711,6 +721,10 @@ def generate_sales_fact(
         # NaT → INT64_MAX means "never closed"
         _close_m[_close_nat_mask] = np.iinfo(np.int64).max
         store_close_month = _close_m
+        # Day-level: NaT → FAR_FUTURE (never closed)
+        _close_dt_d = _close_dt.astype("datetime64[D]")
+        _close_dt_d[_close_nat_mask] = _FAR_FUTURE_DAY
+        store_close_day = _close_dt_d
 
     # StoreType map for assortment (StoreKey -> "Supermarket" etc.)
     store_type_map = None
@@ -939,6 +953,8 @@ def generate_sales_fact(
         store_keys=store_keys,
         store_open_month=store_open_month,
         store_close_month=store_close_month,
+        store_open_day=store_open_day,
+        store_close_day=store_close_day,
         promo_keys_all=promo_keys_all,
         promo_start_all=promo_start_all,
         promo_end_all=promo_end_all,

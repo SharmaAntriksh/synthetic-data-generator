@@ -218,6 +218,8 @@ def generate_employee_store_assignments(
     max_non_sales_episodes_frac: float = 0.50,
     movable_sales_per_store: int = 1,
     multi_store_share: Optional[float] = None,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]] = None,
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]] = None,
 ) -> pd.DataFrame:
     """
     Exclusive (non-overlapping) store assignments per employee, with
@@ -313,7 +315,22 @@ def generate_employee_store_assignments(
 
         n_movable = max(0, int(movable_sales_per_store))
 
+        # Determine which stores are active during the dataset window
+        _active_stores = set(all_stores)
+        if store_closing_dates:
+            for sk, cd in store_closing_dates.items():
+                _effective_open = window_start
+                if store_opening_dates and sk in store_opening_dates:
+                    _od = store_opening_dates[sk]
+                    if _od > window_start:
+                        _effective_open = _od
+                if pd.to_datetime(cd).normalize() < _effective_open:
+                    _active_stores.discard(int(sk))
+
         for store in all_stores:
+            # Skip stores closed before the dataset window
+            if int(store) not in _active_stores:
+                continue
             m_store_role = (home_arr == int(store)) & (role_arr == ps_role)
             if not bool(np.any(m_store_role)):
                 continue
@@ -337,7 +354,7 @@ def generate_employee_store_assignments(
             for j in range(n_anchor, n_anchor + n_mover):
                 mover_keys.add(int(cand_ek[j]))
 
-        missing_stores = [int(s) for s in all_stores if int(s) not in anchor_by_store]
+        missing_stores = [int(s) for s in _active_stores if int(s) not in anchor_by_store]
         if missing_stores:
             raise RuntimeError(
                 f"ensure_store_sales_coverage=true but no '{ps_role}' employees "
@@ -417,11 +434,26 @@ def generate_employee_store_assignments(
 
         raw: List[Tuple[pd.Timestamp, int, int, float]] = []
         for store in chosen:
+            # Clamp episode window to the target store's open/close dates
+            ep_start_min = start_min
+            ep_end_max = end_max
+            _sk = int(store)
+            if store_opening_dates and _sk in store_opening_dates:
+                _sod = pd.to_datetime(store_opening_dates[_sk]).normalize()
+                if _sod > ep_start_min:
+                    ep_start_min = _sod
+            if store_closing_dates and _sk in store_closing_dates:
+                _scd = pd.to_datetime(store_closing_dates[_sk]).normalize()
+                if _scd < ep_end_max:
+                    ep_end_max = _scd
+            if ep_end_max < ep_start_min:
+                continue  # store not active during employee's window
+
             dur = int(rng.integers(dmin, dmax + 1))
-            latest_start = (end_max - pd.Timedelta(days=dur - 1)).normalize()
-            if latest_start < start_min:
+            latest_start = (ep_end_max - pd.Timedelta(days=dur - 1)).normalize()
+            if latest_start < ep_start_min:
                 continue
-            s = rand_single_date(rng, start_min, latest_start)
+            s = rand_single_date(rng, ep_start_min, latest_start)
             sec_fte = float(min(tgt_fte, rng.uniform(fmin, fmax)))
             raw.append((s, dur, int(store), sec_fte))
 
@@ -483,21 +515,50 @@ def generate_employee_store_assignments(
         ))
 
     # -----------------------------------------------------------------
+    # Per-employee store opening/closing dates (for clamping assignment windows)
+    # -----------------------------------------------------------------
+    _store_open_ns = None
+    _store_close_ns = None
+    if store_opening_dates:
+        _store_open_ns = np.array([
+            np.datetime64(store_opening_dates.get(int(sk), window_start), "ns")
+            for sk in home_arr
+        ], dtype="datetime64[ns]")
+    if store_closing_dates:
+        _store_close_ns = np.array([
+            np.datetime64(store_closing_dates.get(int(sk), window_end), "ns")
+            for sk in home_arr
+        ], dtype="datetime64[ns]")
+
+    # -----------------------------------------------------------------
     # Vectorized: anchors get a single full-window row
     # -----------------------------------------------------------------
     if bool(ensure_store_sales_coverage) and anchor_keys:
         anchor_mask = np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int32))
         anc_idx = np.where(anchor_mask)[0]
         if anc_idx.size > 0:
-            batch_dfs.append(pd.DataFrame({
-                "EmployeeKey": ek_arr[anc_idx],
-                "StoreKey": home_arr[anc_idx],
-                "StartDate": window_start,
-                "EndDate": window_end,
-                "FTE": target_fte[anc_idx],
-                "RoleAtStore": ps_role,
-                "IsPrimary": True,
-            }))
+            anc_start = np.full(anc_idx.size, window_start, dtype="datetime64[ns]")
+            anc_end = np.full(anc_idx.size, window_end, dtype="datetime64[ns]")
+            if _store_open_ns is not None:
+                anc_start = np.maximum(anc_start, _store_open_ns[anc_idx])
+            if _store_close_ns is not None:
+                anc_end = np.minimum(anc_end, _store_close_ns[anc_idx])
+            # Filter out anchors whose store closed before the dataset window
+            anc_valid = anc_end >= anc_start
+            if not np.all(anc_valid):
+                anc_idx = anc_idx[anc_valid]
+                anc_start = anc_start[anc_valid]
+                anc_end = anc_end[anc_valid]
+            if anc_idx.size > 0:
+                batch_dfs.append(pd.DataFrame({
+                    "EmployeeKey": ek_arr[anc_idx],
+                    "StoreKey": home_arr[anc_idx],
+                    "StartDate": anc_start,
+                    "EndDate": anc_end,
+                    "FTE": target_fte[anc_idx],
+                    "RoleAtStore": ps_role,
+                    "IsPrimary": True,
+                }))
 
     # -----------------------------------------------------------------
     # Vectorized: pre-compute per-employee validity and movement
@@ -517,10 +578,18 @@ def generate_employee_store_assignments(
     gen_start_all = np.maximum(hire_ns, ws_np)
     plan_end_all = np.minimum(term_filled_ns, we_np)
 
+    # Clamp assignment start to store opening, end to store closing
+    if _store_open_ns is not None:
+        gen_start_all = np.maximum(gen_start_all, _store_open_ns)
+    if _store_close_ns is not None:
+        plan_end_all = np.minimum(plan_end_all, _store_close_ns)
+
     valid &= (plan_end_all >= gen_start_all) & (gen_start_all <= we_np)
 
     open_ended_all = np.isnat(term_ns) | (term_ns > we_np)
     end_date_all = np.where(open_ended_all, we_np, np.minimum(term_ns, we_np))
+    if _store_close_ns is not None:
+        end_date_all = np.minimum(end_date_all, _store_close_ns)
 
     # Build per-role profile lookup (few unique roles, so dict lookup is fine)
     _role_cache: Dict[str, Dict[str, Any]] = {}
@@ -707,7 +776,11 @@ def generate_employee_store_assignments(
     out["AssignmentSequence"] = out.groupby("EmployeeKey").cumcount().astype(np.int32) + 1
 
     if bool(ensure_store_sales_coverage):
-        _validate_store_coverage(out, ps_role, all_stores, window_start, window_end)
+        _validate_store_coverage(
+            out, ps_role, all_stores, window_start, window_end,
+            store_opening_dates=store_opening_dates,
+            store_closing_dates=store_closing_dates,
+        )
 
     return out
 
@@ -718,14 +791,36 @@ def _validate_store_coverage(
     all_stores: List[int],
     window_start: pd.Timestamp,
     window_end: pd.Timestamp,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]] = None,
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]] = None,
 ) -> None:
     """Raise if any store has a coverage gap for the sales-eligible role."""
+    ws = np.datetime64(window_start, "D")
+    we = np.datetime64(window_end, "D")
+
+    # Build set of stores active during the dataset window
+    # (exclude stores that closed before the window started)
+    active_stores = []
+    for s in all_stores:
+        s_ws = ws
+        s_we = we
+        if store_opening_dates and s in store_opening_dates:
+            _od = np.datetime64(store_opening_dates[s], "D")
+            if _od > s_ws:
+                s_ws = _od
+        if store_closing_dates and s in store_closing_dates:
+            _cd = np.datetime64(store_closing_dates[s], "D")
+            if _cd < s_we:
+                s_we = _cd
+        if s_we >= s_ws:
+            active_stores.append(s)
+
     df_cov = out[out["RoleAtStore"].astype(str) == ps_role].copy()
 
     if df_cov.empty:
-        if all_stores:
+        if active_stores:
             sample = "\n".join(
-                f"StoreKey={s}: no '{ps_role}' assignments" for s in all_stores[:10]
+                f"StoreKey={s}: no '{ps_role}' assignments" for s in active_stores[:10]
             )
             raise RuntimeError(
                 "EmployeeStoreAssignments coverage gaps detected (sales-eligible role). "
@@ -739,7 +834,7 @@ def _validate_store_coverage(
     covered = set(df_cov["StoreKey"].unique())
     gaps: list[str] = [
         f"StoreKey={s}: no '{ps_role}' assignments"
-        for s in all_stores if s not in covered
+        for s in active_stores if s not in covered
     ]
 
     # Sort once, then walk through pre-grouped segments
@@ -760,9 +855,25 @@ def _validate_store_coverage(
         seg_s = starts[gs:ge]
         seg_e = ends[gs:ge]
 
+        # Per-store expected window: use store opening/closing dates if available
+        store_ws = ws
+        store_we = we
+        if store_opening_dates and store in store_opening_dates:
+            _od = np.datetime64(store_opening_dates[store], "D")
+            if _od > store_ws:
+                store_ws = _od
+        if store_closing_dates and store in store_closing_dates:
+            _cd = np.datetime64(store_closing_dates[store], "D")
+            if _cd < store_we:
+                store_we = _cd
+
+        # Skip stores that closed before the dataset window started
+        if store_we < store_ws:
+            continue
+
         # Merge overlapping/adjacent, then check coverage
         cur_ms, cur_me = seg_s[0], seg_e[0]
-        cur = ws
+        cur = store_ws
         gap_found = False
         for j in range(1, ge - gs):
             if seg_s[j] <= cur_me + one_day:
@@ -774,7 +885,7 @@ def _validate_store_coverage(
                 elif cur_ms > cur:
                     gaps.append(
                         f"StoreKey={store} gap "
-                        f"{cur}..{min(cur_ms - one_day, we)}"
+                        f"{cur}..{min(cur_ms - one_day, store_we)}"
                     )
                     gap_found = True
                     break
@@ -787,11 +898,11 @@ def _validate_store_coverage(
             if cur_me >= cur and cur_ms <= cur:
                 cur = cur_me + one_day
             elif cur_ms > cur:
-                gaps.append(f"StoreKey={store} gap {cur}..{min(cur_ms - one_day, we)}")
+                gaps.append(f"StoreKey={store} gap {cur}..{min(cur_ms - one_day, store_we)}")
                 continue
 
-            if cur <= we:
-                gaps.append(f"StoreKey={store} gap {cur}..{we}")
+            if cur <= store_we:
+                gaps.append(f"StoreKey={store} gap {cur}..{store_we}")
 
     if gaps:
         sample = "\n".join(gaps[:10])
@@ -856,6 +967,28 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
     role_profiles = as_dict(a_cfg.get("role_profiles"))
 
+    # Read store opening/closing dates for assignment window clamping
+    stores_path = parquet_folder / "stores.parquet"
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]] = None
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]] = None
+    if stores_path.exists():
+        try:
+            _stores_df = pd.read_parquet(stores_path, columns=["StoreKey", "OpeningDate", "ClosingDate"])
+        except (KeyError, ValueError):
+            _stores_df = None
+        if _stores_df is not None:
+            _sk_arr = _stores_df["StoreKey"].astype(np.int32).to_numpy()
+            if "OpeningDate" in _stores_df.columns:
+                _od = pd.to_datetime(_stores_df["OpeningDate"], errors="coerce").dt.normalize()
+                store_opening_dates = {
+                    int(sk): ts for sk, ts in zip(_sk_arr, _od) if pd.notna(ts)
+                }
+            if "ClosingDate" in _stores_df.columns:
+                _cd = pd.to_datetime(_stores_df["ClosingDate"], errors="coerce").dt.normalize()
+                store_closing_dates = {
+                    int(sk): ts for sk, ts in zip(_sk_arr, _cd) if pd.notna(ts)
+                }
+
     with stage("Generating Employee Store Assignments"):
         df = generate_employee_store_assignments(
             employees=employees,
@@ -884,6 +1017,8 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
             multi_store_share=(
                 a_cfg.get("multi_store_share") if "multi_store_share" in a_cfg else None
             ),
+            store_opening_dates=store_opening_dates,
+            store_closing_dates=store_closing_dates,
         )
 
         write_parquet_with_date32(

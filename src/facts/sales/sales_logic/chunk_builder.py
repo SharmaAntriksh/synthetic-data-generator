@@ -697,6 +697,8 @@ def build_chunk_table(
     date_prob = State.date_prob
     store_keys = State.store_keys
     store_eligible_by_month = State.store_eligible_by_month
+    store_open_day = State.store_open_day      # dense array: store_key -> datetime64[D]
+    store_close_day = State.store_close_day    # dense array: store_key -> datetime64[D]
 
     promo_keys_all = State.promo_keys_all
     promo_start_all = State.promo_start_all
@@ -1033,6 +1035,59 @@ def build_chunk_table(
             store_key_arr = order_store[order_idx]
         else:
             store_key_arr = _month_stores[rng.integers(0, len(_month_stores), size=n_lines)]
+
+        # --------------------------------------------------------
+        # DAY-LEVEL STORE ELIGIBILITY: resample stores that have
+        # order dates before opening or after closing.
+        # This only fires in the first/last month of a store's life.
+        # --------------------------------------------------------
+        if store_open_day is not None:
+            _max_sk_d = len(store_open_day)
+            # order_dates aligns with store_key_arr (both n_lines elements)
+            _line_dates_d = np.asarray(order_dates, dtype="datetime64[D]")
+            _sk_i = store_key_arr.astype(np.int32)
+            # Vectorized check: is each row's store valid for its date?
+            _sk_clipped = np.clip(_sk_i, 0, _max_sk_d - 1)
+            _open_for_row = store_open_day[_sk_clipped]
+            _bad = _line_dates_d < _open_for_row
+            if store_close_day is not None:
+                _max_sk_c = len(store_close_day)
+                _sk_clipped_c = np.clip(_sk_i, 0, _max_sk_c - 1)
+                _close_for_row = store_close_day[_sk_clipped_c]
+                _bad |= _line_dates_d > _close_for_row
+            _n_bad = int(_bad.sum())
+            if _n_bad > 0:
+                # Resample invalid stores: for each bad row, pick from
+                # ALL stores that are open on that specific date (not just
+                # month-eligible ones, to avoid empty fallbacks).
+                _bad_idx = np.where(_bad)[0]
+                _bad_dates = _line_dates_d[_bad_idx]
+                _unique_bad_dates = np.unique(_bad_dates)
+                for _bd in _unique_bad_dates:
+                    _date_mask = _bad_dates == _bd
+                    _date_rows = _bad_idx[_date_mask]
+                    # Filter ALL stores by day (not just month stores)
+                    _all_open = store_open_day[np.clip(store_keys.astype(np.int32), 0, _max_sk_d - 1)]
+                    _day_ok = _all_open <= _bd
+                    if store_close_day is not None:
+                        _all_close = store_close_day[np.clip(store_keys.astype(np.int32), 0, _max_sk_c - 1)]
+                        _day_ok &= _all_close >= _bd
+                    _day_stores = store_keys[_day_ok]
+                    if _day_stores.size == 0:
+                        _day_stores = store_keys  # last-resort fallback
+                    # Order-level consistency: all lines of the same order
+                    # must share the same replacement store.
+                    if order_idx is not None:
+                        _bad_order_ids = order_idx[_date_rows]
+                        _unique_orders = np.unique(_bad_order_ids)
+                        for _oid in _unique_orders:
+                            _order_line_mask = order_idx[_date_rows] == _oid
+                            _replacement = _day_stores[rng.integers(0, len(_day_stores))]
+                            store_key_arr[_date_rows[_order_line_mask]] = _replacement
+                    else:
+                        store_key_arr[_date_rows] = _day_stores[
+                            rng.integers(0, len(_day_stores), size=len(_date_rows))
+                        ]
 
         # --------------------------------------------------------
         # PRODUCTS (PER LINE) — each line gets its own product

@@ -318,6 +318,7 @@ def generate_employee_dimension(
     min_primary_sales_per_store: int = 1,
     ensure_store_sales_coverage: bool = False,
     store_manager_names: dict[int, str] | None = None,
+    store_opening_dates: dict[int, pd.Timestamp] | None = None,
 ) -> pd.DataFrame:
     """
     Build a parent-child employee hierarchy with stable keys.
@@ -597,14 +598,56 @@ def generate_employee_dimension(
     is_sales_associate = (ek_all >= STAFF_KEY_BASE) & (df["Title"].astype(str) == ps_role_str)
     sa_mask_np = is_sales_associate.to_numpy()
 
-    # Hire dates: SAs hired before dataset start; everyone else random
+    # Hire dates: SAs hired before their store opens (or dataset start);
+    # everyone else random within the general window.
     hire_start_general = global_start - pd.Timedelta(days=365 * 5)
     hire_dates = rand_dates_between(rng, hire_start_general, global_end, n)
 
     n_sa = int(sa_mask_np.sum())
     if n_sa > 0:
-        sa_hire = rand_dates_between(rng, hire_start_general, global_start, n_sa)
-        hire_dates.iloc[sa_mask_np] = sa_hire.to_numpy()
+        if store_opening_dates:
+            # Per-SA upper bound: min(global_start, store_opening_date)
+            sa_store_keys = pd.to_numeric(
+                df.loc[sa_mask_np, "StoreKey"], errors="coerce"
+            ).fillna(0).astype(np.int32).to_numpy()
+            sa_upper = np.array([
+                min(global_start, store_opening_dates.get(int(sk), global_start))
+                for sk in sa_store_keys
+            ], dtype="datetime64[ns]")
+            # Clamp: upper must be >= hire_start_general
+            sa_lower = np.full(n_sa, hire_start_general, dtype="datetime64[ns]")
+            sa_upper = np.maximum(sa_upper, sa_lower + np.timedelta64(1, "D"))
+            # Vectorized random hire dates per-SA
+            lo_i = sa_lower.astype("int64")
+            hi_i = sa_upper.astype("int64")
+            sa_hire_i = rng.integers(lo_i, hi_i + 1, dtype=np.int64)
+            hire_dates.iloc[sa_mask_np] = pd.to_datetime(
+                sa_hire_i, unit="ns"
+            ).normalize().to_numpy()
+        else:
+            sa_hire = rand_dates_between(rng, hire_start_general, global_start, n_sa)
+            hire_dates.iloc[sa_mask_np] = sa_hire.to_numpy()
+
+    # Store managers: hire before their store opens
+    if store_opening_dates:
+        mgr_mask_np = (df["Title"].astype(str) == "Store Manager").to_numpy()
+        n_mgr = int(mgr_mask_np.sum())
+        if n_mgr > 0:
+            mgr_store_keys = pd.to_numeric(
+                df.loc[mgr_mask_np, "StoreKey"], errors="coerce"
+            ).fillna(0).astype(np.int32).to_numpy()
+            mgr_upper = np.array([
+                min(global_end, store_opening_dates.get(int(sk), global_end))
+                for sk in mgr_store_keys
+            ], dtype="datetime64[ns]")
+            mgr_lower = np.full(n_mgr, hire_start_general, dtype="datetime64[ns]")
+            mgr_upper = np.maximum(mgr_upper, mgr_lower + np.timedelta64(1, "D"))
+            lo_i = mgr_lower.astype("int64")
+            hi_i = mgr_upper.astype("int64")
+            mgr_hire_i = rng.integers(lo_i, hi_i + 1, dtype=np.int64)
+            hire_dates.iloc[mgr_mask_np] = pd.to_datetime(
+                mgr_hire_i, unit="ns"
+            ).normalize().to_numpy()
 
     df["HireDate"] = hire_dates
 
@@ -759,7 +802,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     _STORES_READ_COLS = [
         "StoreKey", "GeographyKey", "EmployeeCount", "StoreType",
-        "StoreDistrict", "StoreRegion", "StoreManager",
+        "StoreDistrict", "StoreRegion", "StoreManager", "OpeningDate",
     ]
     try:
         stores = pd.read_parquet(stores_path, columns=_STORES_READ_COLS)
@@ -823,6 +866,16 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         store_manager_names = dict(zip(_sk.tolist(), _nm.tolist()))
         stores = stores.drop(columns=["StoreManager"], errors="ignore")
 
+    # Build StoreKey → OpeningDate mapping for hire date clamping
+    store_opening_dates: dict[int, pd.Timestamp] | None = None
+    if "OpeningDate" in stores.columns:
+        _od = pd.to_datetime(stores["OpeningDate"], errors="coerce").dt.normalize()
+        _sk_od = stores["StoreKey"].astype(np.int32).to_numpy()
+        store_opening_dates = {
+            int(sk): ts for sk, ts in zip(_sk_od, _od) if pd.notna(ts)
+        }
+        stores = stores.drop(columns=["OpeningDate"], errors="ignore")
+
     with stage("Generating Employees"):
         sa_cfg = emp_cfg.store_assignments
         primary_sales_role = str(sa_cfg.primary_sales_role or "Sales Associate")
@@ -848,6 +901,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             min_primary_sales_per_store=min_primary_sales_per_store,
             ensure_store_sales_coverage=ensure_store_sales_coverage,
             store_manager_names=store_manager_names,
+            store_opening_dates=store_opening_dates,
         )
 
         hr_cfg = emp_cfg.hr
