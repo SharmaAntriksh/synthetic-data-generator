@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils import info, warn, skip, stage
-from src.utils.config_helpers import int_or as _int_or, bool_or as _bool_or
+from src.utils.config_helpers import int_or as _int_or, bool_or as _bool_or, as_dict
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 
@@ -668,8 +668,11 @@ def generate_date_table(
     # ------------------------------------------------------------------
     as_of = _safe_parse_as_of(as_of_date, fallback=end_date)
     # Clamp as_of into the generated date window to keep offsets meaningful.
-    if as_of < start_date or as_of > end_date:
-        warn(f"Dates: as_of_date {as_of.date()} outside [{start_date.date()}..{end_date.date()}], clamping to {end_date.date()}")
+    if as_of < start_date:
+        warn(f"Dates: as_of_date {as_of.date()} before start_date {start_date.date()}, clamping to {start_date.date()}")
+        as_of = start_date
+    elif as_of > end_date:
+        warn(f"Dates: as_of_date {as_of.date()} after end_date {end_date.date()}, clamping to {end_date.date()}")
         as_of = end_date
 
     df["IsToday"] = (df["Date"] == as_of).astype(np.int8)
@@ -757,8 +760,8 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
         getattr(getattr(cfg, "_defaults", None), "dates", None)
     ) or {}
 
-    version_cfg = dict(dates_cfg)
-    version_cfg["global_dates"] = defaults_dates
+    version_cfg = as_dict(dates_cfg)
+    version_cfg["global_dates"] = as_dict(defaults_dates) if defaults_dates else {}
 
     if not should_regenerate("dates", version_cfg, out_path):
         skip("Dates up-to-date")

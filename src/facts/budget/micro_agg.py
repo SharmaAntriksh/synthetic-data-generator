@@ -43,9 +43,14 @@ def _extract_dimension_columns(
     year = (m_int // 12 + 1970).astype(np.int32)
     month = (m_int % 12 + 1).astype(np.int32)
 
-    # Channels: remap to 0-based dense index
+    # Channels: remap to 0-based dense index (with bounds check)
     channel_uniq = np.unique(channel_raw)
     n_ch = int(channel_uniq.size)
+    if n_ch == 0:
+        raise ValueError("Budget micro-agg: no channel keys found in chunk")
+    ch_min = int(channel_uniq.min())
+    if ch_min < 0:
+        raise ValueError(f"Budget micro-agg: negative channel key {ch_min}")
     ch_max = int(channel_uniq.max()) + 1
     ch_remap = np.zeros(ch_max, dtype=np.int32)
     ch_remap[channel_uniq] = np.arange(n_ch, dtype=np.int32)
@@ -229,9 +234,10 @@ def micro_aggregate_returns(
     sorted_keys = sales_key[sort_idx]
     positions = np.searchsorted(sorted_keys, ret_key)
 
-    # Clamp and validate matches
-    positions = np.clip(positions, 0, len(sorted_keys) - 1)
-    matched = sorted_keys[positions] == ret_key
+    # Validate matches: positions can be == len(sorted_keys) for keys beyond max
+    in_bounds = positions < len(sorted_keys)
+    positions = np.clip(positions, 0, max(len(sorted_keys) - 1, 0))
+    matched = in_bounds & (sorted_keys[positions] == ret_key)
     if not matched.any():
         return None
 

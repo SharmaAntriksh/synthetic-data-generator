@@ -42,7 +42,11 @@ def _get_effective_dates(cfg: Dict, ex_cfg: Dict) -> Dict:
         ) or {}
         return defaults_dates if isinstance(defaults_dates, Mapping) else {}
     else:
-        override_dates = (getattr(getattr(ex_cfg, "override", None) or {}, "dates", None)) or {}
+        override = getattr(ex_cfg, "override", None) or {}
+        if isinstance(override, dict):
+            override_dates = override.get("dates", None) or {}
+        else:
+            override_dates = getattr(override, "dates", None) or {}
         return override_dates if isinstance(override_dates, Mapping) else {}
 
 

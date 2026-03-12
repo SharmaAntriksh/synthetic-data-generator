@@ -127,6 +127,15 @@ _DEFAULT_ARCHETYPE: dict = {
     "ln": ["Core", "Essentials"],
 }
 
+# Validate all archetype material weight arrays sum to ~1.0 at import time
+for _sc_name, _arch in list(_SUBCATEGORY_ARCHETYPES.items()) + [("_DEFAULT", _DEFAULT_ARCHETYPE)]:
+    _mw_sum = float(sum(_arch["mw"]))
+    if abs(_mw_sum - 1.0) > 1e-6:
+        raise ValueError(f"product_profile._SUBCATEGORY_ARCHETYPES[{_sc_name!r}].mw sums to {_mw_sum}, expected 1.0")
+    if len(_arch["mat"]) != len(_arch["mw"]):
+        raise ValueError(f"product_profile._SUBCATEGORY_ARCHETYPES[{_sc_name!r}] mat/mw length mismatch")
+del _sc_name, _arch, _mw_sum
+
 _SIZE_DIMS: dict[str, dict] = {
     "xs":      {"L": (3, 15),   "W": (2, 10),   "H": (1, 8)},
     "sm":      {"L": (10, 40),  "W": (8, 30),   "H": (3, 25)},
@@ -238,6 +247,7 @@ def _enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, outpu
         m_list, m_w = arch["mat"], arch["mw"]
         cum = np.cumsum(m_w, dtype=np.float64)
         cum /= cum[-1]
+        cum[-1] = 1.0
         idx = np.clip(np.searchsorted(cum, u_mat[mask]), 0, len(m_list) - 1)
         mat[mask] = np.array(m_list, dtype=object)[idx]
         # Style (uniform selection)
@@ -519,13 +529,17 @@ def _enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, outpu
     for mat_key, probs in _COO_PROBS_BY_MATERIAL.items():
         mask = (~assigned) & (mat_vals == mat_key)
         if mask.any():
-            cum = np.cumsum(probs)
+            cum = np.cumsum(probs, dtype=np.float64)
+            cum /= cum[-1]
+            cum[-1] = 1.0
             idx = np.searchsorted(cum, u_coo[mask])
             idx = np.clip(idx, 0, len(_COUNTRY_OF_ORIGIN) - 1)
             coo[mask] = np.array(_COUNTRY_OF_ORIGIN)[idx]
             assigned[mask] = True
     if (~assigned).any():
-        cum = np.cumsum(_COO_DEFAULT_PROBS)
+        cum = np.cumsum(_COO_DEFAULT_PROBS, dtype=np.float64)
+        cum /= cum[-1]
+        cum[-1] = 1.0
         idx = np.searchsorted(cum, u_coo[~assigned])
         idx = np.clip(idx, 0, len(_COUNTRY_OF_ORIGIN) - 1)
         coo[~assigned] = np.array(_COUNTRY_OF_ORIGIN)[idx]

@@ -179,7 +179,7 @@ def compute_inventory_snapshots(
     d_encoded = d_yr * np.int32(12) + d_mo
     d_month_idx = np.searchsorted(month_keys_encoded, d_encoded).astype(np.int32)
 
-    valid = d_pair_idx >= 0
+    valid = (d_pair_idx >= 0) & (d_month_idx >= 0) & (d_month_idx < n_months)
     np.add.at(demand_matrix, (d_pair_idx[valid], d_month_idx[valid]), d_qty[valid])
 
     # Filter to pairs with recurring demand (stocked assortment items)
@@ -341,7 +341,9 @@ def compute_inventory_snapshots(
     # active[i] tracks whether pair i has been activated (first sale reached)
     active_mask = np.zeros((n_pairs, n_months), dtype=bool)
 
-    pending = np.zeros((n_pairs, n_months + 60), dtype=np.int32)
+    # Buffer for future replenishment arrivals: derived from max lead time + jitter headroom
+    max_lead_buffer = max(int(attr_lead_months.max()) * 2, 12) if n_pairs > 0 else 12
+    pending = np.zeros((n_pairs, n_months + max_lead_buffer), dtype=np.int32)
 
     qoh = np.zeros(n_pairs, dtype=np.int32)
 
@@ -372,6 +374,8 @@ def compute_inventory_snapshots(
 
         # Seasonal reorder point: boost threshold during peak months
         cal_month = int(months_arr[t])
+        if not (1 <= cal_month <= 12):
+            raise ValueError(f"Inventory engine: invalid calendar month {cal_month} at timeline index {t}")
         effective_reorder_pt = (attr_reorder_pt * seasonal_mult_table[cal_month]).astype(np.int32)
 
         reorder_mask = (qoh <= effective_reorder_pt) & is_active
@@ -400,7 +404,7 @@ def compute_inventory_snapshots(
         out_qoh[:, t] = qoh
         out_reorder[:, t] = reorder_mask.astype(np.int8)
         out_stockout[:, t] = stockout_mask.astype(np.int8)
-        out_days_oos[:, t] = days_oos.astype(np.int8)
+        out_days_oos[:, t] = np.clip(days_oos, 0, 127).astype(np.int8)
 
     # ------------------------------------------------------------------
     # 7. Flatten to DataFrame (only active cells)

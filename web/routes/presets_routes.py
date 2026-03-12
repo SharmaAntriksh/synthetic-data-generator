@@ -43,5 +43,6 @@ def apply_preset_route(body: PresetApply):
         raise HTTPException(400, "Presets module not available")
     if body.name not in PRESETS:
         raise HTTPException(404, f"Unknown preset: {body.name}")
-    apply_preset(_state._cfg, _base_config, body.name)
+    with _state._cfg_lock:
+        apply_preset(_state._cfg, _base_config, body.name)
     return {"ok": True, "applied": body.name}

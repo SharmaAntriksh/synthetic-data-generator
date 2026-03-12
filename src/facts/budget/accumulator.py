@@ -85,9 +85,19 @@ class BudgetAccumulator:
             as_index=False,
         ).agg({"sales_amount": "sum", "sales_qty": "sum"})
 
-        # Map ids back to labels
-        monthly["Country"] = self._country_labels[monthly["country_id"].to_numpy()]
-        monthly["Category"] = self._category_labels[monthly["category_id"].to_numpy()]
+        # Map ids back to labels (with bounds check)
+        country_ids = monthly["country_id"].to_numpy()
+        category_ids = monthly["category_id"].to_numpy()
+        if country_ids.size > 0 and int(country_ids.max()) >= len(self._country_labels):
+            raise IndexError(
+                f"country_id {int(country_ids.max())} >= country_labels length {len(self._country_labels)}"
+            )
+        if category_ids.size > 0 and int(category_ids.max()) >= len(self._category_labels):
+            raise IndexError(
+                f"category_id {int(category_ids.max())} >= category_labels length {len(self._category_labels)}"
+            )
+        monthly["Country"] = self._country_labels[country_ids]
+        monthly["Category"] = self._category_labels[category_ids]
         monthly.rename(columns={
             "year": "Year",
             "month": "Month",

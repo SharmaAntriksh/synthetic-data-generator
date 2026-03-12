@@ -91,11 +91,17 @@ def str_or(v: Any, default: str) -> str:
 
 def range2(v: Any, default_lo: float, default_hi: float) -> Tuple[float, float]:
     """Parse a 2-element list/tuple ``[lo, hi]``; ensures *hi >= lo*."""
+    import math
     lo = default_lo
     hi = default_hi
     if isinstance(v, (list, tuple)) and len(v) >= 2:
         lo = float_or(v[0], default_lo)
         hi = float_or(v[1], default_hi)
+    # Guard against NaN/Inf from malformed config
+    if not math.isfinite(lo):
+        lo = default_lo
+    if not math.isfinite(hi):
+        hi = default_hi
     if hi < lo:
         lo, hi = hi, lo
     return lo, hi

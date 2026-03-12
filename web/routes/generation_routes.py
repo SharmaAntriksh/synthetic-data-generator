@@ -136,13 +136,6 @@ def _run_pipeline_thread(job: dict, cfg_snapshot: dict, models_snapshot: dict, r
             with open(models_path, "w", encoding="utf-8") as f:
                 yaml.safe_dump(models_snapshot, f, sort_keys=False)
 
-            if req.only and req.only not in _VALID_ONLY:
-                raise HTTPException(400, f"Invalid 'only' value: {req.only}. Must be one of {_VALID_ONLY}")
-            if req.regen_dimensions:
-                invalid = set(req.regen_dimensions) - _VALID_REGEN
-                if invalid:
-                    raise HTTPException(400, f"Invalid regen_dimensions: {invalid}. Must be from {_VALID_REGEN}")
-
             cmd = [
                 sys.executable, "-u", str(REPO_ROOT / "main.py"),
                 "--config", str(cfg_path),
@@ -181,6 +174,13 @@ def _run_pipeline_thread(job: dict, cfg_snapshot: dict, models_snapshot: dict, r
 
 @router.post("/generate")
 def start_generate(req: GenerateRequest):
+    # Validate request before starting thread (HTTPException can't be returned from threads)
+    if req.only and req.only not in _VALID_ONLY:
+        raise HTTPException(400, f"Invalid 'only' value: {req.only}. Must be one of {_VALID_ONLY}")
+    if req.regen_dimensions:
+        invalid = set(req.regen_dimensions) - _VALID_REGEN
+        if invalid:
+            raise HTTPException(400, f"Invalid regen_dimensions: {invalid}. Must be from {_VALID_REGEN}")
     with _job_lock:
         if _state._current_job and _state._current_job["status"] == "running":
             raise HTTPException(409, "A pipeline is already running.")
@@ -204,7 +204,8 @@ async def stream_logs():
     async def event_stream():
         idx = 0
         while True:
-            job = _state._current_job
+            with _job_lock:
+                job = _state._current_job
             if job is None:
                 yield f"data: {_json.dumps({'type': 'idle'})}\n\n"
                 break
@@ -237,9 +238,10 @@ def cancel_generate():
 
 @router.get("/generate/status")
 def job_status():
-    if not _state._current_job:
+    with _job_lock:
+        job = _state._current_job
+    if not job:
         return {"status": "idle"}
-    job = _state._current_job
     elapsed = time.time() - job["started"] if job["status"] == "running" else job.get("elapsed", 0)
     return {
         "id": job["id"], "status": job["status"],

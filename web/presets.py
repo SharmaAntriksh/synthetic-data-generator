@@ -96,8 +96,11 @@ PRESETS: Dict[str, Dict[str, Any]] = {
 def apply_preset(cfg, base_loader, preset_name: str) -> None:
     preset = PRESETS[preset_name]
 
+    base = base_loader()
+    # Reset config from base. Use clear+update which works on both
+    # Pydantic models (via _MutationMixin) and plain dicts.
     cfg.clear()
-    cfg.update(base_loader())
+    cfg.update(base)
 
     # Pydantic models have defaults for all sections, so setdefault is not needed.
     # Use attribute access for reads and writes on Pydantic config models.

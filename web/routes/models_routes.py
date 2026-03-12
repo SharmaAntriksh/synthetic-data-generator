@@ -46,7 +46,9 @@ def _models_root() -> dict:
 @router.get("")
 def get_models():
     """Return the current models YAML as raw text for the editor."""
-    return Response(content=_state._models_yaml_text, media_type="text/plain")
+    with _state._cfg_lock:
+        text = _state._models_yaml_text
+    return Response(content=text, media_type="text/plain")
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +93,13 @@ def reset_models():
 @router.get("/form")
 def get_models_form():
     """Flat form fields for the models visual editor."""
-    m = _models_root()
+    import copy
+    with _state._cfg_lock:
+        models_copy = copy.deepcopy(_state._models_cfg)
+    # Use copy instead of live state to avoid races
+    m = models_copy.get("models") if isinstance(models_copy, dict) else models_copy
+    if not isinstance(m, dict):
+        m = models_copy
     md = _g(m, "macro_demand", default={})
     ylf = _g(md, "year_level_factors", default={})
     qty = _g(m, "quantity", default={})

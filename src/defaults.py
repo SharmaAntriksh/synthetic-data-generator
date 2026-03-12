@@ -447,5 +447,37 @@ def _validate_probability_arrays() -> None:
                     f"defaults.{name}[{i}] probabilities sum to {total}, expected 1.0"
                 )
 
+    # Validate dict-of-tuple probability structures (choices, probs)
+    _TUPLE_PROB_DICTS = {
+        "STORE_FORMATS": STORE_FORMATS,
+        "STORE_OWNERSHIP_TYPES": STORE_OWNERSHIP_TYPES,
+    }
+    for name, d in _TUPLE_PROB_DICTS.items():
+        for key, (choices, probs) in d.items():
+            total = float(sum(probs))
+            if abs(total - 1.0) > 1e-6:
+                raise ValueError(
+                    f"defaults.{name}[{key!r}] probabilities sum to {total}, expected 1.0"
+                )
+            if len(choices) != len(probs):
+                raise ValueError(
+                    f"defaults.{name}[{key!r}] choices/probs length mismatch: {len(choices)} vs {len(probs)}"
+                )
+
+    # Validate PROMOTION_HOLIDAYS discount ranges
+    for entry in PROMOTION_HOLIDAYS:
+        name_h, _, _, d_min, d_max = entry
+        if d_min > d_max:
+            raise ValueError(
+                f"defaults.PROMOTION_HOLIDAYS[{name_h!r}] discount_min ({d_min}) > discount_max ({d_max})"
+            )
+
+    # Validate PROMOTION_SEASON_WINDOWS months are 1-12
+    for sname, (s_start, s_end) in PROMOTION_SEASON_WINDOWS.items():
+        if not (1 <= s_start <= 12 and 1 <= s_end <= 12):
+            raise ValueError(
+                f"defaults.PROMOTION_SEASON_WINDOWS[{sname!r}] has invalid month(s): ({s_start}, {s_end})"
+            )
+
 
 _validate_probability_arrays()

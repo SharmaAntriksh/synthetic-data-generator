@@ -250,16 +250,17 @@ def _sample_products_per_store(
                 else:
                     w = product_weight[pool]
                     cdf = np.cumsum(w, dtype=np.float64)
-                    # Clamp last CDF element to avoid floating-point
-                    # rounding causing searchsorted out-of-bounds
-                    if cdf.size > 0:
-                        cdf[-1] = w.sum()
+                    # Normalize to [0,1] then clamp to prevent FP rounding
+                    # causing searchsorted out-of-bounds (CLAUDE.md gotcha #16)
+                    if cdf.size > 0 and cdf[-1] > 0:
+                        cdf /= cdf[-1]
+                        cdf[-1] = 1.0
                     if _cdf_cache is not None:
                         _cdf_cache[cache_key] = (pool, cdf)
 
-                total = cdf[-1]
+                total = float(cdf[-1]) if cdf.size > 0 else 0.0
                 if total > 1e-12:
-                    u = rng.random(count) * total
+                    u = rng.random(count)
                     picks = np.searchsorted(cdf, u, side="right")
                     np.minimum(picks, len(pool) - 1, out=picks)
                     out[mask] = pool[picks]
@@ -643,6 +644,11 @@ def build_chunk_table(
     skip_cols = bool(State.skip_order_cols)
     chunk_idx = int(chunk_idx)
     cap = int(chunk_capacity_orders)
+
+    if chunk_idx < 0:
+        raise ValueError(f"chunk_idx must be >= 0, got {chunk_idx}")
+    if cap <= 0:
+        raise ValueError(f"chunk_capacity_orders must be > 0, got {cap}")
 
     INT32_MAX = np.int64(np.iinfo(np.int32).max)
 

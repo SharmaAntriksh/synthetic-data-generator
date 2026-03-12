@@ -10,6 +10,7 @@ import pandas as pd
 import warnings
 
 from src.utils.logging_utils import info, skip, stage, warn
+from src.utils.config_helpers import as_dict
 from src.versioning import should_regenerate, save_version
 
 
@@ -542,8 +543,8 @@ def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
     if not defaults_dates or not getattr(defaults_dates, "start", None) or not getattr(defaults_dates, "end", None):
         raise ValueError("Promotions: missing defaults.dates.start/end (or _defaults.dates.start/end)")
 
-    version_cfg = dict(promo_cfg)
-    version_cfg["global_dates"] = defaults_dates
+    version_cfg = as_dict(promo_cfg)
+    version_cfg["global_dates"] = as_dict(defaults_dates) if defaults_dates else {}
 
     if not should_regenerate("promotions", version_cfg, out_path):
         skip("Promotions up-to-date")

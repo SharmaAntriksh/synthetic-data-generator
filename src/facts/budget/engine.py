@@ -208,12 +208,15 @@ def _compute_yearly_budget(
 
     backfill_prior = first_year.copy()
     backfill_prior["BudgetYear"] = min_year - 1
-    backfill_prior["BaseGrowth"] = -bcfg.default_backcast_growth
+    backcast_growth = bcfg.default_backcast_growth
+    if abs(1.0 + backcast_growth) < 1e-9:
+        backcast_growth = 0.05  # prevent division by zero; fall back to 5%
+    backfill_prior["BaseGrowth"] = -backcast_growth
     backfill_prior["SalesAmount"] = (
-        backfill_prior["SalesAmount"] / (1.0 + bcfg.default_backcast_growth)
+        backfill_prior["SalesAmount"] / (1.0 + backcast_growth)
     )
     backfill_prior["SalesQuantity"] = (
-        backfill_prior["SalesQuantity"] / (1.0 + bcfg.default_backcast_growth)
+        backfill_prior["SalesQuantity"] / (1.0 + backcast_growth)
     )
     backfill_prior["_method"] = "Backfill: back-cast from first-year"
 

@@ -102,6 +102,16 @@ _ORG_SIZE_EMPLOYEE_RANGES = {
 
 _ORG_SIZE_PROBS = np.array([0.20, 0.30, 0.25, 0.15, 0.10])
 
+# Import-time validation for local probability arrays
+for _pname, _parr in [
+    ("_PAYMENT_METHOD_PROBS", _PAYMENT_METHOD_PROBS),
+    ("_ORG_INDUSTRY_PROBS", _ORG_INDUSTRY_PROBS),
+    ("_ORG_SIZE_PROBS", _ORG_SIZE_PROBS),
+]:
+    if abs(float(_parr.sum()) - 1.0) > 1e-6:
+        raise ValueError(f"customers.{_pname} sums to {float(_parr.sum())}, expected 1.0")
+del _pname, _parr
+
 _ORG_REVENUE_PARAMS = {
     "Startup":    (12.0, 0.8),    # median ~$160K
     "Small":      (14.0, 0.6),    # median ~$1.2M
