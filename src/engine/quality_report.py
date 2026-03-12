@@ -1,6 +1,6 @@
 """Post-generation data quality report.
 
-Reads the final output folder, checks referential integrity,
+Reads the final packaged output folder, checks referential integrity,
 distribution sanity, and null/duplicate checks, then writes
 an HTML report alongside the data.
 """
@@ -10,7 +10,7 @@ import html
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -49,6 +49,7 @@ class QualityReport:
     distributions: List[DistributionSummary] = field(default_factory=list)
     table_row_counts: Dict[str, int] = field(default_factory=dict)
     elapsed_sec: float = 0.0
+    folder_name: str = ""
 
     @property
     def passed(self) -> int:
@@ -64,10 +65,56 @@ class QualityReport:
 
 
 # ============================================================================
-# File loaders (format-aware)
+# File loaders (format-aware) with caching
 # ============================================================================
 
-def _read_table(path: Path, columns: Optional[List[str]] = None) -> Optional[pd.DataFrame]:
+class _TableCache:
+    """Caches loaded DataFrames by (path, columns_key) to avoid redundant I/O.
+
+    When columns=None (full read), the result is stored and subsequent
+    column-specific requests are sliced from the cached full frame.
+    """
+
+    def __init__(self) -> None:
+        self._full: Dict[str, pd.DataFrame] = {}      # path -> full DataFrame
+        self._partial: Dict[Tuple, pd.DataFrame] = {}  # (path, col_tuple) -> subset
+
+    def get(self, path: Path, columns: Optional[List[str]] = None) -> Optional[pd.DataFrame]:
+        key = str(path)
+
+        # Already have the full table — slice if needed
+        if key in self._full:
+            df = self._full[key]
+            if columns is None:
+                return df
+            available = [c for c in columns if c in df.columns]
+            return df[available]
+
+        # Check partial cache
+        if columns is not None:
+            col_key = (key, tuple(sorted(columns)))
+            if col_key in self._partial:
+                return self._partial[col_key]
+
+        # Load from disk
+        df = _read_table_uncached(path, columns=columns)
+        if df is None:
+            return None
+
+        if columns is None:
+            self._full[key] = df
+        else:
+            col_key = (key, tuple(sorted(columns)))
+            self._partial[col_key] = df
+
+        return df
+
+    def put_full(self, path: Path, df: pd.DataFrame) -> None:
+        """Store a full table (used by row-count collection that reads everything)."""
+        self._full[str(path)] = df
+
+
+def _read_table_uncached(path: Path, columns: Optional[List[str]] = None) -> Optional[pd.DataFrame]:
     """Read a table from parquet, CSV dir, or delta — returns None if missing."""
     if path.is_file() and path.suffix == ".parquet":
         try:
@@ -117,15 +164,74 @@ def _read_table(path: Path, columns: Optional[List[str]] = None) -> Optional[pd.
     return None
 
 
+def _row_count_fast(path: Path) -> Optional[int]:
+    """Get row count without reading data where possible (parquet metadata)."""
+    if path.is_file() and path.suffix == ".parquet":
+        try:
+            import pyarrow.parquet as pq
+            meta = pq.read_metadata(str(path))
+            return meta.num_rows
+        except Exception:
+            pass
+
+    if path.is_dir():
+        # Delta table
+        if (path / "_delta_log").is_dir():
+            try:
+                from deltalake import DeltaTable
+                dt = DeltaTable(str(path))
+                # read just one column to count rows cheaply
+                files = dt.files()
+                if files:
+                    import pyarrow.parquet as pq
+                    total = 0
+                    for f in files:
+                        fp = path / f
+                        if fp.exists():
+                            total += pq.read_metadata(str(fp)).num_rows
+                    return total
+            except Exception:
+                pass
+
+        # Directory of parquet files — sum metadata
+        pqs = sorted(path.glob("*.parquet"))
+        if pqs:
+            try:
+                import pyarrow.parquet as pq
+                return sum(pq.read_metadata(str(f)).num_rows for f in pqs)
+            except Exception:
+                pass
+
+        # CSV — count lines (cheaper than full parse)
+        csvs = sorted(path.glob("*.csv"))
+        if csvs:
+            try:
+                total = 0
+                for f in csvs:
+                    # Subtract 1 for header per file
+                    with open(f, "r", encoding="utf-8", errors="replace") as fh:
+                        total += sum(1 for _ in fh) - 1
+                return max(total, 0)
+            except Exception:
+                pass
+
+    if path.is_file() and path.suffix == ".csv":
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                return max(sum(1 for _ in fh) - 1, 0)
+        except Exception:
+            pass
+
+    return None
+
+
 def _find_table(folder: Path, name: str) -> Optional[Path]:
     """Find a table by name in dims or facts folder."""
-    # Try common naming: snake_case parquet, PascalCase, lowercase
     candidates = [
         folder / f"{name}.parquet",
         folder / f"{name}.csv",
         folder / name,  # directory (delta or csv chunks)
     ]
-    # Also try snake_case conversion
     snake = _to_snake(name)
     if snake != name:
         candidates.extend([
@@ -155,73 +261,135 @@ def _check_referential_integrity(
     report: QualityReport,
     dims_folder: Path,
     facts_folder: Path,
+    cache: _TableCache,
 ) -> None:
     """Check that all FK values in fact tables exist in dimension tables."""
 
-    # FK relationships: (fact_table, fk_column, dim_table, pk_column)
+    # FK relationships: (fact_table, fact_folder, fk_column, dim_table, pk_column)
     fk_checks = [
-        ("sales", "CustomerKey", "customers", "CustomerKey"),
-        ("sales", "ProductKey", "products", "ProductKey"),
-        ("sales", "StoreKey", "stores", "StoreKey"),
-        ("sales", "PromotionKey", "promotions", "PromotionKey"),
-        ("sales", "CurrencyKey", "currency", "CurrencyKey"),
-        ("sales", "SalesPersonEmployeeKey", "employees", "EmployeeKey"),
-        ("sales", "SalesChannelKey", "sales_channels", "SalesChannelKey"),
-        ("inventory_snapshot", "ProductKey", "products", "ProductKey"),
-        ("inventory_snapshot", "StoreKey", "stores", "StoreKey"),
+        # Sales fact → dimensions
+        ("sales", "fact", "CustomerKey", "customers", "CustomerKey"),
+        ("sales", "fact", "ProductKey", "products", "ProductKey"),
+        ("sales", "fact", "StoreKey", "stores", "StoreKey"),
+        ("sales", "fact", "PromotionKey", "promotions", "PromotionKey"),
+        ("sales", "fact", "CurrencyKey", "currency", "CurrencyKey"),
+        ("sales", "fact", "SalesPersonEmployeeKey", "employees", "EmployeeKey"),
+        ("sales", "fact", "SalesChannelKey", "sales_channels", "SalesChannelKey"),
+        ("sales", "fact", "TimeKey", "time", "TimeKey"),
+        # Sales return → dimensions
+        ("sales_return", "fact", "ReturnReasonKey", "return_reason", "ReturnReasonKey"),
+        # Inventory → dimensions
+        ("inventory_snapshot", "fact", "ProductKey", "products", "ProductKey"),
+        ("inventory_snapshot", "fact", "StoreKey", "stores", "StoreKey"),
+        # Dimension internal FKs
+        ("customers", "dim", "GeographyKey", "geography", "GeographyKey"),
+        ("stores", "dim", "GeographyKey", "geography", "GeographyKey"),
     ]
 
-    for fact_name, fk_col, dim_name, pk_col in fk_checks:
-        fact_path = _find_table(facts_folder, fact_name)
-        dim_path = _find_table(dims_folder, dim_name)
+    folder_map = {"fact": facts_folder, "dim": dims_folder}
 
-        if fact_path is None:
+    # Pre-group FK columns needed per (table, folder_type) so we read once
+    source_cols_needed: Dict[tuple, List[str]] = {}
+    for src_name, src_type, fk_col, _dim_name, _pk_col in fk_checks:
+        key = (src_name, src_type)
+        source_cols_needed.setdefault(key, [])
+        if fk_col not in source_cols_needed[key]:
+            source_cols_needed[key].append(fk_col)
+
+    # Pre-load source tables with all needed FK columns at once
+    source_frames: Dict[tuple, Optional[pd.DataFrame]] = {}
+    for (src_name, src_type), cols in source_cols_needed.items():
+        src_path = _find_table(folder_map[src_type], src_name)
+        if src_path is not None:
+            source_frames[(src_name, src_type)] = cache.get(src_path, columns=cols)
+        else:
+            source_frames[(src_name, src_type)] = None
+
+    for src_name, src_type, fk_col, dim_name, pk_col in fk_checks:
+        src_df = source_frames.get((src_name, src_type))
+        if src_df is None:
             continue  # Table not generated, skip
 
+        dim_path = _find_table(dims_folder, dim_name)
         if dim_path is None:
             report.checks.append(CheckResult(
-                name=f"FK: {fact_name}.{fk_col} → {dim_name}.{pk_col}",
+                name=f"FK: {src_name}.{fk_col} → {dim_name}.{pk_col}",
                 passed=False,
                 message=f"Dimension table '{dim_name}' not found",
                 category="Referential Integrity",
             ))
             continue
 
-        fact_df = _read_table(fact_path, columns=[fk_col])
-        dim_df = _read_table(dim_path, columns=[pk_col])
+        dim_df = cache.get(dim_path, columns=[pk_col])
 
-        if fact_df is None or dim_df is None:
+        if dim_df is None:
             continue
 
-        if fk_col not in fact_df.columns or pk_col not in dim_df.columns:
+        if fk_col not in src_df.columns or pk_col not in dim_df.columns:
             continue
 
-        fact_keys = set(fact_df[fk_col].dropna().unique())
+        src_keys = set(src_df[fk_col].dropna().unique())
         dim_keys = set(dim_df[pk_col].dropna().unique())
-        orphans = fact_keys - dim_keys
+        orphans = src_keys - dim_keys
 
         if orphans:
             sample = sorted(orphans)[:10]
             report.checks.append(CheckResult(
-                name=f"FK: {fact_name}.{fk_col} → {dim_name}.{pk_col}",
+                name=f"FK: {src_name}.{fk_col} → {dim_name}.{pk_col}",
                 passed=False,
-                message=f"{len(orphans)} orphan key(s) in {fact_name}.{fk_col}",
+                message=f"{len(orphans)} orphan key(s) in {src_name}.{fk_col}",
                 details=f"Sample orphans: {sample}",
                 category="Referential Integrity",
             ))
         else:
             report.checks.append(CheckResult(
-                name=f"FK: {fact_name}.{fk_col} → {dim_name}.{pk_col}",
+                name=f"FK: {src_name}.{fk_col} → {dim_name}.{pk_col}",
                 passed=True,
-                message=f"All {len(fact_keys)} keys found in {dim_name}",
+                message=f"All {len(src_keys)} keys found in {dim_name}",
                 category="Referential Integrity",
             ))
+
+    # --- Date-range checks: fact dates must fall within dates dimension ---
+    dates_path = _find_table(dims_folder, "dates")
+    if dates_path is not None:
+        dates_df = cache.get(dates_path, columns=["Date"])
+        if dates_df is not None and "Date" in dates_df.columns:
+            dim_dates = pd.to_datetime(dates_df["Date"])
+            date_min, date_max = dim_dates.min(), dim_dates.max()
+
+            # (fact_table, folder_type, date_column)
+            date_checks = [
+                ("sales", "fact", "OrderDate"),
+                ("sales", "fact", "DueDate"),
+                ("sales", "fact", "DeliveryDate"),
+                ("inventory_snapshot", "fact", "SnapshotDate"),
+            ]
+            for tbl, ftype, col in date_checks:
+                tbl_path = _find_table(folder_map[ftype], tbl)
+                if tbl_path is None:
+                    continue
+                tbl_df = cache.get(tbl_path, columns=[col])
+                if tbl_df is None or col not in tbl_df.columns:
+                    continue
+                col_dates = pd.to_datetime(tbl_df[col])
+                col_min, col_max = col_dates.min(), col_dates.max()
+                in_range = col_min >= date_min and col_max <= date_max
+                msg = f"{col_min.date()} to {col_max.date()}"
+                if not in_range:
+                    msg += f" (dates dim: {date_min.date()} to {date_max.date()})"
+                report.checks.append(CheckResult(
+                    name=f"Date range: {tbl}.{col} ⊆ dates",
+                    passed=in_range,
+                    message=msg,
+                    category="Referential Integrity",
+                ))
 
 
 def _check_nulls_and_duplicates(
     report: QualityReport,
     dims_folder: Path,
     facts_folder: Path,
+    cache: _TableCache,
 ) -> None:
     """Check for null PKs and duplicate PKs in key tables."""
 
@@ -241,7 +409,7 @@ def _check_nulls_and_duplicates(
         if path is None:
             continue
 
-        df = _read_table(path, columns=[pk_col])
+        df = cache.get(path, columns=[pk_col])
         if df is None or pk_col not in df.columns:
             continue
 
@@ -268,14 +436,15 @@ def _check_distributions(
     report: QualityReport,
     dims_folder: Path,
     facts_folder: Path,
+    cache: _TableCache,
     cfg: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Check that key distributions look reasonable."""
 
-    # Sales: quantity distribution
+    # Sales: load all needed columns in one read
     sales_path = _find_table(facts_folder, "sales")
     if sales_path is not None:
-        sales_df = _read_table(sales_path, columns=["Quantity", "NetPrice", "OrderDate", "DiscountAmount"])
+        sales_df = cache.get(sales_path, columns=["Quantity", "NetPrice", "OrderDate", "DiscountAmount"])
         if sales_df is not None:
             if "Quantity" in sales_df.columns:
                 qty = sales_df["Quantity"]
@@ -315,6 +484,24 @@ def _check_distributions(
                     category="Distribution",
                 ))
 
+            if "DiscountAmount" in sales_df.columns:
+                disc = sales_df["DiscountAmount"]
+                report.distributions.append(DistributionSummary(
+                    column="DiscountAmount", table="Sales",
+                    min_val=round(float(disc.min()), 2),
+                    max_val=round(float(disc.max()), 2),
+                    mean_val=round(float(disc.mean()), 2),
+                    median_val=round(float(disc.median()), 2),
+                    std_val=round(float(disc.std()), 2),
+                ))
+                neg_disc = int((disc < 0).sum())
+                report.checks.append(CheckResult(
+                    name="Negative DiscountAmount",
+                    passed=neg_disc == 0,
+                    message=f"{neg_disc} negative discount(s)" if neg_disc > 0 else "All discounts non-negative",
+                    category="Distribution",
+                ))
+
             if "OrderDate" in sales_df.columns:
                 dates = pd.to_datetime(sales_df["OrderDate"])
                 report.checks.append(CheckResult(
@@ -337,21 +524,21 @@ def _check_distributions(
     # Returns: check return rate if sales return exists
     returns_path = _find_table(facts_folder, "sales_return")
     if returns_path is not None and sales_path is not None:
-        returns_df = _read_table(returns_path)
-        sales_df_count = _read_table(sales_path, columns=["Quantity"])
-        if returns_df is not None and sales_df_count is not None:
-            return_rate = len(returns_df) / max(len(sales_df_count), 1)
+        returns_count = _row_count_fast(returns_path)
+        sales_count = _row_count_fast(sales_path)
+        if returns_count is not None and sales_count is not None and sales_count > 0:
+            return_rate = returns_count / sales_count
             report.checks.append(CheckResult(
                 name="Return rate",
                 passed=True,
-                message=f"{return_rate:.2%} ({len(returns_df)} returns / {len(sales_df_count)} sales)",
+                message=f"{return_rate:.2%} ({returns_count:,} returns / {sales_count:,} sales)",
                 category="Distribution",
             ))
 
     # Customers per geography
     cust_path = _find_table(dims_folder, "customers")
     if cust_path is not None:
-        cust_df = _read_table(cust_path, columns=["GeographyKey"])
+        cust_df = cache.get(cust_path, columns=["GeographyKey"])
         if cust_df is not None and "GeographyKey" in cust_df.columns:
             geo_dist = cust_df["GeographyKey"].value_counts()
             report.distributions.append(DistributionSummary(
@@ -366,15 +553,15 @@ def _collect_row_counts(
     dims_folder: Path,
     facts_folder: Path,
 ) -> None:
-    """Count rows in all output tables."""
+    """Count rows in all output tables using metadata when possible."""
     for folder, label in [(dims_folder, "dim"), (facts_folder, "fact")]:
         if not folder.exists():
             continue
         for item in sorted(folder.iterdir()):
-            df = _read_table(item)
-            if df is not None:
+            count = _row_count_fast(item)
+            if count is not None:
                 name = item.stem if item.is_file() else item.name
-                report.table_row_counts[f"{label}/{name}"] = len(df)
+                report.table_row_counts[f"{label}/{name}"] = count
 
 
 # ============================================================================
@@ -383,19 +570,43 @@ def _collect_row_counts(
 
 def _render_html(report: QualityReport) -> str:
     """Render the report as a standalone HTML page."""
-    check_rows = []
+
+    # --- Checks: group by category, failures first within each group ---
+    from collections import OrderedDict
+    cats: OrderedDict[str, List[CheckResult]] = OrderedDict()
     for c in report.checks:
-        status = "PASS" if c.passed else "FAIL"
-        css = "pass" if c.passed else "fail"
-        detail = f'<div class="detail">{html.escape(c.details)}</div>' if c.details else ""
+        cats.setdefault(c.category, []).append(c)
+
+    check_rows = []
+    for cat, checks in cats.items():
+        # Sort: failures first, then passes
+        checks_sorted = sorted(checks, key=lambda c: (c.passed, c.name))
+        cat_pass = sum(1 for c in checks_sorted if c.passed)
+        cat_fail = len(checks_sorted) - cat_pass
+        # Category header row
+        summary_parts = []
+        if cat_fail:
+            summary_parts.append(f'<span class="cat-fail">{cat_fail} failed</span>')
+        if cat_pass:
+            summary_parts.append(f'<span class="cat-pass">{cat_pass} passed</span>')
         check_rows.append(
-            f'<tr class="{css}">'
-            f'<td class="status">{status}</td>'
-            f'<td>{html.escape(c.category)}</td>'
-            f'<td>{html.escape(c.name)}</td>'
-            f'<td>{html.escape(c.message)}{detail}</td>'
+            f'<tr class="cat-header">'
+            f'<td colspan="3">{html.escape(cat)}</td>'
+            f'<td class="cat-summary">{" &middot; ".join(summary_parts)}</td>'
             f'</tr>'
         )
+        for c in checks_sorted:
+            status = "PASS" if c.passed else "FAIL"
+            css = "pass" if c.passed else "fail"
+            detail = f'<div class="detail">{html.escape(c.details)}</div>' if c.details else ""
+            check_rows.append(
+                f'<tr class="{css}">'
+                f'<td><span class="badge badge-{css}">{status}</span></td>'
+                f'<td class="check-name">{html.escape(c.name)}</td>'
+                f'<td>{html.escape(c.message)}{detail}</td>'
+                f'<td></td>'
+                f'</tr>'
+            )
 
     dist_rows = []
     for d in report.distributions:
@@ -413,9 +624,17 @@ def _render_html(report: QualityReport) -> str:
             f'</tr>'
         )
 
-    count_rows = []
-    for name, count in sorted(report.table_row_counts.items()):
-        count_rows.append(f'<tr><td>{html.escape(name)}</td><td>{count:,}</td></tr>')
+    # --- Row counts: split dim/fact, descending by count ---
+    def _count_rows_html(items: List[tuple]) -> str:
+        rows = []
+        for name, count in sorted(items, key=lambda x: x[1], reverse=True):
+            rows.append(
+                f'<tr><td>{html.escape(name)}</td><td class="row-count">{count:,}</td></tr>'
+            )
+        return "".join(rows)
+
+    dim_counts = [(n.split("/", 1)[1], c) for n, c in report.table_row_counts.items() if n.startswith("dim/")]
+    fact_counts = [(n.split("/", 1)[1], c) for n, c in report.table_row_counts.items() if n.startswith("fact/")]
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -425,8 +644,10 @@ def _render_html(report: QualityReport) -> str:
 <style>
   * {{ margin: 0; padding: 0; box-sizing: border-box; }}
   body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         background: #f5f5f5; color: #333; padding: 2rem; }}
-  h1 {{ margin-bottom: 0.5rem; }}
+         background: #f5f5f5; color: #333; padding: 2rem; max-width: 1200px; margin: 0 auto; }}
+  h1 {{ margin-bottom: 0.25rem; }}
+  .folder-name {{ font-size: 0.85rem; color: #64748b; margin-bottom: 0.5rem;
+       font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }}
   .summary {{ font-size: 1.1rem; margin-bottom: 1.5rem; color: #555; }}
   .summary .pass-count {{ color: #16a34a; font-weight: 600; }}
   .summary .fail-count {{ color: #dc2626; font-weight: 600; }}
@@ -438,15 +659,31 @@ def _render_html(report: QualityReport) -> str:
        letter-spacing: 0.03em; }}
   td {{ padding: 0.5rem 0.8rem; border-bottom: 1px solid #eee; font-size: 0.9rem; }}
   tr:last-child td {{ border-bottom: none; }}
-  tr.pass .status {{ color: #16a34a; font-weight: 700; }}
+  /* Check table: category headers */
+  tr.cat-header td {{ background: #f0f4f8; font-weight: 700; font-size: 0.85rem;
+       padding: 0.6rem 0.8rem; color: #334155; border-bottom: 2px solid #e2e8f0;
+       letter-spacing: 0.02em; }}
+  .cat-summary {{ text-align: right; font-weight: 400; font-size: 0.8rem; }}
+  .cat-pass {{ color: #16a34a; }}
+  .cat-fail {{ color: #dc2626; }}
+  /* Status badges */
+  .badge {{ display: inline-block; padding: 0.15rem 0.55rem; border-radius: 4px;
+           font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; }}
+  .badge-pass {{ background: #dcfce7; color: #15803d; }}
+  .badge-fail {{ background: #fee2e2; color: #b91c1c; }}
+  .check-name {{ color: #555; }}
   tr.fail {{ background: #fef2f2; }}
-  tr.fail .status {{ color: #dc2626; font-weight: 700; }}
   .detail {{ font-size: 0.8rem; color: #888; margin-top: 0.2rem; }}
+  /* Row counts */
+  .row-count {{ font-variant-numeric: tabular-nums; text-align: right; }}
+  h3 {{ margin: 1rem 0 0.5rem; color: #475569; font-size: 0.95rem; }}
+  .row-counts-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }}
   .elapsed {{ font-size: 0.85rem; color: #999; margin-top: 1rem; }}
 </style>
 </head>
 <body>
 <h1>Data Quality Report</h1>
+<div class="folder-name">{html.escape(report.folder_name)}</div>
 <div class="summary">
   <span class="pass-count">{report.passed} passed</span> &middot;
   <span class="fail-count">{report.failed} failed</span> &middot;
@@ -455,19 +692,33 @@ def _render_html(report: QualityReport) -> str:
 
 <h2>Checks</h2>
 <table>
-<thead><tr><th>Status</th><th>Category</th><th>Check</th><th>Result</th></tr></thead>
+<thead><tr><th style="width:70px">Status</th><th>Check</th><th>Result</th><th></th></tr></thead>
 <tbody>
 {"".join(check_rows)}
 </tbody>
 </table>
 
 <h2>Row Counts</h2>
+<div class="row-counts-grid">
+<div>
+<h3>Dimensions</h3>
 <table>
 <thead><tr><th>Table</th><th>Rows</th></tr></thead>
 <tbody>
-{"".join(count_rows)}
+{_count_rows_html(dim_counts)}
 </tbody>
 </table>
+</div>
+<div>
+<h3>Facts</h3>
+<table>
+<thead><tr><th>Table</th><th>Rows</th></tr></thead>
+<tbody>
+{_count_rows_html(fact_counts)}
+</tbody>
+</table>
+</div>
+</div>
 
 <h2>Distribution Summaries</h2>
 <table>
@@ -496,7 +747,8 @@ def generate_quality_report(
     """
     with stage("Data Quality Report"):
         t0 = time.time()
-        report = QualityReport()
+        report = QualityReport(folder_name=final_folder.name)
+        cache = _TableCache()
 
         dims_folder = final_folder / "dimensions"
         facts_folder = final_folder / "facts"
@@ -506,13 +758,13 @@ def generate_quality_report(
             return final_folder / "data_quality_report.html"
 
         info("Running referential integrity checks...")
-        _check_referential_integrity(report, dims_folder, facts_folder)
+        _check_referential_integrity(report, dims_folder, facts_folder, cache)
 
         info("Running null / duplicate checks...")
-        _check_nulls_and_duplicates(report, dims_folder, facts_folder)
+        _check_nulls_and_duplicates(report, dims_folder, facts_folder, cache)
 
         info("Checking distributions...")
-        _check_distributions(report, dims_folder, facts_folder, cfg)
+        _check_distributions(report, dims_folder, facts_folder, cache, cfg)
 
         info("Counting rows...")
         _collect_row_counts(report, dims_folder, facts_folder)

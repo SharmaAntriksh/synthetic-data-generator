@@ -471,6 +471,19 @@ class TestGenerateInputValidation:
 class TestGenerateRequestModel:
     """Test pydantic validation of GenerateRequest."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_final_output(self, tmp_path):
+        """Redirect final_output to a temp dir so --clean / --regen don't
+        delete the real generated_datasets/ folder."""
+        with _state._cfg_lock:
+            orig = _state._cfg.paths.final_output if hasattr(_state._cfg, "paths") and _state._cfg.paths else None
+            if hasattr(_state._cfg, "paths") and _state._cfg.paths is not None:
+                _state._cfg.paths.final_output = str(tmp_path / "generated_datasets")
+        yield
+        with _state._cfg_lock:
+            if hasattr(_state._cfg, "paths") and _state._cfg.paths is not None:
+                _state._cfg.paths.final_output = orig
+
     def test_empty_body_accepted(self, client):
         _state._current_job = None
         resp = client.post("/api/generate", json={})
