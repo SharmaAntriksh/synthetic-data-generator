@@ -250,6 +250,10 @@ def _sample_products_per_store(
                 else:
                     w = product_weight[pool]
                     cdf = np.cumsum(w, dtype=np.float64)
+                    # Clamp last CDF element to avoid floating-point
+                    # rounding causing searchsorted out-of-bounds
+                    if cdf.size > 0:
+                        cdf[-1] = w.sum()
                     if _cdf_cache is not None:
                         _cdf_cache[cache_key] = (pool, cdf)
 

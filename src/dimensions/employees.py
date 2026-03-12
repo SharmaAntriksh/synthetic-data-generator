@@ -38,6 +38,11 @@ _STAFF_TITLES = np.array(
 )
 _STAFF_TITLES_P = np.array([0.35, 0.25, 0.20, 0.10, 0.10], dtype=float)
 
+# Validate at import time (per CLAUDE.md gotcha #10)
+assert abs(float(_STAFF_TITLES_P.sum()) - 1.0) < 1e-9, (
+    f"_STAFF_TITLES_P must sum to 1.0, got {_STAFF_TITLES_P.sum()}"
+)
+
 
 # ---------------------------------------------------------
 # Internals
@@ -65,7 +70,7 @@ def _parse_employee_dates(
     Uses ``defaults.dates.{start,end}`` exclusively.
     Legacy ``employees.start_date / end_date`` keys are ignored with a warning.
     """
-    if emp_cfg.get("start_date") is not None or emp_cfg.get("end_date") is not None:
+    if emp_cfg.get("start_date", None) is not None or emp_cfg.get("end_date", None) is not None:
         warn(
             "employees.start_date / employees.end_date are IGNORED. "
             "Employee dates now follow defaults.dates exclusively. "
@@ -100,10 +105,13 @@ def _apply_deterministic_names(
     ek = df["EmployeeKey"].astype(np.int32).to_numpy()
     ek_u64 = ek.astype(np.uint64)
 
-    # Deterministic Gender distribution ~ 49/49/2 (M/F/O) based on hash
+    # Deterministic Gender distribution based on hash
+    # Thresholds from defaults.py: EMPLOYEE_GENDER_PROBS
+    from src.defaults import EMPLOYEE_GENDER_PROBS
+    p_other, p_female = EMPLOYEE_GENDER_PROBS["other"], EMPLOYEE_GENDER_PROBS["female"]
     h = hash_u64(ek_u64, int(seed), 9101)
     u = (h % np.uint64(10_000)).astype(np.float64) / 10_000.0
-    gender_code = np.where(u < 0.02, "O", np.where(u < 0.51, "F", "M")).astype(object)
+    gender_code = np.where(u < p_other, "O", np.where(u < p_other + p_female, "F", "M")).astype(object)
     df["Gender"] = gender_code
 
     # Region per row from GeographyKey → ISOCode → region code
@@ -171,7 +179,7 @@ def _enrich_employee_hr_columns(
         pd.to_datetime({"year": birth_year, "month": birth_month, "day": np.ones(n, dtype=int)})
         .dt.days_in_month.to_numpy()
     )
-    birth_day = (rng.random(n) * dim).astype(int) + 1
+    birth_day = np.minimum((rng.random(n) * dim).astype(int) + 1, dim)
     df["BirthDate"] = pd.to_datetime(
         {"year": birth_year, "month": birth_month, "day": birth_day}
     ).dt.normalize()
@@ -194,9 +202,10 @@ def _enrich_employee_hr_columns(
 
     # Emergency contacts: pick a plausible name from the employee population
     if n > 1:
-        pick = rng.integers(0, n, size=n)
+        pick = rng.integers(0, n - 1, size=n)
         self_idx = np.arange(n)
-        pick = np.where(pick == self_idx, (pick + 1) % n, pick)
+        # Shift picks >= self to avoid self-selection (uniform over n-1 others)
+        pick = np.where(pick >= self_idx, pick + 1, pick)
         df["EmergencyContactName"] = (
             df["FirstName"].iloc[pick].to_numpy(dtype=object)
             + " "
@@ -316,7 +325,6 @@ def generate_employee_dimension(
     default_region: str = "US",
     primary_sales_role: str = "Sales Associate",
     min_primary_sales_per_store: int = 1,
-    ensure_store_sales_coverage: bool = False,
     store_manager_names: dict[int, str] | None = None,
     store_opening_dates: dict[int, pd.Timestamp] | None = None,
 ) -> pd.DataFrame:
@@ -537,10 +545,12 @@ def generate_employee_dimension(
         staff_gk = gk_arr[store_indices]
 
         # Per-employee index within each store (1-based)
+        # Uses cumsum trick: start with 1s, subtract (prev_count) at each
+        # store boundary so cumsum resets to 1 for the next store.
         within_store_idx = np.ones(total_staff, dtype=np.int32)
         offsets = np.cumsum(staff_counts)[:-1]
         if offsets.size > 0:
-            np.subtract.at(within_store_idx, offsets, staff_counts[:-1] - 1)
+            np.subtract.at(within_store_idx, offsets, staff_counts[:-1])
         within_store_idx = np.cumsum(within_store_idx)
 
         max_ek = int(STAFF_KEY_BASE) + int(staff_sk.max()) * int(STAFF_KEY_STORE_MULT) + int(within_store_idx.max())
@@ -556,6 +566,13 @@ def generate_employee_dimension(
 
         # Mark the first k_ps employees of each store as the primary sales role
         k_per_store = np.minimum(staff_counts, k_ps)
+        shortfall_stores = int((staff_counts < k_ps).sum())
+        if shortfall_stores > 0:
+            warn(
+                f"{shortfall_stores} store(s) have fewer staff than "
+                f"min_primary_sales_per_store={k_ps}; they will have "
+                f"fewer '{ps_role}' employees than requested."
+            )
         k_total = int(k_per_store.sum())
         if k_total > 0:
             # Build mask of positions that should be primary sales role
@@ -664,7 +681,13 @@ def generate_employee_dimension(
         hire_i = pd.to_datetime(df.loc[idx, "HireDate"]).dt.normalize()
         max_days = (pd.to_datetime(global_end).normalize() - hire_i).dt.days.to_numpy()
         max_days = np.clip(max_days, 0, None)
-        offs = (rng.random(idx.size) * (max_days + 1)).astype(np.int64)
+        # Enforce minimum 30-day tenure to avoid zero-day terminations
+        min_tenure_days = 30
+        offs = np.clip(
+            (rng.random(idx.size) * (max_days + 1)).astype(np.int64),
+            np.minimum(min_tenure_days, max_days),
+            max_days,
+        )
         term_dates.iloc[idx] = (hire_i + pd.to_timedelta(offs, unit="D")).to_numpy(dtype="datetime64[ns]")
 
     df["TerminationDate"] = term_dates
@@ -695,14 +718,28 @@ def generate_employee_dimension(
             if valid.any():
                 vi = names.index[valid]
                 vn = names[valid].to_numpy(dtype=object)
-                first = np.array([str(n).split(" ", 1)[0] for n in vn], dtype=object)
-                last = np.array(
-                    [str(n).split(" ", 1)[1] if " " in str(n) else "" for n in vn],
-                    dtype=object,
-                )
-                df.loc[vi, "FirstName"] = first
-                df.loc[vi, "LastName"] = last
-                df.loc[vi, "MiddleName"] = ""
+                # Parse "First Middle... Last" — last token is last name,
+                # first token is first name, everything in between is middle.
+                first_arr = np.empty(len(vn), dtype=object)
+                middle_arr = np.empty(len(vn), dtype=object)
+                last_arr = np.empty(len(vn), dtype=object)
+                for j, full_name in enumerate(vn):
+                    parts = str(full_name).split()
+                    if len(parts) >= 3:
+                        first_arr[j] = parts[0]
+                        last_arr[j] = parts[-1]
+                        middle_arr[j] = " ".join(parts[1:-1])
+                    elif len(parts) == 2:
+                        first_arr[j] = parts[0]
+                        last_arr[j] = parts[1]
+                        middle_arr[j] = ""
+                    else:
+                        first_arr[j] = str(full_name)
+                        last_arr[j] = ""
+                        middle_arr[j] = ""
+                df.loc[vi, "FirstName"] = first_arr
+                df.loc[vi, "LastName"] = last_arr
+                df.loc[vi, "MiddleName"] = middle_arr
                 df.loc[vi, "EmployeeName"] = vn
 
     # Final integer casts (single consolidated pass)
@@ -813,10 +850,10 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             columns=["StoreKey", "GeographyKey", "EmployeeCount", "StoreType"],
         )
 
-    version_cfg = dict(emp_cfg)
-    version_cfg["schema_version"] = 6
+    version_cfg = as_dict(emp_cfg)
+    version_cfg["schema_version"] = 7
     version_cfg["_stores_sig"] = _stores_signature(stores)
-    version_cfg["_stores_cfg"] = dict(cfg.stores)
+    version_cfg["_stores_cfg"] = as_dict(cfg.stores)
     version_cfg["_global_dates"] = {
         "start": str(global_start.date()),
         "end": str(global_end.date()),
@@ -899,7 +936,6 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             default_region="US",
             primary_sales_role=primary_sales_role,
             min_primary_sales_per_store=min_primary_sales_per_store,
-            ensure_store_sales_coverage=ensure_store_sales_coverage,
             store_manager_names=store_manager_names,
             store_opening_dates=store_opening_dates,
         )

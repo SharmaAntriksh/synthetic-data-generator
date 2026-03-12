@@ -498,6 +498,7 @@ def _build_analytical(
         elif t == "Online":
             inv_turn[mask] = rng.uniform(20.0, 40.0, cnt)
         else:
+            warn(f"Unknown StoreType {t!r} in InventoryTurnoverTarget; using Supermarket range.")
             inv_turn[mask] = rng.uniform(18.0, 30.0, cnt)
     inv_turn = np.round(inv_turn, 1)
 
@@ -586,12 +587,15 @@ def generate_store_table(
 
     # Location strings
     if geo_loc_short is None:
+        warn("geo_loc_short not provided; store names will use 'Geo <key>' placeholders.")
         loc_short = df["GeographyKey"].astype(np.int64).map(lambda k: f"Geo {int(k)}")
     else:
         _gk = df["GeographyKey"].astype(np.int64)
         loc_short = _gk.map(geo_loc_short)
         _missing = loc_short.isna()
         if _missing.any():
+            n_missing = int(_missing.sum())
+            warn(f"{n_missing} store(s) have GeographyKey not found in location map; using 'Geo <key>' fallback.")
             loc_short[_missing] = _gk[_missing].map(lambda k: f"Geo {int(k)}")
 
     if geo_loc_full is None:
@@ -685,6 +689,19 @@ def generate_store_table(
     open_end_d   = _as_date64d(opening_end)
     close_end_d  = _as_date64d(closing_end)
 
+    # Validate date ordering
+    if open_end_d < open_start_d:
+        warn(
+            f"opening_end ({opening_end}) < opening_start ({opening_start}); "
+            "swapping to fix reversed date range."
+        )
+        open_start_d, open_end_d = open_end_d, open_start_d
+    if close_end_d < open_end_d:
+        warn(
+            f"closing_end ({closing_end}) < opening_end ({opening_end}); "
+            "closed stores may have unrealistic ClosingDates."
+        )
+
     opening_d = _rand_dates_d(rng, open_start_d, open_end_d, num_stores)
     df["OpeningDate"] = pd.to_datetime(opening_d.astype("datetime64[ns]")).normalize()
 
@@ -700,11 +717,13 @@ def generate_store_table(
         if late_openers:
             warn(
                 f"{late_openers} closed store(s) have OpeningDate after closing_end="
-                f"{closing_end}; their ClosingDate will be set to one day after OpeningDate"
+                f"{closing_end}; their ClosingDate will be set to 30+ days after OpeningDate"
             )
 
-        effective_end = np.maximum(open_days + 1, close_end_day)
-        close_days = rng.integers(open_days + 1, effective_end + 1, dtype=np.int64)
+        # Ensure at least 30 days of operation for closed stores
+        min_close_offset = 30
+        effective_end = np.maximum(open_days + min_close_offset, close_end_day)
+        close_days = rng.integers(open_days + min_close_offset, effective_end + 1, dtype=np.int64)
         close_d = close_days.astype("datetime64[D]")
         df.loc[closed_mask, "ClosingDate"] = pd.to_datetime(
             close_d.astype("datetime64[ns]")

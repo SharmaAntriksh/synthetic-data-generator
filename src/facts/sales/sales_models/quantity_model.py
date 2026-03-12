@@ -75,10 +75,12 @@ def _load_cfg() -> dict:
     # Support both "noise_sigma" (current) and "noise_sd" (legacy)
     noise = max(0.0, float(raw.get("noise_sigma", raw.get("noise_sd", _DEFAULTS["noise_sigma"]))))
 
-    min_qty = int(raw.get("min_qty", _DEFAULTS["min_qty"]))
+    min_qty = max(1, int(raw.get("min_qty", _DEFAULTS["min_qty"])))
     max_qty = int(raw.get("max_qty", _DEFAULTS["max_qty"]))
     if max_qty < min_qty:
         min_qty, max_qty = max_qty, min_qty
+    if min_qty < 1:
+        min_qty = 1
 
     # --- monthly factors (must be 12 floats) ---
     factors = raw.get("monthly_factors")

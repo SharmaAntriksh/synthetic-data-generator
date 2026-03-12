@@ -130,6 +130,22 @@ STORE_EU_COUNTRY_CODES = [33, 34, 39, 49, 31, 32, 41, 46, 47, 45]
 
 
 # =================================================================
+#  EMPLOYEE_DEFAULTS
+# =================================================================
+
+# Gender distribution for employees: {other, female, male}
+# Thresholds: u < other → "O"; u < other + female → "F"; else → "M"
+EMPLOYEE_GENDER_PROBS: Dict[str, float] = {
+    "other": 0.02,
+    "female": 0.49,
+    "male": 0.49,
+}
+assert abs(sum(EMPLOYEE_GENDER_PROBS.values()) - 1.0) < 1e-9, (
+    f"EMPLOYEE_GENDER_PROBS must sum to 1.0, got {sum(EMPLOYEE_GENDER_PROBS.values())}"
+)
+
+
+# =================================================================
 #  CUSTOMER_DEFAULTS
 # =================================================================
 

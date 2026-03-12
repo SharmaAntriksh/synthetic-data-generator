@@ -215,6 +215,11 @@ def _load_markdown_cfg():
             kind_codes.append(2)
             values.append(max(0.0, v))
             weights.append(w)
+        else:
+            warn(
+                f"Unknown markdown ladder kind {k!r} (expected 'none', 'pct', or 'amt'); "
+                "entry ignored. Check models.yaml -> models.pricing.markdown.ladder."
+            )
 
     if not kind_codes:
         kind_codes = [0]

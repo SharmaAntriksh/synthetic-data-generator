@@ -322,6 +322,11 @@ def _build_salesperson_effective_by_store(
 
     a_store, a_emp, start_fixed, end_fixed, fte, is_primary, max_store_key = norm
 
+    # Validate FTE bounds — negative or extreme values indicate data corruption
+    bad_fte = (fte < 0.0) | (fte > 2.0)
+    if np.any(bad_fte):
+        fte = np.clip(fte, 0.0, 2.0)
+
     weights = fte * np.where(is_primary, float(primary_boost), 1.0)
 
     order = np.argsort(a_store, kind="mergesort")
@@ -518,8 +523,16 @@ def _build_brand_prob_by_month_rotate_winner(
 def init_sales_worker(worker_cfg: dict) -> None:
     # Resolve any shared-memory descriptors back into numpy array views.
     # This is a no-op for values that are already plain arrays/None.
+    _REQUIRED_ARRAYS = {"product_np", "store_keys", "customer_keys", "date_pool", "date_prob"}
     for _k in list(worker_cfg):
         worker_cfg[_k] = resolve_array(worker_cfg[_k])
+    # Validate that required arrays resolved successfully
+    for _rk in _REQUIRED_ARRAYS:
+        if _rk in worker_cfg and worker_cfg[_rk] is None:
+            raise RuntimeError(
+                f"Failed to resolve shared array for required key '{_rk}'. "
+                "Shared memory descriptor may be corrupted."
+            )
 
     try:
         product_np = worker_cfg["product_np"]
@@ -675,9 +688,17 @@ def init_sales_worker(worker_cfg: dict) -> None:
             eligible_mask = (store_open_month <= mi) & (store_close_month >= mi)
             store_eligible_by_month.append(store_keys[eligible_mask])
         # Warn if any month has zero eligible stores
+        _n_fallback = 0
         for idx, arr in enumerate(store_eligible_by_month):
             if arr.size == 0:
                 store_eligible_by_month[idx] = store_keys  # fallback: all stores
+                _n_fallback += 1
+        if _n_fallback > 0:
+            from src.utils.logging_utils import warn as _warn_eligibility
+            _warn_eligibility(
+                f"{_n_fallback} month(s) had zero eligible stores based on "
+                "opening/closing dates; falling back to all stores for those months."
+            )
 
     # ------------------------------------------------------------
     # Day-level store open/close for exact eligibility filtering
