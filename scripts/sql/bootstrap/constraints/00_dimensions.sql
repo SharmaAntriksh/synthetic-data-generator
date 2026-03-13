@@ -845,3 +845,97 @@ BEGIN
             CHECK ([ValidFromDate] <= [ValidToDate]);
 END;
 GO
+
+-----------------------------------------------------------------------
+-- 7. CUSTOMER WISHLISTS BRIDGE
+-----------------------------------------------------------------------
+
+-- CustomerWishlists: PK
+IF OBJECT_ID(N'dbo.CustomerWishlists', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerWishlists', N'WishlistKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_CustomerWishlists'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerWishlists')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerWishlists
+    ADD CONSTRAINT PK_CustomerWishlists PRIMARY KEY NONCLUSTERED ([WishlistKey]);
+END;
+GO
+
+-- CustomerWishlists -> Customers FK
+IF OBJECT_ID(N'dbo.CustomerWishlists', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerWishlists', N'CustomerKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_CustomerWishlists_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerWishlists')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerWishlists WITH CHECK
+    ADD CONSTRAINT FK_CustomerWishlists_Customers
+        FOREIGN KEY ([CustomerKey])
+        REFERENCES dbo.Customers ([CustomerKey]);
+
+    ALTER TABLE dbo.CustomerWishlists CHECK CONSTRAINT FK_CustomerWishlists_Customers;
+END;
+GO
+
+-- CustomerWishlists -> Products FK
+IF OBJECT_ID(N'dbo.CustomerWishlists', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerWishlists', N'ProductKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_CustomerWishlists_Products'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerWishlists')
+)
+BEGIN
+    ALTER TABLE dbo.CustomerWishlists WITH CHECK
+    ADD CONSTRAINT FK_CustomerWishlists_Products
+        FOREIGN KEY ([ProductKey])
+        REFERENCES dbo.Products ([ProductKey]);
+
+    ALTER TABLE dbo.CustomerWishlists CHECK CONSTRAINT FK_CustomerWishlists_Products;
+END;
+GO
+
+-- CustomerWishlists: CHECK constraints
+IF OBJECT_ID(N'dbo.CustomerWishlists', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.CustomerWishlists', N'Quantity') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerWishlists_Quantity'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerWishlists')
+    )
+        ALTER TABLE dbo.CustomerWishlists
+        ADD CONSTRAINT CK_CustomerWishlists_Quantity
+            CHECK ([Quantity] >= 1);
+
+    IF COL_LENGTH(N'dbo.CustomerWishlists', N'Priority') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerWishlists_Priority'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerWishlists')
+    )
+        ALTER TABLE dbo.CustomerWishlists
+        ADD CONSTRAINT CK_CustomerWishlists_Priority
+            CHECK ([Priority] IN (N'High', N'Medium', N'Low'));
+
+    IF COL_LENGTH(N'dbo.CustomerWishlists', N'NetPrice') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerWishlists_NetPrice'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerWishlists')
+    )
+        ALTER TABLE dbo.CustomerWishlists
+        ADD CONSTRAINT CK_CustomerWishlists_NetPrice
+            CHECK ([NetPrice] >= 0);
+END;
+GO

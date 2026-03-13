@@ -63,6 +63,7 @@ def get_config():
         wf = {"enabled": wf}
 
     # Extra sections
+    wl = _g(cfg, "wishlists", default={})
     sp = _g(cfg, "superpowers", default={})
     emp = _g(cfg, "employees", default={})
     er = _g(cfg, "exchange_rates", default={})
@@ -142,6 +143,15 @@ def get_config():
         "promoLoyalty": int(getattr(promos, "num_loyalty", 3) or 3),
         "promoBundle": int(getattr(promos, "num_bundle", 3) or 3),
         "promoNewCustomer": int(getattr(promos, "num_new_customer", 3) or 3),
+        # Superpowers
+        # Wishlists
+        "wlEnabled": bool(getattr(wl, "enabled", False)),
+        "wlParticipationRate": float(getattr(wl, "participation_rate", 0.35)),
+        "wlAvgItems": float(getattr(wl, "avg_items", 3.5)),
+        "wlMaxItems": int(getattr(wl, "max_items", 20)),
+        "wlPreBrowseDays": int(getattr(wl, "pre_browse_days", 90)),
+        "wlAffinityStrength": float(getattr(wl, "affinity_strength", 0.6)),
+        "wlSeed": int(getattr(wl, "seed", 500) or 500),
         # Superpowers
         "spEnabled": bool(getattr(sp, "enabled", False)),
         "spGenerateBridge": bool(getattr(sp, "generate_bridge", False)),
@@ -290,6 +300,15 @@ def update_config(body: ConfigUpdate):
         if "promoLoyalty" in v: cfg.promotions.num_loyalty = int(v["promoLoyalty"])
         if "promoBundle" in v: cfg.promotions.num_bundle = int(v["promoBundle"])
         if "promoNewCustomer" in v: cfg.promotions.num_new_customer = int(v["promoNewCustomer"])
+
+        # Wishlists
+        if "wlEnabled" in v: cfg.wishlists.enabled = bool(v["wlEnabled"])
+        if "wlParticipationRate" in v: cfg.wishlists.participation_rate = float(v["wlParticipationRate"])
+        if "wlAvgItems" in v: cfg.wishlists.avg_items = float(v["wlAvgItems"])
+        if "wlMaxItems" in v: cfg.wishlists.max_items = int(v["wlMaxItems"])
+        if "wlPreBrowseDays" in v: cfg.wishlists.pre_browse_days = int(v["wlPreBrowseDays"])
+        if "wlAffinityStrength" in v: cfg.wishlists.affinity_strength = float(v["wlAffinityStrength"])
+        if "wlSeed" in v: cfg.wishlists.seed = int(v["wlSeed"])
 
         # Superpowers
         if "spEnabled" in v: cfg.superpowers.enabled = bool(v["spEnabled"])

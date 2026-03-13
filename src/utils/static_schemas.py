@@ -643,6 +643,15 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("DaysToAcquire", INT(not_null=True)),
         ("IsLatestPower", BIT(not_null=True)),
     ),
+    "CustomerWishlists": (
+        ("WishlistKey", INT_NN),
+        ("CustomerKey", INT_NN),
+        ("ProductKey", INT_NN),
+        ("AddedDate", DATE_NN),
+        ("Priority", VARCHAR(10, not_null=True)),
+        ("Quantity", INT_NN),
+        ("NetPrice", DECIMAL(10, 2, not_null=True)),
+    ),
     "LoyaltyTiers": (
         ("LoyaltyTierKey", INT_NN),
         ("LoyaltyTier", VARCHAR(50, not_null=True)),

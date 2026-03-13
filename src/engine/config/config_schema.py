@@ -543,6 +543,21 @@ class StoresConfig(_Base):
     global_dates: Optional[Any] = None
 
 
+# -- Wishlists --
+
+class WishlistsConfig(_Base):
+    enabled: bool = False
+    participation_rate: float = 0.35
+    avg_items: float = 3.5
+    max_items: int = 20
+    pre_browse_days: int = 90
+    affinity_strength: float = 0.6
+    seed: Optional[int] = 500
+    write_chunk_rows: int = 250_000
+    # Injected by dimensions_runner
+    global_dates: Optional[Any] = None
+
+
 # -- Superpowers --
 
 class SuperpowersConfig(_Base):
@@ -589,6 +604,7 @@ class AppConfig(_Base):
     products: ProductsConfig = ProductsConfig()
     customers: CustomersConfig = CustomersConfig()
     superpowers: SuperpowersConfig = SuperpowersConfig()
+    wishlists: WishlistsConfig = WishlistsConfig()
 
     geography: Optional[GeographyConfig] = None
     promotions: PromotionsConfig = PromotionsConfig()

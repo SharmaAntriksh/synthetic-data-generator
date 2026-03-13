@@ -23,6 +23,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 _DIM_FILE_SUPERPOWERS = "superpowers.parquet"
 _DIM_FILE_SUPERPOWERS_BRIDGE = "customer_superpowers.parquet"
+_DIM_FILE_WISHLISTS = "customer_wishlists.parquet"
 _DIM_FILE_RETURN_REASON = "return_reason.parquet"
 
 
@@ -290,6 +291,11 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
             excluded.add(_DIM_FILE_SUPERPOWERS_BRIDGE)
         elif not bool(getattr(sp_cfg, "generate_bridge", True)):
             excluded.add(_DIM_FILE_SUPERPOWERS_BRIDGE)
+
+    wl_cfg = getattr(cfg, "wishlists", None)
+    if wl_cfg is not None:
+        if not bool(getattr(wl_cfg, "enabled", True)):
+            excluded.add(_DIM_FILE_WISHLISTS)
 
     returns_cfg = getattr(cfg, "returns", None)
     returns_on = bool(getattr(returns_cfg, "enabled", False)) if returns_cfg is not None else False

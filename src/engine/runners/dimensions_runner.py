@@ -33,6 +33,7 @@ from src.dimensions.lookups import (
 
 from src.dimensions.return_reasons import run_return_reasons
 from src.dimensions.superpowers import run_superpowers
+from src.dimensions.wishlists import run_wishlists
 
 
 # =========================================================
@@ -86,6 +87,13 @@ def _superpowers_enabled(cfg) -> bool:
     if not sp_cfg or not isinstance(sp_cfg, Mapping):
         return False
     return bool(getattr(sp_cfg, "enabled", False))
+
+
+def _wishlists_enabled(cfg) -> bool:
+    wl_cfg = getattr(cfg, "wishlists", None)
+    if not wl_cfg or not isinstance(wl_cfg, Mapping):
+        return False
+    return bool(getattr(wl_cfg, "enabled", False))
 
 
 # =========================================================
@@ -239,6 +247,18 @@ DIM_SPECS: List[DimensionSpec] = [
         force_also=("suppliers",),
         regenerated_from_return_key="_regenerated",
         outputs_all=("products.parquet", "product_profile.parquet"),
+    ),
+
+    # 5.5) Wishlists (depends on customers + products)
+    DimensionSpec(
+        name="wishlists",
+        cfg_key="wishlists",
+        run_fn=run_wishlists,
+        deps=("customers", "products"),
+        date_dependent=True,
+        inject_global_dates=True,
+        enabled=_wishlists_enabled,
+        outputs_all=("customer_wishlists.parquet",),
     ),
 
     # 6) Dates

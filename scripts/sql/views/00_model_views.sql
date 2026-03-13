@@ -38,6 +38,11 @@ IF OBJECT_ID(N'dbo.CustomerAcquisitionChannels', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerAcquisitionChannels] AS SELECT * FROM [dbo].[CustomerAcquisitionChannels];');
 GO
 
+-- CustomerWishlists (optional)
+IF OBJECT_ID(N'dbo.CustomerWishlists', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerWishlists] AS SELECT * FROM [dbo].[CustomerWishlists];');
+GO
+
 -- CustomerSuperpowers (optional)
 IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerSuperpowers] AS SELECT * FROM [dbo].[CustomerSuperpowers];');

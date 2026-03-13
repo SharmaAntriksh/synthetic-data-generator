@@ -90,6 +90,18 @@ customers:
 
 
 # ------------------------------------------------------------------
+# WISHLISTS
+# ------------------------------------------------------------------
+wishlists:
+  enabled: true
+  participation_rate: 0.35        # fraction of customers who wishlist
+  avg_items: 3.5                  # mean items per participant (Poisson λ)
+  max_items: 20                   # cap per customer
+  pre_browse_days: 90             # days before CustomerStartDate wishlisting can begin
+  affinity_strength: 0.6          # probability of picking from same subcategory as a prior item
+  seed: 500
+
+# ------------------------------------------------------------------
 # SUPERPOWERS (disabled by default)
 # ------------------------------------------------------------------
 superpowers:
