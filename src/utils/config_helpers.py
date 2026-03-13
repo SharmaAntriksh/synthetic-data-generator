@@ -118,19 +118,16 @@ def pick_seed_nested(
 ) -> int:
     """Resolve seed: ``override.seed → local_cfg.seed → defaults.seed → fallback``.
 
-    Also checks ``_defaults.seed`` for backward compatibility.
+    .. deprecated:: Use ``resolve_seed`` from ``src.utils.config_precedence`` instead.
     """
-    override = as_dict(getattr(local_cfg, "override", None))
-    seed = override.get("seed") if isinstance(override, dict) else getattr(override, "seed", None)
-    if seed is None:
-        seed = getattr(local_cfg, "seed", None)
-    if seed is None:
-        defaults = getattr(cfg, "defaults", None)
-        seed = getattr(defaults, "seed", None) if defaults is not None else None
-    if seed is None:
-        _defaults = getattr(cfg, "_defaults", None)
-        seed = getattr(_defaults, "seed", None) if _defaults is not None else None
-    return int_or(seed, fallback)
+    import warnings
+    from src.utils.config_precedence import resolve_seed
+    warnings.warn(
+        "pick_seed_nested() is deprecated — use resolve_seed() from config_precedence",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return resolve_seed(cfg, local_cfg, fallback=fallback)
 
 
 def pick_seed_flat(
@@ -138,14 +135,18 @@ def pick_seed_flat(
     local_cfg: Dict[str, Any],
     fallback: int = 42,
 ) -> int:
-    """Resolve seed: ``local_cfg.seed → cfg.seed → fallback``."""
-    local_seed = getattr(local_cfg, "seed", None)
-    if local_seed is not None:
-        return int_or(local_seed, fallback)
-    cfg_seed = getattr(cfg, "seed", None)
-    if cfg_seed is not None:
-        return int_or(cfg_seed, fallback)
-    return fallback
+    """Resolve seed: ``local_cfg.seed → cfg.seed → fallback``.
+
+    .. deprecated:: Use ``resolve_seed`` from ``src.utils.config_precedence`` instead.
+    """
+    import warnings
+    from src.utils.config_precedence import resolve_seed
+    warnings.warn(
+        "pick_seed_flat() is deprecated — use resolve_seed() from config_precedence",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return resolve_seed(cfg, local_cfg, fallback=fallback)
 
 
 # ---------------------------------------------------------------------------

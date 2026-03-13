@@ -167,34 +167,17 @@ def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional
     return str(start_date), str(end_date)
 
 
-def _resolve_seed(cfg: dict, seed: Any, default_seed: int = 42) -> int:
+def _resolve_seed(cfg: Any, seed: Any, default_seed: int = 42) -> int:
+    """Resolve sales seed via unified resolver.
+
+    If *seed* is explicitly provided (not None), it takes priority.
+    Otherwise delegates to config_precedence.resolve_seed.
     """
-    Priority:
-      explicit seed param
-      cfg.sales.override.seed
-      cfg.sales.seed
-      cfg.defaults.seed
-      fallback
-    """
+    from src.utils.config_precedence import resolve_seed as _resolve
     if seed is not None:
         return _int_or(seed, default_seed)
-
-    ov = _cfg_get(cfg, ["sales", "override", "seed"], default=None)
-    if ov is not None:
-        return _int_or(ov, default_seed)
-
-    s = _cfg_get(cfg, ["sales", "seed"], default=None)
-    if s is not None:
-        return _int_or(s, default_seed)
-
-    d = _cfg_get(cfg, ["defaults", "seed"], default=None)
-    if d is None:
-        d = _cfg_get(cfg, ["_defaults", "seed"], default=None)
-
-    if d is not None:
-        return _int_or(d, default_seed)
-
-    return int(default_seed)
+    sales_cfg = getattr(cfg, "sales", None) if not isinstance(cfg, dict) else cfg.get("sales")
+    return _resolve(cfg, sales_cfg, fallback=default_seed)
 
 
 def _normalize_dt_any(x) -> Union[pd.Series, pd.DatetimeIndex]:

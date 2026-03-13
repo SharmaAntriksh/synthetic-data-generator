@@ -30,25 +30,74 @@ import pandas as pd
 from src.utils.config_helpers import as_dict, int_or
 
 
+def _getattr_or_get(obj: Any, key: str) -> Any:
+    """Read *key* from a Pydantic model (getattr) or dict (.get)."""
+    if obj is None:
+        return None
+    if hasattr(obj, key):
+        return getattr(obj, key, None)
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return None
+
+
+def _is_random_mode(cfg: Any) -> bool:
+    """Return True when ``defaults.random`` is truthy."""
+    defaults = _getattr_or_get(cfg, "defaults")
+    if defaults is None:
+        return False
+    val = _getattr_or_get(defaults, "random")
+    return bool(val) if val is not None else False
+
+
 def resolve_seed(
-    cfg: Dict[str, Any],
-    section_cfg: Dict[str, Any],
+    cfg: Any,
+    section_cfg: Any = None,
     *,
     fallback: int = 42,
 ) -> int:
     """Resolve seed using the standard precedence chain.
 
     override.seed -> section.seed -> defaults.seed -> fallback
+
+    When ``defaults.random`` is ``True``, generates a one-time random
+    seed from OS entropy so every run produces different output while
+    keeping downstream code (which does ``int(seed)``) unchanged.
+
+    Works with both Pydantic models (attribute access) and plain dicts.
     """
-    override = as_dict(section_cfg.get("override"))
-    seed = override.get("seed")
-    if seed is None:
-        seed = section_cfg.get("seed")
-    if seed is None:
-        seed = as_dict(cfg.get("defaults")).get("seed")
-    if seed is None:
-        seed = as_dict(cfg.get("_defaults")).get("seed")
-    return int_or(seed, fallback)
+    if _is_random_mode(cfg):
+        import numpy as np
+        return int(np.random.default_rng(None).integers(1, 1 << 31))
+
+    # 1. override.seed
+    if section_cfg is not None:
+        override = _getattr_or_get(section_cfg, "override")
+        ov_dict = as_dict(override) if override is not None else {}
+        seed = ov_dict.get("seed") if isinstance(ov_dict, dict) else _getattr_or_get(override, "seed")
+        if seed is not None:
+            return int_or(seed, fallback)
+
+        # 2. section.seed
+        seed = _getattr_or_get(section_cfg, "seed")
+        if seed is not None:
+            return int_or(seed, fallback)
+
+    # 3. defaults.seed
+    defaults = _getattr_or_get(cfg, "defaults")
+    if defaults is not None:
+        seed = _getattr_or_get(defaults, "seed")
+        if seed is not None:
+            return int_or(seed, fallback)
+
+    # 3b. _defaults.seed (legacy normalizer key)
+    _defaults = _getattr_or_get(cfg, "_defaults")
+    if _defaults is not None:
+        seed = _getattr_or_get(_defaults, "seed")
+        if seed is not None:
+            return int_or(seed, fallback)
+
+    return fallback
 
 
 def resolve_dates(

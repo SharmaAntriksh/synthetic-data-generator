@@ -20,10 +20,10 @@ from src.utils.config_helpers import (
     as_dict,
     int_or,
     float_or,
-    pick_seed_flat,
     range2,
     region_from_iso_code,
 )
+from src.utils.config_precedence import resolve_seed
 from src.defaults import STORE_CLOSE_TRANSFER_SHARE_BY_REASON as _TRANSFER_SHARE_BY_REASON
 from src.defaults import (
     STORE_TYPES as _STORE_TYPES,
@@ -1017,7 +1017,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             opening_start=opening_cfg.get("start") or "1995-01-01",
             opening_end=opening_cfg.get("end") or "2020-12-31",
             closing_end=store_cfg.closing_end or "2025-12-31",
-            seed=pick_seed_flat(cfg, store_cfg, fallback=42),
+            seed=resolve_seed(cfg, store_cfg, fallback=42),
             square_footage_cfg=sqft_cfg,
             employee_count_cfg=emp_cfg,
             geo_loc_short=loc_short_map,

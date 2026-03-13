@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils import info, skip, stage
+from src.utils.config_precedence import resolve_seed
 from src.versioning import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
 from src.utils.name_pools import (
@@ -1144,10 +1145,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     if total_customers <= 0:
         raise ValueError("customers.total_customers must be > 0")
 
-    default_seed = cfg.defaults.seed if hasattr(cfg, "defaults") else 42
-    override_seed = (cust_cfg.override or {}).get("seed")
-    seed = override_seed if override_seed is not None else default_seed
-    rng = np.random.default_rng(int(seed))
+    seed = resolve_seed(cfg, cust_cfg, fallback=42)
+    rng = np.random.default_rng(seed)
 
     start_date, end_date = _parse_cfg_dates(cfg)
     start_month0, _end_month0, T = _month_index_space(start_date, end_date)

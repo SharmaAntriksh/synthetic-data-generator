@@ -17,6 +17,7 @@ scale:
 # ------------------------------------------------------------------
 defaults:
   seed: 42
+  random: false                    # true = ignore seeds, use OS entropy (non-deterministic)
   dates:
     start: "2021-01-01"
     end: "2025-12-31"
@@ -44,7 +45,7 @@ sales:
 
   partition_by: ["Year", "Month"]     # null or [] to disable
 
-  optimize: true                      # sort merged files for better query perf
+  optimize: false                      # sort merged files for better query perf
 
   advanced:
     chunk_size: 1_000_000
@@ -120,12 +121,12 @@ complaints:
 # SUPERPOWERS (disabled by default)
 # ------------------------------------------------------------------
 superpowers:
-  enabled: false
-  generate_bridge: false
+  enabled: true
+  generate_bridge: true
 
   powers_count: 20
   powers_per_customer_min: 1
-  powers_per_customer_max: 3
+  powers_per_customer_max: 2
 
   include_power_level: true
   include_primary_flag: true

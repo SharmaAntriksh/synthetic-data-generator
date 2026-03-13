@@ -20,11 +20,11 @@ from src.utils.config_helpers import (
     int_or,
     float_or,
     bool_or,
-    pick_seed_nested,
     parse_global_dates,
     rand_dates_between,
     region_from_iso_code,
 )
+from src.utils.config_precedence import resolve_seed
 from src.defaults import (
     EMPLOYEE_PART_TIME_RATE_BY_ROLE,
     EMPLOYEE_PART_TIME_FTE_VALUES,
@@ -1144,7 +1144,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     if not stores_path.exists():
         raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
 
-    seed = pick_seed_nested(cfg, dict(emp_cfg), fallback=42)
+    seed = resolve_seed(cfg, dict(emp_cfg), fallback=42)
     global_start, global_end = _parse_employee_dates(cfg, dict(emp_cfg))
 
     _STORES_READ_COLS = [

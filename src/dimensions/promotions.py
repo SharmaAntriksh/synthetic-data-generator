@@ -11,6 +11,7 @@ import warnings
 
 from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.config_helpers import as_dict
+from src.utils.config_precedence import resolve_seed
 from src.versioning import should_regenerate, save_version
 
 
@@ -112,22 +113,6 @@ def _normalize_override_dates(promo_cfg: Dict) -> Dict:
     return override if isinstance(override, Mapping) else {}
 
 
-def _pick_seed(promo_cfg: Dict, default_seed: int = 42) -> int:
-    override = promo_cfg.override if hasattr(promo_cfg, "override") else ((promo_cfg or {}).get("override") if isinstance(promo_cfg, dict) else None)
-    override = override or {}
-    if not isinstance(override, Mapping):
-        override = {}
-
-    seed = promo_cfg.seed if hasattr(promo_cfg, "seed") else ((promo_cfg or {}).get("seed") if isinstance(promo_cfg, dict) else None)
-    if seed is None:
-        seed = override.get("seed", None)
-    if seed is None:
-        seed = default_seed
-
-    try:
-        return int(seed)
-    except (TypeError, ValueError):
-        raise ValueError(f"Promotions: seed must be an integer, got {seed!r}")
 
 
 def _discount(rng: np.random.Generator, lo: float, hi: float) -> float:
@@ -560,7 +545,7 @@ def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
         end = pd.to_datetime(defaults_dates.end)
 
     years, windows = _build_year_windows(start, end)
-    seed = _pick_seed(promo_cfg)
+    seed = resolve_seed(cfg, promo_cfg, fallback=42)
 
     # Optional parquet settings (safe defaults)
     compression = promo_cfg.parquet_compression

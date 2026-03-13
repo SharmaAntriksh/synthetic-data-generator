@@ -264,6 +264,7 @@ class GlobalDatesConfig(_Base):
 
 class DefaultsConfig(_Base):
     seed: int = 42
+    random: bool = False
     dates: GlobalDatesConfig = GlobalDatesConfig()
     paths: Optional[Dict[str, str]] = None
 

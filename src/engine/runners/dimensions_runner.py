@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from src.exceptions import DimensionError
+from src.utils.config_precedence import _is_random_mode
 from src.utils.logging_utils import info, skip, stage
 from src.versioning import delete_version
 
@@ -416,6 +417,10 @@ def generate_dimensions(
             info(f"Ignoring unknown force_regenerate keys: {sorted(unknown)}")
         force_set = {x for x in requested if x in known}
 
+    # random mode: every run must regenerate all dimensions
+    if _is_random_mode(cfg):
+        force_set = set(known)
+
     # Special per-dimension force expansions (e.g., products -> suppliers)
     for n in list(force_set):
         force_set.update(by_name[n].force_also)
@@ -437,9 +442,10 @@ def generate_dimensions(
 
     # Delete version files for forced dims — each dimension's
     # should_regenerate() will return True when the file is missing.
+    random_mode = _is_random_mode(cfg)
     if force_set:
         deleted = [n for n in sorted(force_set) if delete_version(n)]
-        if deleted:
+        if deleted and not random_mode:
             info(f"Deleted version files to force regeneration: {deleted}")
 
     regenerated: Dict[str, bool] = {}
