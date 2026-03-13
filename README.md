@@ -30,10 +30,11 @@ Each run produces a self-contained output folder under `generated_datasets/` wit
 
 ## Prerequisites
 
-- **Python 3.10+**
+- **Python 3.11+**
 - Git
 
 Optional:
+- [uv](https://docs.astral.sh/uv/) — recommended for fast, locked dependency installs (`pip install uv`)
 - Power BI Desktop (to explore the included `.pbip` project template)
 
 Verify Python:
@@ -57,6 +58,7 @@ cd synthetic-data-generator
 
 ```powershell
 # Create virtual environment and install dependencies
+# Uses uv (preferred) if available, falls back to pip
 .\scripts\create_venv.ps1
 
 # Activate
@@ -72,6 +74,11 @@ To update dependencies later:
 **macOS / Linux:**
 
 ```bash
+# Recommended (locked, reproducible)
+pip install uv
+uv sync
+
+# Or traditional
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -208,6 +215,7 @@ python main.py [OPTIONS]
 
 | Flag | Description |
 |---|---|
+| `--version` | Print version and exit |
 | `--format` | Output format: `csv`, `parquet`, `delta`, `deltaparquet` |
 | `--sales-rows N` | Number of sales rows to generate |
 | `--customers N` | Number of customers |
@@ -297,7 +305,7 @@ Each output includes a Power BI Project (`.pbip`) template with pre-configured f
 
 ## Testing
 
-The project includes 186 unit tests covering config validation, pricing pipeline, quantity model, geography, customer profiles, version store, state management, and determinism guarantees.
+The project includes 1000+ tests covering config validation, pricing pipeline, quantity model, geography, customer profiles, version store, state management, determinism guarantees, web API, packaging, sales logic, and schema validation.
 
 ```bash
 # Run all tests

@@ -6,6 +6,7 @@ import sys
 from collections.abc import Mapping
 from typing import Optional, Sequence
 
+from src import __version__
 from src.engine.runners.pipeline_runner import PipelineOverrides, run_pipeline
 from src.utils.logging_utils import configure_logging, fail, info
 
@@ -23,8 +24,14 @@ def str2bool(v):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="contoso",
-        description="Contoso Fake Data Generator",
+        prog="syndata",
+        description="Synthetic Data Generator — analytics-ready retail data",
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
 
     # ----------------- SALES / OUTPUT OVERRIDES -----------------

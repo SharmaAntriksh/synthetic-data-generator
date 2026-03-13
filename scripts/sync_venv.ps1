@@ -2,18 +2,20 @@
 # Sync (create/update) a project virtual environment
 #
 # Behavior:
+#   - Uses uv (preferred) when available for locked, reproducible installs
+#   - Falls back to pip + requirements.txt if uv is not installed
 #   - Resolves project root (walks upward for .git / pyproject.toml / requirements.txt)
 #   - Creates the venv if missing (or recreates with -Force)
-#   - Installs dependencies only when inputs change (requirements/constraints hash + python version)
-#   - Uses the venv's python directly (no activation required)
+#   - Installs dependencies only when inputs change (hash stamp or uv lockfile)
 #
 # Exit codes:
 #   0 = OK
-#   1 = failure (missing python, venv create failed, pip install failed)
+#   1 = failure (missing python, venv create failed, install failed)
 #
 # Usage:
 #   .\scripts\sync_venv.ps1
 #   .\scripts\sync_venv.ps1 -Force
+#   .\scripts\sync_venv.ps1 -Dev
 #   .\scripts\sync_venv.ps1 -Requirements requirements-dev.txt
 #   .\scripts\sync_venv.ps1 -Constraints constraints.txt
 #   .\scripts\sync_venv.ps1 -Quiet
@@ -25,9 +27,10 @@ param(
     [string]$Requirements = "requirements.txt",
     [string]$Constraints = "",
     [switch]$Force,
+    [switch]$Dev,
     [switch]$NoUpgradePip,
     [switch]$Quiet,
-    [version]$MinPythonVersion = "3.10",
+    [version]$MinPythonVersion = "3.11",
     [string]$ProjectRoot
 )
 
@@ -36,7 +39,7 @@ Set-StrictMode -Version Latest
 
 . (Join-Path $PSScriptRoot "_common.ps1")
 
-# ---- Stamp helpers (local to this script) ----
+# ---- Stamp helpers (local to this script, pip fallback only) ----
 
 function Read-Stamp {
     param([string]$Path)
@@ -86,14 +89,48 @@ try {
     $RootPath = if ($ProjectRoot) { (Resolve-Path $ProjectRoot).Path } else { Resolve-ProjectRoot -StartDir $PSScriptRoot }
     $VenvPath = Join-Path $RootPath $VenvDir
 
-    $ReqFile = Join-Path $RootPath $Requirements
-    $ConFile = if ([string]::IsNullOrWhiteSpace($Constraints)) { "" } else { (Join-Path $RootPath $Constraints) }
+    Log "Project root  : $RootPath"
+    Log "Venv path     : $VenvPath"
 
+    # Handle -Force: remove existing venv
+    if ($Force -and (Test-Path -LiteralPath $VenvPath)) {
+        Log "Removing existing venv (-Force)..." -Level warn
+        Remove-Item -LiteralPath $VenvPath -Recurse -Force
+    }
+
+    # --- Try uv first ---
+    $useUv = $false
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        $useUv = $true
+    }
+
+    if ($useUv) {
+        Log "Using uv sync (locked dependencies)" -Level ok
+
+        $uvArgs = @("sync", "--project", $RootPath)
+        if ($Dev) {
+            $uvArgs += "--dev"
+        } else {
+            $uvArgs += "--no-dev"
+        }
+        if ($Quiet) {
+            $uvArgs += "--quiet"
+        }
+
+        Invoke-Checked -Exe "uv" -Arguments $uvArgs -ErrorMessage "uv sync failed."
+        Log "Virtual environment synced successfully (uv, locked)." -Level ok
+        exit 0
+    }
+
+    # --- Fallback: pip + requirements.txt ---
+    Log "uv not found — falling back to pip" -Level warn
+    Log "  Tip: install uv for locked, reproducible installs: pip install uv" -Level info
+
+    $ReqFile    = Join-Path $RootPath $Requirements
+    $ConFile    = if ([string]::IsNullOrWhiteSpace($Constraints)) { "" } else { (Join-Path $RootPath $Constraints) }
     $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
     $StampFile  = Join-Path $VenvPath ".requirements.stamp.json"
 
-    Log "Project root  : $RootPath"
-    Log "Venv path     : $VenvPath"
     Log "Requirements  : $ReqFile"
     if ($ConFile) { Log "Constraints   : $ConFile" }
     Log "Stamp file    : $StampFile"
@@ -111,12 +148,7 @@ try {
         exit 1
     }
 
-    # (Re)create venv if needed
-    if ($Force -and (Test-Path -LiteralPath $VenvPath)) {
-        Log "Removing existing venv (-Force)..." -Level warn
-        Remove-Item -LiteralPath $VenvPath -Recurse -Force
-    }
-
+    # Create venv if needed
     if (-not (Test-Path -LiteralPath $VenvPython)) {
         Log "Creating virtual environment..." -Level cmd
         $venvArgs = @() + $runner.Args + @("-m", "venv", $VenvPath)
@@ -143,7 +175,6 @@ try {
     $venvPyVer = (& $VenvPython -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")' 2>$null).Trim()
 
     $stamp = Read-Stamp -Path $StampFile
-    # Normalize version strings for comparison (e.g. "3.10.0" vs "3.10.0.0")
     $stampPyNorm = if ($stamp -and $stamp.python_version) { try { [version]$stamp.python_version } catch { $stamp.python_version } } else { $null }
     $venvPyNorm  = try { [version]$venvPyVer } catch { $venvPyVer }
     $needsSync =
@@ -179,7 +210,7 @@ try {
     }
 
     Write-Stamp -Path $StampFile -ReqHash $reqHash -ConHash $conHash -PyVer $venvPyVer
-    Log "Virtual environment updated." -Level ok
+    Log "Virtual environment synced successfully (pip, unpinned transitive deps)." -Level ok
     exit 0
 }
 catch {
