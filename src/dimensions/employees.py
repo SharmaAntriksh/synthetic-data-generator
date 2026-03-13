@@ -45,6 +45,15 @@ assert abs(float(_STAFF_TITLES_P.sum()) - 1.0) < 1e-9, (
 
 
 # ---------------------------------------------------------
+# SA natural attrition constants (no config knobs)
+# ---------------------------------------------------------
+_SA_ANNUAL_ATTRITION_RATE: float = 0.12    # 12 % annual voluntary turnover
+_SA_MIN_TENURE_DAYS: int = 180             # minimum days before an SA can leave
+_SA_MAX_TENURE_DAYS: int = 2555            # ~7-year cap
+_SA_REPLACEMENT_LEAD_DAYS: int = 14        # new hire overlaps departing employee
+
+
+# ---------------------------------------------------------
 # Internals
 # ---------------------------------------------------------
 
@@ -234,10 +243,8 @@ def _enrich_employee_hr_columns(
         base_vac + rng.normal(0, 10, size=n), 0, 240,
     ).round(0).astype(np.int16)
 
-    # CurrentFlag / Status / StartDate / EndDate
+    # CurrentFlag / Status
     df["CurrentFlag"] = df["IsActive"].astype(np.int8)
-    df["StartDate"] = hire
-    df["EndDate"] = pd.to_datetime(df["TerminationDate"]).dt.normalize()
     df["Status"] = np.where(
         df["IsActive"].astype(int) == 1, "Active", "Terminated",
     ).astype(object)
@@ -304,6 +311,148 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------
+# SA attrition chain generator
+# ---------------------------------------------------------
+
+def _generate_attrition_replacements(
+    df: pd.DataFrame,
+    *,
+    rng: np.random.Generator,
+    global_start: pd.Timestamp,
+    global_end: pd.Timestamp,
+    primary_sales_role: str = "Sales Associate",
+    store_closing_dates: dict[int, pd.Timestamp] | None = None,
+) -> pd.DataFrame:
+    """
+    For each Sales Associate, simulate a tenure chain: the original SA
+    serves for a random tenure drawn from an exponential distribution,
+    then departs and is replaced by a new hire (with a
+    ``_SA_REPLACEMENT_LEAD_DAYS`` overlap).  The chain continues until
+    the last SA's tenure reaches ``global_end``.
+
+    Returns *df* with original SA rows mutated (TerminationDate set)
+    plus appended replacement rows.
+    """
+    ps_role = str(primary_sales_role or "Sales Associate")
+    ek_col = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
+    sa_mask = (ek_col >= STAFF_KEY_BASE) & (df["Title"].astype(str) == ps_role)
+    sa_idx = np.where(sa_mask.to_numpy())[0]
+
+    if sa_idx.size == 0:
+        return df
+
+    # Mean tenure in days from annual attrition rate
+    mean_tenure = 365.0 / _SA_ANNUAL_ATTRITION_RATE
+
+    # Track highest within-store seq per store for key allocation
+    # Current keys: STAFF_KEY_BASE + store * STAFF_KEY_STORE_MULT + seq
+    store_max_seq: dict[int, int] = {}
+    for i in range(len(df)):
+        ek_val = int(ek_col.iloc[i])
+        if ek_val >= STAFF_KEY_BASE:
+            sk = (ek_val - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
+            seq = (ek_val - STAFF_KEY_BASE) % STAFF_KEY_STORE_MULT
+            store_max_seq[sk] = max(store_max_seq.get(sk, 0), seq)
+
+    replacement_rows: list[dict] = []
+    term_date_col = df.columns.get_loc("TerminationDate")
+    is_active_col = df.columns.get_loc("IsActive")
+
+    # Per-store RNG spawn for determinism regardless of iteration order
+    store_keys_sorted = sorted({
+        int((int(ek_col.iloc[i]) - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT)
+        for i in sa_idx
+    })
+    store_rng_map: dict[int, np.random.Generator] = {}
+    spawned = rng.spawn(len(store_keys_sorted))
+    for sk, child_rng in zip(store_keys_sorted, spawned):
+        store_rng_map[sk] = child_rng
+
+    for i in sa_idx:
+        ek_val = int(ek_col.iloc[i])
+        store_key = int((ek_val - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT)
+        hire_date = pd.to_datetime(df.iat[i, df.columns.get_loc("HireDate")]).normalize()
+        store_rng = store_rng_map[store_key]
+
+        # Determine the effective end for this store (global_end or closing date)
+        store_end = global_end
+        if store_closing_dates and store_key in store_closing_dates:
+            cd = pd.to_datetime(store_closing_dates[store_key]).normalize()
+            if global_start <= cd <= global_end:
+                store_end = cd
+
+        # Draw tenure for original SA
+        tenure_days = int(np.clip(
+            store_rng.exponential(mean_tenure),
+            _SA_MIN_TENURE_DAYS,
+            _SA_MAX_TENURE_DAYS,
+        ))
+        departure = (hire_date + pd.Timedelta(days=tenure_days)).normalize()
+
+        if departure >= store_end:
+            continue  # this SA lasts the whole window — no attrition
+
+        # Set termination on original SA
+        df.iat[i, term_date_col] = departure
+        df.iat[i, is_active_col] = np.int8(0)
+
+        # Build replacement chain
+        current_departure = departure
+        # Carry forward columns from the original SA row
+        template = df.iloc[i].to_dict()
+
+        while current_departure < store_end:
+            next_seq = store_max_seq.get(store_key, 0) + 1
+            if next_seq >= STAFF_KEY_STORE_MULT:
+                raise OverflowError(
+                    f"Store {store_key}: replacement employee key overflow "
+                    f"(seq={next_seq} >= {STAFF_KEY_STORE_MULT}). "
+                    f"Too many attrition replacements for this store."
+                )
+            store_max_seq[store_key] = next_seq
+
+            new_ek = STAFF_KEY_BASE + store_key * STAFF_KEY_STORE_MULT + next_seq
+            new_hire = (current_departure - pd.Timedelta(days=_SA_REPLACEMENT_LEAD_DAYS)).normalize()
+            # Clamp hire date to not be before global_start - 5y (consistent with general logic)
+            earliest_hire = global_start - pd.Timedelta(days=365 * 5)
+            if new_hire < earliest_hire:
+                new_hire = earliest_hire
+
+            # Draw tenure for replacement
+            rep_tenure = int(np.clip(
+                store_rng.exponential(mean_tenure),
+                _SA_MIN_TENURE_DAYS,
+                _SA_MAX_TENURE_DAYS,
+            ))
+            rep_departure = (new_hire + pd.Timedelta(days=rep_tenure)).normalize()
+
+            # Determine if this is the last in chain
+            is_last = rep_departure >= store_end
+
+            row = dict(template)
+            row["EmployeeKey"] = np.int64(new_ek)
+            row["ParentEmployeeKey"] = template["ParentEmployeeKey"]
+            row["EmployeeName"] = ""  # will be assigned by name generator
+            row["HireDate"] = new_hire
+            row["TerminationDate"] = pd.NaT if is_last else rep_departure
+            row["IsActive"] = np.int8(1) if is_last else np.int8(0)
+
+            replacement_rows.append(row)
+            current_departure = rep_departure
+
+            if is_last:
+                break
+
+    if not replacement_rows:
+        return df
+
+    rep_df = pd.DataFrame(replacement_rows)
+    df = pd.concat([df, rep_df], ignore_index=True)
+    info(f"SA attrition: generated {len(replacement_rows)} replacement employees")
+    return df
+
+
+# ---------------------------------------------------------
 # Generator
 # ---------------------------------------------------------
 
@@ -335,11 +484,13 @@ def generate_employee_dimension(
     """
     Build a parent-child employee hierarchy with stable keys.
 
-    Sales Associate lifecycle guarantee:
+    Sales Associate lifecycle:
       - ALL Sales Associates are hired at or before *global_start*.
-      - ALL Sales Associates have no termination (NaT).
-      - This ensures the bridge table can assign every Sales Associate for
-        the full ``[global_start, global_end]`` window without date conflicts.
+      - SAs are subject to natural attrition: after a random tenure they
+        depart and are replaced by a new hire (with overlap for training).
+        The last SA in each chain serves until ``global_end`` (NaT).
+      - This ensures the bridge table always has at least one SA per store
+        covering any date in ``[global_start, global_end]``.
     """
     if stores.empty:
         raise ValueError("stores dataframe is empty; cannot generate employees")
@@ -672,7 +823,8 @@ def generate_employee_dimension(
 
     df["HireDate"] = hire_dates
 
-    # Terminations: SAs never terminated; others probabilistic (reduced for senior levels)
+    # Terminations: SAs skip probabilistic termination (attrition handles them);
+    # others probabilistic (reduced for senior levels)
     base_p = termination_rate
     level = df["OrgLevel"].astype(np.int16).to_numpy()
     p = np.where(level <= 4, base_p * 0.25, base_p)
@@ -698,6 +850,19 @@ def generate_employee_dimension(
     df["IsActive"] = (
         df["TerminationDate"].isna() | (df["TerminationDate"] > global_end)
     ).astype(np.int8)
+
+    # ------------------------------------------------------------------
+    # SA natural attrition: tenure chains with replacements
+    # ------------------------------------------------------------------
+    df = _generate_attrition_replacements(
+        df,
+        rng=np.random.default_rng(int(seed) ^ 0xA7721710),
+        global_start=global_start,
+        global_end=global_end,
+        primary_sales_role=ps_role_str,
+        store_closing_dates=store_closing_dates,
+    )
+    n = len(df)  # update after attrition may have added rows
 
     # ------------------------------------------------------------------
     # Store-closure: terminate or mark for transfer
@@ -1109,7 +1274,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             "BirthDate", "MaritalStatus", "EmailAddress", "Phone",
             "EmergencyContactName", "EmergencyContactPhone",
             "SalariedFlag", "PayFrequency", "BaseRate", "VacationHours",
-            "CurrentFlag", "StartDate", "EndDate", "Status",
+            "CurrentFlag", "Status",
             "SalesPersonFlag", "DepartmentName",
         ]
         df = df[_SCHEMA_ORDER]
@@ -1117,7 +1282,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         compression = emp_cfg.parquet_compression
         compression_level = emp_cfg.parquet_compression_level
 
-        date_cols = ["HireDate", "TerminationDate", "BirthDate", "StartDate", "EndDate"]
+        date_cols = ["HireDate", "TerminationDate", "BirthDate"]
         write_parquet_with_date32(
             df,
             out_path,

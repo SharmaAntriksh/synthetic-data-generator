@@ -804,8 +804,8 @@ class TestGenerateEmployeeDimension:
         actual_levels = set(df["OrgLevel"].dropna().astype(int).unique())
         assert actual_levels.issubset(valid_levels)
 
-    def test_sales_associates_never_terminated(self, people_pools):
-        """Sales Associates should have NaT termination date."""
+    def test_sales_associates_attrition_chain(self, people_pools):
+        """SA attrition: last SA per chain has NaT, others have TerminationDate set."""
         stores = self._make_stores()
         df = generate_employee_dimension(
             stores=stores,
@@ -816,10 +816,14 @@ class TestGenerateEmployeeDimension:
         )
         sa = df[df["Title"] == "Sales Associate"]
         if len(sa) > 0:
-            assert sa["TerminationDate"].isna().all()
+            # At least some SAs should still be active (last in each chain)
+            assert sa["TerminationDate"].isna().any(), "No active SAs found"
+            # With attrition, some SAs should have been terminated
+            assert sa["TerminationDate"].notna().any(), "No SA attrition occurred"
 
-    def test_sales_associates_hired_before_start(self, people_pools):
-        """Sales Associates should be hired at or before global_start."""
+    def test_every_store_has_sa_hired_before_start(self, people_pools):
+        """Every store should have at least one SA hired at or before global_start."""
+        from src.dimensions.employees import STAFF_KEY_BASE
         global_start = pd.Timestamp("2021-01-01")
         stores = self._make_stores()
         df = generate_employee_dimension(
@@ -829,10 +833,14 @@ class TestGenerateEmployeeDimension:
             global_end=pd.Timestamp("2025-12-31"),
             people_pools=people_pools,
         )
-        sa = df[df["Title"] == "Sales Associate"]
+        sa = df[(df["Title"] == "Sales Associate") & (df["EmployeeKey"] >= STAFF_KEY_BASE)]
         if len(sa) > 0:
-            hire_dates = pd.to_datetime(sa["HireDate"])
-            assert (hire_dates <= global_start).all()
+            for sk in sa["StoreKey"].unique():
+                store_sa = sa[sa["StoreKey"] == sk]
+                hire_dates = pd.to_datetime(store_sa["HireDate"])
+                assert (hire_dates <= global_start).any(), (
+                    f"Store {sk}: no SA hired before {global_start}"
+                )
 
     def test_max_staff_zero_means_no_staff(self, people_pools):
         stores = self._make_stores(n=3)

@@ -615,8 +615,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("BaseRate", DECIMAL(10, 2, not_null=True)),
         ("VacationHours", INT_NN),
         ("CurrentFlag", BIT(not_null=True)),
-        ("StartDate", DATE_NN),
-        ("EndDate", DATE_NULL),
         ("Status", VARCHAR(20, not_null=True)),
         ("SalesPersonFlag", BIT(not_null=True)),
         ("DepartmentName", VARCHAR(50, not_null=True)),

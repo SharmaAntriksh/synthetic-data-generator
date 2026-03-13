@@ -327,32 +327,90 @@ def generate_employee_store_assignments(
                 if pd.to_datetime(cd).normalize() < _effective_open:
                     _active_stores.discard(int(sk))
 
+        # Build anchor/mover sets per store.  An SA can safely become a
+        # mover if the remaining anchors at the store fully cover the
+        # mover's tenure (so the store is never left unstaffed during
+        # away episodes).  Short-tenure SAs (< 1 year) stay anchors.
+        _MIN_TENURE_FOR_TRANSFER_DAYS = 365
+        ws_np = np.datetime64(window_start, "ns")
+        we_np = np.datetime64(window_end, "ns")
+
+        def _anchors_cover(
+            anch_starts: np.ndarray,
+            anch_ends: np.ndarray,
+            target_start: np.int64,
+            target_end: np.int64,
+        ) -> bool:
+            """Check merged anchor intervals fully cover [target_start, target_end]."""
+            # Filter to anchors overlapping the target window
+            mask = (anch_ends >= target_start) & (anch_starts <= target_end)
+            if not np.any(mask):
+                return False
+            starts = anch_starts[mask]
+            ends = anch_ends[mask]
+            order = np.argsort(starts)
+            starts = starts[order]
+            ends = ends[order]
+            covered_until = starts[0]
+            if covered_until > target_start:
+                return False
+            covered_until = ends[0]
+            for k in range(1, len(starts)):
+                if starts[k] > covered_until + np.timedelta64(1, "D"):
+                    break
+                if ends[k] > covered_until:
+                    covered_until = ends[k]
+            return bool(covered_until >= target_end)
+
         for store in all_stores:
-            # Skip stores closed before the dataset window
             if int(store) not in _active_stores:
                 continue
             m_store_role = (home_arr == int(store)) & (role_arr == ps_role)
             if not bool(np.any(m_store_role)):
                 continue
 
-            cand_ek = ek_arr[m_store_role]
-            cand_si = staff_idx[m_store_role]
-            order = np.argsort(cand_si)
-            cand_ek = cand_ek[order]
+            cand_pos = np.where(m_store_role)[0]
+            cand_ek = ek_arr[cand_pos]
+            cand_hire_ns = np.asarray(hire_arr[cand_pos], dtype="datetime64[ns]")
+            cand_term_ns = np.asarray(term_arr[cand_pos], dtype="datetime64[ns]")
 
-            n_sa_store = len(cand_ek)
-            n_anchor = max(1, n_sa_store - n_movable)
-            n_anchor = min(n_anchor, n_sa_store)
-            n_mover = min(n_movable, n_sa_store - n_anchor)
+            # Effective tenure per SA (clamped to data window)
+            eff_start = np.maximum(cand_hire_ns, ws_np)
+            eff_end = np.where(
+                np.isnat(cand_term_ns), we_np,
+                np.minimum(cand_term_ns, we_np),
+            )
+            tenure_days = (eff_end - eff_start) / np.timedelta64(1, "D")
 
-            for j in range(n_anchor):
-                ek_j = int(cand_ek[j])
-                anchor_keys.add(ek_j)
-                if j == 0:
-                    anchor_by_store[int(store)] = ek_j
+            # Start with everyone as anchor
+            store_anchor_set: set[int] = set(cand_ek.astype(int))
+            store_mover_set: set[int] = set()
 
-            for j in range(n_anchor, n_anchor + n_mover):
-                mover_keys.add(int(cand_ek[j]))
+            # Try to convert long-tenure SAs to movers (longest first)
+            order = np.argsort(-tenure_days)
+            for idx in order:
+                if tenure_days[idx] < _MIN_TENURE_FOR_TRANSFER_DAYS:
+                    continue
+                ek_val = int(cand_ek[idx])
+                # Build arrays of remaining anchors (excluding this SA)
+                other_mask = np.array(
+                    [int(cand_ek[j]) in store_anchor_set and j != idx
+                     for j in range(len(cand_ek))],
+                    dtype=bool,
+                )
+                if not np.any(other_mask):
+                    continue
+                if _anchors_cover(
+                    eff_start[other_mask], eff_end[other_mask],
+                    eff_start[idx], eff_end[idx],
+                ):
+                    store_anchor_set.remove(ek_val)
+                    store_mover_set.add(ek_val)
+
+            anchor_keys.update(store_anchor_set)
+            mover_keys.update(store_mover_set)
+            if store_anchor_set:
+                anchor_by_store[int(store)] = min(store_anchor_set)
 
         missing_stores = [int(s) for s in _active_stores if int(s) not in anchor_by_store]
         if missing_stores:
@@ -531,19 +589,27 @@ def generate_employee_store_assignments(
         ], dtype="datetime64[ns]")
 
     # -----------------------------------------------------------------
-    # Vectorized: anchors get a single full-window row
+    # Vectorized: anchors get tenure-bounded rows (chained for attrition)
     # -----------------------------------------------------------------
     if bool(ensure_store_sales_coverage) and anchor_keys:
         anchor_mask = np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int32))
         anc_idx = np.where(anchor_mask)[0]
         if anc_idx.size > 0:
-            anc_start = np.full(anc_idx.size, window_start, dtype="datetime64[ns]")
-            anc_end = np.full(anc_idx.size, window_end, dtype="datetime64[ns]")
+            # Start = max(hire_date, window_start, store_open)
+            anc_start = np.maximum(
+                np.asarray(hire_arr[anc_idx], dtype="datetime64[ns]"),
+                np.datetime64(window_start, "ns"),
+            )
             if _store_open_ns is not None:
                 anc_start = np.maximum(anc_start, _store_open_ns[anc_idx])
+
+            # End = min(term_date or window_end, window_end, store_close)
+            anc_end = np.asarray(term_filled_arr[anc_idx], dtype="datetime64[ns]")
+            anc_end = np.minimum(anc_end, np.datetime64(window_end, "ns"))
             if _store_close_ns is not None:
                 anc_end = np.minimum(anc_end, _store_close_ns[anc_idx])
-            # Filter out anchors whose store closed before the dataset window
+
+            # Filter out anchors whose effective window is invalid
             anc_valid = anc_end >= anc_start
             if not np.all(anc_valid):
                 anc_idx = anc_idx[anc_valid]
