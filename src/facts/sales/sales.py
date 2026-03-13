@@ -279,7 +279,7 @@ def _normalize_nullable_int_month(arr: Any, n: int) -> np.ndarray:
         return np.full(n, -1, dtype=np.int64)
 
     s = pd.Series(arr)
-    v = pd.to_numeric(s, errors="coerce").fillna(-1).astype("int64", copy=False).to_numpy()
+    v = pd.to_numeric(s, errors="coerce").fillna(-1).astype("int64").to_numpy(copy=True)
     v[v < 0] = -1
     if v.shape[0] != n:
         v = np.resize(v, n)
