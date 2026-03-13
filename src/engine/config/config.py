@@ -988,7 +988,25 @@ def validate_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
             returns_cfg["enabled"] = False
             cfg["returns"] = returns_cfg
 
-    # Rule 2: FX dates follow global dates (enforced here AND in pipeline_runner
+    # Rule 2: Complaints require order columns
+    complaints_cfg = cfg.get("complaints")
+    if isinstance(sales_cfg, Mapping) and isinstance(complaints_cfg, Mapping):
+        complaints_enabled = bool(complaints_cfg.get("enabled", False))
+        skip_order_c = bool(sales_cfg.get("skip_order_cols", False))
+        sales_output_c = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+
+        if complaints_enabled and skip_order_c and sales_output_c == "sales":
+            _warn(
+                "complaints.enabled=true but sales_output='sales' with "
+                "skip_order_cols=true removes order identifiers. "
+                "Complaints will be disabled. Set skip_order_cols=false or "
+                "use sales_output='sales_order'/'both' to generate complaints."
+            )
+            complaints_cfg = dict(complaints_cfg)
+            complaints_cfg["enabled"] = False
+            cfg["complaints"] = complaints_cfg
+
+    # Rule 3: FX dates follow global dates (enforced here AND in pipeline_runner
     # for backward compat, but catching it at config time gives earlier feedback).
     fx_cfg = cfg.get("exchange_rates")
     if isinstance(fx_cfg, Mapping):

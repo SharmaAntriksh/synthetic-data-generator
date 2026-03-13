@@ -33,7 +33,7 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "parquet"              # csv | parquet | deltaparquet
+  file_format: "csv"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   skip_order_cols: false
 
@@ -101,6 +101,20 @@ wishlists:
   affinity_strength: 0.6          # probability of picking from same subcategory as a prior item
   conversion_rate: 0.50            # fraction of wishlist items drawn from actual purchases
   seed: 500
+
+# ------------------------------------------------------------------
+# COMPLAINTS
+# ------------------------------------------------------------------
+complaints:
+  enabled: true
+  complaint_rate: 0.03              # fraction of customers who file a complaint
+  repeat_complaint_rate: 0.15       # fraction of complainers who file more than one
+  max_complaints: 5                 # max complaints per customer
+  resolution_rate: 0.85             # fraction of complaints that get resolved
+  escalation_rate: 0.10             # fraction of unresolved that get escalated (rest stay open)
+  avg_response_days: 5              # mean days to resolve
+  max_response_days: 30             # cap on resolution time
+  seed: 600
 
 # ------------------------------------------------------------------
 # SUPERPOWERS (disabled by default)

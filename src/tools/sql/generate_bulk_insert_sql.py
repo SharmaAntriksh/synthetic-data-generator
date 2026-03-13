@@ -67,6 +67,10 @@ _FOLDER_TABLE_ALIASES: dict[str, str] = {
     # inventory (files live under facts/inventory/)
     "inventory_snapshot": "InventorySnapshot",
     "inventory": "InventorySnapshot",
+
+    # complaints (files live under facts/complaints/)
+    "fact_complaints": "FactComplaints",
+    "complaints": "FactComplaints",
 }
 
 def _infer_table_from_filename(csv_file: str) -> str:
@@ -146,6 +150,16 @@ def _inventory_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
     return bool(getattr(inv_cfg, "enabled", False))
 
 
+def _complaints_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
+    """Return True if complaints generation is enabled in config."""
+    if cfg is None:
+        return False
+    cc = getattr(cfg, "complaints", None)
+    if cc is None or not isinstance(cc, Mapping):
+        return False
+    return bool(getattr(cc, "enabled", False))
+
+
 def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     """
     Allowed fact tables for facts bulk insert.
@@ -153,6 +167,7 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     - returns flags (above) controls SalesReturn
     - budget.enabled controls BudgetYearly/BudgetMonthly
     - inventory.enabled controls InventorySnapshot
+    - complaints.enabled controls FactComplaints
     """
     if cfg is None:
         return None
@@ -178,6 +193,9 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
 
     if _inventory_enabled_from_cfg(cfg):
         allowed.add("InventorySnapshot")
+
+    if _complaints_enabled_from_cfg(cfg):
+        allowed.add("FactComplaints")
 
     return allowed
 
@@ -335,11 +353,13 @@ def generate_dims_and_facts_bulk_insert_scripts(
 
     allowed = _allowed_fact_tables_from_cfg(cfg)
 
-    # Budget tables need FORMAT='CSV' for embedded commas in string columns
+    # Tables with embedded commas in string columns need FORMAT='CSV'
     csv_tables: set[str] = set()
     if _budget_enabled_from_cfg(cfg):
         csv_tables.add("BudgetYearly")
         csv_tables.add("BudgetMonthly")
+    if _complaints_enabled_from_cfg(cfg):
+        csv_tables.add("FactComplaints")
 
     generate_bulk_insert_script(
         facts_folder,

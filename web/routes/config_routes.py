@@ -64,6 +64,7 @@ def get_config():
 
     # Extra sections
     wl = _g(cfg, "wishlists", default={})
+    cc = _g(cfg, "complaints", default={})
     sp = _g(cfg, "superpowers", default={})
     emp = _g(cfg, "employees", default={})
     er = _g(cfg, "exchange_rates", default={})
@@ -153,6 +154,16 @@ def get_config():
         "wlAffinityStrength": float(getattr(wl, "affinity_strength", 0.6)),
         "wlConversionRate": float(getattr(wl, "conversion_rate", 0.30)),
         "wlSeed": int(getattr(wl, "seed", 500) or 500),
+        # Complaints
+        "ccEnabled": bool(getattr(cc, "enabled", False)),
+        "ccComplaintRate": float(getattr(cc, "complaint_rate", 0.03)),
+        "ccRepeatComplaintRate": float(getattr(cc, "repeat_complaint_rate", 0.15)),
+        "ccMaxComplaints": int(getattr(cc, "max_complaints", 5)),
+        "ccResolutionRate": float(getattr(cc, "resolution_rate", 0.85)),
+        "ccEscalationRate": float(getattr(cc, "escalation_rate", 0.10)),
+        "ccAvgResponseDays": int(getattr(cc, "avg_response_days", 5)),
+        "ccMaxResponseDays": int(getattr(cc, "max_response_days", 30)),
+        "ccSeed": int(getattr(cc, "seed", 600) or 600),
         # Superpowers
         "spEnabled": bool(getattr(sp, "enabled", False)),
         "spGenerateBridge": bool(getattr(sp, "generate_bridge", False)),
@@ -311,6 +322,17 @@ def update_config(body: ConfigUpdate):
         if "wlAffinityStrength" in v: cfg.wishlists.affinity_strength = float(v["wlAffinityStrength"])
         if "wlConversionRate" in v: cfg.wishlists.conversion_rate = float(v["wlConversionRate"])
         if "wlSeed" in v: cfg.wishlists.seed = int(v["wlSeed"])
+
+        # Complaints
+        if "ccEnabled" in v: cfg.complaints.enabled = bool(v["ccEnabled"])
+        if "ccComplaintRate" in v: cfg.complaints.complaint_rate = float(v["ccComplaintRate"])
+        if "ccRepeatComplaintRate" in v: cfg.complaints.repeat_complaint_rate = float(v["ccRepeatComplaintRate"])
+        if "ccMaxComplaints" in v: cfg.complaints.max_complaints = int(v["ccMaxComplaints"])
+        if "ccResolutionRate" in v: cfg.complaints.resolution_rate = float(v["ccResolutionRate"])
+        if "ccEscalationRate" in v: cfg.complaints.escalation_rate = float(v["ccEscalationRate"])
+        if "ccAvgResponseDays" in v: cfg.complaints.avg_response_days = int(v["ccAvgResponseDays"])
+        if "ccMaxResponseDays" in v: cfg.complaints.max_response_days = int(v["ccMaxResponseDays"])
+        if "ccSeed" in v: cfg.complaints.seed = int(v["ccSeed"])
 
         # Superpowers
         if "spEnabled" in v: cfg.superpowers.enabled = bool(v["spEnabled"])

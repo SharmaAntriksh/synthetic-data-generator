@@ -1018,6 +1018,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
 
             "inventory_enabled": bool(worker_cfg.get("inventory_enabled", False)),
             "wishlists_enabled": bool(worker_cfg.get("wishlists_enabled", False)),
+            "complaints_enabled": bool(worker_cfg.get("complaints_enabled", False)),
 
             "store_to_product_rows": store_to_product_rows,
 

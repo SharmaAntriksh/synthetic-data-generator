@@ -47,6 +47,12 @@ try:
 except ImportError:
     _WISHLISTS_AVAILABLE = False
 
+try:
+    from src.facts.complaints.accumulator import ComplaintsAccumulator
+    _COMPLAINTS_AVAILABLE = True
+except ImportError:
+    _COMPLAINTS_AVAILABLE = False
+
 @dataclass(frozen=True)
 class TableOutputs:
     table: str
@@ -1148,6 +1154,20 @@ def generate_sales_fact(
         worker_cfg["wishlists_enabled"] = False
 
     # ------------------------------------------------------------
+    # Complaints
+    # ------------------------------------------------------------
+    _cc_obj = getattr(cfg, "complaints", None)
+    complaints_enabled = _COMPLAINTS_AVAILABLE and bool(getattr(_cc_obj, "enabled", False))
+    complaints_acc = None
+
+    if complaints_enabled:
+        complaints_acc = ComplaintsAccumulator()
+        worker_cfg["complaints_enabled"] = True
+        info("Complaints streaming aggregation: enabled")
+    else:
+        worker_cfg["complaints_enabled"] = False
+
+    # ------------------------------------------------------------
     # Shared memory: place large numpy arrays in OS shared memory
     # so worker processes get zero-copy views instead of pickle copies.
     # ------------------------------------------------------------
@@ -1330,6 +1350,9 @@ def generate_sales_fact(
 
         if wishlists_acc is not None and isinstance(r, Mapping):
             wishlists_acc.add(r.pop("_wishlists_agg", None))
+
+        if complaints_acc is not None and isinstance(r, Mapping):
+            complaints_acc.add(r.pop("_complaints_agg", None))
         def _chunk_tag(path_like: str) -> str:
             b = os.path.basename(path_like)
             i = b.find("chunk")
@@ -1480,11 +1503,11 @@ def generate_sales_fact(
             raise RuntimeError(f"No delta parts found for any table. {msg}")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 
     if file_format == "csv":
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 
     if file_format == "parquet":
         if merge_parquet:
@@ -1542,6 +1565,6 @@ def generate_sales_fact(
                 info("Merge parquet: none")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc) if return_manifest else created_files
+        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 
     raise ValueError(f"Unknown file_format: {file_format}")

@@ -235,11 +235,13 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     budget_acc = None
     inventory_acc = None
     wishlists_acc = None
+    complaints_acc = None
 
     def _do_generate():
         nonlocal budget_acc
         nonlocal inventory_acc
         nonlocal wishlists_acc
+        nonlocal complaints_acc
         result = generate_sales_fact(
             ctx.cfg_for_run,
             parquet_folder=str(ctx.parquet_dims),
@@ -262,8 +264,10 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             return_manifest=True,
         )
         if isinstance(result, tuple):
-            # result layout: (chunk_files, row_count, budget_acc?, inventory_acc?, wishlists_acc?)
-            if len(result) >= 5:
+            # result layout: (chunk_files, row_count, budget_acc?, inventory_acc?, wishlists_acc?, complaints_acc?)
+            if len(result) >= 6:
+                _chunk_files, _row_count, budget_acc, inventory_acc, wishlists_acc, complaints_acc = result[:6]
+            elif len(result) >= 5:
                 _chunk_files, _row_count, budget_acc, inventory_acc, wishlists_acc = result[:5]
             elif len(result) >= 4:
                 _chunk_files, _row_count, budget_acc, inventory_acc = result[:4]
@@ -316,6 +320,21 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             )
 
         _run_step("Generating Customer Wishlists", _do_wishlists)
+
+    # --- Step 2d: Complaints (optional, runs after sales to use order data)
+    if complaints_acc is not None and complaints_acc.has_data:
+        from src.facts.complaints.runner import run_complaints_pipeline
+
+        def _do_complaints():
+            run_complaints_pipeline(
+                accumulator=complaints_acc,
+                parquet_dims=ctx.parquet_dims,
+                fact_out=ctx.fact_out,
+                cfg=ctx.cfg,
+                file_format=ctx.fmt,
+            )
+
+        _run_step("Generating Fact Complaints", _do_complaints)
 
     # --- Step 3: Package output + PBIP
     final_folder_result = None

@@ -939,3 +939,87 @@ BEGIN
             CHECK ([NetPrice] >= 0);
 END;
 GO
+
+------------------------------------------------------------------------
+-- 8. FactComplaints (optional)
+------------------------------------------------------------------------
+
+-- FactComplaints: PK
+IF OBJECT_ID(N'dbo.FactComplaints', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.FactComplaints', N'ComplaintKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_FactComplaints'
+      AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+)
+BEGIN
+    ALTER TABLE dbo.FactComplaints
+    ADD CONSTRAINT PK_FactComplaints PRIMARY KEY NONCLUSTERED ([ComplaintKey]);
+END;
+GO
+
+-- FactComplaints -> Customers FK
+IF OBJECT_ID(N'dbo.FactComplaints', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.FactComplaints', N'CustomerKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_FactComplaints_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+)
+BEGIN
+    ALTER TABLE dbo.FactComplaints WITH CHECK
+    ADD CONSTRAINT FK_FactComplaints_Customers
+        FOREIGN KEY ([CustomerKey])
+        REFERENCES dbo.Customers ([CustomerKey]);
+
+    ALTER TABLE dbo.FactComplaints CHECK CONSTRAINT FK_FactComplaints_Customers;
+END;
+GO
+
+-- FactComplaints: CHECK constraints
+IF OBJECT_ID(N'dbo.FactComplaints', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.FactComplaints', N'Severity') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_FactComplaints_Severity'
+          AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+    )
+        ALTER TABLE dbo.FactComplaints
+        ADD CONSTRAINT CK_FactComplaints_Severity
+            CHECK ([Severity] IN (N'Low', N'Medium', N'High', N'Critical'));
+
+    IF COL_LENGTH(N'dbo.FactComplaints', N'Status') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_FactComplaints_Status'
+          AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+    )
+        ALTER TABLE dbo.FactComplaints
+        ADD CONSTRAINT CK_FactComplaints_Status
+            CHECK ([Status] IN (N'Open', N'Resolved', N'Escalated', N'Closed'));
+
+    IF COL_LENGTH(N'dbo.FactComplaints', N'Channel') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_FactComplaints_Channel'
+          AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+    )
+        ALTER TABLE dbo.FactComplaints
+        ADD CONSTRAINT CK_FactComplaints_Channel
+            CHECK ([Channel] IN (N'Email', N'Phone', N'In-Store', N'Website', N'Chat'));
+
+    IF COL_LENGTH(N'dbo.FactComplaints', N'ResponseDays') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_FactComplaints_ResponseDays'
+          AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+    )
+        ALTER TABLE dbo.FactComplaints
+        ADD CONSTRAINT CK_FactComplaints_ResponseDays
+            CHECK ([ResponseDays] >= 0);
+END;
+GO

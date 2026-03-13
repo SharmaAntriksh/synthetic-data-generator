@@ -20,6 +20,7 @@ TABLE_SALES_RETURN = "SalesReturn"
 TABLE_BUDGET_YEARLY = "BudgetYearly"
 TABLE_BUDGET_MONTHLY = "BudgetMonthly"
 TABLE_INVENTORY_SNAPSHOT = "InventorySnapshot"
+TABLE_FACT_COMPLAINTS = "FactComplaints"
 
 # Tables that should be emitted in the Facts script (not Dimensions),
 # even though they live inside STATIC_SCHEMAS.
@@ -31,6 +32,7 @@ _FACT_TABLE_NAMES = {
     TABLE_BUDGET_YEARLY,
     TABLE_BUDGET_MONTHLY,
     TABLE_INVENTORY_SNAPSHOT,
+    TABLE_FACT_COMPLAINTS,
 }
 
 _SAFE_IDENT_RE = _re.compile(r'^[A-Za-z_][A-Za-z0-9_ ]*$')
@@ -95,6 +97,14 @@ def _inventory_enabled(cfg: Mapping) -> bool:
     if inv_cfg is None or not isinstance(inv_cfg, Mapping):
         return False
     return bool(getattr(inv_cfg, "enabled", False))
+
+
+def _complaints_enabled(cfg: Mapping) -> bool:
+    """Return True if complaints generation is enabled in config."""
+    cc = getattr(cfg, "complaints", None)
+    if cc is None or not isinstance(cc, Mapping):
+        return False
+    return bool(getattr(cc, "enabled", False))
 
 
 def _require_static_schema(table_name: str) -> ColumnSpec:
@@ -296,6 +306,18 @@ def generate_all_create_tables(
             create_table_from_schema(
                 TABLE_INVENTORY_SNAPSHOT,
                 _require_static_schema(TABLE_INVENTORY_SNAPSHOT),
+                schema=schema,
+                drop_existing=drop_existing,
+                include_go=True,
+            )
+        )
+
+    # Complaints (conditional on complaints.enabled)
+    if _complaints_enabled(cfg):
+        fact_scripts.append(
+            create_table_from_schema(
+                TABLE_FACT_COMPLAINTS,
+                _require_static_schema(TABLE_FACT_COMPLAINTS),
                 schema=schema,
                 drop_existing=drop_existing,
                 include_go=True,

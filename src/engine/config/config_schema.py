@@ -557,6 +557,21 @@ class WishlistsConfig(_Base):
     write_chunk_rows: int = 250_000
 
 
+# -- Complaints --
+
+class ComplaintsConfig(_Base):
+    enabled: bool = False
+    complaint_rate: float = 0.03
+    repeat_complaint_rate: float = 0.15
+    max_complaints: int = 5
+    resolution_rate: float = 0.85
+    escalation_rate: float = 0.10
+    avg_response_days: int = 5
+    max_response_days: int = 30
+    seed: Optional[int] = 600
+    write_chunk_rows: int = 250_000
+
+
 # -- Superpowers --
 
 class SuperpowersConfig(_Base):
@@ -604,6 +619,7 @@ class AppConfig(_Base):
     customers: CustomersConfig = CustomersConfig()
     superpowers: SuperpowersConfig = SuperpowersConfig()
     wishlists: WishlistsConfig = WishlistsConfig()
+    complaints: ComplaintsConfig = ComplaintsConfig()
 
     geography: Optional[GeographyConfig] = None
     promotions: PromotionsConfig = PromotionsConfig()
