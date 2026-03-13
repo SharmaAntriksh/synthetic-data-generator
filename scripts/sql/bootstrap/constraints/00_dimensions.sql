@@ -759,6 +759,41 @@ BEGIN
 END;
 GO
 
+-- Plans: CHECK constraints
+IF OBJECT_ID(N'dbo.Plans', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.Plans', N'BillingCycle') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_Plans_BillingCycle'
+          AND parent_object_id = OBJECT_ID(N'dbo.Plans')
+    )
+        ALTER TABLE dbo.Plans
+        ADD CONSTRAINT CK_Plans_BillingCycle
+            CHECK ([BillingCycle] IN ('Monthly', 'Quarterly', 'Half-Yearly', 'Annual'));
+
+    IF COL_LENGTH(N'dbo.Plans', N'Discount') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_Plans_Discount'
+          AND parent_object_id = OBJECT_ID(N'dbo.Plans')
+    )
+        ALTER TABLE dbo.Plans
+        ADD CONSTRAINT CK_Plans_Discount
+            CHECK ([Discount] >= 0 AND [Discount] < 1);
+
+    IF COL_LENGTH(N'dbo.Plans', N'MonthlyPrice') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_Plans_MonthlyPrice'
+          AND parent_object_id = OBJECT_ID(N'dbo.Plans')
+    )
+        ALTER TABLE dbo.Plans
+        ADD CONSTRAINT CK_Plans_MonthlyPrice
+            CHECK ([MonthlyPrice] >= 0);
+END;
+GO
+
 -- CustomerSubscriptions: CHECK constraints
 IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
 BEGIN
@@ -791,6 +826,16 @@ BEGIN
         ALTER TABLE dbo.CustomerSubscriptions
         ADD CONSTRAINT CK_CustomerSubscriptions_MonthlyPrice
             CHECK ([MonthlyPrice] >= 0);
+
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'LoyaltyDiscount') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSubscriptions_LoyaltyDiscount'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
+    )
+        ALTER TABLE dbo.CustomerSubscriptions
+        ADD CONSTRAINT CK_CustomerSubscriptions_LoyaltyDiscount
+            CHECK ([LoyaltyDiscount] >= 0 AND [LoyaltyDiscount] <= 1);
 END;
 GO
 

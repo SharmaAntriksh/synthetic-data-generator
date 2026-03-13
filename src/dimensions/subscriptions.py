@@ -11,12 +11,15 @@ Bridge is written STREAMING with pyarrow ParquetWriter (does not hold the
 whole bridge in RAM).
 
 Schema:
-  DimPlans:
-    PlanKey, PlanName, PlanType, BillingCycle, MonthlyPrice, Tier, MaxUsers, HasFreeTrial, IsActiveFlag
+  DimPlans (14 cols):
+    PlanKey, PlanName, PlanType, Category, BillingCycle, MonthlyPrice,
+    Discount, CyclePrice, AnnualPrice, Tier, MaxUsers, HasFreeTrial,
+    LaunchDate, IsActiveFlag
 
-  CustomerSubscriptions:
+  CustomerSubscriptions (11 cols):
     SubscriptionKey, CustomerKey, PlanKey, SubscribedDate, CancelledDate,
-    Status, MonthlyPrice, AutoRenew, TrialEndDate, PaymentMethod
+    Status, MonthlyPrice, AutoRenew, TrialEndDate, PaymentMethod,
+    LoyaltyDiscount
 
 Config (optional)
 subscriptions:
@@ -58,25 +61,93 @@ from src.versioning.version_store import should_regenerate, save_version
 # Catalog
 # ---------------------------------------------------------------------------
 
-# Each entry: (PlanName, PlanType, BillingCycle, MonthlyPrice, Tier, MaxUsers, HasFreeTrial)
-PLANS_CATALOG: List[Tuple[str, str, str, float, str, int, int]] = [
-    ("Basic Streaming",      "Streaming",     "Monthly",   9.99, "Basic",    1, 1),
-    ("Premium Streaming",    "Streaming",     "Monthly",  19.99, "Premium",  4, 1),
-    ("Family Streaming",     "Streaming",     "Annual",   14.99, "Standard", 6, 0),
-    ("Fitness",              "Fitness",       "Monthly",  29.99, "Standard", 1, 1),
-    ("Fitness Premium",      "Fitness",       "Monthly",  49.99, "Premium",  2, 1),
-    ("Cloud 100GB",          "Cloud Storage", "Monthly",   2.99, "Basic",    1, 1),
-    ("Cloud 1TB",            "Cloud Storage", "Monthly",   9.99, "Standard", 5, 0),
-    ("Cloud Unlimited",      "Cloud Storage", "Annual",   14.99, "Premium", 10, 0),
-    ("Gaming Pass",          "Gaming",        "Monthly",  14.99, "Standard", 1, 1),
-    ("Gaming Ultimate",      "Gaming",        "Monthly",  19.99, "Premium",  1, 1),
-    ("News Digital",         "News & Media",  "Monthly",   4.99, "Basic",    1, 1),
-    ("News All-Access",      "News & Media",  "Annual",   12.99, "Premium",  5, 0),
-    ("Learn",                "Education",     "Monthly",  19.99, "Standard", 1, 1),
-    ("Learn Teams",          "Education",     "Annual",   14.99, "Premium", 10, 0),
-    ("Music",                "Music",         "Monthly",  10.99, "Standard", 1, 1),
-    ("Music Family",         "Music",         "Annual",   16.99, "Premium",  6, 0),
+# Billing-cycle discount rates (off monthly price)
+_CYCLE_DISCOUNT = {
+    "Monthly":     0.00,
+    "Quarterly":   0.05,
+    "Half-Yearly": 0.10,
+    "Annual":      0.17,
+}
+_CYCLE_MONTHS = {
+    "Monthly": 1, "Quarterly": 3, "Half-Yearly": 6, "Annual": 12,
+}
+
+# Category mapping: PlanType -> higher-level Category for analytics
+_CATEGORY_MAP = {
+    "Streaming":     "Entertainment",
+    "Gaming":        "Entertainment",
+    "Fitness":       "Health",
+    "Cloud Storage": "Productivity",
+    "Education":     "Productivity",
+    "News & Media":  "Information",
+    "Music":         "Entertainment",
+}
+
+# Base plan definitions: (PlanName, PlanType, MonthlyPrice, Tier, MaxUsers, HasFreeTrial, LaunchDate)
+# Each base plan is expanded into one row per billing cycle it supports.
+_BASE_PLANS: List[Tuple[str, str, float, str, int, int, str]] = [
+    ("Basic Streaming",   "Streaming",     9.99, "Basic",    1, 1, "2021-01-15"),
+    ("Premium Streaming", "Streaming",    19.99, "Premium",  4, 1, "2021-03-01"),
+    ("Family Streaming",  "Streaming",    14.99, "Standard", 6, 0, "2021-06-01"),
+    ("Fitness",           "Fitness",      29.99, "Standard", 1, 1, "2021-02-01"),
+    ("Fitness Premium",   "Fitness",      49.99, "Premium",  2, 1, "2022-01-10"),
+    ("Cloud 100GB",       "Cloud Storage", 2.99, "Basic",    1, 1, "2021-01-15"),
+    ("Cloud 1TB",         "Cloud Storage", 9.99, "Standard", 5, 0, "2021-04-01"),
+    ("Cloud Unlimited",   "Cloud Storage",14.99, "Premium", 10, 0, "2021-09-15"),
+    ("Gaming Pass",       "Gaming",       14.99, "Standard", 1, 1, "2021-05-01"),
+    ("Gaming Ultimate",   "Gaming",       19.99, "Premium",  1, 1, "2022-03-01"),
+    ("News Digital",      "News & Media",  4.99, "Basic",    1, 1, "2021-01-15"),
+    ("News All-Access",   "News & Media", 12.99, "Premium",  5, 0, "2021-07-01"),
+    ("Learn",             "Education",    19.99, "Standard", 1, 1, "2021-08-15"),
+    ("Learn Teams",       "Education",    14.99, "Premium", 10, 0, "2022-02-01"),
+    ("Music",             "Music",        10.99, "Standard", 1, 1, "2021-03-15"),
+    ("Music Family",      "Music",        16.99, "Premium",  6, 0, "2021-11-01"),
 ]
+
+# Which billing cycles each base plan supports (index into _BASE_PLANS)
+_PLAN_CYCLES: Dict[str, List[str]] = {
+    "Basic Streaming":   ["Monthly"],
+    "Premium Streaming": ["Monthly", "Quarterly", "Annual"],
+    "Family Streaming":  ["Annual"],
+    "Fitness":           ["Monthly", "Quarterly"],
+    "Fitness Premium":   ["Monthly", "Half-Yearly", "Annual"],
+    "Cloud 100GB":       ["Monthly"],
+    "Cloud 1TB":         ["Monthly", "Quarterly"],
+    "Cloud Unlimited":   ["Annual"],
+    "Gaming Pass":       ["Monthly", "Quarterly"],
+    "Gaming Ultimate":   ["Monthly", "Annual"],
+    "News Digital":      ["Monthly"],
+    "News All-Access":   ["Annual"],
+    "Learn":             ["Monthly", "Half-Yearly"],
+    "Learn Teams":       ["Annual"],
+    "Music":             ["Monthly", "Quarterly"],
+    "Music Family":      ["Half-Yearly", "Annual"],
+}
+
+
+def _expand_catalog() -> List[Tuple]:
+    """
+    Expand base plans × billing cycles into the full catalog.
+    Returns list of:
+      (PlanName, PlanType, Category, BillingCycle, MonthlyPrice, Discount,
+       CyclePrice, AnnualPrice, Tier, MaxUsers, HasFreeTrial, LaunchDate)
+    """
+    rows = []
+    for name, ptype, mprice, tier, maxu, trial, launch in _BASE_PLANS:
+        category = _CATEGORY_MAP.get(ptype, ptype)
+        for cycle in _PLAN_CYCLES[name]:
+            discount = _CYCLE_DISCOUNT[cycle]
+            months = _CYCLE_MONTHS[cycle]
+            cycle_price = round(mprice * months * (1 - discount), 2)
+            annual_price = round(mprice * 12 * (1 - discount), 2)
+            rows.append((
+                name, ptype, category, cycle, mprice, discount,
+                cycle_price, annual_price, tier, maxu, trial, launch,
+            ))
+    return rows
+
+
+PLANS_CATALOG = _expand_catalog()
 
 _PLAN_TYPE_WEIGHT = {
     "Streaming": 4.0,
@@ -168,18 +239,23 @@ def _parse_global_dates(cfg: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
 # ---------------------------------------------------------------------------
 
 def build_dim_plans() -> pd.DataFrame:
-    """Build the subscription plans dimension table."""
+    """Build the subscription plans dimension table (14 columns)."""
     k = len(PLANS_CATALOG)
     return pd.DataFrame({
-        "PlanKey": np.arange(1, k + 1, dtype=np.int64),
-        "PlanName": [row[0] for row in PLANS_CATALOG],
-        "PlanType": [row[1] for row in PLANS_CATALOG],
-        "BillingCycle": [row[2] for row in PLANS_CATALOG],
-        "MonthlyPrice": pd.array([row[3] for row in PLANS_CATALOG], dtype="Float64"),
-        "Tier": [row[4] for row in PLANS_CATALOG],
-        "MaxUsers": np.array([row[5] for row in PLANS_CATALOG], dtype=np.int32),
-        "HasFreeTrial": np.array([row[6] for row in PLANS_CATALOG], dtype=np.int8),
-        "IsActiveFlag": np.ones(k, dtype=np.int8),
+        "PlanKey":       np.arange(1, k + 1, dtype=np.int64),
+        "PlanName":      [r[0] for r in PLANS_CATALOG],
+        "PlanType":      [r[1] for r in PLANS_CATALOG],
+        "Category":      [r[2] for r in PLANS_CATALOG],
+        "BillingCycle":  [r[3] for r in PLANS_CATALOG],
+        "MonthlyPrice":  pd.array([r[4] for r in PLANS_CATALOG], dtype="Float64"),
+        "Discount":      pd.array([r[5] for r in PLANS_CATALOG], dtype="Float64"),
+        "CyclePrice":    pd.array([r[6] for r in PLANS_CATALOG], dtype="Float64"),
+        "AnnualPrice":   pd.array([r[7] for r in PLANS_CATALOG], dtype="Float64"),
+        "Tier":          [r[8] for r in PLANS_CATALOG],
+        "MaxUsers":      np.array([r[9] for r in PLANS_CATALOG], dtype=np.int32),
+        "HasFreeTrial":  np.array([r[10] for r in PLANS_CATALOG], dtype=np.int8),
+        "LaunchDate":    pd.to_datetime([r[11] for r in PLANS_CATALOG]),
+        "IsActiveFlag":  np.ones(k, dtype=np.int8),
     })
 
 
@@ -248,6 +324,7 @@ def _bridge_schema() -> pa.Schema:
         pa.field("AutoRenew", pa.int8()),
         pa.field("TrialEndDate", pa.timestamp("ns")),
         pa.field("PaymentMethod", pa.utf8()),
+        pa.field("LoyaltyDiscount", pa.float64()),
     ])
 
 
@@ -304,6 +381,7 @@ def _write_bridge_streaming(
     buf_renew = np.empty(buf_cap, dtype=np.int8)      # AutoRenew
     buf_trial = np.empty(buf_cap, dtype="object")      # TrialEndDate (nullable)
     buf_payment = np.empty(buf_cap, dtype="object")    # PaymentMethod
+    buf_loyalty = np.empty(buf_cap, dtype=np.float64)  # LoyaltyDiscount
 
     total_rows = 0
     pos = 0
@@ -336,6 +414,7 @@ def _write_bridge_streaming(
             pa.array(buf_renew[:n], type=pa.int8()),
             pa.array(trial_ns_list, type=pa.timestamp("ns")),
             pa.array(buf_payment[:n].tolist(), type=pa.utf8()),
+            pa.array(buf_loyalty[:n], type=pa.float64()),
         ]
 
         table = pa.Table.from_arrays(arrays, schema=schema)
@@ -378,11 +457,12 @@ def _write_bridge_streaming(
                 # Subscribed date
                 sub_ns = lo_ns + int(sub_offsets[s]) * _NS_PER_DAY
 
-                # Determine subscription duration
-                if cycle == "Annual":
-                    base_duration_days = 365
-                else:
-                    base_duration_days = rng.integers(30, 365)
+                # Duration based on billing cycle
+                cycle_months = _CYCLE_MONTHS.get(cycle, 1)
+                # Number of renewal periods the customer stays
+                n_periods = max(1, int(rng.geometric(0.3)))  # geometric: most stay 1-3 periods
+                base_duration_days = cycle_months * 30 * n_periods
+
                 price = float(plan_monthly[pidx])
 
                 # Trial?
@@ -405,10 +485,18 @@ def _write_bridge_streaming(
                     status = "Active"
                     auto_renew = 1
                 else:
-                    # Expired (reached end but didn't explicitly cancel)
                     cancel_ns = None
                     status = "Expired"
                     auto_renew = 0
+
+                # Loyalty discount based on cumulative tenure
+                tenure_days = (int(cancel_ns if cancel_ns else g_end_ns) - sub_ns) // _NS_PER_DAY
+                if tenure_days >= 730:       # 24+ months
+                    loyalty_disc = 0.10
+                elif tenure_days >= 365:     # 12-24 months
+                    loyalty_disc = 0.05
+                else:
+                    loyalty_disc = 0.00
 
                 # Payment method
                 pm_idx = rng.choice(len(PAYMENT_METHODS), p=_PAYMENT_WEIGHTS)
@@ -420,10 +508,11 @@ def _write_bridge_streaming(
                 buf_sub_date[pos] = sub_ns
                 buf_cancel[pos] = cancel_ns
                 buf_status[pos] = status
-                buf_price[pos] = price
+                buf_price[pos] = round(price * (1 - loyalty_disc), 2)
                 buf_renew[pos] = auto_renew
                 buf_trial[pos] = trial_end_ns
                 buf_payment[pos] = payment
+                buf_loyalty[pos] = loyalty_disc
 
                 next_sub_key += 1
                 pos += 1
@@ -464,7 +553,7 @@ def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
     from src.utils.config_helpers import as_dict
     st = os.stat(customers_fp)
     version_cfg = as_dict(cfg.subscriptions)
-    version_cfg["_schema_version"] = 1
+    version_cfg["_schema_version"] = 2
     version_cfg["_upstream_customers_sig"] = {
         "path": str(customers_fp),
         "size": int(st.st_size),
