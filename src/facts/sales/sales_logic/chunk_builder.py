@@ -1064,7 +1064,7 @@ def build_chunk_table(
                 _max_sk_c = len(store_close_day)
                 _sk_clipped_c = np.clip(_sk_i, 0, _max_sk_c - 1)
                 _close_for_row = store_close_day[_sk_clipped_c]
-                _bad |= _line_dates_d > _close_for_row
+                _bad |= _line_dates_d >= _close_for_row
             _n_bad = int(_bad.sum())
             if _n_bad > 0:
                 # Resample invalid stores: for each bad row, pick from
@@ -1081,7 +1081,7 @@ def build_chunk_table(
                     _day_ok = _all_open <= _bd
                     if store_close_day is not None:
                         _all_close = store_close_day[np.clip(store_keys.astype(np.int32), 0, _max_sk_c - 1)]
-                        _day_ok &= _all_close >= _bd
+                        _day_ok &= _all_close > _bd
                     _day_stores = store_keys[_day_ok]
                     if _day_stores.size == 0:
                         _day_stores = store_keys  # last-resort fallback

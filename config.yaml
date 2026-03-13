@@ -7,9 +7,9 @@
 # ------------------------------------------------------------------
 scale:
   sales_rows: 1032850
-  products: 24332
-  customers: 48348
-  stores: 40
+  products: 2517
+  customers: 18348
+  stores: 20
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -151,6 +151,16 @@ stores:
     end:   "2025-12-31"
   closing_end: "2028-12-31"
 
+  # Store closure: controls which stores close during the dataset window
+  closing:
+    enabled: true
+    close_share: 0.10              # fraction of non-Online stores that close
+    transfer_share: 0.60           # fraction of employees transferred (rest terminated)
+    notice_days: 30                # wind-down period before closure (staggered departures)
+    prefer_same_district: true     # transferred employees go to same-district stores first
+    ramp_days: 30                  # productivity ramp-up period at new store
+    ramp_start_factor: 0.50        # sales weight starts at 50%, ramps to 100%
+
   # Product assortment per store type (which subcategories each store carries)
   assortment:
     enabled: true                    # false = every store sells every product (debug/test only) i.e. CROSSJOIN
@@ -170,8 +180,8 @@ employees:
   # district_size / districts_per_region now live under 'stores:' (single source of truth).
   # Values here are ignored; hierarchy is read from stores.parquet.
   use_store_employee_count: false
-  min_staff_per_store: 3
-  max_staff_per_store: 5
+  min_staff_per_store: 2
+  max_staff_per_store: 4
 
   hr:
     email_domain: "contoso.com"
@@ -179,7 +189,7 @@ employees:
   store_assignments:
     enabled: true
     ensure_store_sales_coverage: true
-    min_primary_sales_per_store: 2
+    min_primary_sales_per_store: 1
     primary_sales_role: "Sales Associate"
     movable_sales_per_store: 2
 
@@ -189,7 +199,7 @@ employees:
 
     role_profiles:
       default:                 { mult: 0.25, episodes: [0, 1], duration: [60, 180]  }
-      Sales Associate:         { mult: 2.50, episodes: [1, 3], duration: [60, 240]  }
+      Sales Associate:         { mult: 2.50, episodes: [2, 4], duration: [60, 240]  }
       Cashier:                 { mult: 1.10, episodes: [0, 2], duration: [14, 120]  }
       Fulfillment Associate:   { mult: 0.40, episodes: [0, 1], duration: [45, 180]  }
 

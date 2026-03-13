@@ -24,6 +24,7 @@ from src.utils.config_helpers import (
     range2,
     region_from_iso_code,
 )
+from src.defaults import STORE_CLOSE_TRANSFER_SHARE_BY_REASON as _TRANSFER_SHARE_BY_REASON
 from src.defaults import (
     STORE_TYPES as _STORE_TYPES,
     STORE_STATUS as _STORE_STATUS,
@@ -543,6 +544,10 @@ def generate_store_table(
     people_pools=None,
     district_size: int = 10,
     districts_per_region: int = 8,
+    dataset_start: Optional[str] = None,
+    dataset_end: Optional[str] = None,
+    close_share: float = 0.10,
+    closing_enabled: bool = True,
 ) -> pd.DataFrame:
     """
     Generate synthetic store dimension table.
@@ -575,7 +580,32 @@ def generate_store_table(
     df["StoreFormat"] = _build_store_format(rng, df["StoreType"])
     df["OwnershipType"] = _build_ownership_type(rng, df["StoreType"])
     df["RevenueClass"] = rng.choice(_REVENUE_CLASSES, size=num_stores, p=_REVENUE_CLASSES_P)
-    df["Status"] = rng.choice(_STORE_STATUS, size=num_stores, p=_STORE_STATUS_P)
+
+    # --- Status assignment ---
+    # When closing is enabled with a dataset window, we pick exactly
+    # close_share fraction of non-Online stores to close during the window.
+    # The rest are Open (with a small Renovating fraction).
+    if closing_enabled and dataset_start and dataset_end:
+        ds_start = pd.to_datetime(dataset_start).normalize()
+        ds_end = pd.to_datetime(dataset_end).normalize()
+        st_arr = df["StoreType"].astype(str).to_numpy()
+        non_online = st_arr != "Online"
+        n_eligible = int(non_online.sum())
+        n_close = max(1, int(round(n_eligible * float(close_share))))
+        # Randomly select which eligible stores close
+        eligible_idx = np.where(non_online)[0]
+        close_idx = rng.choice(eligible_idx, size=min(n_close, n_eligible), replace=False)
+        # Of the remaining non-online, ~5% are Renovating
+        remaining_idx = np.setdiff1d(eligible_idx, close_idx)
+        n_reno = max(0, int(round(len(remaining_idx) * 0.05)))
+        reno_idx = rng.choice(remaining_idx, size=min(n_reno, len(remaining_idx)), replace=False) if n_reno > 0 else np.array([], dtype=np.intp)
+        status_arr = np.full(num_stores, "Open", dtype=object)
+        status_arr[close_idx] = "Closed"
+        if reno_idx.size > 0:
+            status_arr[reno_idx] = "Renovating"
+        df["Status"] = status_arr
+    else:
+        df["Status"] = rng.choice(_STORE_STATUS, size=num_stores, p=_STORE_STATUS_P)
 
     df["GeographyKey"] = _sample_geography_keys(
         rng=rng,
@@ -710,24 +740,59 @@ def generate_store_table(
     closed_mask = status.to_numpy() == "Closed"
 
     if closed_mask.any():
-        open_days     = opening_d.astype("int64")[closed_mask]
-        close_end_day = close_end_d.astype("int64")
-
-        late_openers = int((open_days > close_end_day).sum())
-        if late_openers:
-            warn(
-                f"{late_openers} closed store(s) have OpeningDate after closing_end="
-                f"{closing_end}; their ClosingDate will be set to 30+ days after OpeningDate"
+        if closing_enabled and dataset_start and dataset_end:
+            # Constrain closing dates to [dataset_start, dataset_end]
+            ds_start_d = _as_date64d(dataset_start)
+            ds_end_d = _as_date64d(dataset_end)
+            # Leave a buffer: close at least 30 days into the window,
+            # and at least 60 days before the end (for wind-down/transfer)
+            min_close_d = _as_date64d(
+                (pd.to_datetime(dataset_start) + pd.Timedelta(days=30)).date()
             )
+            max_close_d = _as_date64d(
+                (pd.to_datetime(dataset_end) - pd.Timedelta(days=60)).date()
+            )
+            if max_close_d < min_close_d:
+                max_close_d = ds_end_d
 
-        # Ensure at least 30 days of operation for closed stores
-        min_close_offset = 30
-        effective_end = np.maximum(open_days + min_close_offset, close_end_day)
-        close_days = rng.integers(open_days + min_close_offset, effective_end + 1, dtype=np.int64)
-        close_d = close_days.astype("datetime64[D]")
-        df.loc[closed_mask, "ClosingDate"] = pd.to_datetime(
-            close_d.astype("datetime64[ns]")
-        ).normalize()
+            n_closed = int(closed_mask.sum())
+            close_d = _rand_dates_d(rng, min_close_d, max_close_d, n_closed)
+            df.loc[closed_mask, "ClosingDate"] = pd.to_datetime(
+                close_d.astype("datetime64[ns]")
+            ).normalize()
+
+            # Ensure opening dates for closed stores are before their closing date
+            # (opening range may extend into the dataset window)
+            closed_idx = np.where(closed_mask)[0]
+            open_ts = pd.to_datetime(df.loc[closed_mask, "OpeningDate"])
+            close_ts = pd.to_datetime(df.loc[closed_mask, "ClosingDate"])
+            bad = open_ts.to_numpy() >= close_ts.to_numpy()
+            if bad.any():
+                bad_idx = closed_idx[bad]
+                for bi in bad_idx:
+                    cd = pd.to_datetime(df.at[bi, "ClosingDate"]).normalize()
+                    # Place opening at least 180 days before closing
+                    new_open = cd - pd.Timedelta(days=rng.integers(180, 730))
+                    df.at[bi, "OpeningDate"] = new_open.normalize()
+        else:
+            open_days     = opening_d.astype("int64")[closed_mask]
+            close_end_day = close_end_d.astype("int64")
+
+            late_openers = int((open_days > close_end_day).sum())
+            if late_openers:
+                warn(
+                    f"{late_openers} closed store(s) have OpeningDate after closing_end="
+                    f"{closing_end}; their ClosingDate will be set to 30+ days after OpeningDate"
+                )
+
+            # Ensure at least 30 days of operation for closed stores
+            min_close_offset = 30
+            effective_end = np.maximum(open_days + min_close_offset, close_end_day)
+            close_days = rng.integers(open_days + min_close_offset, effective_end + 1, dtype=np.int64)
+            close_d = close_days.astype("datetime64[D]")
+            df.loc[closed_mask, "ClosingDate"] = pd.to_datetime(
+                close_d.astype("datetime64[ns]")
+            ).normalize()
 
     df["OpenFlag"] = (df["Status"] == "Open").astype(np.int64)
 
@@ -936,6 +1001,15 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             people_folder, enable_asia=enable_asia, legacy_support=True,
         )
 
+    # Resolve dataset window for store closing constraint
+    global_dates = as_dict(cfg.defaults.dates) if hasattr(cfg.defaults, "dates") else {}
+    ds_start = global_dates.get("start")
+    ds_end = global_dates.get("end")
+
+    closing_cfg = as_dict(store_cfg.closing) if hasattr(store_cfg, "closing") and store_cfg.closing is not None else {}
+    closing_enabled = closing_cfg.get("enabled", True)
+    close_share = float_or(closing_cfg.get("close_share"), 0.10)
+
     with stage("Generating Stores"):
         df = generate_store_table(
             geo_keys=geo_keys,
@@ -954,6 +1028,10 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             people_pools=people_pools,
             district_size=store_cfg.district_size,
             districts_per_region=store_cfg.districts_per_region,
+            dataset_start=ds_start,
+            dataset_end=ds_end,
+            close_share=close_share,
+            closing_enabled=closing_enabled,
         )
 
         write_parquet_with_date32(

@@ -539,6 +539,16 @@ class AssortmentConfig(_Base):
     coverage: AssortmentCoverageConfig = AssortmentCoverageConfig()
 
 
+class StoreClosingConfig(_Base):
+    enabled: bool = True
+    close_share: float = 0.10
+    transfer_share: float = 0.60
+    notice_days: int = 30
+    prefer_same_district: bool = True
+    ramp_days: int = 30
+    ramp_start_factor: float = 0.50
+
+
 class StoresConfig(_Base):
     num_stores: Optional[int] = None
     total_stores: Optional[int] = None  # back-compat alias
@@ -547,6 +557,7 @@ class StoresConfig(_Base):
     districts_per_region: int = 8
     opening: StoreOpeningConfig = StoreOpeningConfig()
     closing_end: str = "2028-12-31"
+    closing: StoreClosingConfig = StoreClosingConfig()
     assortment: AssortmentConfig = AssortmentConfig()
     # Store attribute config
     square_footage: Optional[Dict[str, Any]] = None

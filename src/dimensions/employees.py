@@ -327,6 +327,10 @@ def generate_employee_dimension(
     min_primary_sales_per_store: int = 1,
     store_manager_names: dict[int, str] | None = None,
     store_opening_dates: dict[int, pd.Timestamp] | None = None,
+    store_closing_dates: dict[int, pd.Timestamp] | None = None,
+    store_close_reasons: dict[int, str] | None = None,
+    transfer_share: float = 0.60,
+    notice_days: int = 30,
 ) -> pd.DataFrame:
     """
     Build a parent-child employee hierarchy with stable keys.
@@ -695,6 +699,99 @@ def generate_employee_dimension(
         df["TerminationDate"].isna() | (df["TerminationDate"] > global_end)
     ).astype(np.int8)
 
+    # ------------------------------------------------------------------
+    # Store-closure: terminate or mark for transfer
+    # ------------------------------------------------------------------
+    # TransferStatus: None = normal, "Transferred" = relocating, "Terminated_StoreClose" = let go
+    df["TransferStatus"] = None
+    df["TransferDate"] = pd.NaT
+    df["OriginalStoreKey"] = pd.array([pd.NA] * n, dtype="Int32")
+
+    if store_closing_dates:
+        from src.defaults import STORE_CLOSE_TRANSFER_SHARE_BY_REASON
+
+        ek_all_np = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
+        sk_all_np = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
+
+        for close_sk, close_date in store_closing_dates.items():
+            close_date = pd.to_datetime(close_date).normalize()
+            if close_date < global_start or close_date > global_end:
+                continue
+
+            # Find store employees (managers + staff)
+            store_mask = sk_all_np == int(close_sk)
+            # Skip already-terminated employees
+            already_terminated = df["TerminationDate"].notna() & (df["TerminationDate"] <= close_date)
+            eligible = store_mask & ~already_terminated.to_numpy()
+            eligible_idx = np.where(eligible)[0]
+
+            if eligible_idx.size == 0:
+                continue
+
+            # Determine per-store transfer share (varies by close reason)
+            reason = (store_close_reasons or {}).get(int(close_sk), "")
+            effective_share = STORE_CLOSE_TRANSFER_SHARE_BY_REASON.get(reason, transfer_share)
+
+            # Decide who transfers vs who gets terminated
+            n_eligible = len(eligible_idx)
+            n_transfer = max(0, int(round(n_eligible * effective_share)))
+
+            # Sales Associates always transfer (never terminated)
+            titles_eligible = df.iloc[eligible_idx]["Title"].astype(str).to_numpy()
+            sa_mask_eligible = titles_eligible == ps_role_str
+            sa_idx = eligible_idx[sa_mask_eligible]
+            non_sa_idx = eligible_idx[~sa_mask_eligible]
+
+            # All SAs transfer; fill remaining transfer slots from non-SAs
+            n_transfer_non_sa = max(0, n_transfer - len(sa_idx))
+            if n_transfer_non_sa > 0 and len(non_sa_idx) > 0:
+                transfer_non_sa = rng.choice(
+                    non_sa_idx,
+                    size=min(n_transfer_non_sa, len(non_sa_idx)),
+                    replace=False,
+                )
+            else:
+                transfer_non_sa = np.array([], dtype=np.intp)
+
+            all_transfer_idx = np.concatenate([sa_idx, transfer_non_sa]).astype(np.intp)
+            all_terminate_idx = np.setdiff1d(eligible_idx, all_transfer_idx)
+
+            # Staggered transfer: spread over notice period
+            # Non-SAs transfer first, SAs transfer last (ensures sales coverage until closing)
+            if all_transfer_idx.size > 0:
+                # Split into non-SA and SA groups, sort each by EmployeeKey
+                titles_transfer = df.iloc[all_transfer_idx]["Title"].astype(str).to_numpy()
+                is_sa = titles_transfer == ps_role_str
+                non_sa_transfer = all_transfer_idx[~is_sa]
+                sa_transfer = all_transfer_idx[is_sa]
+                # Sort each group by EmployeeKey for determinism
+                non_sa_transfer = non_sa_transfer[np.argsort(ek_all_np[non_sa_transfer])]
+                sa_transfer = sa_transfer[np.argsort(ek_all_np[sa_transfer])]
+                # Non-SAs go first, SAs go last — last SA leaves on closing date
+                sorted_transfer = np.concatenate([non_sa_transfer, sa_transfer])
+
+                n_t = len(sorted_transfer)
+                # Spread transfer dates from (close_date - notice_days) to close_date
+                notice_start = close_date - pd.Timedelta(days=max(1, notice_days))
+                offsets = np.linspace(0, notice_days, n_t, dtype=np.int64)
+                for j, idx in enumerate(sorted_transfer):
+                    t_date = (notice_start + pd.Timedelta(days=int(offsets[j]))).normalize()
+                    df.iat[idx, df.columns.get_loc("TransferStatus")] = "Transferred"
+                    df.iat[idx, df.columns.get_loc("TransferDate")] = t_date
+                    df.iat[idx, df.columns.get_loc("OriginalStoreKey")] = int(close_sk)
+
+            # Staggered termination: spread over notice period too
+            if all_terminate_idx.size > 0:
+                n_term = len(all_terminate_idx)
+                notice_start = close_date - pd.Timedelta(days=max(1, notice_days))
+                term_offsets = rng.integers(0, notice_days + 1, size=n_term)
+                for j, idx in enumerate(all_terminate_idx):
+                    t_date = (notice_start + pd.Timedelta(days=int(term_offsets[j]))).normalize()
+                    df.iat[idx, df.columns.get_loc("TerminationDate")] = t_date
+                    df.iat[idx, df.columns.get_loc("IsActive")] = np.int8(0)
+                    df.iat[idx, df.columns.get_loc("TransferStatus")] = "Terminated_StoreClose"
+                    df.iat[idx, df.columns.get_loc("OriginalStoreKey")] = int(close_sk)
+
     # Names
     _apply_deterministic_names(
         df,
@@ -840,6 +937,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     _STORES_READ_COLS = [
         "StoreKey", "GeographyKey", "EmployeeCount", "StoreType",
         "StoreDistrict", "StoreRegion", "StoreManager", "OpeningDate",
+        "ClosingDate", "CloseReason",
     ]
     try:
         stores = pd.read_parquet(stores_path, columns=_STORES_READ_COLS)
@@ -913,11 +1011,32 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         }
         stores = stores.drop(columns=["OpeningDate"], errors="ignore")
 
+    # Build StoreKey → ClosingDate and CloseReason mappings for store-closure logic
+    store_closing_dates: dict[int, pd.Timestamp] | None = None
+    store_close_reasons: dict[int, str] | None = None
+    if "ClosingDate" in stores.columns:
+        _cd = pd.to_datetime(stores["ClosingDate"], errors="coerce").dt.normalize()
+        _sk_cd = stores["StoreKey"].astype(np.int32).to_numpy()
+        store_closing_dates = {
+            int(sk): ts for sk, ts in zip(_sk_cd, _cd) if pd.notna(ts)
+        }
+        if "CloseReason" in stores.columns:
+            _cr = stores["CloseReason"].astype(str).to_numpy()
+            store_close_reasons = {
+                int(sk): str(cr) for sk, cr, cd in zip(_sk_cd, _cr, _cd) if pd.notna(cd)
+            }
+        stores = stores.drop(columns=["ClosingDate", "CloseReason"], errors="ignore")
+
     with stage("Generating Employees"):
         sa_cfg = emp_cfg.store_assignments
         primary_sales_role = str(sa_cfg.primary_sales_role or "Sales Associate")
         min_primary_sales_per_store = sa_cfg.min_primary_sales_per_store
         ensure_store_sales_coverage = sa_cfg.ensure_store_sales_coverage
+
+        # Resolve store closing config for employee fate
+        closing_cfg = as_dict(cfg.stores.closing) if hasattr(cfg.stores, "closing") and cfg.stores.closing is not None else {}
+        _transfer_share = float_or(closing_cfg.get("transfer_share"), 0.60)
+        _notice_days = int_or(closing_cfg.get("notice_days"), 30)
 
         df = generate_employee_dimension(
             stores=stores,
@@ -938,6 +1057,10 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             min_primary_sales_per_store=min_primary_sales_per_store,
             store_manager_names=store_manager_names,
             store_opening_dates=store_opening_dates,
+            store_closing_dates=store_closing_dates,
+            store_close_reasons=store_close_reasons,
+            transfer_share=_transfer_share,
+            notice_days=_notice_days,
         )
 
         hr_cfg = emp_cfg.hr
@@ -951,6 +1074,30 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         )
 
         df = _finalize_employee_integer_cols(df)
+
+        # Write employee_transfers sidecar for the assignment generator
+        transfers = df[df["TransferStatus"] == "Transferred"][
+            ["EmployeeKey", "OriginalStoreKey", "TransferDate", "Title", "DistrictId"]
+        ].copy()
+        transfers_path = parquet_folder / "employee_transfers.parquet"
+        if not transfers.empty:
+            transfers["EmployeeKey"] = transfers["EmployeeKey"].astype(np.int32)
+            transfers["OriginalStoreKey"] = transfers["OriginalStoreKey"].astype(np.int32)
+            write_parquet_with_date32(
+                transfers,
+                transfers_path,
+                date_cols=["TransferDate"],
+                cast_all_datetime=False,
+                compression="snappy",
+                compression_level=None,
+                force_date32=True,
+            )
+            info(f"Employee transfers written: {transfers_path} ({len(transfers)} employees)")
+        elif transfers_path.exists():
+            transfers_path.unlink()
+
+        # Drop internal transfer columns before writing main employees parquet
+        df = df.drop(columns=["TransferStatus", "TransferDate", "OriginalStoreKey"], errors="ignore")
 
         # Reorder columns to match the static schema (CREATE TABLE column order).
         _SCHEMA_ORDER = [

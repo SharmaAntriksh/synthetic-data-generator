@@ -96,6 +96,14 @@ STORE_DEFAULT_OWNERSHIP: tuple[list[str], list[float]] = (
 STORE_REVENUE_CLASSES = np.array(["A", "B", "C"], dtype=object)
 STORE_REVENUE_CLASSES_P = np.array([0.20, 0.60, 0.20], dtype=float)
 
+# Transfer share by CloseReason — higher for planned closures, lower for performance
+STORE_CLOSE_TRANSFER_SHARE_BY_REASON: Dict[str, float] = {
+    "Lease Ended": 0.80,
+    "Moved Location": 0.90,
+    "Renovation": 0.70,
+    "Low Sales": 0.40,
+}
+
 # StoreZone derived from ISO/currency code
 STORE_ISO_TO_ZONE: dict[str, str] = {
     "USD": "Americas",    "CAD": "Americas",    "MXN": "Americas",    "BRL": "Americas",
