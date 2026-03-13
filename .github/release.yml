@@ -1,11 +1,13 @@
 changelog:
   categories:
     - title: Features
-      labels: ["feature", "enhancement", "feat", "chore"]
+      labels: ["feature", "enhancement", "feat"]
     - title: Fixes
       labels: ["bug", "fix"]
     - title: Refactors / Performance
       labels: ["refactor", "performance", "refac", "perf"]
+    - title: Maintenance
+      labels: ["chore", "dependencies", "ci"]
     - title: Docs
       labels: ["docs"]
     - title: Other

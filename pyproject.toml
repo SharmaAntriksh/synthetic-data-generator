@@ -21,9 +21,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
     "httpx>=0.28.0",
 ]
-
 
 [build-system]
 requires = ["hatchling"]
@@ -35,3 +35,10 @@ packages = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 40

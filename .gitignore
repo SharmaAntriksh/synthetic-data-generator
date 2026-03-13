@@ -7,3 +7,5 @@ data/parquet_dims/*
 cache.abf
 .claude
 .vscode
+htmlcov/
+.coverage

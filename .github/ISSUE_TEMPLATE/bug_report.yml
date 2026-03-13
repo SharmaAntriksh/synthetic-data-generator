@@ -7,10 +7,41 @@ body:
     id: summary
     attributes:
       label: What happened?
-      description: Describe the issue. Add logs if you have them.
+      description: Describe the issue. Include what you expected vs. what actually happened.
       placeholder: "Example: Generator crashes when ..."
     validations:
       required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the issue.
+      placeholder: |
+        1. Set config.yaml to ...
+        2. Run `python main.py --format parquet`
+        3. See error
+    validations:
+      required: false
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: false
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      placeholder: "3.13.7"
+    validations:
+      required: false
 
   - type: textarea
     id: logs
