@@ -356,6 +356,7 @@ class InventoryConfig(_Base):
     seed: int = 42
     grain: str = "monthly"
     partition_by: Optional[List[str]] = None
+    abc_filter: Optional[List[str]] = None
     min_demand_months: int = 6
     initial_stock_multiplier: float = 1.5
     reorder_compliance: float = 0.65

@@ -38,6 +38,8 @@ class InventoryConfig:
 
     min_demand_months: int = 3
 
+    abc_filter: Optional[list] = None
+
     abc_stock_multiplier: Dict[str, float] = field(default_factory=lambda: {
         "A": 1.30,
         "B": 1.00,
@@ -55,10 +57,19 @@ def load_inventory_config(cfg: Dict[str, Any]) -> InventoryConfig:
         "A": 1.30, "B": 1.00, "C": 0.70,
     })
 
+    abc_filter_raw = getattr(raw, "abc_filter", None)
+    abc_filter = None
+    if abc_filter_raw is not None and isinstance(abc_filter_raw, (list, tuple)):
+        abc_filter = [str(x).upper() for x in abc_filter_raw]
+
+    grain = str(getattr(raw, "grain", "monthly")).lower()
+    if grain not in {"monthly", "quarterly"}:
+        raise ValueError(f"inventory.grain must be 'monthly' or 'quarterly', got {grain!r}")
+
     return InventoryConfig(
         enabled=bool(getattr(raw, "enabled", False)),
         seed=int(getattr(raw, "seed", 42)),
-        grain=str(getattr(raw, "grain", "monthly")).lower(),
+        grain=grain,
         initial_stock_multiplier=float(getattr(raw, "initial_stock_multiplier", 3.0)),
         reorder_compliance=float(getattr(raw, "reorder_compliance", 0.85)),
         lead_time_variance=float(getattr(raw, "lead_time_variance", 0.20)),
@@ -67,6 +78,7 @@ def load_inventory_config(cfg: Dict[str, Any]) -> InventoryConfig:
         shrinkage_rate=float(getattr(shrinkage, "rate", 0.02)),
         abc_stock_multiplier=dict(abc),
         min_demand_months=int(getattr(raw, "min_demand_months", 3)),
+        abc_filter=abc_filter,
     )
 
 
@@ -193,6 +205,38 @@ def compute_inventory_snapshots(
     pair_pk = pair_pk[keep_mask]
     pair_sk = pair_sk[keep_mask]
     n_pairs = int(keep_mask.sum())
+
+    # ------------------------------------------------------------------
+    # 2b. ABC filter — restrict to specified classifications
+    # ------------------------------------------------------------------
+    if icfg.abc_filter is not None and len(icfg.abc_filter) > 0:
+        if product_attrs_arrays is not None:
+            _pa_df = pd.DataFrame(product_attrs_arrays)
+        else:
+            _pa_df = _load_product_attrs(parquet_dims)
+
+        if not _pa_df.empty and "ABCClassification" in _pa_df.columns:
+            allowed_set = set(icfg.abc_filter)
+            _pa_pk = _pa_df["ProductKey"].to_numpy(dtype=np.int32)
+            _pa_abc = _pa_df["ABCClassification"].to_numpy().astype(str)
+            _pa_max = int(_pa_pk.max()) + 1
+            # Dense lookup: 1 = allowed, 0 = excluded
+            dense_allowed = np.zeros(_pa_max, dtype=np.int8)
+            for cls in allowed_set:
+                dense_allowed[_pa_pk[_pa_abc == cls]] = 1
+
+            abc_keep = np.ones(n_pairs, dtype=bool)
+            in_range = pair_pk < _pa_max
+            abc_keep[in_range] = dense_allowed[pair_pk[in_range]] == 1
+            # Products not in product_profile are kept (no ABC data to filter on)
+
+            if not abc_keep.any():
+                return _empty_snapshot()
+
+            demand_matrix = demand_matrix[abc_keep]
+            pair_pk = pair_pk[abc_keep]
+            pair_sk = pair_sk[abc_keep]
+            n_pairs = int(abc_keep.sum())
 
     # ------------------------------------------------------------------
     # 3. Load product attributes into dense arrays aligned to pairs
@@ -440,7 +484,54 @@ def compute_inventory_snapshots(
     result["StockoutFlag"] = result["StockoutFlag"].astype(np.int8)
     result["DaysOutOfStock"] = result["DaysOutOfStock"].astype(np.int8)
 
+    if icfg.grain == "quarterly":
+        result = _aggregate_quarterly(result)
+
     return result
+
+
+def _aggregate_quarterly(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate monthly snapshots to quarterly grain.
+
+    SnapshotDate becomes the first day of each quarter.
+    - QuantityOnHand: end-of-quarter value (last month in quarter)
+    - QuantitySold, QuantityOnOrder, QuantityReceived: summed over quarter
+    - ReorderFlag, StockoutFlag: 1 if any month in quarter flagged
+    - DaysOutOfStock: summed over quarter (capped at 90)
+    """
+    dates = pd.to_datetime(df["SnapshotDate"])
+    df = df.copy()
+    df["_Quarter"] = dates.dt.to_period("Q")
+
+    group_keys = ["ProductKey", "StoreKey", "_Quarter"]
+    agg = df.groupby(group_keys, sort=True).agg(
+        QuantityOnHand=("QuantityOnHand", "last"),
+        QuantityOnOrder=("QuantityOnOrder", "sum"),
+        QuantitySold=("QuantitySold", "sum"),
+        QuantityReceived=("QuantityReceived", "sum"),
+        ReorderFlag=("ReorderFlag", "max"),
+        StockoutFlag=("StockoutFlag", "max"),
+        DaysOutOfStock=("DaysOutOfStock", "sum"),
+    ).reset_index()
+
+    # Quarter start date as SnapshotDate
+    agg["SnapshotDate"] = agg["_Quarter"].dt.start_time
+    agg.drop(columns=["_Quarter"], inplace=True)
+
+    agg["DaysOutOfStock"] = agg["DaysOutOfStock"].clip(upper=90).astype(np.int8)
+    agg["ReorderFlag"] = agg["ReorderFlag"].astype(np.int8)
+    agg["StockoutFlag"] = agg["StockoutFlag"].astype(np.int8)
+    agg["ProductKey"] = agg["ProductKey"].astype(np.int32)
+    agg["StoreKey"] = agg["StoreKey"].astype(np.int32)
+    agg["QuantityOnHand"] = agg["QuantityOnHand"].astype(np.int32)
+    agg["QuantityOnOrder"] = agg["QuantityOnOrder"].astype(np.int32)
+    agg["QuantitySold"] = agg["QuantitySold"].astype(np.int32)
+    agg["QuantityReceived"] = agg["QuantityReceived"].astype(np.int32)
+
+    return agg[["ProductKey", "StoreKey", "SnapshotDate",
+                "QuantityOnHand", "QuantityOnOrder",
+                "QuantitySold", "QuantityReceived",
+                "ReorderFlag", "StockoutFlag", "DaysOutOfStock"]]
 
 
 def _empty_snapshot() -> pd.DataFrame:

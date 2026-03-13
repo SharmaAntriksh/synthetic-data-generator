@@ -260,8 +260,9 @@ budget:
 inventory:
   enabled: true
   seed: 42
-  grain: monthly
-  partition_by: ["Year", "Month"]     # null or [] to disable (used by deltaparquet)
+  grain: quarterly                       # monthly | quarterly
+  partition_by: ["Year", "Month"]      # null or [] to disable (used by deltaparquet)
+  abc_filter: null                     # null = all classes; ["A", "B"] = skip C-class products
 
   min_demand_months: 6
   initial_stock_multiplier: 1.5        # was 3.0 — start with 1.5 months of avg demand, not 3
