@@ -179,15 +179,7 @@ def generate_all_create_tables(
         "",
     ]
 
-    skip_tables: set[str] = set()
-    seg_cfg = getattr(cfg, "customer_segments", None) or {}
-    if isinstance(seg_cfg, Mapping):
-        if not bool(getattr(seg_cfg, "enabled", True)):
-            skip_tables.add("CustomerSegment")
-            skip_tables.add("CustomerSegmentMembership")
-        elif not bool(getattr(seg_cfg, "generate_bridge", True)):
-            skip_tables.add("CustomerSegmentMembership")
-
+    skip_tables: set[str] = {"CustomerSegment", "CustomerSegmentMembership"}
     sp_cfg = getattr(cfg, "superpowers", None) or {}
     if isinstance(sp_cfg, Mapping):
         if not bool(getattr(sp_cfg, "enabled", True)):

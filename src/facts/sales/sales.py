@@ -530,24 +530,59 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     customers_path = parquet_folder_p / "customers.parquet"
 
-    cust_cols = ["CustomerKey", "IsActiveInSales", "CustomerStartMonth", "CustomerEndMonth"]
-    cust_df = load_parquet_df(customers_path, cust_cols)
+    # Load customer identity + date columns; month indices and active flag
+    # are derived at load time (no longer stored in customers.parquet).
+    _cust_load_cols = ["CustomerKey", "CustomerStartDate", "CustomerEndDate"]
+    # Backward compat: also load legacy columns if they still exist
+    _cust_legacy = ["IsActiveInSales", "CustomerStartMonth", "CustomerEndMonth"]
+    try:
+        cust_df = load_parquet_df(customers_path, _cust_load_cols + _cust_legacy)
+    except Exception:
+        cust_df = load_parquet_df(customers_path, _cust_load_cols)
 
     if cust_df.empty:
         raise RuntimeError("customers.parquet is empty; cannot generate sales")
 
     customer_keys = _as_np(cust_df["CustomerKey"], np.int32)
-    is_active_in_sales = _as_np(cust_df["IsActiveInSales"], np.int32)
+
+    # --- Derive month indices from dates ---
+    config_start = pd.to_datetime(start_date).to_period("M")
 
     if "CustomerStartMonth" in cust_df.columns:
+        # Legacy path: use stored month indices
         customer_start_month = _as_np(cust_df["CustomerStartMonth"], np.int64)
+    elif "CustomerStartDate" in cust_df.columns:
+        cust_start_ts = pd.to_datetime(cust_df["CustomerStartDate"], errors="coerce")
+        cust_start_period = cust_start_ts.dt.to_period("M")
+        customer_start_month = (cust_start_period.apply(lambda p: p.ordinal) - config_start.ordinal).to_numpy(dtype=np.int64)
+        customer_start_month = np.clip(customer_start_month, 0, None)
     else:
         customer_start_month = np.zeros(len(customer_keys), dtype=np.int64)
 
     if "CustomerEndMonth" in cust_df.columns:
         customer_end_month = _normalize_nullable_int_month(_as_np(cust_df["CustomerEndMonth"]), len(customer_keys))
+    elif "CustomerEndDate" in cust_df.columns:
+        cust_end_ts = pd.to_datetime(cust_df["CustomerEndDate"], errors="coerce")
+        customer_end_month = np.full(len(customer_keys), -1, dtype=np.int64)
+        valid_end = cust_end_ts.notna()
+        if valid_end.any():
+            end_periods = cust_end_ts[valid_end].dt.to_period("M")
+            customer_end_month[valid_end.to_numpy()] = (end_periods.apply(lambda p: p.ordinal) - config_start.ordinal).to_numpy(dtype=np.int64)
     else:
         customer_end_month = np.full(len(customer_keys), -1, dtype=np.int64)
+
+    # --- Derive is_active_in_sales from churn status ---
+    if "IsActiveInSales" in cust_df.columns:
+        # Legacy path
+        is_active_in_sales = _as_np(cust_df["IsActiveInSales"], np.int32)
+    else:
+        # Active = not churned (no end date, or end date in the future)
+        config_end = pd.to_datetime(end_date)
+        cust_end_for_active = pd.to_datetime(cust_df.get("CustomerEndDate"), errors="coerce")
+        is_active_in_sales = np.where(
+            cust_end_for_active.isna() | (cust_end_for_active >= config_end),
+            1, 0,
+        ).astype(np.int32)
 
     # Load customer weight column separately (robust)
     customer_base_weight = None

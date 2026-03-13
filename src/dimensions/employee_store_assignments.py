@@ -13,6 +13,10 @@ from src.dimensions.employees import (
     STAFF_KEY_STORE_MULT,
 )
 
+from src.defaults import (
+    EMPLOYEE_TRANSFER_REASON_LABELS,
+    EMPLOYEE_TRANSFER_REASON_PROBS,
+)
 from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
@@ -231,7 +235,7 @@ def generate_employee_store_assignments(
     """
     out_cols = [
         "EmployeeKey", "StoreKey", "StartDate", "EndDate",
-        "FTE", "RoleAtStore", "IsPrimary",
+        "FTE", "RoleAtStore", "IsPrimary", "TransferReason",
     ]
     if not enabled:
         return pd.DataFrame(columns=out_cols + ["AssignmentSequence"])
@@ -271,16 +275,11 @@ def generate_employee_store_assignments(
     term_filled = term.fillna(window_end)
     title_arr = emp["Title"].astype(str).to_numpy()
 
-    # Part-time probability by role
-    pt_prob = np.where(
-        np.isin(title_arr, ["Cashier"]),
-        0.45,
-        np.where(np.isin(title_arr, ["Sales Associate"]), 0.25, 0.10),
-    )
-    is_part_time = rng.random(len(emp)) < pt_prob
-    target_fte = np.where(
-        is_part_time, rng.uniform(0.50, 0.80, size=len(emp)), 1.0,
-    ).astype(np.float64)
+    # FTE from employee dimension (determined at hire)
+    if "FTE" in emp.columns:
+        target_fte = emp["FTE"].astype(np.float64).to_numpy()
+    else:
+        target_fte = np.ones(len(emp), dtype=np.float64)
 
     # Store pools
     store_by_district = _build_store_by_district(emp)
@@ -512,8 +511,7 @@ def generate_employee_store_assignments(
             if latest_start < ep_start_min:
                 continue
             s = rand_single_date(rng, ep_start_min, latest_start)
-            sec_fte = float(min(tgt_fte, rng.uniform(fmin, fmax)))
-            raw.append((s, dur, int(store), sec_fte))
+            raw.append((s, dur, int(store), tgt_fte))
 
         if not raw:
             return []
@@ -561,6 +559,7 @@ def generate_employee_store_assignments(
         ek: int, role: str, store_key: int,
         seg_start: pd.Timestamp, seg_end: Any,
         is_primary: bool, fte_val: float,
+        transfer_reason: Any = pd.NA,
     ) -> None:
         mover_rows.append(dict(
             EmployeeKey=int(ek),
@@ -570,6 +569,7 @@ def generate_employee_store_assignments(
             FTE=float(fte_val),
             RoleAtStore=str(role),
             IsPrimary=bool(is_primary),
+            TransferReason=transfer_reason,
         ))
 
     # -----------------------------------------------------------------
@@ -624,6 +624,7 @@ def generate_employee_store_assignments(
                     "FTE": target_fte[anc_idx],
                     "RoleAtStore": ps_role,
                     "IsPrimary": True,
+                    "TransferReason": pd.NA,
                 }))
 
     # -----------------------------------------------------------------
@@ -730,6 +731,7 @@ def generate_employee_store_assignments(
                 "FTE": target_fte[nm_idx],
                 "RoleAtStore": role_arr[nm_idx],
                 "IsPrimary": True,
+                "TransferReason": pd.NA,
             }))
 
     # -----------------------------------------------------------------
@@ -776,7 +778,7 @@ def generate_employee_store_assignments(
 
         MIN_HOME_GAP_DAYS = 3
 
-        for (s, e, store, sec_fte) in episodes:
+        for (s, e, store, _sec_fte) in episodes:
             s = pd.to_datetime(s).normalize()
             e = pd.to_datetime(e).normalize()
 
@@ -791,7 +793,11 @@ def generate_employee_store_assignments(
                 # extend the away episode backwards to absorb it.
                 s = cur
 
-            _emit_mover(ek, role, store, s, e, False, sec_fte)
+            # Away episode: employee FTE, random transfer reason
+            _reason = str(rng.choice(
+                EMPLOYEE_TRANSFER_REASON_LABELS, p=EMPLOYEE_TRANSFER_REASON_PROBS,
+            ))
+            _emit_mover(ek, role, store, s, e, False, tgt, transfer_reason=_reason)
             cur = (e + pd.Timedelta(days=1)).normalize()
 
         # Final home segment
@@ -1004,7 +1010,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
     employees = pd.read_parquet(
         employees_path,
-        columns=["EmployeeKey", "HireDate", "TerminationDate", "Title", "DistrictId"],
+        columns=["EmployeeKey", "HireDate", "TerminationDate", "Title", "DistrictId", "FTE"],
     )
 
     version_cfg = dict(a_cfg)
@@ -1171,41 +1177,22 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
                 ramp_start_factor = float_or(_closing_cfg.get("ramp_start_factor"), 0.50)
                 ramp_end = (t_date + pd.Timedelta(days=ramp_days)).normalize()
 
-                if ramp_days > 0 and ramp_start_factor < 1.0 and ramp_end < global_end:
-                    # Ramp segment: reduced FTE for the first ramp_days
-                    avg_ramp_fte = (ramp_start_factor + 1.0) / 2.0
-                    transfer_rows.append({
-                        "EmployeeKey": np.int32(ek),
-                        "StoreKey": np.int32(dest_sk),
-                        "StartDate": t_date,
-                        "EndDate": ramp_end,
-                        "FTE": round(avg_ramp_fte, 2),
-                        "RoleAtStore": role,
-                        "IsPrimary": True,
-                    })
-                    # Full segment: normal FTE after ramp
-                    transfer_rows.append({
-                        "EmployeeKey": np.int32(ek),
-                        "StoreKey": np.int32(dest_sk),
-                        "StartDate": (ramp_end + pd.Timedelta(days=1)).normalize(),
-                        "EndDate": global_end,
-                        "FTE": 1.0,
-                        "RoleAtStore": role,
-                        "IsPrimary": True,
-                    })
-                else:
-                    transfer_rows.append({
-                        "EmployeeKey": np.int32(ek),
-                        "StoreKey": np.int32(dest_sk),
-                        "StartDate": t_date,
-                        "EndDate": global_end,
-                        "FTE": 1.0,
-                        "RoleAtStore": role,
-                        "IsPrimary": True,
-                    })
+                # Look up employee's FTE from the employees data
+                _emp_fte = float(trow.get("FTE", 1.0)) if "FTE" in trow.index else 1.0
+
+                transfer_rows.append({
+                    "EmployeeKey": np.int32(ek),
+                    "StoreKey": np.int32(dest_sk),
+                    "StartDate": t_date,
+                    "EndDate": global_end,
+                    "FTE": _emp_fte,
+                    "RoleAtStore": role,
+                    "IsPrimary": True,
+                    "TransferReason": pd.NA,
+                })
 
             if transfer_rows:
-                out_cols = ["EmployeeKey", "StoreKey", "StartDate", "EndDate", "FTE", "RoleAtStore", "IsPrimary"]
+                out_cols = ["EmployeeKey", "StoreKey", "StartDate", "EndDate", "FTE", "RoleAtStore", "IsPrimary", "TransferReason"]
                 t_df = pd.DataFrame(transfer_rows, columns=out_cols)
                 df = pd.concat([df, t_df], ignore_index=True)
                 info(f"Added {len(transfer_rows)} transfer assignments from closed stores")

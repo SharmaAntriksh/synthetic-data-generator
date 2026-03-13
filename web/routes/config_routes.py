@@ -63,7 +63,6 @@ def get_config():
         wf = {"enabled": wf}
 
     # Extra sections
-    cs = _g(cfg, "customer_segments", default={})
     sp = _g(cfg, "superpowers", default={})
     emp = _g(cfg, "employees", default={})
     er = _g(cfg, "exchange_rates", default={})
@@ -71,7 +70,6 @@ def get_config():
     inv = _g(cfg, "inventory", default={})
     cost = _g(cfg, "products", "pricing", "cost", default={})
     brand_norm = _g(cfg, "products", "pricing", "brand_normalization", default={})
-    cs_validity = _g(cs, "validity", default={})
     store_assigns = _g(emp, "store_assignments", default={})
 
     return {
@@ -144,19 +142,6 @@ def get_config():
         "promoLoyalty": int(getattr(promos, "num_loyalty", 3) or 3),
         "promoBundle": int(getattr(promos, "num_bundle", 3) or 3),
         "promoNewCustomer": int(getattr(promos, "num_new_customer", 3) or 3),
-        # Customer Segments
-        "csEnabled": bool(getattr(cs, "enabled", False)),
-        "csGenerateBridge": bool(getattr(cs, "generate_bridge", False)),
-        "csSegmentCount": int(getattr(cs, "segment_count", 10)),
-        "csPerCustomerMin": int(getattr(cs, "segments_per_customer_min", 1)),
-        "csPerCustomerMax": int(getattr(cs, "segments_per_customer_max", 2)),
-        "csIncludeScore": bool(getattr(cs, "include_score", True)),
-        "csIncludePrimaryFlag": bool(getattr(cs, "include_primary_flag", True)),
-        "csIncludeValidity": bool(getattr(cs, "include_validity", True)),
-        "csValidityGrain": str(getattr(cs_validity, "grain", "month")),
-        "csChurnRateQtr": float(getattr(cs_validity, "churn_rate_qtr", 0.08)),
-        "csNewCustomerMonths": int(getattr(cs_validity, "new_customer_months", 2)),
-        "csSeed": int(getattr(cs, "seed", 123) or 123),
         # Superpowers
         "spEnabled": bool(getattr(sp, "enabled", False)),
         "spGenerateBridge": bool(getattr(sp, "generate_bridge", False)),
@@ -220,9 +205,6 @@ def update_config(body: ConfigUpdate):
         if cfg.geography is None:
             from src.engine.config.config_schema import GeographyConfig
             cfg.geography = GeographyConfig()
-        if cfg.customer_segments.validity is None:
-            from src.engine.config.config_schema import SegmentValidityConfig
-            cfg.customer_segments.validity = SegmentValidityConfig()
         if cfg.dates.include.weekly_fiscal is None:
             from src.engine.config.config_schema import WeeklyFiscalConfig
             cfg.dates.include.weekly_fiscal = WeeklyFiscalConfig()
@@ -308,20 +290,6 @@ def update_config(body: ConfigUpdate):
         if "promoLoyalty" in v: cfg.promotions.num_loyalty = int(v["promoLoyalty"])
         if "promoBundle" in v: cfg.promotions.num_bundle = int(v["promoBundle"])
         if "promoNewCustomer" in v: cfg.promotions.num_new_customer = int(v["promoNewCustomer"])
-
-        # Customer Segments
-        if "csEnabled" in v: cfg.customer_segments.enabled = bool(v["csEnabled"])
-        if "csGenerateBridge" in v: cfg.customer_segments.generate_bridge = bool(v["csGenerateBridge"])
-        if "csSegmentCount" in v: cfg.customer_segments.segment_count = int(v["csSegmentCount"])
-        if "csPerCustomerMin" in v: cfg.customer_segments.segments_per_customer_min = int(v["csPerCustomerMin"])
-        if "csPerCustomerMax" in v: cfg.customer_segments.segments_per_customer_max = int(v["csPerCustomerMax"])
-        if "csIncludeScore" in v: cfg.customer_segments.include_score = bool(v["csIncludeScore"])
-        if "csIncludePrimaryFlag" in v: cfg.customer_segments.include_primary_flag = bool(v["csIncludePrimaryFlag"])
-        if "csIncludeValidity" in v: cfg.customer_segments.include_validity = bool(v["csIncludeValidity"])
-        if "csValidityGrain" in v: cfg.customer_segments.validity.grain = v["csValidityGrain"]
-        if "csChurnRateQtr" in v: cfg.customer_segments.validity.churn_rate_qtr = float(v["csChurnRateQtr"])
-        if "csNewCustomerMonths" in v: cfg.customer_segments.validity.new_customer_months = int(v["csNewCustomerMonths"])
-        if "csSeed" in v: cfg.customer_segments.seed = int(v["csSeed"])
 
         # Superpowers
         if "spEnabled" in v: cfg.superpowers.enabled = bool(v["spEnabled"])

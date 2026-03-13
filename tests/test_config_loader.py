@@ -15,7 +15,6 @@ from src.engine.config.config import (
     _expand_products_pricing,
     _fold_facts_enabled,
     _parse_date,
-    normalize_customer_segments_config,
     normalize_defaults,
     normalize_sales_config,
 )
@@ -486,61 +485,3 @@ class TestFoldFactsEnabled:
         assert "facts" not in result
 
 
-# ===================================================================
-# normalize_customer_segments_config
-# ===================================================================
-
-class TestNormalizeCustomerSegments:
-    def test_disabled_returns_early(self):
-        result = normalize_customer_segments_config({"enabled": False})
-
-        assert result["enabled"] is False
-
-    def test_defaults_applied(self):
-        result = normalize_customer_segments_config({"enabled": True})
-
-        assert result["seed"] == 123
-        assert result["segment_count"] == 12
-        assert result["segments_per_customer_min"] == 1
-        assert result["segments_per_customer_max"] == 4
-
-    def test_max_less_than_min_raises(self):
-        with pytest.raises(ValueError, match="must be >="):
-            normalize_customer_segments_config({
-                "enabled": True,
-                "segment_count": 10,
-                "segments_per_customer_min": 5,
-                "segments_per_customer_max": 2,
-            })
-
-    def test_max_exceeds_segment_count_raises(self):
-        with pytest.raises(ValueError, match="must be <= segment_count"):
-            normalize_customer_segments_config({
-                "enabled": True,
-                "segment_count": 3,
-                "segments_per_customer_min": 1,
-                "segments_per_customer_max": 5,
-            })
-
-    def test_zero_segment_count_raises(self):
-        with pytest.raises(ValueError, match="must be > 0"):
-            normalize_customer_segments_config({
-                "enabled": True,
-                "segment_count": 0,
-            })
-
-    def test_validity_grain_validated(self):
-        with pytest.raises(ValueError, match="grain must be one of"):
-            normalize_customer_segments_config({
-                "enabled": True,
-                "include_validity": True,
-                "validity": {"grain": "weekly"},
-            })
-
-    def test_churn_rate_out_of_range_raises(self):
-        with pytest.raises(ValueError, match="between 0 and 1"):
-            normalize_customer_segments_config({
-                "enabled": True,
-                "include_validity": True,
-                "validity": {"grain": "month", "churn_rate_qtr": 1.5},
-            })

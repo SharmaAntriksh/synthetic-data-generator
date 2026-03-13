@@ -25,6 +25,12 @@ from src.utils.config_helpers import (
     rand_dates_between,
     region_from_iso_code,
 )
+from src.defaults import (
+    EMPLOYEE_PART_TIME_RATE_BY_ROLE,
+    EMPLOYEE_PART_TIME_FTE_VALUES,
+    EMPLOYEE_TERMINATION_REASON_LABELS,
+    EMPLOYEE_TERMINATION_REASON_PROBS,
+)
 
 # EmployeeKey encoding scheme (shared with employee_store_assignments)
 STORE_MGR_KEY_BASE: int = 30_000_000
@@ -249,6 +255,18 @@ def _enrich_employee_hr_columns(
         df["IsActive"].astype(int) == 1, "Active", "Terminated",
     ).astype(object)
 
+    # TerminationReason (only for terminated employees)
+    term_mask = df["TerminationDate"].notna() & (df["IsActive"].astype(int) == 0)
+    n_term = int(term_mask.sum())
+    df["TerminationReason"] = pd.array([pd.NA] * len(df), dtype="object")
+    if n_term > 0:
+        reasons = rng.choice(
+            EMPLOYEE_TERMINATION_REASON_LABELS,
+            size=n_term,
+            p=EMPLOYEE_TERMINATION_REASON_PROBS,
+        )
+        df.loc[term_mask, "TerminationReason"] = reasons
+
     # SalesPersonFlag
     df["SalesPersonFlag"] = title.isin(["Sales Associate"]).astype(np.int8)
 
@@ -395,6 +413,9 @@ def _generate_attrition_replacements(
         # Set termination on original SA
         df.iat[i, term_date_col] = departure
         df.iat[i, is_active_col] = np.int8(0)
+        # Attrition departures are voluntary by default
+        if "TerminationReason" in df.columns:
+            df.iat[i, df.columns.get_loc("TerminationReason")] = "Voluntary"
 
         # Build replacement chain
         current_departure = departure
@@ -436,6 +457,14 @@ def _generate_attrition_replacements(
             row["HireDate"] = new_hire
             row["TerminationDate"] = pd.NaT if is_last else rep_departure
             row["IsActive"] = np.int8(1) if is_last else np.int8(0)
+            row["TerminationReason"] = pd.NA if is_last else "Voluntary"
+            # Draw fresh EmploymentType/FTE for replacement
+            _pt_rate = EMPLOYEE_PART_TIME_RATE_BY_ROLE.get(
+                str(template.get("Title", "")), 0.10,
+            )
+            _is_pt = bool(store_rng.random() < _pt_rate)
+            row["EmploymentType"] = "Part-Time" if _is_pt else "Full-Time"
+            row["FTE"] = float(store_rng.choice(EMPLOYEE_PART_TIME_FTE_VALUES)) if _is_pt else 1.0
 
             replacement_rows.append(row)
             current_departure = rep_departure
@@ -761,6 +790,23 @@ def generate_employee_dimension(
     df = pd.concat([corporate_df, mgr_df, staff_df], ignore_index=True)
 
     # ------------------------------------------------------------------
+    # EmploymentType & FTE — determined at hire based on role
+    # ------------------------------------------------------------------
+    n_all = len(df)
+    titles_np = df["Title"].astype(str).to_numpy()
+    pt_prob = np.array(
+        [EMPLOYEE_PART_TIME_RATE_BY_ROLE.get(t, 0.10) for t in titles_np],
+        dtype=np.float64,
+    )
+    is_part_time = rng.random(n_all) < pt_prob
+    df["EmploymentType"] = np.where(is_part_time, "Part-Time", "Full-Time").astype(object)
+    df["FTE"] = np.where(
+        is_part_time,
+        rng.choice(EMPLOYEE_PART_TIME_FTE_VALUES, size=n_all),
+        1.0,
+    ).astype(np.float64)
+
+    # ------------------------------------------------------------------
     # Dates — with Sales Associate full-window guarantee
     # ------------------------------------------------------------------
     n = len(df)
@@ -956,6 +1002,8 @@ def generate_employee_dimension(
                     df.iat[idx, df.columns.get_loc("IsActive")] = np.int8(0)
                     df.iat[idx, df.columns.get_loc("TransferStatus")] = "Terminated_StoreClose"
                     df.iat[idx, df.columns.get_loc("OriginalStoreKey")] = int(close_sk)
+                    if "TerminationReason" in df.columns:
+                        df.iat[idx, df.columns.get_loc("TerminationReason")] = "Involuntary"
 
     # Names
     _apply_deterministic_names(
@@ -1242,7 +1290,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
         # Write employee_transfers sidecar for the assignment generator
         transfers = df[df["TransferStatus"] == "Transferred"][
-            ["EmployeeKey", "OriginalStoreKey", "TransferDate", "Title", "DistrictId"]
+            ["EmployeeKey", "OriginalStoreKey", "TransferDate", "Title", "DistrictId", "FTE"]
         ].copy()
         transfers_path = parquet_folder / "employee_transfers.parquet"
         if not transfers.empty:
@@ -1269,7 +1317,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             "EmployeeKey", "ParentEmployeeKey", "EmployeeName", "Title",
             "OrgLevel", "OrgUnitType", "RegionId", "DistrictId",
             "StoreKey", "GeographyKey",
-            "HireDate", "TerminationDate", "IsActive",
+            "HireDate", "TerminationDate", "TerminationReason", "IsActive",
+            "EmploymentType", "FTE",
             "Gender", "FirstName", "LastName", "MiddleName",
             "BirthDate", "MaritalStatus", "EmailAddress", "Phone",
             "EmergencyContactName", "EmergencyContactPhone",

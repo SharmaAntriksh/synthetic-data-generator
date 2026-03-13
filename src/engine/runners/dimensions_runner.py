@@ -32,7 +32,6 @@ from src.dimensions.lookups import (
 )
 
 from src.dimensions.return_reasons import run_return_reasons
-from src.dimensions.customer_segments import run_customer_segments
 from src.dimensions.superpowers import run_superpowers
 
 
@@ -80,13 +79,6 @@ def _returns_enabled(cfg) -> bool:
     if skip_order and sales_output == "sales":
         return False
     return True
-
-
-def _customer_segments_enabled(cfg) -> bool:
-    seg_cfg = getattr(cfg, "customer_segments", None)
-    if not seg_cfg or not isinstance(seg_cfg, Mapping):
-        return False
-    return bool(getattr(seg_cfg, "enabled", False))
 
 
 def _superpowers_enabled(cfg) -> bool:
@@ -165,19 +157,7 @@ DIM_SPECS: List[DimensionSpec] = [
         outputs_all=("customers.parquet", "customer_profile.parquet", "organization_profile.parquet"),
     ),
 
-    # 2.5) Customer Segments (depends on customers)
-    DimensionSpec(
-        name="customer_segments",
-        cfg_key="customer_segments",
-        run_fn=run_customer_segments,
-        deps=("customers",),
-        date_dependent=True,
-        inject_global_dates=True,
-        enabled=_customer_segments_enabled,
-        outputs_all=("customer_segments.parquet",),
-    ),
-
-    # 2.6) Superpowers (depends on customers)
+    # 2.5) Superpowers (depends on customers)
     DimensionSpec(
         name="superpowers",
         cfg_key="superpowers",

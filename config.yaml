@@ -79,6 +79,7 @@ products:
 # ------------------------------------------------------------------
 customers:
   active_ratio: 0.98
+  household_pct: 0.35               # fraction of individuals in multi-person households
 
   region_mix: { US: 51, EU: 39, India: 10 }
   org_pct: 1
@@ -87,27 +88,6 @@ customers:
   first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
 
 
-# ------------------------------------------------------------------
-# CUSTOMER SEGMENTS (disabled by default)
-# ------------------------------------------------------------------
-customer_segments:
-  enabled: false
-  generate_bridge: false
-
-  segment_count: 10
-  segments_per_customer_min: 1
-  segments_per_customer_max: 2
-
-  include_score: true
-  include_primary_flag: true
-  include_validity: true
-
-  validity:
-    grain: month
-    churn_rate_qtr: 0.08
-    new_customer_months: 2
-
-  seed: 123
 
 # ------------------------------------------------------------------
 # SUPERPOWERS (disabled by default)

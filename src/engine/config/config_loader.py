@@ -15,7 +15,6 @@ from .config import (  # noqa: F401
     load_config_file,
     load_config_typed,
     load_pipeline_config,
-    normalize_customer_segments_config,
     normalize_defaults,
     normalize_sales_config,
     prepare_paths,
@@ -30,6 +29,5 @@ __all__ = [
     "normalize_defaults",
     "get_global_dates",
     "normalize_sales_config",
-    "normalize_customer_segments_config",
     "prepare_paths",
 ]

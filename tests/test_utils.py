@@ -838,18 +838,6 @@ class TestExcludedDimFiles:
         # With no returns config, return_reason should be excluded
         assert "return_reason.parquet" in excluded
 
-    def test_segments_disabled(self):
-        cfg = AppConfig.model_validate({"customer_segments": {"enabled": False}})
-        excluded = _excluded_dim_files(cfg)
-        assert "customer_segment.parquet" in excluded
-        assert "customer_segment_membership.parquet" in excluded
-
-    def test_segments_enabled_bridge_disabled(self):
-        cfg = AppConfig.model_validate({"customer_segments": {"enabled": True, "generate_bridge": False}})
-        excluded = _excluded_dim_files(cfg)
-        assert "customer_segment.parquet" not in excluded
-        assert "customer_segment_membership.parquet" in excluded
-
     def test_superpowers_disabled(self):
         cfg = AppConfig.model_validate({"superpowers": {"enabled": False}})
         excluded = _excluded_dim_files(cfg)

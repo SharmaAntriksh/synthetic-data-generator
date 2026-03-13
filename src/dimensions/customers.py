@@ -68,6 +68,12 @@ from src.defaults import (
     CUSTOMER_URBAN_RURAL_PROBS as _URBAN_RURAL_PROBS,
     CUSTOMER_POSTCODE_FMT as _POSTCODE_FMT,
     CUSTOMER_LANGUAGE_BY_REGION as _LANGUAGE_BY_REGION,
+    CUSTOMER_HOUSEHOLD_PCT as _HOUSEHOLD_PCT_DEFAULT,
+    CUSTOMER_HOUSEHOLD_HEAD_MIN_AGE as _HEAD_MIN_AGE,
+    CUSTOMER_HOUSEHOLD_SPOUSE_MAX_AGE_GAP as _SPOUSE_MAX_AGE_GAP,
+    CUSTOMER_HOUSEHOLD_SPOUSE_MIN_AGE as _SPOUSE_MIN_AGE,
+    CUSTOMER_HOUSEHOLD_DEPENDENT_MIN_AGE_GAP as _DEPENDENT_MIN_AGE_GAP,
+    CUSTOMER_HOUSEHOLD_DEPENDENT_MAX_AGE as _DEPENDENT_MAX_AGE,
 )
 
 _PAYMENT_METHOD_LABELS = np.array([
@@ -951,6 +957,185 @@ def _generate_org_profile(
 
 
 # ---------------------------------------------------------
+# Household assignment
+# ---------------------------------------------------------
+
+def _assign_households(
+    rng: np.random.Generator,
+    N: int,
+    is_org: np.ndarray,
+    last_name: np.ndarray,
+    geography_key: np.ndarray,
+    gender: np.ndarray,
+    ages_years: np.ndarray,
+    marital_status: np.ndarray,
+    children_raw: np.ndarray,
+    home_ownership: np.ndarray,
+    household_pct: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Assign HouseholdKey and HouseholdRole for all customers.
+
+    Strategy — proactively *form* households rather than relying on
+    coincidental name/geography collisions:
+
+      1. Select married individuals as household "Head" candidates.
+         Pick *household_pct* of them (capped by available married pool).
+      2. For each head, find a spouse: opposite gender, age gap within
+         threshold, preferring same HomeOwnership.  Copy the head's
+         LastName and GeographyKey onto the spouse so the family shares
+         a surname and location.
+      3. If the head's TotalChildren > 0, recruit up to that many young
+         individuals (age gap >= DEPENDENT_MIN_AGE_GAP) as "Dependent",
+         again copying LastName and GeographyKey.
+      4. Everyone not placed into a multi-person household gets their own
+         single-person household with role "Head" (individuals) or
+         role=None (orgs).
+
+    Mutates *last_name* and *geography_key* in place so downstream
+    columns (CustomerName, Email, address) reflect the shared surname.
+
+    Returns (HouseholdKey, HouseholdRole) arrays of length N.
+    """
+    household_key = np.zeros(N, dtype="int64")
+    household_role = np.empty(N, dtype=object)
+    household_role[:] = None
+
+    person_mask = ~is_org
+    person_idx = np.where(person_mask)[0]
+    n_person = len(person_idx)
+
+    if n_person == 0:
+        household_key[:] = np.arange(1, N + 1)
+        return household_key, household_role
+
+    # --- Identify head candidates: married individuals old enough ---
+    married_mask = (marital_status[person_idx] == "Married") & (ages_years[person_idx] >= _HEAD_MIN_AGE)
+    married_idx = person_idx[married_mask]
+
+    n_target_heads = max(1, int(round(n_person * household_pct)))
+    n_heads = min(n_target_heads, len(married_idx))
+
+    if n_heads == 0:
+        # No married individuals — everyone gets a solo household
+        household_key[:] = np.arange(1, N + 1)
+        household_role[person_mask] = "Head"
+        return household_key, household_role
+
+    head_indices = rng.choice(married_idx, size=n_heads, replace=False)
+
+    # -----------------------------------------------------------------
+    # Build sorted-by-age pools per gender for O(log n) spouse search
+    # -----------------------------------------------------------------
+    head_set = set(head_indices.tolist())
+    avail_mask = np.zeros(N, dtype=bool)          # global availability tracker
+    avail_mask[person_idx] = True
+    avail_mask[head_indices] = False               # heads are not in the pool
+
+    ages_f64 = ages_years.astype(np.float64)       # ensure float for arithmetic
+    ho_arr = home_ownership                        # alias for readability
+
+    # Per-gender sorted pools: (sorted_ages, sorted_indices, alive_mask)
+    _pools: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    for g in ("Male", "Female"):
+        g_avail = np.where(avail_mask & (gender == g))[0]
+        if len(g_avail) == 0:
+            _pools[g] = (np.empty(0), np.empty(0, dtype="int64"), np.empty(0, dtype=bool))
+            continue
+        order = np.argsort(ages_f64[g_avail])
+        sorted_idx = g_avail[order]
+        sorted_ages = ages_f64[sorted_idx]
+        alive = np.ones(len(sorted_idx), dtype=bool)
+        _pools[g] = (sorted_ages, sorted_idx, alive)
+
+    # Dependent pool: all genders, age <= DEPENDENT_MAX_AGE, sorted ascending
+    dep_avail = np.where(avail_mask & (ages_f64 <= _DEPENDENT_MAX_AGE))[0]
+    dep_order = np.argsort(ages_f64[dep_avail])
+    dep_sorted_idx = dep_avail[dep_order]
+    dep_sorted_ages = ages_f64[dep_sorted_idx]
+    dep_alive = np.ones(len(dep_sorted_idx), dtype=bool)
+
+    hh_id = 0
+
+    for head in head_indices:
+        hh_id += 1
+        household_key[head] = hh_id
+        household_role[head] = "Head"
+
+        head_age = ages_f64[head]
+        head_gender = gender[head]
+        head_ln = last_name[head]
+        head_geo = geography_key[head]
+        head_ho = ho_arr[head]
+
+        # --- Find a spouse: opposite gender, within age gap ---
+        spouse_gender = "Female" if head_gender == "Male" else "Male"
+        s_ages, s_idx, s_alive = _pools.get(spouse_gender, (np.empty(0), np.empty(0, dtype="int64"), np.empty(0, dtype=bool)))
+
+        best_pool_pos = -1
+
+        if len(s_ages) > 0:
+            lo_age = max(head_age - _SPOUSE_MAX_AGE_GAP, _SPOUSE_MIN_AGE)
+            hi_age = head_age + _SPOUSE_MAX_AGE_GAP
+            lo_pos = int(np.searchsorted(s_ages, lo_age, side="left"))
+            hi_pos = int(np.searchsorted(s_ages, hi_age, side="right"))
+
+            if lo_pos < hi_pos:
+                window_alive = s_alive[lo_pos:hi_pos]
+                alive_positions = np.flatnonzero(window_alive)
+                if len(alive_positions) > 0:
+                    w_ages = s_ages[lo_pos:hi_pos][alive_positions]
+                    w_idx = s_idx[lo_pos:hi_pos][alive_positions]
+                    scores = np.abs(head_age - w_ages)
+                    ho_match = (ho_arr[w_idx] == head_ho)
+                    scores = np.where(ho_match, scores - 2.0, scores)
+                    best_w = int(np.argmin(scores))
+                    best_pool_pos = lo_pos + int(alive_positions[best_w])
+
+        if best_pool_pos >= 0:
+            matched = int(s_idx[best_pool_pos])
+            household_key[matched] = hh_id
+            household_role[matched] = "Spouse"
+            s_alive[best_pool_pos] = False
+            avail_mask[matched] = False
+            last_name[matched] = head_ln
+            geography_key[matched] = head_geo
+
+        # --- Recruit dependents based on TotalChildren ---
+        n_children_wanted = int(children_raw[head])
+        if n_children_wanted > 0:
+            max_dep_age = head_age - _DEPENDENT_MIN_AGE_GAP
+            if max_dep_age > 0:
+                # dep_sorted_ages is ascending; valid range is [0, max_dep_age]
+                hi_dep = int(np.searchsorted(dep_sorted_ages, max_dep_age, side="right"))
+                dependents_added = 0
+                # Scan backwards from hi_dep-1 (oldest eligible first)
+                for dp in range(hi_dep - 1, -1, -1):
+                    if dependents_added >= n_children_wanted:
+                        break
+                    if not dep_alive[dp]:
+                        continue
+                    cand = int(dep_sorted_idx[dp])
+                    if not avail_mask[cand]:
+                        continue
+                    household_key[cand] = hh_id
+                    household_role[cand] = "Dependent"
+                    dep_alive[dp] = False
+                    avail_mask[cand] = False
+                    last_name[cand] = head_ln
+                    geography_key[cand] = head_geo
+                    dependents_added += 1
+
+    # --- Assign solo households to everyone not yet assigned ---
+    unassigned = np.where(household_key == 0)[0]
+    household_key[unassigned] = np.arange(hh_id + 1, hh_id + 1 + len(unassigned))
+    # Solo persons get "Head" role; orgs stay None
+    solo_persons = unassigned[person_mask[unassigned]]
+    household_role[solo_persons] = "Head"
+
+    return household_key, household_role
+
+
+# ---------------------------------------------------------
 # Main generator
 # ---------------------------------------------------------
 def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
@@ -1284,12 +1469,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     CustomerWeight = rng.lognormal(mean=0.0, sigma=0.6, size=N).astype("float64")
     CustomerTemperature = np.clip(rng.normal(loc=0.6, scale=0.25, size=N), 0.05, 1.0).astype("float64")
 
-    segment_cfg = lifecycle_cfg.get("segments", {}) or {}
-    seg_names = np.array(segment_cfg.get("names", ["Budget", "Mainstream", "Premium"]), dtype=object)
-    seg_probs = np.array(segment_cfg.get("probs", [0.35, 0.5, 0.15]), dtype="float64")
-    seg_probs = seg_probs / seg_probs.sum()
-    CustomerSegment = rng.choice(seg_names, size=N, p=seg_probs)
-
     churn_bias_cfg = lifecycle_cfg.get("churn_bias", {}) or {}
     bias_sigma = float(churn_bias_cfg.get("sigma", 0.5))
     CustomerChurnBias = rng.lognormal(mean=0.0, sigma=bias_sigma, size=N).astype("float64")
@@ -1372,16 +1551,23 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     )
 
     CustomerStartDate = _month_idx_to_date(start_month0, CustomerStartMonth)
+    # Add random day-of-month offset (0-27 days) so dates aren't always the 1st
+    day_offsets = rng.integers(0, 28, size=N).astype("timedelta64[D]")
+    CustomerStartDate = CustomerStartDate + day_offsets
 
     if enable_churn:
         end_idx = np.array([int(x) if not pd.isna(x) else -1 for x in CustomerEndMonth], dtype="int64")
-        CustomerEndDate = np.where(
-            end_idx >= 0,
-            _month_idx_to_date(start_month0, end_idx),
-            pd.NaT,
-        )
+        has_end = end_idx >= 0
+        CustomerEndDate = np.empty(N, dtype="datetime64[ns]")
+        CustomerEndDate[:] = np.datetime64("NaT")
+        if has_end.any():
+            end_base = _month_idx_to_date(start_month0, end_idx[has_end])
+            n_with_end = int(has_end.sum())
+            end_offsets = rng.integers(0, 28, size=n_with_end).astype("timedelta64[D]")
+            CustomerEndDate[has_end] = end_base + end_offsets
     else:
-        CustomerEndDate = pd.Series(pd.NaT, index=np.arange(N), dtype="datetime64[ns]").to_numpy()
+        CustomerEndDate = np.empty(N, dtype="datetime64[ns]")
+        CustomerEndDate[:] = np.datetime64("NaT")
 
     CustomerType = np.where(IsOrg, "Organization", "Individual")
     CompanyName = np.where(IsOrg, OrgName, None)
@@ -1562,6 +1748,38 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     )
 
     # =====================================================
+    # Household assignment
+    # =====================================================
+    household_pct_cfg = getattr(cust_cfg, "household_pct", None)
+    household_pct = float(household_pct_cfg) if household_pct_cfg is not None else _HOUSEHOLD_PCT_DEFAULT
+
+    HouseholdKey, HouseholdRole = _assign_households(
+        rng=rng,
+        N=N,
+        is_org=IsOrg,
+        last_name=safe_last,
+        geography_key=GeographyKey,
+        gender=Gender,
+        ages_years=ages_years,
+        marital_status=MaritalStatus,
+        children_raw=children_raw,
+        home_ownership=HomeOwnership,
+        household_pct=household_pct,
+    )
+
+    n_multi = int((HouseholdRole == "Spouse").sum() + (HouseholdRole == "Dependent").sum()
+                  + (HouseholdRole == "Relative").sum())
+    n_households = int(np.max(HouseholdKey))
+    info(f"Households: {n_households} total, {n_multi} customers in multi-person households")
+
+    # Rebuild CustomerName — household assignment may have updated last names
+    CustomerName = np.where(
+        IsOrg,
+        OrgName.astype(str),
+        safe_first.astype(str) + " " + safe_last.astype(str),
+    )
+
+    # =====================================================
     # Build Customers dataframe (identity + engine)
     # =====================================================
     customers_df = pd.DataFrame(
@@ -1580,17 +1798,12 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
             "CustomerType": CustomerType,
             "CompanyName": CompanyName,
             "GeographyKey": GeographyKey,
+            "HouseholdKey": HouseholdKey,
+            "HouseholdRole": HouseholdRole,
             "LoyaltyTierKey": pd.Series(LoyaltyTierKey, dtype="Int64"),
             "CustomerAcquisitionChannelKey": pd.Series(CustomerAcquisitionChannelKey, dtype="Int64"),
-            "IsActiveInSales": is_active,
-            "CustomerStartMonth": CustomerStartMonth.astype("int64"),
-            "CustomerEndMonth": pd.Series(CustomerEndMonth, dtype="Int64"),
             "CustomerStartDate": pd.to_datetime(CustomerStartDate),
             "CustomerEndDate": pd.to_datetime(CustomerEndDate),
-            "CustomerWeight": CustomerWeight,
-            "CustomerTemperature": CustomerTemperature,
-            "CustomerSegment": CustomerSegment,
-            "CustomerChurnBias": CustomerChurnBias,
         }
     )
 

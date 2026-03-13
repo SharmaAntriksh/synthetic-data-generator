@@ -35,7 +35,6 @@ _VALID_FILE_FORMATS: frozenset[str] = frozenset(
     {"csv", "parquet", "deltaparquet", "delta"}
 )
 
-_VALID_SEG_GRAINS: frozenset[str] = frozenset({"month", "day"})
 
 # ---------------------------------------------------------------------------
 # Section normalization registry (single source of truth)
@@ -49,7 +48,7 @@ _SECTION_MAPPING_ONLY_KEYS: frozenset[str] = frozenset({"customers", "scale", "p
 
 # For config files that intentionally don't have defaults (e.g. models.yaml),
 # we keep normalization deliberately narrow to avoid surprising validation failures.
-_CONFIG_FILE_NORMALIZE_KEYS: frozenset[str] = frozenset({"customer_segments"})
+_CONFIG_FILE_NORMALIZE_KEYS: frozenset[str] = frozenset()
 
 # Populated inline after normalizer functions are defined (see bottom of file).
 _SECTION_NORMALIZERS: Dict[str, SectionNormalizer] = {}
@@ -895,123 +894,6 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
     return sales_cfg
 
 
-# ---------------------------------------------------------------------------
-# Customer segments normalization
-# ---------------------------------------------------------------------------
-
-def normalize_customer_segments_config(seg_cfg: Dict[str, Any]) -> Dict[str, Any]:
-    seg_cfg = dict(seg_cfg)
-
-    seg_cfg.setdefault("enabled", True)
-    seg_cfg["enabled"] = bool(seg_cfg["enabled"])
-    if not seg_cfg["enabled"]:
-        return seg_cfg
-
-    # --- deterministic seed (top-level) ---
-    seg_cfg.setdefault("seed", 123)
-    if seg_cfg["seed"] is not None:
-        seg_cfg["seed"] = int(seg_cfg["seed"])
-
-    # --- segment counts with range validation ---
-    seg_cfg.setdefault("segment_count", 12)
-    seg_cfg.setdefault("segments_per_customer_min", 1)
-    seg_cfg.setdefault("segments_per_customer_max", 4)
-
-    seg_count = int(seg_cfg["segment_count"])
-    seg_min = int(seg_cfg["segments_per_customer_min"])
-    seg_max = int(seg_cfg["segments_per_customer_max"])
-
-    if seg_count <= 0:
-        raise ValueError(
-            f"customer_segments.segment_count must be > 0, got {seg_count}"
-        )
-    if seg_min < 1:
-        raise ValueError(
-            f"customer_segments.segments_per_customer_min must be >= 1, got {seg_min}"
-        )
-    if seg_max < seg_min:
-        raise ValueError(
-            f"customer_segments.segments_per_customer_max ({seg_max}) "
-            f"must be >= segments_per_customer_min ({seg_min})"
-        )
-    if seg_max > seg_count:
-        raise ValueError(
-            f"customer_segments.segments_per_customer_max ({seg_max}) "
-            f"must be <= segment_count ({seg_count})"
-        )
-
-    seg_cfg["segment_count"] = seg_count
-    seg_cfg["segments_per_customer_min"] = seg_min
-    seg_cfg["segments_per_customer_max"] = seg_max
-
-    # --- boolean flags ---
-    seg_cfg.setdefault("include_score", True)
-    seg_cfg.setdefault("include_primary_flag", True)
-
-    # Auto-enable validity if a validity block exists (prevents "silent ignore")
-    if "include_validity" not in seg_cfg:
-        seg_cfg["include_validity"] = ("validity" in seg_cfg)
-
-    seg_cfg["include_score"] = bool(seg_cfg["include_score"])
-    seg_cfg["include_primary_flag"] = bool(seg_cfg["include_primary_flag"])
-    seg_cfg["include_validity"] = bool(seg_cfg["include_validity"])
-
-    # --- validity block ---
-    validity = seg_cfg.get("validity") or {}
-    if seg_cfg["include_validity"]:
-        if not isinstance(validity, Mapping):
-            raise KeyError("customer_segments.validity must be a mapping/object")
-
-        grain = str(validity.get("grain", "month")).lower()
-        if grain not in _VALID_SEG_GRAINS:
-            raise ValueError(
-                f"customer_segments.validity.grain must be one of: "
-                f"{', '.join(sorted(_VALID_SEG_GRAINS))}"
-            )
-
-        churn = float(validity.get("churn_rate_qtr", 0.08))
-        if not 0.0 <= churn <= 1.0:
-            raise ValueError(
-                "customer_segments.validity.churn_rate_qtr must be between 0 and 1"
-            )
-
-        new_months = int(validity.get("new_customer_months", 2))
-        if new_months < 0:
-            raise ValueError(
-                "customer_segments.validity.new_customer_months must be >= 0"
-            )
-
-        seg_cfg["validity"] = {
-            "grain": grain,
-            "churn_rate_qtr": churn,
-            "new_customer_months": new_months,
-        }
-    else:
-        # If user supplied validity but include_validity is off, record it as ignored
-        if "validity" in seg_cfg:
-            ignored: set[str] = set(seg_cfg.get("_ignored_keys") or [])
-            ignored.add("validity")
-            seg_cfg["_ignored_keys"] = sorted(ignored)
-
-    # --- override block ---
-    override = seg_cfg.get("override") or {}
-    if not isinstance(override, Mapping):
-        raise KeyError("customer_segments.override must be a mapping/object")
-    override.setdefault("seed", None)
-    override.setdefault("dates", {})
-    override.setdefault("paths", {})
-
-    if override["seed"] is not None:
-        override["seed"] = int(override["seed"])
-
-    if not isinstance(override["dates"], Mapping):
-        raise KeyError("customer_segments.override.dates must be a mapping/object")
-    if not isinstance(override["paths"], Mapping):
-        raise KeyError("customer_segments.override.paths must be a mapping/object")
-    seg_cfg["override"] = override
-
-    return seg_cfg
-
 
 # ---------------------------------------------------------------------------
 # Validation helpers
@@ -1063,7 +945,6 @@ def prepare_paths(
 _SECTION_NORMALIZERS.update(
     {
         "sales": normalize_sales_config,
-        "customer_segments": normalize_customer_segments_config,
         "geography": normalize_geography_config,
     }
 )

@@ -218,37 +218,9 @@ class CustomersConfig(_Base):
     override: Optional[Dict[str, Any]] = None
     # Injected by dimensions_runner
     global_dates: Optional[Any] = None
+    # Household grouping: fraction of individual customers in multi-person households
+    household_pct: Optional[float] = None
 
-
-# -- Customer Segments --
-
-class SegmentValidityConfig(_Base):
-    grain: str = "month"
-    churn_rate_qtr: float = 0.08
-    new_customer_months: int = 2
-
-
-class SegmentOverrideConfig(_Base):
-    seed: Optional[int] = None
-    dates: Dict[str, Any] = {}
-    paths: Dict[str, Any] = {}
-
-
-class CustomerSegmentsConfig(_Base):
-    enabled: bool = False
-    generate_bridge: bool = False
-    segment_count: int = 10
-    segments_per_customer_min: int = 1
-    segments_per_customer_max: int = 2
-    include_score: bool = True
-    include_primary_flag: bool = True
-    include_validity: bool = True
-    mode: str = "scd2"
-    validity: Optional[SegmentValidityConfig] = None
-    override: Optional[SegmentOverrideConfig] = None
-    seed: Optional[int] = 123
-    # Injected by dimensions_runner
-    global_dates: Optional[Any] = None
 
 
 # -- Dates (dimension table config) --
@@ -616,7 +588,6 @@ class AppConfig(_Base):
 
     products: ProductsConfig = ProductsConfig()
     customers: CustomersConfig = CustomersConfig()
-    customer_segments: CustomerSegmentsConfig = CustomerSegmentsConfig()
     superpowers: SuperpowersConfig = SuperpowersConfig()
 
     geography: Optional[GeographyConfig] = None

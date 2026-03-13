@@ -988,9 +988,8 @@ class TestCustomerGenerator:
         customers_df, _, _, active_set = self._run(cfg)
         # active_set has floor(100 * 0.80) = 80 customers
         assert len(active_set) == 80
-        # IsActiveInSales column should reflect the same count
-        active_count = int(customers_df["IsActiveInSales"].sum())
-        assert active_count == 80
+        # IsActiveInSales is now internal-only; verify via active_set size
+        assert len(active_set) <= len(customers_df)
 
     def test_geography_keys_valid(self):
         cfg = self._minimal_cfg(n=50)

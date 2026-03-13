@@ -152,6 +152,38 @@ assert abs(sum(EMPLOYEE_GENDER_PROBS.values()) - 1.0) < 1e-9, (
     f"EMPLOYEE_GENDER_PROBS must sum to 1.0, got {sum(EMPLOYEE_GENDER_PROBS.values())}"
 )
 
+# Part-time probability by role (Store Managers always full-time)
+EMPLOYEE_PART_TIME_RATE_BY_ROLE: Dict[str, float] = {
+    "Cashier": 0.45,
+    "Sales Associate": 0.25,
+    "Stock Associate": 0.15,
+    "Customer Support": 0.10,
+    "Fulfillment Associate": 0.10,
+    "Store Manager": 0.0,
+}
+
+# FTE values for part-time employees (chosen at hire)
+EMPLOYEE_PART_TIME_FTE_VALUES = np.array([0.50, 0.75], dtype=np.float64)
+
+# Termination reasons with weights
+EMPLOYEE_TERMINATION_REASON_LABELS = np.array(
+    ["Voluntary", "Involuntary", "Retirement", "Relocation"], dtype=object
+)
+EMPLOYEE_TERMINATION_REASON_PROBS = np.array([0.45, 0.30, 0.15, 0.10], dtype=np.float64)
+assert abs(EMPLOYEE_TERMINATION_REASON_PROBS.sum() - 1.0) < 1e-9, (
+    f"EMPLOYEE_TERMINATION_REASON_PROBS must sum to 1.0, got {EMPLOYEE_TERMINATION_REASON_PROBS.sum()}"
+)
+
+# Transfer reasons for non-primary (away) assignments
+EMPLOYEE_TRANSFER_REASON_LABELS = np.array(
+    ["Seasonal Support", "New Store Opening", "Backfill", "Employee Request", "Performance"],
+    dtype=object,
+)
+EMPLOYEE_TRANSFER_REASON_PROBS = np.array([0.30, 0.20, 0.25, 0.15, 0.10], dtype=np.float64)
+assert abs(EMPLOYEE_TRANSFER_REASON_PROBS.sum() - 1.0) < 1e-9, (
+    f"EMPLOYEE_TRANSFER_REASON_PROBS must sum to 1.0, got {EMPLOYEE_TRANSFER_REASON_PROBS.sum()}"
+)
+
 
 # =================================================================
 #  CUSTOMER_DEFAULTS
@@ -268,6 +300,30 @@ CUSTOMER_HOME_OWNERSHIP_AGE_SHIFT = [
 
 # NumberOfCars: Poisson lambda by age bracket
 CUSTOMER_CAR_LAMBDA_BY_AGE = np.array([0.3, 0.8, 1.2, 1.3, 1.2, 0.9])
+
+# ----- Household defaults -----
+# Fraction of *individual* customers placed into multi-person households
+CUSTOMER_HOUSEHOLD_PCT = 0.35
+
+# Household role labels
+CUSTOMER_HOUSEHOLD_ROLE_LABELS = np.array(
+    ["Head", "Spouse", "Dependent", "Relative"], dtype=object
+)
+
+# Min age for a household head (years)
+CUSTOMER_HOUSEHOLD_HEAD_MIN_AGE = 25
+
+# Max spousal age gap in years (absolute)
+CUSTOMER_HOUSEHOLD_SPOUSE_MAX_AGE_GAP = 12
+
+# Min age for a spouse (years)
+CUSTOMER_HOUSEHOLD_SPOUSE_MIN_AGE = 21
+
+# Min age gap between head/spouse and a dependent (years)
+CUSTOMER_HOUSEHOLD_DEPENDENT_MIN_AGE_GAP = 18
+
+# Max age for a dependent (years) — young adults still in household
+CUSTOMER_HOUSEHOLD_DEPENDENT_MAX_AGE = 24
 
 CUSTOMER_ORG_EMAIL_PREFIXES = np.array([
     "info", "contact", "sales", "hello", "support",

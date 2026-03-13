@@ -7,7 +7,7 @@ GO
 --
 -- Every view is guarded with IF OBJECT_ID so the script is resilient
 -- to partial deployments (e.g. a minimal config that omits LoyaltyTiers,
--- Superpowers, CustomerSegment, etc.).
+-- Superpowers, etc.).
 --
 -- All guards use EXEC() to work around the CREATE VIEW must-be-first-
 -- statement-in-batch rule.
@@ -36,16 +36,6 @@ GO
 -- CustomerAcquisitionChannels
 IF OBJECT_ID(N'dbo.CustomerAcquisitionChannels', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerAcquisitionChannels] AS SELECT * FROM [dbo].[CustomerAcquisitionChannels];');
-GO
-
--- CustomerSegment (optional)
-IF OBJECT_ID(N'dbo.CustomerSegment', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerSegment] AS SELECT * FROM [dbo].[CustomerSegment];');
-GO
-
--- CustomerSegmentMembership (optional)
-IF OBJECT_ID(N'dbo.CustomerSegmentMembership', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerSegmentMembership] AS SELECT * FROM [dbo].[CustomerSegmentMembership];');
 GO
 
 -- CustomerSuperpowers (optional)

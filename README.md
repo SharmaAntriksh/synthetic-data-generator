@@ -14,7 +14,7 @@ The generator produces a full star-schema data model across dimension and fact t
 
 **Fact tables:** Sales (flat or split into SalesOrderHeader + SalesOrderDetail), SalesReturn, ExchangeRates, BudgetYearly, BudgetMonthly, InventorySnapshot
 
-**Optional dimension tables (disabled by default):** CustomerSegment + CustomerSegmentMembership, Superpowers + CustomerSuperpowers
+**Optional dimension tables (disabled by default):** Superpowers + CustomerSuperpowers
 
 ### Output formats
 

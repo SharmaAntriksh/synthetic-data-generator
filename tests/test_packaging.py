@@ -68,8 +68,6 @@ class TestStaticSchemas:
         "CustomerProfile",
         "OrganizationProfile",
         "CustomerAcquisitionChannels",
-        "CustomerSegment",
-        "CustomerSegmentMembership",
         "Geography",
         "Products",
         "ProductProfile",
@@ -325,19 +323,16 @@ class TestSQLDDLGeneration:
         fact_sql = fact_out.read_text(encoding="utf-8")
         assert "[InventorySnapshot]" in fact_sql
 
-    def test_generate_all_skips_segments_when_disabled(self, tmp_path):
+    def test_generate_all_skips_retired_segment_tables(self, tmp_path):
         cfg = AppConfig.model_validate({
             "sales": {"sales_output": "sales"},
             "dates": {},
-            "customer_segments": {"enabled": False},
         })
         dim_out, _ = generate_all_create_tables(
             dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
         )
         dim_sql = dim_out.read_text(encoding="utf-8")
-        # "CustomerSegment" may appear as a column name in other tables,
-        # so check that the CREATE TABLE statements are absent instead.
         assert "CREATE TABLE [dbo].[CustomerSegment]" not in dim_sql
         assert "CREATE TABLE [dbo].[CustomerSegmentMembership]" not in dim_sql
 

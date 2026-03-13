@@ -97,7 +97,7 @@ SIMPLE_SEGMENTS: List[Tuple[str, str, str]] = [
     # Optional tags
     ("VIP", "Loyalty", "Top loyalty tiers"),
     ("High Value", "Behavior", "CustomerWeight in top quantile"),
-    ("Frequent Shopper", "Behavior", "CustomerTemperature in top quantile"),
+    ("Frequent Shopper", "Behavior", "CustomerWeight in top frequency quantile"),
 ]
 
 
@@ -412,13 +412,13 @@ def _build_bridge_simple(
 
     # --- Optional extra tags ---
     weight = pd.to_numeric(df.get("CustomerWeight", np.nan), errors="coerce")
-    temp = pd.to_numeric(df.get("CustomerTemperature", np.nan), errors="coerce")
 
     w_q = float(weight.dropna().quantile(0.85)) if weight.notna().any() else np.inf
-    t_q = float(temp.dropna().quantile(0.80)) if temp.notna().any() else np.inf
+    # "Frequent Shopper" uses a slightly lower quantile of the same weight
+    freq_q = float(weight.dropna().quantile(0.80)) if weight.notna().any() else np.inf
 
     is_high_value = (weight.notna() & (weight >= w_q)).to_numpy()
-    is_frequent = (temp.notna() & (temp >= t_q)).to_numpy()
+    is_frequent = (weight.notna() & (weight >= freq_q)).to_numpy()
 
     vip = pd.Series(False, index=df.index)
     if "LoyaltyTierKey" in df.columns:
@@ -808,16 +808,14 @@ def _safe_read_customers(parquet_path: Path, desired_cols: List[str]) -> pd.Data
 
 
 def _columns_needed_for_bridge(mode: str) -> List[str]:
-    cols = ["CustomerKey", "IsActiveInSales"]
+    cols = ["CustomerKey"]
     if mode == "simple":
         cols += [
-            "CustomerSegment",
             "CustomerType",
             "CustomerStartDate",
             "CustomerEndDate",
             "LoyaltyTierKey",
             "CustomerWeight",
-            "CustomerTemperature",
         ]
     else:  # scd2
         cols += [

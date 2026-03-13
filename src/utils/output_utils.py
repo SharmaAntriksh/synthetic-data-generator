@@ -21,8 +21,6 @@ __all__ = [
 # Dimension filenames — single source of truth for exclusion logic.
 # If a dimension's output filename changes, update here only.
 # ---------------------------------------------------------------------------
-_DIM_FILE_CUSTOMER_SEGMENT = "customer_segment.parquet"
-_DIM_FILE_CUSTOMER_SEGMENT_BRIDGE = "customer_segment_membership.parquet"
 _DIM_FILE_SUPERPOWERS = "superpowers.parquet"
 _DIM_FILE_SUPERPOWERS_BRIDGE = "customer_superpowers.parquet"
 _DIM_FILE_RETURN_REASON = "return_reason.parquet"
@@ -284,14 +282,6 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
     - returns effectively disabled → exclude ReturnReason
     """
     excluded: set[str] = set()
-
-    seg_cfg = getattr(cfg, "customer_segments", None)
-    if seg_cfg is not None:
-        if not bool(getattr(seg_cfg, "enabled", True)):
-            excluded.add(_DIM_FILE_CUSTOMER_SEGMENT)
-            excluded.add(_DIM_FILE_CUSTOMER_SEGMENT_BRIDGE)
-        elif not bool(getattr(seg_cfg, "generate_bridge", True)):
-            excluded.add(_DIM_FILE_CUSTOMER_SEGMENT_BRIDGE)
 
     sp_cfg = getattr(cfg, "superpowers", None)
     if sp_cfg is not None:
