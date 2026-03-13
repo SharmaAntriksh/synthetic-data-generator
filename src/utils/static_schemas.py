@@ -652,7 +652,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("Quantity", INT_NN),
         ("NetPrice", DECIMAL(10, 2, not_null=True)),
     ),
-    "FactComplaints": (
+    "Complaints": (
         ("ComplaintKey", INT_NN),
         ("CustomerKey", INT_NN),
         ("SalesOrderNumber", INT(not_null=False)),

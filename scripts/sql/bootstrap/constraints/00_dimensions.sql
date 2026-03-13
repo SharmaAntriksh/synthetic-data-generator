@@ -941,85 +941,85 @@ END;
 GO
 
 ------------------------------------------------------------------------
--- 8. FactComplaints (optional)
+-- 8. Complaints (optional)
 ------------------------------------------------------------------------
 
--- FactComplaints: PK
-IF OBJECT_ID(N'dbo.FactComplaints', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.FactComplaints', N'ComplaintKey') IS NOT NULL
+-- Complaints: PK
+IF OBJECT_ID(N'dbo.Complaints', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Complaints', N'ComplaintKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.key_constraints
-    WHERE name = N'PK_FactComplaints'
-      AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+    WHERE name = N'PK_Complaints'
+      AND parent_object_id = OBJECT_ID(N'dbo.Complaints')
 )
 BEGIN
-    ALTER TABLE dbo.FactComplaints
-    ADD CONSTRAINT PK_FactComplaints PRIMARY KEY NONCLUSTERED ([ComplaintKey]);
+    ALTER TABLE dbo.Complaints
+    ADD CONSTRAINT PK_Complaints PRIMARY KEY NONCLUSTERED ([ComplaintKey]);
 END;
 GO
 
--- FactComplaints -> Customers FK
-IF OBJECT_ID(N'dbo.FactComplaints', N'U') IS NOT NULL
+-- Complaints -> Customers FK
+IF OBJECT_ID(N'dbo.Complaints', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.FactComplaints', N'CustomerKey') IS NOT NULL
+AND COL_LENGTH(N'dbo.Complaints', N'CustomerKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
-    WHERE name = N'FK_FactComplaints_Customers'
-      AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+    WHERE name = N'FK_Complaints_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.Complaints')
 )
 BEGIN
-    ALTER TABLE dbo.FactComplaints WITH CHECK
-    ADD CONSTRAINT FK_FactComplaints_Customers
+    ALTER TABLE dbo.Complaints WITH CHECK
+    ADD CONSTRAINT FK_Complaints_Customers
         FOREIGN KEY ([CustomerKey])
         REFERENCES dbo.Customers ([CustomerKey]);
 
-    ALTER TABLE dbo.FactComplaints CHECK CONSTRAINT FK_FactComplaints_Customers;
+    ALTER TABLE dbo.Complaints CHECK CONSTRAINT FK_Complaints_Customers;
 END;
 GO
 
--- FactComplaints: CHECK constraints
-IF OBJECT_ID(N'dbo.FactComplaints', N'U') IS NOT NULL
+-- Complaints: CHECK constraints
+IF OBJECT_ID(N'dbo.Complaints', N'U') IS NOT NULL
 BEGIN
-    IF COL_LENGTH(N'dbo.FactComplaints', N'Severity') IS NOT NULL
+    IF COL_LENGTH(N'dbo.Complaints', N'Severity') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_FactComplaints_Severity'
-          AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+        WHERE name = N'CK_Complaints_Severity'
+          AND parent_object_id = OBJECT_ID(N'dbo.Complaints')
     )
-        ALTER TABLE dbo.FactComplaints
-        ADD CONSTRAINT CK_FactComplaints_Severity
+        ALTER TABLE dbo.Complaints
+        ADD CONSTRAINT CK_Complaints_Severity
             CHECK ([Severity] IN (N'Low', N'Medium', N'High', N'Critical'));
 
-    IF COL_LENGTH(N'dbo.FactComplaints', N'Status') IS NOT NULL
+    IF COL_LENGTH(N'dbo.Complaints', N'Status') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_FactComplaints_Status'
-          AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+        WHERE name = N'CK_Complaints_Status'
+          AND parent_object_id = OBJECT_ID(N'dbo.Complaints')
     )
-        ALTER TABLE dbo.FactComplaints
-        ADD CONSTRAINT CK_FactComplaints_Status
+        ALTER TABLE dbo.Complaints
+        ADD CONSTRAINT CK_Complaints_Status
             CHECK ([Status] IN (N'Open', N'Resolved', N'Escalated', N'Closed'));
 
-    IF COL_LENGTH(N'dbo.FactComplaints', N'Channel') IS NOT NULL
+    IF COL_LENGTH(N'dbo.Complaints', N'Channel') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_FactComplaints_Channel'
-          AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+        WHERE name = N'CK_Complaints_Channel'
+          AND parent_object_id = OBJECT_ID(N'dbo.Complaints')
     )
-        ALTER TABLE dbo.FactComplaints
-        ADD CONSTRAINT CK_FactComplaints_Channel
+        ALTER TABLE dbo.Complaints
+        ADD CONSTRAINT CK_Complaints_Channel
             CHECK ([Channel] IN (N'Email', N'Phone', N'In-Store', N'Website', N'Chat'));
 
-    IF COL_LENGTH(N'dbo.FactComplaints', N'ResponseDays') IS NOT NULL
+    IF COL_LENGTH(N'dbo.Complaints', N'ResponseDays') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_FactComplaints_ResponseDays'
-          AND parent_object_id = OBJECT_ID(N'dbo.FactComplaints')
+        WHERE name = N'CK_Complaints_ResponseDays'
+          AND parent_object_id = OBJECT_ID(N'dbo.Complaints')
     )
-        ALTER TABLE dbo.FactComplaints
-        ADD CONSTRAINT CK_FactComplaints_ResponseDays
+        ALTER TABLE dbo.Complaints
+        ADD CONSTRAINT CK_Complaints_ResponseDays
             CHECK ([ResponseDays] >= 0);
 END;
 GO

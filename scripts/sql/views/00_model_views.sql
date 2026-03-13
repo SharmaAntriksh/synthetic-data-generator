@@ -43,9 +43,9 @@ IF OBJECT_ID(N'dbo.CustomerWishlists', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerWishlists] AS SELECT * FROM [dbo].[CustomerWishlists];');
 GO
 
--- FactComplaints (optional)
-IF OBJECT_ID(N'dbo.FactComplaints', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_FactComplaints] AS SELECT * FROM [dbo].[FactComplaints];');
+-- Complaints (optional)
+IF OBJECT_ID(N'dbo.Complaints', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Complaints] AS SELECT * FROM [dbo].[Complaints];');
 GO
 
 -- CustomerSuperpowers (optional)

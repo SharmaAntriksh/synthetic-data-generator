@@ -69,8 +69,7 @@ _FOLDER_TABLE_ALIASES: dict[str, str] = {
     "inventory": "InventorySnapshot",
 
     # complaints (files live under facts/complaints/)
-    "fact_complaints": "FactComplaints",
-    "complaints": "FactComplaints",
+    "complaints": "Complaints",
 }
 
 def _infer_table_from_filename(csv_file: str) -> str:
@@ -167,7 +166,7 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
     - returns flags (above) controls SalesReturn
     - budget.enabled controls BudgetYearly/BudgetMonthly
     - inventory.enabled controls InventorySnapshot
-    - complaints.enabled controls FactComplaints
+    - complaints.enabled controls Complaints
     """
     if cfg is None:
         return None
@@ -195,7 +194,7 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
         allowed.add("InventorySnapshot")
 
     if _complaints_enabled_from_cfg(cfg):
-        allowed.add("FactComplaints")
+        allowed.add("Complaints")
 
     return allowed
 
@@ -359,7 +358,7 @@ def generate_dims_and_facts_bulk_insert_scripts(
         csv_tables.add("BudgetYearly")
         csv_tables.add("BudgetMonthly")
     if _complaints_enabled_from_cfg(cfg):
-        csv_tables.add("FactComplaints")
+        csv_tables.add("Complaints")
 
     generate_bulk_insert_script(
         facts_folder,

@@ -1,4 +1,4 @@
-"""Complaints pipeline runner — generates fact_complaints.parquet using
+"""Complaints pipeline runner — generates complaints.parquet using
 accumulated (CustomerKey, SalesOrderNumber, SalesOrderLineNumber) triples
 from the sales pipeline.
 
@@ -401,7 +401,7 @@ def _prepare_complaints_csv(df: pd.DataFrame) -> pd.DataFrame:
 
 def _write_complaints(table: pa.Table, complaints_dir: Path, file_format: str) -> None:
     """Write complaints table in the requested format (parquet, csv, or delta)."""
-    name = "fact_complaints"
+    name = "complaints"
 
     if file_format == "deltaparquet":
         # Delta table lives at complaints_dir itself (the directory IS the delta table)
@@ -444,7 +444,7 @@ def run_complaints_pipeline(
     cfg: Any,
     file_format: str = "parquet",
 ) -> Optional[Dict[str, Any]]:
-    """Generate fact_complaints.parquet using accumulated sales data."""
+    """Generate complaints output using accumulated sales data."""
     c = _read_cfg(cfg)
     if not c.enabled:
         return None
