@@ -8,13 +8,13 @@ Memory: holds (ProductKey × StoreKey × Month) summary rows — typically
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 import numpy as np
 import pandas as pd
 
+from src.facts.shared.base_accumulator import BaseAccumulator
 
-class InventoryAccumulator:
+
+class InventoryAccumulator(BaseAccumulator):
     """
     Accumulator for per-chunk inventory micro-aggregates.
 
@@ -26,15 +26,7 @@ class InventoryAccumulator:
     """
 
     def __init__(self) -> None:
-        self._parts: List[Dict[str, np.ndarray]] = []
-
-    def add(self, micro: Optional[Dict[str, np.ndarray]]) -> None:
-        if micro is not None and len(micro.get("quantity_sold", [])) > 0:
-            self._parts.append(micro)
-
-    @property
-    def has_data(self) -> bool:
-        return len(self._parts) > 0
+        super().__init__(validator_key="quantity_sold")
 
     def finalize(self) -> pd.DataFrame:
         """

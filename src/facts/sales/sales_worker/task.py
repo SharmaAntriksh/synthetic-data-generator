@@ -765,43 +765,28 @@ def build_header_from_detail(detail: pa.Table, *, validate_invariants: bool = Tr
     return pa.Table.from_arrays(cols, names=names)
 
 
-def _inventory_enabled() -> bool:
-    return (
-        _INVENTORY_AGG_AVAILABLE
-        and bool(getattr(State, "inventory_enabled", False))
-    )
+# ---------------------------------------------------------------------------
+# Simple micro-agg registry: (result_key, available_flag, state_attr, agg_fn)
+# Budget is excluded — it needs extra State attrs and SalesChannelKey guard.
+# ---------------------------------------------------------------------------
+
+_SIMPLE_AGGS: List[Tuple[str, bool, str, Any]] = [
+    ("_inventory_agg", _INVENTORY_AGG_AVAILABLE, "inventory_enabled",
+     micro_aggregate_inventory if _INVENTORY_AGG_AVAILABLE else None),
+    ("_wishlists_agg", _WISHLISTS_AGG_AVAILABLE, "wishlists_enabled",
+     micro_aggregate_wishlists if _WISHLISTS_AGG_AVAILABLE else None),
+    ("_complaints_agg", _COMPLAINTS_AGG_AVAILABLE, "complaints_enabled",
+     micro_aggregate_complaints if _COMPLAINTS_AGG_AVAILABLE else None),
+]
 
 
-def _maybe_inventory_agg(detail_table: pa.Table) -> Optional[Dict[str, Any]]:
-    if not _inventory_enabled():
-        return None
-    return micro_aggregate_inventory(detail_table)
-
-
-def _wishlists_enabled() -> bool:
-    return (
-        _WISHLISTS_AGG_AVAILABLE
-        and bool(getattr(State, "wishlists_enabled", False))
-    )
-
-
-def _maybe_wishlists_agg(detail_table: pa.Table) -> Optional[Dict[str, Any]]:
-    if not _wishlists_enabled():
-        return None
-    return micro_aggregate_wishlists(detail_table)
-
-
-def _complaints_enabled() -> bool:
-    return (
-        _COMPLAINTS_AGG_AVAILABLE
-        and bool(getattr(State, "complaints_enabled", False))
-    )
-
-
-def _maybe_complaints_agg(detail_table: pa.Table) -> Optional[Dict[str, Any]]:
-    if not _complaints_enabled():
-        return None
-    return micro_aggregate_complaints(detail_table)
+def _resolve_simple_agg_flags() -> List[Tuple[str, Any]]:
+    """Return [(result_key, agg_fn), ...] for enabled simple aggs."""
+    return [
+        (key, fn)
+        for key, avail, state_attr, fn in _SIMPLE_AGGS
+        if avail and bool(getattr(State, state_attr, False))
+    ]
 
 
 def _budget_enabled() -> bool:
@@ -843,27 +828,18 @@ def _maybe_returns_agg(
     )
 
 
-def _attach_budget(
+def _attach_aggs(
     result: Any,
-    budget_agg: Optional[Dict[str, Any]],
-    returns_agg: Optional[Dict[str, Any]],
+    aggs: Dict[str, Any],
     table_name_fallback: str = TABLE_SALES,
-    inventory_agg: Optional[Dict[str, Any]] = None,
-    wishlists_agg: Optional[Dict[str, Any]] = None,
-    complaints_agg: Optional[Dict[str, Any]] = None,
 ) -> Any:
-    """
-    Attach budget, inventory, wishlists, and complaints micro-aggregates
-    to a worker result.
+    """Attach micro-aggregate dicts to a worker result.
 
-    Normalizes bare str/dict results into a dict so the main process can
-    pop _budget_agg / _returns_agg / _inventory_agg / _wishlists_agg /
-    _complaints_agg without breaking existing result handling.
-
-    If all aggs are None, returns the original result untouched
-    to preserve backward compatibility.
+    *aggs* maps result keys (e.g. ``"_budget_agg"``) to their payloads.
+    Normalizes bare str results into a dict so the main process can
+    pop agg keys without breaking existing result handling.
     """
-    if budget_agg is None and returns_agg is None and inventory_agg is None and wishlists_agg is None and complaints_agg is None:
+    if not aggs:
         return result
 
     if isinstance(result, str):
@@ -872,17 +848,7 @@ def _attach_budget(
     if not isinstance(result, dict):
         return result
 
-    if budget_agg is not None:
-        result["_budget_agg"] = budget_agg
-    if returns_agg is not None:
-        result["_returns_agg"] = returns_agg
-    if inventory_agg is not None:
-        result["_inventory_agg"] = inventory_agg
-    if wishlists_agg is not None:
-        result["_wishlists_agg"] = wishlists_agg
-    if complaints_agg is not None:
-        result["_complaints_agg"] = complaints_agg
-
+    result.update(aggs)
     return result
 
 
@@ -906,9 +872,7 @@ def _worker_task(args):
     mode = _mode()
     returns_cfg = _build_returns_config()
     do_budget = _budget_enabled()
-    do_inventory = _inventory_enabled()
-    do_wishlists = _wishlists_enabled()
-    do_complaints = _complaints_enabled()
+    simple_aggs = _resolve_simple_agg_flags()
 
     # Pre-validate column requirements for sales_order/both modes once
     so_require = None
@@ -953,9 +917,13 @@ def _worker_task(args):
             raise TypeError("chunk_builder must return pyarrow.Table")
 
         budget_agg = _maybe_budget_agg(detail_table) if do_budget else None
-        inventory_agg = _maybe_inventory_agg(detail_table) if do_inventory else None
-        wishlists_agg = _maybe_wishlists_agg(detail_table) if do_wishlists else None
-        complaints_agg = _maybe_complaints_agg(detail_table) if do_complaints else None
+        chunk_aggs: Dict[str, Any] = {}
+        if budget_agg is not None:
+            chunk_aggs["_budget_agg"] = budget_agg
+        for agg_key, agg_fn in simple_aggs:
+            agg_result = agg_fn(detail_table)
+            if agg_result is not None:
+                chunk_aggs[agg_key] = agg_result
 
         if mode in {"sales_order", "both"}:
             got = set(detail_table.column_names)
@@ -982,14 +950,16 @@ def _worker_task(args):
 
             if returns_table is None:
                 result = _write_table(TABLE_SALES, idx_i, sales_out)
-                results.append(_attach_budget(result, budget_agg, None, TABLE_SALES, inventory_agg=inventory_agg, wishlists_agg=wishlists_agg, complaints_agg=complaints_agg))
+                results.append(_attach_aggs(result, chunk_aggs, TABLE_SALES))
                 continue
 
             out: Dict[str, Any] = {TABLE_SALES: _write_table(TABLE_SALES, idx_i, sales_out)}
             returns_out = _project_for_table(TABLE_SALES_RETURN, returns_table)  # type: ignore[arg-type]
             out[TABLE_SALES_RETURN] = _write_table(TABLE_SALES_RETURN, idx_i, returns_out)  # type: ignore[arg-type]
             returns_agg = _maybe_returns_agg(returns_table, detail_table) if do_budget else None
-            results.append(_attach_budget(out, budget_agg, returns_agg, inventory_agg=inventory_agg, wishlists_agg=wishlists_agg, complaints_agg=complaints_agg))
+            if returns_agg is not None:
+                chunk_aggs["_returns_agg"] = returns_agg
+            results.append(_attach_aggs(out, chunk_aggs))
             continue
 
         out: Dict[str, Any] = {}
@@ -1018,6 +988,8 @@ def _worker_task(args):
             )
 
         returns_agg = _maybe_returns_agg(returns_table, detail_table) if do_budget else None
-        results.append(_attach_budget(out, budget_agg, returns_agg, inventory_agg=inventory_agg, wishlists_agg=wishlists_agg, complaints_agg=complaints_agg))
+        if returns_agg is not None:
+            chunk_aggs["_returns_agg"] = returns_agg
+        results.append(_attach_aggs(out, chunk_aggs))
 
     return results[0] if single else results

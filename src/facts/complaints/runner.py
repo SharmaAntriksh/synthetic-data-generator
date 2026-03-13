@@ -15,9 +15,9 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from src.facts.complaints.accumulator import ComplaintsAccumulator
+from src.facts.shared.writers import write_fact_table
 from src.utils.logging_utils import info, skip
 
 
@@ -401,35 +401,8 @@ def _prepare_complaints_csv(df: pd.DataFrame) -> pd.DataFrame:
 
 def _write_complaints(table: pa.Table, complaints_dir: Path, file_format: str) -> None:
     """Write complaints table in the requested format (parquet, csv, or delta)."""
-    name = "complaints"
-
-    if file_format == "deltaparquet":
-        # Delta table lives at complaints_dir itself (the directory IS the delta table)
-        try:
-            from deltalake import write_deltalake
-        except ImportError:
-            from deltalake.writer import write_deltalake
-        write_deltalake(str(complaints_dir), table, mode="overwrite")
-        info(f"Wrote {name} delta ({table.num_rows:,} rows)")
-        return
-
-    # Parquet (always written for parquet and csv formats)
-    parquet_path = complaints_dir / f"{name}.parquet"
-    pq.write_table(
-        table, str(parquet_path),
-        compression="snappy",
-        row_group_size=500_000,
-        use_dictionary=True,
-    )
-
-    if file_format == "csv":
-        csv_path = complaints_dir / f"{name}.csv"
-        df = table.to_pandas()
-        csv_df = _prepare_complaints_csv(df)
-        csv_df.to_csv(str(csv_path), index=False)
-        info(f"Wrote {csv_path.name} ({table.num_rows:,} rows)")
-    else:
-        info(f"Wrote {parquet_path.name} ({table.num_rows:,} rows)")
+    write_fact_table(table, complaints_dir, "complaints", file_format,
+                     csv_prep_fn=_prepare_complaints_csv)
 
 
 # ---------------------------------------------------------------------------
