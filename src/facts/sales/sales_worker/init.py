@@ -1017,6 +1017,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "budget_product_to_cat": budget_product_to_cat,
 
             "inventory_enabled": bool(worker_cfg.get("inventory_enabled", False)),
+            "wishlists_enabled": bool(worker_cfg.get("wishlists_enabled", False)),
 
             "store_to_product_rows": store_to_product_rows,
 

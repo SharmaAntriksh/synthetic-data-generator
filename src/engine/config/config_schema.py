@@ -552,10 +552,9 @@ class WishlistsConfig(_Base):
     max_items: int = 20
     pre_browse_days: int = 90
     affinity_strength: float = 0.6
+    conversion_rate: float = 0.30
     seed: Optional[int] = 500
     write_chunk_rows: int = 250_000
-    # Injected by dimensions_runner
-    global_dates: Optional[Any] = None
 
 
 # -- Superpowers --

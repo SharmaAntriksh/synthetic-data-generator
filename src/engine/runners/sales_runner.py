@@ -234,10 +234,12 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     # --- Step 1: Generate sales
     budget_acc = None
     inventory_acc = None
+    wishlists_acc = None
 
     def _do_generate():
         nonlocal budget_acc
         nonlocal inventory_acc
+        nonlocal wishlists_acc
         result = generate_sales_fact(
             ctx.cfg_for_run,
             parquet_folder=str(ctx.parquet_dims),
@@ -260,8 +262,10 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             return_manifest=True,
         )
         if isinstance(result, tuple):
-            # result layout: (chunk_files, row_count, budget_acc?, inventory_acc?)
-            if len(result) >= 4:
+            # result layout: (chunk_files, row_count, budget_acc?, inventory_acc?, wishlists_acc?)
+            if len(result) >= 5:
+                _chunk_files, _row_count, budget_acc, inventory_acc, wishlists_acc = result[:5]
+            elif len(result) >= 4:
                 _chunk_files, _row_count, budget_acc, inventory_acc = result[:4]
             elif len(result) >= 3:
                 _chunk_files, _row_count, budget_acc = result[:3]
@@ -298,6 +302,20 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             )
 
         _run_step("Generating Inventory Snapshots", _do_inventory)
+
+    # --- Step 2c: Wishlists (optional, runs after sales to use purchase data)
+    if wishlists_acc is not None and wishlists_acc.has_data:
+        from src.facts.wishlists.runner import run_wishlist_pipeline
+
+        def _do_wishlists():
+            run_wishlist_pipeline(
+                accumulator=wishlists_acc,
+                parquet_dims=ctx.parquet_dims,
+                cfg=ctx.cfg,
+                file_format=ctx.fmt,
+            )
+
+        _run_step("Generating Customer Wishlists", _do_wishlists)
 
     # --- Step 3: Package output + PBIP
     final_folder_result = None

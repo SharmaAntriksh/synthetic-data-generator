@@ -99,6 +99,7 @@ wishlists:
   max_items: 20                   # cap per customer
   pre_browse_days: 90             # days before CustomerStartDate wishlisting can begin
   affinity_strength: 0.6          # probability of picking from same subcategory as a prior item
+  conversion_rate: 0.50            # fraction of wishlist items drawn from actual purchases
   seed: 500
 
 # ------------------------------------------------------------------

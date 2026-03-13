@@ -151,6 +151,7 @@ def get_config():
         "wlMaxItems": int(getattr(wl, "max_items", 20)),
         "wlPreBrowseDays": int(getattr(wl, "pre_browse_days", 90)),
         "wlAffinityStrength": float(getattr(wl, "affinity_strength", 0.6)),
+        "wlConversionRate": float(getattr(wl, "conversion_rate", 0.30)),
         "wlSeed": int(getattr(wl, "seed", 500) or 500),
         # Superpowers
         "spEnabled": bool(getattr(sp, "enabled", False)),
@@ -308,6 +309,7 @@ def update_config(body: ConfigUpdate):
         if "wlMaxItems" in v: cfg.wishlists.max_items = int(v["wlMaxItems"])
         if "wlPreBrowseDays" in v: cfg.wishlists.pre_browse_days = int(v["wlPreBrowseDays"])
         if "wlAffinityStrength" in v: cfg.wishlists.affinity_strength = float(v["wlAffinityStrength"])
+        if "wlConversionRate" in v: cfg.wishlists.conversion_rate = float(v["wlConversionRate"])
         if "wlSeed" in v: cfg.wishlists.seed = int(v["wlSeed"])
 
         # Superpowers

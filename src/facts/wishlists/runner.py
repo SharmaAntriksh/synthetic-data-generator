@@ -1,50 +1,24 @@
+"""Wishlist pipeline runner — generates customer_wishlists.parquet using
+accumulated (CustomerKey, ProductKey) purchase pairs from the sales pipeline.
+
+Runs AFTER sales generation, using the WishlistAccumulator to create realistic
+wishlist-to-purchase conversion rates.  A configurable fraction of each
+customer's wishlist items are drawn from products they actually bought;
+the remainder are selected via popularity-weighted subcategory affinity.
+"""
 from __future__ import annotations
 
-"""
-Customer Wishlists (bridge table: Customers ↔ Products)
-
-Writes:
-  - customer_wishlists.parquet
-
-Each row = one wishlisted product for a customer, with a snapshot of the
-product price at the time the item was added.
-
-AddedDate semantics:
-  - Can be BEFORE CustomerStartDate (pre-purchase browsing intent)
-  - Bounded by [global_start - pre_browse_days, CustomerEndDate or global_end]
-
-Config (optional):
-wishlists:
-  enabled: true
-  participation_rate: 0.35      # fraction of customers who wishlist
-  avg_items: 3.5                # mean items per participant (Poisson λ)
-  max_items: 20                 # cap per customer
-  pre_browse_days: 90           # how many days before CustomerStartDate wishlisting can begin
-  affinity_strength: 0.6        # probability of picking from same subcategory as a prior item
-  seed: 500
-
-Requires:
-  customers.parquet, products.parquet in parquet_folder
-  defaults.dates.start/end (or _defaults.dates.start/end) in cfg.
-
-Power BI:
-  Customers (1) ──< customer_wishlists >── (1) Products
-"""
-
-import os
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.utils.logging_utils import info, skip, stage
-from src.versioning.version_store import should_regenerate, save_version
+from src.facts.wishlists.accumulator import WishlistAccumulator
+from src.utils.logging_utils import info, skip
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +28,7 @@ from src.versioning.version_store import should_regenerate, save_version
 _NS_PER_DAY: int = 86_400_000_000_000
 
 _PRIORITY_VALUES = np.array(["High", "Medium", "Low"], dtype=object)
-_PRIORITY_WEIGHTS = np.array([0.20, 0.50, 0.30])  # most items are Medium
+_PRIORITY_WEIGHTS = np.array([0.20, 0.50, 0.30])
 
 
 # ---------------------------------------------------------------------------
@@ -62,56 +36,51 @@ _PRIORITY_WEIGHTS = np.array([0.20, 0.50, 0.30])  # most items are Medium
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class WishlistsCfg:
+class _WishlistsCfg:
     enabled: bool = False
     participation_rate: float = 0.35
     avg_items: float = 3.5
     max_items: int = 20
     pre_browse_days: int = 90
     affinity_strength: float = 0.6
+    conversion_rate: float = 0.30
     seed: int = 500
     write_chunk_rows: int = 250_000
 
 
-def _read_cfg(cfg: Dict[str, Any]) -> WishlistsCfg:
-    wl = cfg.wishlists
-    return WishlistsCfg(
-        enabled=bool(wl.enabled),
-        participation_rate=float(wl.participation_rate),
-        avg_items=float(wl.avg_items),
-        max_items=int(wl.max_items),
-        pre_browse_days=int(wl.pre_browse_days),
-        affinity_strength=float(wl.affinity_strength),
-        seed=int(wl.seed if wl.seed is not None else 500),
-        write_chunk_rows=int(wl.write_chunk_rows),
+def _read_cfg(cfg: Any) -> _WishlistsCfg:
+    wl = getattr(cfg, "wishlists", None)
+    if wl is None:
+        return _WishlistsCfg()
+    return _WishlistsCfg(
+        enabled=bool(getattr(wl, "enabled", False)),
+        participation_rate=float(getattr(wl, "participation_rate", 0.35)),
+        avg_items=float(getattr(wl, "avg_items", 3.5)),
+        max_items=int(getattr(wl, "max_items", 20)),
+        pre_browse_days=int(getattr(wl, "pre_browse_days", 90)),
+        affinity_strength=float(getattr(wl, "affinity_strength", 0.6)),
+        conversion_rate=float(getattr(wl, "conversion_rate", 0.30)),
+        seed=int(getattr(wl, "seed", None) or 500),
+        write_chunk_rows=int(getattr(wl, "write_chunk_rows", 250_000)),
     )
 
 
-def _parse_global_dates(cfg: Dict[str, Any]) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    """Extract global start/end dates from cfg, with 3-level fallback."""
-    wl = getattr(cfg, "wishlists", None)
-    gd = getattr(wl, "global_dates", None) if wl else None
-
-    if gd is None:
-        defaults = getattr(cfg, "defaults", None)
-        if defaults is None:
-            defaults = getattr(cfg, "_defaults", None)
-        gd = getattr(defaults, "dates", None)
-
+def _parse_global_dates(cfg: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
+    defaults = getattr(cfg, "defaults", None)
+    if defaults is None:
+        defaults = getattr(cfg, "_defaults", None)
+    gd = getattr(defaults, "dates", None) if defaults else None
     if gd is None:
         raise ValueError("Cannot resolve global dates for wishlists.")
-
     start_raw = gd.get("start", None) if isinstance(gd, dict) else getattr(gd, "start", None)
     end_raw = gd.get("end", None) if isinstance(gd, dict) else getattr(gd, "end", None)
-
     if start_raw is None or end_raw is None:
         raise ValueError("Global dates must have both 'start' and 'end'.")
-
     return pd.Timestamp(start_raw), pd.Timestamp(end_raw)
 
 
 # ---------------------------------------------------------------------------
-# Bridge schema
+# Schema
 # ---------------------------------------------------------------------------
 
 def _bridge_schema() -> pa.Schema:
@@ -127,7 +96,7 @@ def _bridge_schema() -> pa.Schema:
 
 
 # ---------------------------------------------------------------------------
-# Customer window extraction
+# Customer windows
 # ---------------------------------------------------------------------------
 
 def _compute_customer_windows(
@@ -136,12 +105,6 @@ def _compute_customer_windows(
     g_end: pd.Timestamp,
     pre_browse_days: int,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Return (cust_keys, earliest_ns, latest_ns) arrays.
-
-    earliest = max(global_start - pre_browse_days, CustomerStartDate - pre_browse_days)
-    latest   = CustomerEndDate or global_end
-    """
     cust_keys = customers["CustomerKey"].astype(np.int64).to_numpy()
     order = np.argsort(cust_keys)
     cust_keys = cust_keys[order]
@@ -150,7 +113,6 @@ def _compute_customer_windows(
     g_end_ns = np.int64(g_end.value)
     browse_offset_ns = np.int64(pre_browse_days) * _NS_PER_DAY
 
-    # Start dates
     if "CustomerStartDate" in customers.columns:
         start_vals = customers["CustomerStartDate"].to_numpy().astype("datetime64[ns]")
         start_ns = start_vals.view(np.int64).copy()
@@ -158,7 +120,6 @@ def _compute_customer_windows(
     else:
         start_ns = np.full(len(cust_keys), g_start_ns, dtype=np.int64)
 
-    # End dates
     if "CustomerEndDate" in customers.columns:
         end_vals = customers["CustomerEndDate"].to_numpy().astype("datetime64[ns]")
         end_ns = end_vals.view(np.int64).copy()
@@ -169,75 +130,126 @@ def _compute_customer_windows(
     start_ns = start_ns[order]
     end_ns = end_ns[order]
 
-    # Earliest wishlist date = CustomerStartDate - pre_browse_days, floored at global_start - pre_browse_days
     earliest_ns = start_ns - browse_offset_ns
     floor_ns = g_start_ns - browse_offset_ns
     earliest_ns = np.maximum(earliest_ns, floor_ns)
-
-    # Latest wishlist date = CustomerEndDate (or global_end)
     latest_ns = np.clip(end_ns, g_start_ns, g_end_ns)
-
-    # Ensure earliest < latest
     latest_ns = np.maximum(latest_ns, earliest_ns + _NS_PER_DAY)
 
     return cust_keys, earliest_ns, latest_ns
 
 
 # ---------------------------------------------------------------------------
-# Subcategory affinity product selection
+# Product popularity weights
 # ---------------------------------------------------------------------------
 
-def _pick_products_with_affinity(
+def _build_product_weights(
+    products: pd.DataFrame,
+    parquet_dims: Path,
+) -> np.ndarray:
+    n = len(products)
+    prod_keys = products["ProductKey"].to_numpy().astype(np.int64)
+
+    brand_weight_per_product = np.ones(n, dtype=np.float64)
+    if "Brand" in products.columns:
+        brands = products["Brand"].fillna("Unknown").astype(str).to_numpy()
+        unique_brands, brand_codes = np.unique(brands, return_inverse=True)
+        brand_counts = np.bincount(brand_codes).astype(np.float64)
+        brand_base = np.sqrt(np.maximum(brand_counts, 1.0))
+        brand_base /= brand_base.sum()
+        brand_weight_per_product = brand_base[brand_codes]
+
+    pop_scores = np.full(n, 50.0, dtype=np.float64)
+    for name in ("product_profile.parquet", "ProductProfile.parquet"):
+        profile_path = parquet_dims / name
+        if profile_path.exists():
+            try:
+                pp_df = pd.read_parquet(profile_path, columns=["ProductKey", "PopularityScore"])
+                pp_df = pp_df.drop_duplicates("ProductKey", keep="first")
+                pop_map = pd.Series(
+                    pp_df["PopularityScore"].to_numpy(dtype=np.float64),
+                    index=pp_df["ProductKey"].to_numpy(dtype=np.int64),
+                )
+                pop_scores = pop_map.reindex(prod_keys).fillna(50.0).to_numpy(dtype=np.float64)
+            except (KeyError, OSError):
+                pass
+            break
+
+    weights = brand_weight_per_product * pop_scores
+    total = weights.sum()
+    if total > 0:
+        weights /= total
+    else:
+        weights = np.ones(n, dtype=np.float64) / n
+    return weights
+
+
+# ---------------------------------------------------------------------------
+# Product selection with sales-driven conversion + affinity
+# ---------------------------------------------------------------------------
+
+def _pick_products_for_customer(
     rng: np.random.Generator,
     n_items: int,
+    purchased_indices: np.ndarray,
     n_products: int,
     prod_subcat: np.ndarray,
     subcat_to_indices: Dict[int, np.ndarray],
     affinity: float,
+    conversion_rate: float,
+    product_weights: np.ndarray,
+    subcat_weights: Dict[int, np.ndarray],
 ) -> np.ndarray:
-    """
-    Pick *n_items* unique product indices with subcategory affinity.
+    """Pick n_items product indices for a customer's wishlist.
 
-    - First product is chosen uniformly at random.
-    - Each subsequent product: with probability *affinity*, pick from the
-      same subcategory as a previously chosen product; otherwise pick
-      uniformly from all products.
-    - No duplicates within a single customer's wishlist.
+    - With probability *conversion_rate* per slot, pick from products the
+      customer actually purchased (if any available).
+    - Otherwise, pick via popularity-weighted subcategory affinity.
+    - No duplicates.
     """
     chosen = np.empty(n_items, dtype=np.int64)
     chosen_set: set = set()
 
-    # First item: random
-    first = int(rng.integers(0, n_products))
-    chosen[0] = first
-    chosen_set.add(first)
+    has_purchases = len(purchased_indices) > 0
 
-    for j in range(1, n_items):
-        if rng.random() < affinity:
-            # Pick a random previously chosen item's subcategory
-            anchor = chosen[rng.integers(0, j)]
-            sc = prod_subcat[anchor]
-            pool = subcat_to_indices[sc]
-            # Filter out already-chosen indices
-            available = pool[~np.isin(pool, list(chosen_set))]
-            if len(available) > 0:
+    for j in range(n_items):
+        # Conversion slot: pick from actual purchases
+        if has_purchases and rng.random() < conversion_rate:
+            available = [p for p in purchased_indices if p not in chosen_set]
+            if available:
                 pick = int(rng.choice(available))
                 chosen[j] = pick
                 chosen_set.add(pick)
                 continue
 
-        # Fallback: random from all products (excluding already chosen)
-        # For efficiency, rejection-sample (expected <2 tries at low fill)
-        for _ in range(100):
-            pick = int(rng.integers(0, n_products))
+        # Affinity slot: pick from same subcategory as a prior item
+        if j > 0 and rng.random() < affinity:
+            anchor = chosen[rng.integers(0, j)]
+            sc = prod_subcat[anchor]
+            pool = subcat_to_indices[sc]
+            sc_w = subcat_weights[sc]
+            mask = ~np.isin(pool, list(chosen_set))
+            available = pool[mask]
+            if len(available) > 0:
+                w = sc_w[mask]
+                w_sum = w.sum()
+                pick = int(rng.choice(available, p=w / w_sum if w_sum > 0 else None))
+                chosen[j] = pick
+                chosen_set.add(pick)
+                continue
+
+        # Global weighted random (rejection-sample for no-dups)
+        for _ in range(200):
+            pick = int(rng.choice(n_products, p=product_weights))
             if pick not in chosen_set:
                 chosen[j] = pick
                 chosen_set.add(pick)
                 break
         else:
-            # Extremely unlikely: brute-force fallback
             remaining = np.setdiff1d(np.arange(n_products), np.array(list(chosen_set)))
-            pick = int(rng.choice(remaining))
+            w = product_weights[remaining]
+            w_sum = w.sum()
+            pick = int(rng.choice(remaining, p=w / w_sum if w_sum > 0 else None))
             chosen[j] = pick
             chosen_set.add(pick)
 
@@ -245,18 +257,19 @@ def _pick_products_with_affinity(
 
 
 # ---------------------------------------------------------------------------
-# Bridge writer (streaming)
+# Bridge writer
 # ---------------------------------------------------------------------------
 
-def _write_bridge_streaming(
+def _write_bridge(
     customers: pd.DataFrame,
     products: pd.DataFrame,
-    c: WishlistsCfg,
+    product_weights: np.ndarray,
+    purchased_pairs: pd.DataFrame,
+    c: _WishlistsCfg,
     g_start: pd.Timestamp,
     g_end: pd.Timestamp,
     out_path: Path,
 ) -> int:
-    """Generate and write the customer_wishlists bridge table."""
     rng = np.random.default_rng(c.seed)
     schema = _bridge_schema()
 
@@ -267,30 +280,38 @@ def _write_bridge_streaming(
     n_customers = len(cust_keys)
     n_participants = max(1, int(round(n_customers * c.participation_rate)))
 
-    # Choose participating customers
     participant_idx = rng.choice(n_customers, size=n_participants, replace=False)
     participant_idx.sort()
 
-    # Product keys, prices, and subcategory index
     prod_keys = products["ProductKey"].to_numpy().astype(np.int64)
     prod_prices = products["UnitPrice"].to_numpy().astype(np.float64)
     prod_subcat = products["SubcategoryKey"].to_numpy().astype(np.int64)
     n_products = len(prod_keys)
 
-    # Build subcategory → product index lookup for affinity selection
+    # Product key → index lookup
+    prod_key_to_idx = pd.Series(np.arange(n_products), index=prod_keys)
+
+    # Build per-customer purchased product indices from accumulated sales data
+    cust_purchased: Dict[int, np.ndarray] = {}
+    if len(purchased_pairs) > 0:
+        for ck, grp in purchased_pairs.groupby("CustomerKey"):
+            pks = grp["ProductKey"].to_numpy().astype(np.int64)
+            idxs = prod_key_to_idx.reindex(pks).dropna().to_numpy(dtype=np.int64)
+            if len(idxs) > 0:
+                cust_purchased[int(ck)] = idxs
+
     unique_subcats = np.unique(prod_subcat)
     subcat_to_indices: Dict[int, np.ndarray] = {
         sc: np.where(prod_subcat == sc)[0] for sc in unique_subcats
     }
-    affinity = c.affinity_strength
+    subcat_weights: Dict[int, np.ndarray] = {
+        sc: product_weights[idx] for sc, idx in subcat_to_indices.items()
+    }
 
-    # Number of items per participant (Poisson, clamped to [1, max_items])
     items_per = rng.poisson(lam=c.avg_items, size=n_participants)
     items_per = np.clip(items_per, 1, min(c.max_items, n_products))
-
     total_rows = int(items_per.sum())
 
-    # Pre-allocate output arrays
     out_wkey = np.empty(total_rows, dtype=np.int64)
     out_ckey = np.empty(total_rows, dtype=np.int64)
     out_pkey = np.empty(total_rows, dtype=np.int64)
@@ -307,22 +328,22 @@ def _write_bridge_streaming(
         e_ns = earliest_ns[cidx]
         l_ns = latest_ns[cidx]
 
-        # Choose products with subcategory affinity (no duplicates)
-        chosen_prod_idx = _pick_products_with_affinity(
-            rng, n_items, n_products, prod_subcat, subcat_to_indices, affinity,
+        purchased_indices = cust_purchased.get(int(ck), np.array([], dtype=np.int64))
+
+        chosen_prod_idx = _pick_products_for_customer(
+            rng, n_items, purchased_indices,
+            n_products, prod_subcat, subcat_to_indices,
+            c.affinity_strength, c.conversion_rate,
+            product_weights, subcat_weights,
         )
 
-        # Random dates within window
         span = l_ns - e_ns
         if span <= 0:
             span = _NS_PER_DAY
         offsets = rng.integers(0, max(1, span), size=n_items)
         dates = e_ns + offsets
 
-        # Priorities
         priorities = rng.choice(_PRIORITY_VALUES, size=n_items, p=_PRIORITY_WEIGHTS)
-
-        # Quantities (most wishlist 1, some wishlist 2-3)
         qtys = rng.choice([1, 1, 1, 1, 2, 2, 3], size=n_items).astype(np.int32)
 
         sl = slice(row, row + n_items)
@@ -336,10 +357,8 @@ def _write_bridge_streaming(
 
         row += n_items
 
-    # Convert ns timestamps to date32
     out_dates_dt = out_date_ns.view("datetime64[ns]").astype("datetime64[ms]")
 
-    # Write in chunks via PyArrow
     writer = pq.ParquetWriter(str(out_path), schema)
     chunk = c.write_chunk_rows
     for start in range(0, total_rows, chunk):
@@ -363,87 +382,70 @@ def _write_bridge_streaming(
 
 
 # ---------------------------------------------------------------------------
-# Runner
+# Pipeline entry point
 # ---------------------------------------------------------------------------
 
-def run_wishlists(cfg: Dict[str, Any], parquet_folder: Path) -> Dict[str, Any]:
-    parquet_folder = Path(parquet_folder)
-
+def run_wishlist_pipeline(
+    *,
+    accumulator: WishlistAccumulator,
+    parquet_dims: Path,
+    cfg: Any,
+    file_format: str = "parquet",
+) -> Optional[Dict[str, Any]]:
+    """Generate customer_wishlists.parquet using accumulated sales data."""
     c = _read_cfg(cfg)
     if not c.enabled:
-        skip("Wishlists disabled; skipping.")
-        return {"_regenerated": False, "reason": "disabled"}
+        return None
 
-    out_bridge = parquet_folder / "customer_wishlists.parquet"
+    if not accumulator.has_data:
+        skip("Wishlists: no sales data accumulated; skipping.")
+        return None
 
-    # Locate upstream parquet files
-    customers_fp = parquet_folder / "customers.parquet"
-    if not customers_fp.exists():
-        alt = parquet_folder / "Customers.parquet"
-        if alt.exists():
-            customers_fp = alt
-        else:
-            raise FileNotFoundError(
-                f"Customers parquet not found at {parquet_folder}. "
-                "Expected customers.parquet (or Customers.parquet)."
-            )
+    g_start, g_end = _parse_global_dates(cfg)
 
-    products_fp = parquet_folder / "products.parquet"
-    if not products_fp.exists():
-        alt = parquet_folder / "Products.parquet"
-        if alt.exists():
-            products_fp = alt
-        else:
-            raise FileNotFoundError(
-                f"Products parquet not found at {parquet_folder}. "
-                "Expected products.parquet (or Products.parquet)."
-            )
+    # Load dimension tables
+    customers_fp = _find_parquet(parquet_dims, "customers")
+    products_fp = _find_parquet(parquet_dims, "products")
 
-    # Version hash includes upstream file metadata
-    cust_st = os.stat(customers_fp)
-    prod_st = os.stat(products_fp)
-    version_cfg = dict(cfg.wishlists)
-    version_cfg["_schema_version"] = 1
-    version_cfg["_upstream_customers_sig"] = {
-        "path": str(customers_fp),
-        "size": int(cust_st.st_size),
-        "mtime_ns": int(cust_st.st_mtime_ns),
-    }
-    version_cfg["_upstream_products_sig"] = {
-        "path": str(products_fp),
-        "size": int(prod_st.st_size),
-        "mtime_ns": int(prod_st.st_mtime_ns),
-    }
+    customers = pd.read_parquet(
+        customers_fp,
+        columns=["CustomerKey", "CustomerStartDate", "CustomerEndDate"],
+    )
+    products = pd.read_parquet(
+        products_fp,
+        columns=["ProductKey", "UnitPrice", "SubcategoryKey", "Brand"],
+    )
 
-    if out_bridge.exists() and not should_regenerate("wishlists", version_cfg, out_bridge):
-        skip("Wishlists up-to-date")
-        return {"_regenerated": False, "reason": "version"}
+    product_weights = _build_product_weights(products, parquet_dims)
+    purchased_pairs = accumulator.finalize()
 
-    with stage("Generating Customer Wishlists"):
-        g_start, g_end = _parse_global_dates(cfg)
+    out_path = parquet_dims / "customer_wishlists.parquet"
 
-        customers = pd.read_parquet(
-            customers_fp,
-            columns=["CustomerKey", "CustomerStartDate", "CustomerEndDate"],
-        )
-        products = pd.read_parquet(
-            products_fp,
-            columns=["ProductKey", "UnitPrice", "SubcategoryKey"],
-        )
-
-        n_rows = _write_bridge_streaming(
-            customers=customers,
-            products=products,
-            c=c,
-            g_start=g_start,
-            g_end=g_end,
-            out_path=out_bridge,
-        )
-        save_version("wishlists", version_cfg, out_bridge)
-        info(f"Customer wishlists written: {out_bridge} ({n_rows:,} rows)")
+    n_rows = _write_bridge(
+        customers=customers,
+        products=products,
+        product_weights=product_weights,
+        purchased_pairs=purchased_pairs,
+        c=c,
+        g_start=g_start,
+        g_end=g_end,
+        out_path=out_path,
+    )
+    info(f"Customer wishlists written: {out_path} ({n_rows:,} rows)")
 
     return {
-        "_regenerated": True,
-        "bridge": str(out_bridge),
+        "bridge": str(out_path),
         "bridge_rows": n_rows,
     }
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _find_parquet(folder: Path, name: str) -> Path:
+    for variant in (f"{name}.parquet", f"{name.title()}.parquet"):
+        p = folder / variant
+        if p.exists():
+            return p
+    raise FileNotFoundError(f"{name}.parquet not found in {folder}")
