@@ -574,19 +574,17 @@ class ComplaintsConfig(_Base):
     write_chunk_rows: int = 250_000
 
 
-# -- Superpowers --
+# -- Subscriptions --
 
-class SuperpowersConfig(_Base):
+class SubscriptionsConfig(_Base):
     enabled: bool = False
     generate_bridge: bool = False
-    powers_count: int = 20
-    powers_per_customer_min: int = 1
-    powers_per_customer_max: int = 3
-    include_power_level: bool = True
-    include_primary_flag: bool = True
-    include_acquired_date: bool = True
-    include_validity: bool = False
-    seed: Optional[int] = 123
+    participation_rate: float = 0.65
+    avg_subscriptions_per_customer: float = 1.5
+    max_subscriptions: int = 5
+    churn_rate: float = 0.25
+    trial_rate: float = 0.30
+    seed: Optional[int] = 700
     write_chunk_rows: int = 250_000
     # Injected by dimensions_runner
     global_dates: Optional[Any] = None
@@ -619,7 +617,7 @@ class AppConfig(_Base):
 
     products: ProductsConfig = ProductsConfig()
     customers: CustomersConfig = CustomersConfig()
-    superpowers: SuperpowersConfig = SuperpowersConfig()
+    subscriptions: SubscriptionsConfig = SubscriptionsConfig()
     wishlists: WishlistsConfig = WishlistsConfig()
     complaints: ComplaintsConfig = ComplaintsConfig()
 

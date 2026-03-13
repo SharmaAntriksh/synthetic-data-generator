@@ -882,11 +882,11 @@ class TestExcludedDimFiles:
         # With no returns config, return_reason should be excluded
         assert "return_reason.parquet" in excluded
 
-    def test_superpowers_disabled(self):
-        cfg = AppConfig.model_validate({"superpowers": {"enabled": False}})
+    def test_subscriptions_disabled(self):
+        cfg = AppConfig.model_validate({"subscriptions": {"enabled": False}})
         excluded = _excluded_dim_files(cfg)
-        assert "superpowers.parquet" in excluded
-        assert "customer_superpowers.parquet" in excluded
+        assert "plans.parquet" in excluded
+        assert "customer_subscriptions.parquet" in excluded
 
     def test_returns_enabled(self):
         cfg = AppConfig.model_validate({"returns": {"enabled": True}, "sales": {"skip_order_cols": False}})

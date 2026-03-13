@@ -74,7 +74,6 @@ products:
   brand_normalize: false               # pull brand prices toward global median
   brand_normalize_alpha: 0.35         # brands keep 65% of price identity
 
-
 # ------------------------------------------------------------------
 # CUSTOMERS
 # ------------------------------------------------------------------
@@ -87,8 +86,6 @@ customers:
 
   profile: steady                   # gradual | steady | aggressive | instant
   first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
-
-
 
 # ------------------------------------------------------------------
 # WISHLISTS
@@ -118,22 +115,19 @@ complaints:
   seed: 600
 
 # ------------------------------------------------------------------
-# SUPERPOWERS (disabled by default)
+# SUBSCRIPTIONS (bridge table for DAX many-to-many patterns)
 # ------------------------------------------------------------------
-superpowers:
+subscriptions:
   enabled: true
   generate_bridge: true
 
-  powers_count: 20
-  powers_per_customer_min: 1
-  powers_per_customer_max: 2
+  participation_rate: 0.65          # fraction of customers who subscribe
+  avg_subscriptions_per_customer: 1.5
+  max_subscriptions: 5
+  churn_rate: 0.25                  # fraction that cancel before expiry
+  trial_rate: 0.30                  # fraction that start with a trial
 
-  include_power_level: true
-  include_primary_flag: true
-  include_acquired_date: true
-  include_validity: false
-
-  seed: 123
+  seed: 700
 
 # ------------------------------------------------------------------
 # GEOGRAPHY (static — derived from CURATED_ROWS in geography.py)

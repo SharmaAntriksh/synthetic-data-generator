@@ -30,7 +30,7 @@ from src.engine.config.config_schema import (
     ProductsConfig,
     PromotionsConfig,
     DatesTableConfig,
-    SuperpowersConfig,
+    SubscriptionsConfig,
     PackagingConfig,
     YearLevelFactorsConfig,
     ModelsInnerConfig,

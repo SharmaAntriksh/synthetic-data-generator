@@ -7,7 +7,7 @@ GO
 --
 -- Every view is guarded with IF OBJECT_ID so the script is resilient
 -- to partial deployments (e.g. a minimal config that omits LoyaltyTiers,
--- Superpowers, etc.).
+-- Subscriptions, etc.).
 --
 -- All guards use EXEC() to work around the CREATE VIEW must-be-first-
 -- statement-in-batch rule.
@@ -48,14 +48,14 @@ IF OBJECT_ID(N'dbo.Complaints', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_Complaints] AS SELECT * FROM [dbo].[Complaints];');
 GO
 
--- CustomerSuperpowers (optional)
-IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerSuperpowers] AS SELECT * FROM [dbo].[CustomerSuperpowers];');
+-- CustomerSubscriptions (optional)
+IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerSubscriptions] AS SELECT * FROM [dbo].[CustomerSubscriptions];');
 GO
 
--- Superpowers (optional)
-IF OBJECT_ID(N'dbo.Superpowers', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Superpowers] AS SELECT * FROM [dbo].[Superpowers];');
+-- Plans (optional)
+IF OBJECT_ID(N'dbo.Plans', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Plans] AS SELECT * FROM [dbo].[Plans];');
 GO
 
 -- Dates

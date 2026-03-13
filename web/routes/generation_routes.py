@@ -37,7 +37,7 @@ router = APIRouter(prefix="/api", tags=["generation"])
 _VALID_ONLY = {"dimensions", "sales"}
 _VALID_REGEN = {"all", "products", "customers", "stores", "employees", "dates",
                 "geography", "currency", "exchange_rates", "promotions", "suppliers",
-                "return_reasons", "superpowers", "lookups", "time"}
+                "return_reasons", "subscriptions", "lookups", "time"}
 
 
 # ---------------------------------------------------------------------------

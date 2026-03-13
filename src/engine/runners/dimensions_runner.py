@@ -33,7 +33,7 @@ from src.dimensions.lookups import (
 )
 
 from src.dimensions.return_reasons import run_return_reasons
-from src.dimensions.superpowers import run_superpowers
+from src.dimensions.subscriptions import run_subscriptions
 
 
 # =========================================================
@@ -82,11 +82,11 @@ def _returns_enabled(cfg) -> bool:
     return True
 
 
-def _superpowers_enabled(cfg) -> bool:
-    sp_cfg = getattr(cfg, "superpowers", None)
-    if not sp_cfg or not isinstance(sp_cfg, Mapping):
+def _subscriptions_enabled(cfg) -> bool:
+    sub_cfg = getattr(cfg, "subscriptions", None)
+    if not sub_cfg or not isinstance(sub_cfg, Mapping):
         return False
-    return bool(getattr(sp_cfg, "enabled", False))
+    return bool(getattr(sub_cfg, "enabled", False))
 
 
 
@@ -160,16 +160,16 @@ DIM_SPECS: List[DimensionSpec] = [
         outputs_all=("customers.parquet", "customer_profile.parquet", "organization_profile.parquet"),
     ),
 
-    # 2.5) Superpowers (depends on customers)
+    # 2.5) Subscriptions (depends on customers)
     DimensionSpec(
-        name="superpowers",
-        cfg_key="superpowers",
-        run_fn=run_superpowers,
+        name="subscriptions",
+        cfg_key="subscriptions",
+        run_fn=run_subscriptions,
         deps=("customers",),
         date_dependent=True,
         inject_global_dates=True,
-        enabled=_superpowers_enabled,
-        outputs_all=("superpowers.parquet",),
+        enabled=_subscriptions_enabled,
+        outputs_all=("plans.parquet",),
     ),
 
     # 3) Stores (depends on geography)
