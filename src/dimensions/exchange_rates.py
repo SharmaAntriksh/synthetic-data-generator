@@ -136,4 +136,4 @@ def run_exchange_rates(cfg, parquet_folder: Path):
     df.to_parquet(out_path, index=False)
 
     save_version("exchange_rates", minimal_cfg, out_path)
-    info(f"Exchange Rates dimension written: {out_path}")
+    info(f"Exchange Rates dimension written: {out_path.name}")

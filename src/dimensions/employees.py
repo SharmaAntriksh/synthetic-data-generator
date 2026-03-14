@@ -1308,7 +1308,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
                 compression_level=None,
                 force_date32=True,
             )
-            info(f"Employee transfers written: {transfers_path} ({len(transfers)} employees)")
+            info(f"Employee transfers written: {transfers_path.name} ({len(transfers)} employees)")
         elif transfers_path.exists():
             transfers_path.unlink()
 
@@ -1346,7 +1346,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         )
 
     save_version("employees", version_cfg, out_path)
-    info(f"Employees dimension written: {out_path}")
+    info(f"Employees dimension written: {out_path.name}")
 
     # --- Sync stores.parquet EmployeeCount with actual generated counts ---
     _sync_stores_employee_count(df, stores_path)

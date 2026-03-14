@@ -388,17 +388,16 @@ def _build_hierarchy(
     zones = np.empty(n, dtype=object)
 
     if iso_by_geo:
-        for i, gk in enumerate(geo_keys):
-            iso = iso_by_geo.get(int(gk), "")
-            zones[i] = _iso_to_zone(iso)
+        _iso_arr = np.array([iso_by_geo.get(int(gk), "") for gk in geo_keys], dtype=object)
+        _zone_map = np.vectorize(_iso_to_zone, otypes=[object])
+        zones = _zone_map(_iso_arr)
     else:
         zones[:] = "International"
 
     # Country label per store (used for sub-grouping within a zone)
     countries = np.empty(n, dtype=object)
     if country_by_geo:
-        for i, gk in enumerate(geo_keys):
-            countries[i] = country_by_geo.get(int(gk), "Unknown")
+        countries = np.array([country_by_geo.get(int(gk), "Unknown") for gk in geo_keys], dtype=object)
     else:
         countries[:] = "Unknown"
 
@@ -419,8 +418,8 @@ def _build_hierarchy(
 
     region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int16)
 
-    store_districts = np.array([f"District {d}" for d in district_id], dtype=object)
-    store_regions   = np.array([f"Region {r}"   for r in region_id],   dtype=object)
+    store_districts = np.char.add("District ", district_id.astype(str))
+    store_regions   = np.char.add("Region ", region_id.astype(str))
 
     return zones, store_districts, store_regions
 
@@ -433,15 +432,19 @@ def _build_emails(
 ) -> np.ndarray:
     """Generate ``StoreEmail`` addresses keyed to brand domain."""
     n = len(brand_arr)
-    out = np.empty(n, dtype=object)
-    for i in range(n):
-        domain = _BRAND_DOMAINS.get(str(brand_arr[i]), "retailstore.com")
-        sn = str(store_number_arr[i]).lower().replace("-", ".")
-        if is_online[i]:
-            out[i] = f"online.{sn}@{domain}"
-        else:
-            area_slug = str(area_arr[i]).lower().replace(" ", ".").replace("-", ".")
-            out[i] = f"{area_slug}.{sn}@{domain}"
+    # Vectorised domain lookup
+    domains = np.array([_BRAND_DOMAINS.get(str(b), "retailstore.com") for b in brand_arr], dtype=object)
+    # Vectorised store number slug
+    sn_arr = np.array([str(s).lower().replace("-", ".") for s in store_number_arr], dtype=object)
+    # Vectorised area slug
+    area_slug = np.array([str(a).lower().replace(" ", ".").replace("-", ".") for a in area_arr], dtype=object)
+
+    online_mask = np.asarray(is_online, dtype=bool)
+    out = np.where(
+        online_mask,
+        np.char.add(np.char.add("online.", sn_arr.astype(str)), np.char.add("@", domains.astype(str))),
+        np.char.add(np.char.add(area_slug.astype(str), np.char.add(".", sn_arr.astype(str))), np.char.add("@", domains.astype(str))),
+    )
     return out
 
 
@@ -1045,4 +1048,4 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
         )
 
     save_version("stores", version_cfg, out_path)
-    info(f"Stores dimension written: {out_path}")
+    info(f"Stores dimension written: {out_path.name}")

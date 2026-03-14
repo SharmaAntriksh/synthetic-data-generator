@@ -36,13 +36,15 @@ def deduplicate_tuples(
     arrays: List[np.ndarray],
     output_keys: List[str],
 ) -> Optional[Dict[str, np.ndarray]]:
-    """Deduplicate N-ary tuples via column_stack + np.unique.
+    """Deduplicate N-ary tuples via hash-based DataFrame.drop_duplicates.
 
     Returns a dict mapping *output_keys* to the unique columns,
     or None if the result is empty.
     """
-    stacked = np.column_stack(arrays)
-    unique = np.unique(stacked, axis=0)
-    if len(unique) == 0:
+    import pandas as pd
+
+    df = pd.DataFrame({key: arr for key, arr in zip(output_keys, arrays)})
+    df = df.drop_duplicates(ignore_index=True)
+    if len(df) == 0:
         return None
-    return {key: unique[:, i] for i, key in enumerate(output_keys)}
+    return {key: df[key].to_numpy() for key in output_keys}

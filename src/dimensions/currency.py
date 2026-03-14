@@ -142,4 +142,4 @@ def run_currency(cfg: Dict, parquet_folder: Path) -> None:
         )
 
     save_version("currency", version_cfg, out_path)
-    info(f"Currency dimension written: {out_path}")
+    info(f"Currency dimension written: {out_path.name}")

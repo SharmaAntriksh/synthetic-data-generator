@@ -577,4 +577,4 @@ def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
         )
 
     save_version("promotions", version_cfg, out_path)
-    info(f"Promotions dimension written: {out_path}")
+    info(f"Promotions dimension written: {out_path.name}")

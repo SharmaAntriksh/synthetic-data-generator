@@ -188,7 +188,7 @@ def refresh_fx_master(out_path):
     )
 
     master_updated.to_parquet(out_path, index=False)
-    info(f"FX master refreshed → {out_path}  ({len(master_updated)} rows)")
+    info(f"FX master refreshed → {out_path.name}  ({len(master_updated)} rows)")
     return master_updated
 
 

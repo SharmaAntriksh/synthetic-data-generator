@@ -1248,4 +1248,4 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
         )
 
     save_version("employee_store_assignments", version_cfg, out_path)
-    info(f"Employee Store Assignments written: {out_path}")
+    info(f"Employee Store Assignments written: {out_path.name}")

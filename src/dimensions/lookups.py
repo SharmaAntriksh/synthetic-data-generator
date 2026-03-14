@@ -88,7 +88,7 @@ def _run_lookup_dim(
         _write_parquet(df, out_path, compression=compression)
 
     save_version(dim_key, version_cfg, out_path)
-    info(f"{display_name} written: {out_path}")
+    info(f"{display_name} written: {out_path.name}")
 
 # =========================================================
 # Default row sets

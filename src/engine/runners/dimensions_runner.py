@@ -3,6 +3,7 @@
 # ---------------------------------------------------------
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -307,12 +308,12 @@ def _stable_toposort(specs: Sequence[DimensionSpec]) -> List[DimensionSpec]:
             out[d].append(s.name)
             indeg[s.name] += 1
 
-    # Queue in original spec order
-    queue: List[str] = [s.name for s in specs if indeg[s.name] == 0]
+    # Queue in original spec order (deque for O(1) popleft)
+    queue: deque[str] = deque(s.name for s in specs if indeg[s.name] == 0)
     result: List[str] = []
 
     while queue:
-        n = queue.pop(0)
+        n = queue.popleft()
         result.append(n)
         for m in out[n]:
             indeg[m] -= 1

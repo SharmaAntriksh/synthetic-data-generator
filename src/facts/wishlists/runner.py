@@ -188,6 +188,12 @@ def _build_product_weights(
 # Product selection with sales-driven conversion + affinity
 # ---------------------------------------------------------------------------
 
+def _weighted_pick(cdf: np.ndarray, rng: np.random.Generator) -> int:
+    """Single weighted draw via pre-computed CDF + searchsorted (O(log n))."""
+    idx = int(np.searchsorted(cdf, rng.random()))
+    return min(idx, len(cdf) - 1)
+
+
 def _pick_products_for_customer(
     rng: np.random.Generator,
     n_items: int,
@@ -197,96 +203,83 @@ def _pick_products_for_customer(
     subcat_to_indices: Dict[int, np.ndarray],
     affinity: float,
     conversion_rate: float,
-    product_weights: np.ndarray,
-    subcat_weights: Dict[int, np.ndarray],
+    global_cdf: np.ndarray,
+    subcat_cdfs: Dict[int, np.ndarray],
+    subcat_to_pool_and_weights: Dict[int, Tuple[np.ndarray, np.ndarray]],
 ) -> np.ndarray:
     """Pick n_items product indices for a customer's wishlist.
 
-    - With probability *conversion_rate* per slot, pick from products the
-      customer actually purchased (if any available).
-    - Otherwise, pick via popularity-weighted subcategory affinity.
-    - No duplicates.
+    Uses pre-computed CDFs for O(log n) weighted sampling instead of
+    rebuilding CDFs per call.
     """
     has_purchases = len(purchased_indices) > 0
-
-    # Fast path: no purchases and no affinity possible for first item —
-    # pre-draw all candidates via weighted sampling, then deduplicate.
-    if not has_purchases and n_items <= n_products:
-        # Over-sample to handle duplicates, then take first n_items unique
-        oversample = min(n_items * 3, n_products)
-        candidates = rng.choice(n_products, size=oversample, replace=False, p=product_weights)
-
-        # Apply affinity to swap some items to same-subcategory
-        chosen = candidates[:n_items].copy()
-        if affinity > 0 and n_items > 1:
-            rolls = rng.random(n_items - 1)
-            chosen_excl: set = set()
-            chosen_excl.add(int(chosen[0]))
-            for j in range(1, n_items):
-                if rolls[j - 1] < affinity:
-                    anchor = chosen[rng.integers(0, j)]
-                    sc = prod_subcat[anchor]
-                    pool = subcat_to_indices[sc]
-                    sc_w = subcat_weights[sc]
-                    # Direct mask for tiny exclusion set (faster than np.isin)
-                    mask = np.ones(len(pool), dtype=bool)
-                    for exc in chosen_excl:
-                        mask &= (pool != exc)
-                    available = pool[mask]
-                    if len(available) > 0:
-                        w = sc_w[mask]
-                        w_sum = w.sum()
-                        chosen[j] = int(rng.choice(available, p=w / w_sum if w_sum > 0 else None))
-                chosen_excl.add(int(chosen[j]))
-        return chosen
-
-    # Slow path: has purchases — need per-slot conversion check
     chosen = np.empty(n_items, dtype=np.int64)
     chosen_set: set = set()
 
     for j in range(n_items):
+        picked = False
+
         # Conversion slot: pick from actual purchases
         if has_purchases and rng.random() < conversion_rate:
-            available = purchased_indices[~np.isin(purchased_indices, np.fromiter(chosen_set, dtype=np.int64, count=len(chosen_set)))] if chosen_set else purchased_indices
+            if chosen_set:
+                mask = np.ones(len(purchased_indices), dtype=bool)
+                for exc in chosen_set:
+                    mask &= (purchased_indices != exc)
+                available = purchased_indices[mask]
+            else:
+                available = purchased_indices
             if len(available) > 0:
-                pick = int(rng.choice(available))
-                chosen[j] = pick
-                chosen_set.add(pick)
-                continue
+                chosen[j] = int(available[rng.integers(0, len(available))])
+                chosen_set.add(chosen[j])
+                picked = True
 
         # Affinity slot: pick from same subcategory as a prior item
-        if j > 0 and rng.random() < affinity:
+        if not picked and j > 0 and rng.random() < affinity:
             anchor = chosen[rng.integers(0, j)]
-            sc = prod_subcat[anchor]
-            pool = subcat_to_indices[sc]
-            sc_w = subcat_weights[sc]
-            # Direct mask for tiny exclusion set (faster than np.isin)
-            mask = np.ones(len(pool), dtype=bool)
-            for exc in chosen_set:
-                mask &= (pool != exc)
-            available = pool[mask]
+            sc = int(prod_subcat[anchor])
+            pool, sc_w = subcat_to_pool_and_weights[sc]
+            if chosen_set:
+                mask = np.ones(len(pool), dtype=bool)
+                for exc in chosen_set:
+                    mask &= (pool != exc)
+                available = pool[mask]
+            else:
+                available = pool
             if len(available) > 0:
-                w = sc_w[mask]
-                w_sum = w.sum()
-                pick = int(rng.choice(available, p=w / w_sum if w_sum > 0 else None))
-                chosen[j] = pick
-                chosen_set.add(pick)
-                continue
+                if chosen_set:
+                    w = sc_w[mask]
+                    w_sum = w.sum()
+                    if w_sum > 0:
+                        _sc_cdf = np.cumsum(w / w_sum)
+                        _sc_cdf[-1] = 1.0
+                        chosen[j] = int(available[np.searchsorted(_sc_cdf, rng.random())])
+                    else:
+                        chosen[j] = int(available[rng.integers(0, len(available))])
+                else:
+                    sc_cdf = subcat_cdfs.get(sc)
+                    if sc_cdf is not None:
+                        idx = min(int(np.searchsorted(sc_cdf, rng.random())), len(pool) - 1)
+                        chosen[j] = int(pool[idx])
+                    else:
+                        chosen[j] = int(pool[rng.integers(0, len(pool))])
+                chosen_set.add(chosen[j])
+                picked = True
 
-        # Global weighted random (rejection-sample for no-dups)
-        for _ in range(200):
-            pick = int(rng.choice(n_products, p=product_weights))
-            if pick not in chosen_set:
-                chosen[j] = pick
-                chosen_set.add(pick)
-                break
-        else:
-            remaining = np.setdiff1d(np.arange(n_products), np.fromiter(chosen_set, dtype=np.int64, count=len(chosen_set)))
-            w = product_weights[remaining]
-            w_sum = w.sum()
-            pick = int(rng.choice(remaining, p=w / w_sum if w_sum > 0 else None))
-            chosen[j] = pick
-            chosen_set.add(pick)
+        # Global weighted random via pre-computed CDF (rejection for no-dups)
+        if not picked:
+            for _ in range(200):
+                pick = _weighted_pick(global_cdf, rng)
+                if pick not in chosen_set:
+                    chosen[j] = pick
+                    chosen_set.add(pick)
+                    break
+            else:
+                remaining = np.setdiff1d(
+                    np.arange(n_products),
+                    np.fromiter(chosen_set, dtype=np.int64, count=len(chosen_set)),
+                )
+                chosen[j] = int(remaining[rng.integers(0, len(remaining))])
+                chosen_set.add(chosen[j])
 
     return chosen
 
@@ -350,59 +343,181 @@ def _write_bridge(
     subcat_to_indices: Dict[int, np.ndarray] = {
         sc: np.where(prod_subcat == sc)[0] for sc in unique_subcats
     }
-    subcat_weights: Dict[int, np.ndarray] = {
-        sc: product_weights[idx] for sc, idx in subcat_to_indices.items()
-    }
+    # Pre-compute per-subcategory weights and CDFs (avoids rebuilding per call)
+    subcat_to_pool_and_weights: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+    subcat_cdfs: Dict[int, np.ndarray] = {}
+    for sc, idx in subcat_to_indices.items():
+        w = product_weights[idx]
+        subcat_to_pool_and_weights[sc] = (idx, w)
+        ws = w.sum()
+        if ws > 0:
+            sc_cdf = np.cumsum(w / ws)
+            sc_cdf[-1] = 1.0
+            subcat_cdfs[sc] = sc_cdf
+        else:
+            subcat_cdfs[sc] = None
+
+    # Pre-compute global CDF for fast weighted sampling via searchsorted
+    global_cdf = np.cumsum(product_weights)
+    global_cdf[-1] = 1.0
 
     items_per = rng.poisson(lam=c.avg_items, size=n_participants)
     items_per = np.clip(items_per, 1, min(c.max_items, n_products))
     total_rows = int(items_per.sum())
 
-    out_wkey = np.empty(total_rows, dtype=np.int64)
+    # ------------------------------------------------------------------
+    # BATCH ALL RANDOM NUMBER GENERATION UPFRONT
+    # ------------------------------------------------------------------
+    # 1. Global weighted product picks for every item
+    _base_prod_idx = np.searchsorted(global_cdf, rng.random(total_rows))
+    np.clip(_base_prod_idx, 0, n_products - 1, out=_base_prod_idx)
+
+    # 2. Per-item conversion and affinity rolls
+    _conv_rolls = rng.random(total_rows)
+    _aff_rolls = rng.random(total_rows)
+
+    # 3. Misc random pool (conversion picks, affinity anchors/picks, dedup)
+    _MISC_SIZE = max(total_rows * 6, 1024)
+    _misc = rng.random(_MISC_SIZE)
+    _mi = 0
+
+    # 4. Dates: batch uniform [0,1) scaled per-customer below
+    _date_rands = rng.random(total_rows)
+
+    # 5. Priorities: batch via CDF searchsorted (3 elements)
+    _prio_cdf = np.cumsum(_PRIORITY_WEIGHTS)
+    _prio_cdf[-1] = 1.0
+    _prio_idx = np.searchsorted(_prio_cdf, rng.random(total_rows))
+    np.clip(_prio_idx, 0, len(_PRIORITY_VALUES) - 1, out=_prio_idx)
+    out_priority = _PRIORITY_VALUES[_prio_idx]
+
+    # 6. Quantities: batch uniform choice from [1,1,1,1,2,2,3]
+    _qty_options = np.array([1, 1, 1, 1, 2, 2, 3], dtype=np.int32)
+    out_quantity = _qty_options[rng.integers(0, 7, size=total_rows)]
+
+    # ------------------------------------------------------------------
+    # OUTPUT ARRAYS
+    # ------------------------------------------------------------------
+    out_prod_idx = _base_prod_idx.copy()
     out_ckey = np.empty(total_rows, dtype=np.int64)
-    out_pkey = np.empty(total_rows, dtype=np.int64)
     out_date_ns = np.empty(total_rows, dtype=np.int64)
-    out_priority = np.empty(total_rows, dtype=object)
-    out_quantity = np.empty(total_rows, dtype=np.int32)
-    out_price = np.empty(total_rows, dtype=np.float64)
 
-    row = 0
+    # Pre-compute per-customer offsets
+    _offsets = np.zeros(n_participants + 1, dtype=np.int64)
+    np.cumsum(items_per, out=_offsets[1:])
+
+    # Cache subcat pool arrays as Python lists for fast iteration
+    _sc_pool_list: Dict[int, list] = {
+        sc: pool.tolist() for sc, (pool, _) in subcat_to_pool_and_weights.items()
+    }
+
+    # Localize frequently accessed values for inner loop speed
+    _prod_subcat = prod_subcat  # numpy array
+    _conversion_rate = c.conversion_rate
+    _affinity = c.affinity_strength
+    _empty_list: list = []
+    _n_products = n_products
+
+    # ------------------------------------------------------------------
+    # PER-CUSTOMER PRODUCT SELECTION (tight loop, minimal numpy calls)
+    # ------------------------------------------------------------------
     for i in range(n_participants):
+        start = int(_offsets[i])
+        end = int(_offsets[i + 1])
+        n_items = end - start
         cidx = participant_idx[i]
-        n_items = int(items_per[i])
-        ck = cust_keys[cidx]
-        e_ns = earliest_ns[cidx]
-        l_ns = latest_ns[cidx]
+        ck = int(cust_keys[cidx])
 
-        purchased_indices = cust_purchased.get(int(ck), np.array([], dtype=np.int64))
+        # Fill customer key (batch)
+        out_ckey[start:end] = ck
 
-        chosen_prod_idx = _pick_products_for_customer(
-            rng, n_items, purchased_indices,
-            n_products, prod_subcat, subcat_to_indices,
-            c.affinity_strength, c.conversion_rate,
-            product_weights, subcat_weights,
-        )
-
+        # Fill dates: scale pre-generated [0,1) by customer's window
+        e_ns = int(earliest_ns[cidx])
+        l_ns = int(latest_ns[cidx])
         span = l_ns - e_ns
         if span <= 0:
             span = _NS_PER_DAY
-        offsets = rng.integers(0, max(1, span), size=n_items)
-        dates = e_ns + offsets
+        out_date_ns[start:end] = e_ns + (_date_rands[start:end] * span).astype(np.int64)
 
-        priorities = rng.choice(_PRIORITY_VALUES, size=n_items, p=_PRIORITY_WEIGHTS)
-        qtys = rng.choice([1, 1, 1, 1, 2, 2, 3], size=n_items).astype(np.int32)
+        # Product selection adjustments
+        purchased = cust_purchased.get(ck)
+        has_purch = purchased is not None
+        purch_list = purchased.tolist() if has_purch else _empty_list
 
-        sl = slice(row, row + n_items)
-        out_wkey[sl] = np.arange(row + 1, row + n_items + 1)
-        out_ckey[sl] = ck
-        out_pkey[sl] = prod_keys[chosen_prod_idx]
-        out_date_ns[sl] = dates
-        out_priority[sl] = priorities
-        out_quantity[sl] = qtys
-        out_price[sl] = prod_prices[chosen_prod_idx]
+        chosen_set: set = set()
+        for j in range(n_items):
+            pos = start + j
+            picked = False
 
-        row += n_items
+            # --- Conversion: pick from actual purchases ---
+            if has_purch and _conv_rolls[pos] < _conversion_rate:
+                avail = [p for p in purch_list if p not in chosen_set]
+                if avail:
+                    r = float(_misc[_mi]); _mi += 1
+                    out_prod_idx[pos] = avail[min(int(r * len(avail)), len(avail) - 1)]
+                    chosen_set.add(int(out_prod_idx[pos]))
+                    picked = True
 
+            # --- Affinity: pick from same subcategory (rejection sampling) ---
+            if not picked and j > 0 and _aff_rolls[pos] < _affinity:
+                r = float(_misc[_mi]); _mi += 1
+                anchor_j = min(int(r * j), j - 1)
+                anchor = int(out_prod_idx[start + anchor_j])
+                sc = int(_prod_subcat[anchor])
+                sc_cdf = subcat_cdfs.get(sc)
+                pool = subcat_to_indices[sc]
+                pool_len = len(pool)
+                if sc_cdf is not None and pool_len > 0:
+                    for _ in range(50):
+                        r = float(_misc[_mi]); _mi += 1
+                        local_idx = int(np.searchsorted(sc_cdf, r))
+                        if local_idx >= pool_len:
+                            local_idx = pool_len - 1
+                        pick = int(pool[local_idx])
+                        if pick not in chosen_set:
+                            out_prod_idx[pos] = pick
+                            chosen_set.add(pick)
+                            picked = True
+                            break
+                elif pool_len > 0:
+                    r = float(_misc[_mi]); _mi += 1
+                    pick = int(pool[min(int(r * pool_len), pool_len - 1)])
+                    if pick not in chosen_set:
+                        out_prod_idx[pos] = pick
+                        chosen_set.add(pick)
+                        picked = True
+
+            # --- Default: use pre-generated global pick, check dedup ---
+            if not picked:
+                pick = int(out_prod_idx[pos])
+                if pick in chosen_set:
+                    for _ in range(200):
+                        r = float(_misc[_mi]); _mi += 1
+                        pick = int(np.searchsorted(global_cdf, r))
+                        if pick >= _n_products:
+                            pick = _n_products - 1
+                        if pick not in chosen_set:
+                            out_prod_idx[pos] = pick
+                            break
+                    else:
+                        # Absolute fallback (astronomically rare)
+                        for p in range(_n_products):
+                            if p not in chosen_set:
+                                out_prod_idx[pos] = p
+                                break
+                chosen_set.add(int(out_prod_idx[pos]))
+
+            # Refill misc pool if running low
+            if _mi + 60 > len(_misc):
+                _misc = rng.random(_MISC_SIZE)
+                _mi = 0
+
+    # ------------------------------------------------------------------
+    # BUILD FINAL OUTPUT (batch lookups)
+    # ------------------------------------------------------------------
+    out_wkey = np.arange(1, total_rows + 1, dtype=np.int64)
+    out_pkey = prod_keys[out_prod_idx]
+    out_price = prod_prices[out_prod_idx]
     out_dates_dt = out_date_ns.view("datetime64[ns]").astype("datetime64[ms]")
 
     writer = pq.ParquetWriter(str(out_path), schema)
@@ -485,7 +600,7 @@ def run_wishlist_pipeline(
         g_end=g_end,
         out_path=out_path,
     )
-    info(f"Customer wishlists written: {out_path} ({n_rows:,} rows)")
+    info(f"Customer wishlists written: {out_path.name} ({n_rows:,} rows)")
 
     return {
         "bridge": str(out_path),
