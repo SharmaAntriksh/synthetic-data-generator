@@ -87,6 +87,10 @@ customers:
   profile: steady                   # gradual | steady | aggressive | instant
   first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
 
+  scd2_enabled: true               # enable SCD Type 2 history tracking
+  scd2_change_rate: 0.15            # fraction of customers with life event changes
+  scd2_max_versions: 4              # max version rows per customer
+
 # ------------------------------------------------------------------
 # WISHLISTS
 # ------------------------------------------------------------------
@@ -268,7 +272,7 @@ inventory:
   abc_stock_multiplier:
     A: 1.20                            # was 1.30
     B: 1.00
-    C: 0.60                            # was 0.70 — C-class products are more neglected
+    C: 0.60                            # C-class products are more neglected
 
   shrinkage:
     enabled: true

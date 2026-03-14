@@ -220,6 +220,10 @@ class CustomersConfig(_Base):
     global_dates: Optional[Any] = None
     # Household grouping: fraction of individual customers in multi-person households
     household_pct: Optional[float] = None
+    # SCD Type 2 settings
+    scd2_enabled: bool = False
+    scd2_change_rate: float = 0.15
+    scd2_max_versions: int = 4
 
 
 

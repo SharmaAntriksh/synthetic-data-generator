@@ -44,6 +44,37 @@ BEGIN
     ADD CONSTRAINT PK_Customers PRIMARY KEY NONCLUSTERED ([CustomerKey]);
 END;
 
+-- Customers — SCD2 constraints
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Customers', N'IsCurrent') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = N'CK_Customers_IsCurrent'
+      AND parent_object_id = OBJECT_ID(N'dbo.Customers')
+)
+BEGIN
+    ALTER TABLE dbo.Customers WITH CHECK
+    ADD CONSTRAINT CK_Customers_IsCurrent
+        CHECK ([IsCurrent] IN (0, 1));
+    ALTER TABLE dbo.Customers CHECK CONSTRAINT CK_Customers_IsCurrent;
+END;
+
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Customers', N'VersionNumber') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = N'CK_Customers_VersionNumber'
+      AND parent_object_id = OBJECT_ID(N'dbo.Customers')
+)
+BEGIN
+    ALTER TABLE dbo.Customers WITH CHECK
+    ADD CONSTRAINT CK_Customers_VersionNumber
+        CHECK ([VersionNumber] >= 1);
+    ALTER TABLE dbo.Customers CHECK CONSTRAINT CK_Customers_VersionNumber;
+END;
+
 
 -- CustomerProfile (1:1 with Customers)
 IF OBJECT_ID(N'dbo.CustomerProfile', N'U') IS NOT NULL
