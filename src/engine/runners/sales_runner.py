@@ -87,33 +87,76 @@ def _compute_returns_effective(cfg, sales_cfg) -> Tuple[Any, bool]:
     return cfg, effective
 
 
-def _load_active_products(parquet_dims: Path) -> np.ndarray:
+def _load_active_products(parquet_dims: Path, *, active_ratio: float = 1.0, seed: int = 42) -> np.ndarray:
     """
-    Loads active products pool: (ProductKey, UnitPrice, UnitCost)
+    Loads active products pool: (ProductKey, ListPrice, UnitCost)
+
+    When Products has SCD2 versions, only IsCurrent=1 rows are used for the
+    sampling pool.  ``active_ratio`` filters by unique ProductID so that all
+    versions of a product are either fully included or fully excluded.
+
     Raises clear errors if file/columns missing or no active products.
     """
     products_path = parquet_dims / "products.parquet"
     if not products_path.exists():
         raise SalesError(f"Missing products parquet: {products_path}")
 
-    wanted_cols = ["ProductKey", "IsActiveInSales", "UnitPrice", "UnitCost"]
+    wanted_cols = ["ProductKey", "ListPrice", "UnitCost"]
+    scd2_cols = ["ProductID", "IsCurrent"]
     try:
-        products_df = pd.read_parquet(products_path, columns=wanted_cols)
-    except (KeyError, ValueError, OSError) as e:
-        raise RuntimeError(
-            f"Failed reading {products_path} with columns {wanted_cols}. "
-            f"Underlying error: {type(e).__name__}: {e}"
-        ) from e
+        products_df = pd.read_parquet(products_path, columns=wanted_cols + scd2_cols)
+    except (KeyError, ValueError, OSError):
+        # Fallback: SCD2 columns may not exist in older outputs
+        try:
+            products_df = pd.read_parquet(products_path, columns=wanted_cols)
+        except (KeyError, ValueError, OSError) as e:
+            raise RuntimeError(
+                f"Failed reading {products_path} with columns {wanted_cols}. "
+                f"Underlying error: {type(e).__name__}: {e}"
+            ) from e
 
     missing = [c for c in wanted_cols if c not in products_df.columns]
     if missing:
         raise RuntimeError(f"products.parquet missing required columns: {missing}. Found: {list(products_df.columns)}")
 
-    active = products_df.loc[products_df["IsActiveInSales"] == 1, ["ProductKey", "UnitPrice", "UnitCost"]]
-    if active.empty:
-        raise RuntimeError("No active products found for sales generation (IsActiveInSales == 1)")
+    has_scd2 = (
+        "IsCurrent" in products_df.columns
+        and "ProductID" in products_df.columns
+        and (products_df["IsCurrent"] == 0).any()
+    )
 
-    return active.to_numpy()
+    if has_scd2:
+        # SCD2 mode: filter active_ratio by unique ProductID, then keep IsCurrent=1
+        current_df = products_df[products_df["IsCurrent"] == 1].copy()
+
+        if 0 < active_ratio < 1.0:
+            unique_ids = current_df["ProductID"].unique()
+            n_active = max(1, int(len(unique_ids) * float(active_ratio)))
+            rng = np.random.default_rng(seed)
+            active_ids = set(rng.choice(unique_ids, size=n_active, replace=False).tolist())
+            current_df = current_df[current_df["ProductID"].isin(active_ids)]
+
+        if current_df.empty:
+            raise RuntimeError("No active products found for sales generation")
+
+        return current_df[wanted_cols].to_numpy()
+    else:
+        # No SCD2 — filter IsCurrent if column exists, then apply active_ratio
+        if "IsCurrent" in products_df.columns:
+            products_df = products_df[products_df["IsCurrent"] == 1].copy()
+
+        if 0 < active_ratio < 1.0:
+            n_total = len(products_df)
+            n_active = max(1, int(n_total * float(active_ratio)))
+            rng = np.random.default_rng(seed)
+            active_idx = rng.choice(n_total, size=n_active, replace=False)
+            active_idx.sort()
+            products_df = products_df.iloc[active_idx]
+
+        if products_df.empty:
+            raise RuntimeError("No active products found for sales generation")
+
+        return products_df[wanted_cols].to_numpy()
 
 
 def _bind_runner_globals(skip_order_cols: bool, active_product_np: Any) -> None:
@@ -178,7 +221,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
 
     Contract (preserved from current runner):
     - Customer lifecycle is fully driven by customers.parquet; this runner does NOT filter customers.
-    - Product filtering (IsActiveInSales) remains valid.
+    - Product active_ratio filtering is applied here at load time (no longer stored in dimension).
     - CSV / Delta outputs are regenerated per run; Parquet output folder is preserved (not pre-deleted).
     """
 
@@ -207,8 +250,11 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     # --- Returns effective config for THIS run
     cfg_for_run, returns_enabled_effective = _compute_returns_effective(cfg, sales_cfg)
 
-    # --- Load active products pool
-    active_product_np = _load_active_products(parquet_dims_p)
+    # --- Load active products pool (active_ratio filtering moved here from dimension)
+    prod_cfg = getattr(cfg, "products", None)
+    _active_ratio = float(getattr(prod_cfg, "active_ratio", 1.0)) if prod_cfg else 1.0
+    _prod_seed = int(getattr(prod_cfg, "seed", 42)) if prod_cfg else 42
+    active_product_np = _load_active_products(parquet_dims_p, active_ratio=_active_ratio, seed=_prod_seed)
 
     # --- Bind runner-level globals
     _bind_runner_globals(skip_order_cols=skip_order_cols, active_product_np=active_product_np)

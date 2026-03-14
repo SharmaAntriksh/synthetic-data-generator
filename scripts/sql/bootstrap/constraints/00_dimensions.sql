@@ -115,6 +115,37 @@ BEGIN
     ADD CONSTRAINT PK_Products PRIMARY KEY NONCLUSTERED ([ProductKey]);
 END;
 
+-- Products — SCD2 constraints
+IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Products', N'IsCurrent') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = N'CK_Products_IsCurrent'
+      AND parent_object_id = OBJECT_ID(N'dbo.Products')
+)
+BEGIN
+    ALTER TABLE dbo.Products WITH CHECK
+    ADD CONSTRAINT CK_Products_IsCurrent
+        CHECK ([IsCurrent] IN (0, 1));
+    ALTER TABLE dbo.Products CHECK CONSTRAINT CK_Products_IsCurrent;
+END;
+
+IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Products', N'VersionNumber') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = N'CK_Products_VersionNumber'
+      AND parent_object_id = OBJECT_ID(N'dbo.Products')
+)
+BEGIN
+    ALTER TABLE dbo.Products WITH CHECK
+    ADD CONSTRAINT CK_Products_VersionNumber
+        CHECK ([VersionNumber] >= 1);
+    ALTER TABLE dbo.Products CHECK CONSTRAINT CK_Products_VersionNumber;
+END;
+
 -- ProductProfile (1:1 with Products)
 IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
 AND NOT EXISTS (

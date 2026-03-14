@@ -9,10 +9,123 @@ import pandas as pd
 from src.utils import info, skip
 from src.versioning import should_regenerate, save_version
 
+from src.utils.config_precedence import resolve_dates
+
 from .contoso_loader import load_contoso_products
 from .contoso_expander import expand_contoso_products
 from .pricing import apply_product_pricing
 from .product_profile import _enrich_products_attributes
+
+
+# ---------------------------------------------------------------------
+# SCD Type 2 — price revision versions
+# ---------------------------------------------------------------------
+
+def _generate_scd2_versions(
+    rng: np.random.Generator,
+    base_df: pd.DataFrame,
+    prod_cfg,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> pd.DataFrame:
+    """
+    Expand products into SCD2 version rows with price revisions.
+
+    Each version represents a price revision period. ListPrice and UnitCost
+    change per version (drift ± scd2_price_drift), while all other product
+    attributes remain static.
+
+    Version 1 = original product (EffectiveStartDate = config start_date).
+    Subsequent versions have EffectiveStartDate spaced by scd2_revision_frequency
+    months from the product's first revision date.
+
+    Returns a new DataFrame sorted by ProductID + VersionNumber, with
+    ProductKey reassigned sequentially (1..N_total_rows).
+    """
+    revision_freq = int(getattr(prod_cfg, "revision_frequency", 12))
+    price_drift = float(getattr(prod_cfg, "price_drift", 0.05))
+    max_versions = int(getattr(prod_cfg, "max_versions", 4))
+
+    N = len(base_df)
+    if max_versions <= 1 or revision_freq <= 0:
+        # No revisions — just add SCD2 metadata with defaults
+        return base_df
+
+    # How many revision slots fit in the date range?
+    total_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+    max_possible_versions = min(max_versions, max(1, total_months // revision_freq + 1))
+
+    if max_possible_versions <= 1:
+        return base_df
+
+    # Determine how many versions each product gets (1 to max_possible_versions)
+    # Use a geometric-ish distribution: most products get few revisions
+    n_extra = rng.integers(0, max_possible_versions, size=N, dtype=np.int64)
+    # Products with 0 extra versions stay at version 1 only
+
+    version_rows = []
+    for i in range(N):
+        row = base_df.iloc[i]
+        product_id = int(row["ProductID"])
+        n_versions = int(n_extra[i]) + 1  # at least 1
+
+        list_price = float(row["ListPrice"])
+        unit_cost = float(row["UnitCost"])
+
+        # First revision starts at a random offset within the first revision period
+        first_revision_offset = rng.integers(1, max(2, revision_freq))
+        revision_start = start_date + pd.DateOffset(months=int(first_revision_offset))
+
+        for v in range(n_versions):
+            version_data = row.to_dict()
+            version_data["VersionNumber"] = v + 1
+
+            if v == 0:
+                version_data["EffectiveStartDate"] = start_date
+            else:
+                eff_start = revision_start + pd.DateOffset(months=int((v - 1) * revision_freq))
+                if eff_start > end_date:
+                    break  # no more versions fit
+                version_data["EffectiveStartDate"] = eff_start
+
+                # Apply price drift
+                drift = 1.0 + rng.uniform(-price_drift, price_drift * 2)
+                list_price = round(list_price * drift, 2)
+                unit_cost = round(min(unit_cost * drift, list_price), 2)
+                version_data["ListPrice"] = list_price
+                version_data["UnitCost"] = unit_cost
+
+            version_rows.append(version_data)
+
+    result = pd.DataFrame(version_rows)
+
+    # Set EffectiveEndDate: next version's start - 1 day, or 9999-12-31 for current
+    result = result.sort_values(["ProductID", "VersionNumber"]).reset_index(drop=True)
+
+    eff_end = pd.Series(pd.Timestamp("9999-12-31"), index=result.index)
+    is_current = pd.Series(np.int64(1), index=result.index)
+
+    for pid in result["ProductID"].unique():
+        mask = result["ProductID"] == pid
+        idx = result.index[mask]
+        if len(idx) > 1:
+            for j in range(len(idx) - 1):
+                next_start = result.loc[idx[j + 1], "EffectiveStartDate"]
+                eff_end.iloc[idx[j]] = next_start - pd.Timedelta(days=1)
+                is_current.iloc[idx[j]] = 0
+
+    result["EffectiveEndDate"] = eff_end
+    result["IsCurrent"] = is_current
+
+    # Reassign ProductKey sequentially (PK, unique per version row)
+    result["ProductKey"] = np.arange(1, len(result) + 1, dtype="int64")
+
+    n_with_history = int((n_extra > 0).sum())
+    total_rows = len(result)
+    info(f"Products SCD2: {n_with_history:,}/{N:,} products have price history "
+         f"({total_rows:,} total rows, max {max_possible_versions} versions)")
+
+    return result
 
 
 # ---------------------------------------------------------------------
@@ -58,10 +171,9 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
           * stratified trim by SubcategoryKey when target < base_count
           * repeat/variants when target > base_count
       - Apply lifecycle (Launch/Discontinued) from products.lifecycle (date-typed)
-      - Apply pricing from products.pricing (UnitPrice/UnitCost finalized here)
+      - Apply pricing from products.pricing (ListPrice/UnitCost finalized here)
       - Enrich attributes (merch/channel/logistics/quality)
       - Assign SupplierKey (optional)
-      - Mark IsActiveInSales based on active_ratio
       - Write products.parquet
 
     Returns:
@@ -69,10 +181,6 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     """
     p = config["products"]
     seed = int(p.get("seed", 42))
-
-    active_ratio = p.get("active_ratio", 1.0)
-    if not isinstance(active_ratio, (int, float)) or not (0 < float(active_ratio) <= 1.0):
-        raise ValueError("products.active_ratio must be a number in the range (0, 1]")
 
     # Supplier assignment
     sup_cfg = p.get("supplier_assignment") or {}
@@ -162,31 +270,14 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
 
         df["SupplierKey"] = supplier_keys[idx].astype("int64")
 
-    # Active products for Sales
-    N = len(df)
-    active_count = int(N * float(active_ratio))
-    if active_count <= 0:
-        raise ValueError("products.active_ratio results in zero active products; increase active_ratio or product count")
-
-    product_keys = df["ProductKey"].to_numpy(dtype="int64", copy=False)
-    if active_count < N:
-        rng = np.random.default_rng(seed)
-        active_product_keys = rng.choice(product_keys, size=active_count, replace=False)
-        active_product_set = set(active_product_keys.tolist())
-    else:
-        active_product_set = set(product_keys.tolist())
-
-    df["IsActiveInSales"] = df["ProductKey"].isin(active_product_set).astype("int64")
-
     # Minimal required fields for Sales
     required = [
         "ProductKey",
         "BaseProductKey",
         "VariantIndex",
         "SubcategoryKey",
-        "UnitPrice",
+        "ListPrice",
         "UnitCost",
-        "IsActiveInSales",
     ]
 
     missing = [c for c in required if c not in df.columns]
@@ -194,22 +285,51 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         raise ValueError(f"Missing required field(s) in Products: {missing}")
 
     # -----------------------------------------------------------------
+    # SCD Type 2 metadata (always present for consistent schema)
+    # -----------------------------------------------------------------
+    N = len(df)
+    df["ProductID"] = df["ProductKey"].copy()
+    df["VersionNumber"] = np.ones(N, dtype="int64")
+
+    # Resolve date range for SCD2 effective dates
+    try:
+        start_date, end_date = resolve_dates(config, p, section_name="products")
+    except (KeyError, ValueError):
+        start_date = pd.Timestamp("2020-01-01")
+        end_date = pd.Timestamp("2025-12-31")
+
+    df["EffectiveStartDate"] = start_date
+    df["EffectiveEndDate"] = pd.Timestamp("9999-12-31")
+    df["IsCurrent"] = np.ones(N, dtype="int64")
+
+    # SCD2 expansion (if enabled)
+    scd2_cfg = getattr(p, "scd2", None)
+    scd2_enabled = bool(getattr(scd2_cfg, "enabled", False)) if scd2_cfg else False
+    if scd2_enabled:
+        rng_scd2 = np.random.default_rng(seed + 7777)
+        df = _generate_scd2_versions(rng_scd2, df, scd2_cfg, start_date, end_date)
+
+    # -----------------------------------------------------------------
     # Split into Products (core) and ProductProfile (analytical)
     # -----------------------------------------------------------------
     _PRODUCTS_CORE_COLS = [
-        "ProductKey", "ProductCode", "ProductName", "ProductDescription",
+        "ProductKey", "ProductID",
+        "ProductCode", "ProductName", "ProductDescription",
         "SubcategoryKey", "Brand", "Class", "Color",
         "StockTypeCode", "StockType",
-        "UnitCost", "UnitPrice",
+        "UnitCost", "ListPrice",
         "BaseProductKey", "VariantIndex",
-        "IsActiveInSales",
+        "VersionNumber", "EffectiveStartDate", "EffectiveEndDate", "IsCurrent",
     ]
 
     core_cols = [c for c in _PRODUCTS_CORE_COLS if c in df.columns]
+    # Profile links to IsCurrent=1 version's ProductKey
+    current_mask = df["IsCurrent"] == 1
+    profile_source = df.loc[current_mask]
     profile_cols = ["ProductKey"] + [c for c in df.columns if c not in core_cols]
 
     products_df = df[core_cols].copy()
-    profile_df = df[profile_cols].copy()
+    profile_df = profile_source[profile_cols].copy()
 
     profile_path = output_folder / "product_profile.parquet"
     products_df.to_parquet(parquet_path, index=False)
@@ -223,11 +343,20 @@ def _version_key(p: dict) -> dict:
     """
     Version key for Products. Pricing is the economic source of truth.
     """
-    return {
+    key = {
         "num_products": p.get("num_products"),
         "seed": p.get("seed"),
         "pricing": p.get("pricing"),
-        "active_ratio": p.get("active_ratio", 1.0),
         # bump whenever you add/remove enrichment columns (forces one regen)
-        "enrichment_v": 4,
+        "enrichment_v": 6,
     }
+    # SCD2 settings affect output shape
+    scd2 = p.get("scd2")
+    if scd2 and bool(scd2.get("enabled", False)):
+        key["scd2"] = {
+            "enabled": True,
+            "revision_frequency": scd2.get("revision_frequency", 12),
+            "price_drift": scd2.get("price_drift", 0.05),
+            "max_versions": scd2.get("max_versions", 4),
+        }
+    return key

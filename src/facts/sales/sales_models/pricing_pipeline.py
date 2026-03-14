@@ -541,23 +541,30 @@ def build_prices(rng, order_dates, qty, price):
         return price
 
     # ---- 1. Compute per-row inflation factor ----
-    order_month_i = order_dates.astype("datetime64[M]").astype("int64")
-    uniq_months, inv = np.unique(order_month_i, return_inverse=True)
+    # When product SCD2 is active, versioned prices already include historical
+    # price drift — skip inflation to avoid double-counting.
+    _product_scd2_active = bool(getattr(State, "product_scd2_active", False))
 
-    start_m = _global_start_month_int(order_dates)
-    months_since = (uniq_months.astype(np.int64) - start_m).astype(np.float64)
-
-    infl = (1.0 + annual_rate) ** (months_since / 12.0)
-    infl = np.where(np.isfinite(infl), infl, 1.0)
-
-    if month_sigma > 0.0:
-        noises = np.fromiter(
-            (_month_noise(int(m), vol_seed, month_sigma) for m in uniq_months),
-            dtype=np.float64, count=uniq_months.size)
+    if _product_scd2_active:
+        factor = np.ones(n, dtype=np.float64)
     else:
-        noises = np.ones_like(infl)
+        order_month_i = order_dates.astype("datetime64[M]").astype("int64")
+        uniq_months, inv = np.unique(order_month_i, return_inverse=True)
 
-    factor = np.clip(infl * noises, clip_lo, clip_hi)[inv]
+        start_m = _global_start_month_int(order_dates)
+        months_since = (uniq_months.astype(np.int64) - start_m).astype(np.float64)
+
+        infl = (1.0 + annual_rate) ** (months_since / 12.0)
+        infl = np.where(np.isfinite(infl), infl, 1.0)
+
+        if month_sigma > 0.0:
+            noises = np.fromiter(
+                (_month_noise(int(m), vol_seed, month_sigma) for m in uniq_months),
+                dtype=np.float64, count=uniq_months.size)
+        else:
+            noises = np.ones_like(infl)
+
+        factor = np.clip(infl * noises, clip_lo, clip_hi)[inv]
 
     # ---- 2. Inflate + snap UnitPrice ----
     base_up = _as_f64(price["final_unit_price"])

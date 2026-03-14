@@ -430,8 +430,8 @@ def _enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, outpu
     out["CasePackQty"] = pd.Series(case_pack[inv], index=out.index).astype("int32")
     out["FulfillmentType"] = pd.Series(fulfil[inv], index=out.index, dtype="string")
 
-    # --- BrandTier from UnitPrice (robust: rank-based so Mainstream isn't empty) ---
-    up = pd.to_numeric(out.get("UnitPrice", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
+    # --- BrandTier from ListPrice (robust: rank-based so Mainstream isn't empty) ---
+    up = pd.to_numeric(out.get("ListPrice", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
     N = len(out)
 
     tier = np.full(N, "Mainstream", dtype=object)
@@ -576,7 +576,7 @@ def _enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, outpu
     PopularityScore = np.clip(pop_raw, 1, 100).astype("int32")
     out["PopularityScore"] = pd.Series(PopularityScore, index=out.index)
 
-    up_arr = pd.to_numeric(out.get("UnitPrice", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
+    up_arr = pd.to_numeric(out.get("ListPrice", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
     velocity_est = np.clip(PopularityScore / 100.0, 0.01, 1.0)
     abc_value = up_arr * velocity_est
     abc_rank = np.argsort(np.argsort(-abc_value))

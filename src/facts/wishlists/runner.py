@@ -207,10 +207,37 @@ def _pick_products_for_customer(
     - Otherwise, pick via popularity-weighted subcategory affinity.
     - No duplicates.
     """
+    has_purchases = len(purchased_indices) > 0
+
+    # Fast path: no purchases and no affinity possible for first item —
+    # pre-draw all candidates via weighted sampling, then deduplicate.
+    if not has_purchases and n_items <= n_products:
+        # Over-sample to handle duplicates, then take first n_items unique
+        oversample = min(n_items * 3, n_products)
+        candidates = rng.choice(n_products, size=oversample, replace=False, p=product_weights)
+
+        # Apply affinity to swap some items to same-subcategory
+        chosen = candidates[:n_items].copy()
+        if affinity > 0 and n_items > 1:
+            rolls = rng.random(n_items - 1)
+            for j in range(1, n_items):
+                if rolls[j - 1] < affinity:
+                    anchor = chosen[rng.integers(0, j)]
+                    sc = prod_subcat[anchor]
+                    pool = subcat_to_indices[sc]
+                    sc_w = subcat_weights[sc]
+                    chosen_set = set(chosen[:j].tolist())
+                    mask = ~np.isin(pool, list(chosen_set))
+                    available = pool[mask]
+                    if len(available) > 0:
+                        w = sc_w[mask]
+                        w_sum = w.sum()
+                        chosen[j] = int(rng.choice(available, p=w / w_sum if w_sum > 0 else None))
+        return chosen
+
+    # Slow path: has purchases — need per-slot conversion check
     chosen = np.empty(n_items, dtype=np.int64)
     chosen_set: set = set()
-
-    has_purchases = len(purchased_indices) > 0
 
     for j in range(n_items):
         # Conversion slot: pick from actual purchases
@@ -284,7 +311,7 @@ def _write_bridge(
     participant_idx.sort()
 
     prod_keys = products["ProductKey"].to_numpy().astype(np.int64)
-    prod_prices = products["UnitPrice"].to_numpy().astype(np.float64)
+    prod_prices = products["ListPrice"].to_numpy().astype(np.float64)
     prod_subcat = products["SubcategoryKey"].to_numpy().astype(np.int64)
     n_products = len(prod_keys)
 
@@ -294,11 +321,22 @@ def _write_bridge(
     # Build per-customer purchased product indices from accumulated sales data
     cust_purchased: Dict[int, np.ndarray] = {}
     if len(purchased_pairs) > 0:
-        for ck, grp in purchased_pairs.groupby("CustomerKey"):
-            pks = grp["ProductKey"].to_numpy().astype(np.int64)
-            idxs = prod_key_to_idx.reindex(pks).dropna().to_numpy(dtype=np.int64)
-            if len(idxs) > 0:
-                cust_purchased[int(ck)] = idxs
+        _pp_ckeys = purchased_pairs["CustomerKey"].to_numpy().astype(np.int64)
+        _pp_pkeys = purchased_pairs["ProductKey"].to_numpy().astype(np.int64)
+        # Vectorized lookup: map product keys to indices
+        _pp_idx_series = prod_key_to_idx.reindex(_pp_pkeys)
+        _pp_valid = _pp_idx_series.notna()
+        _pp_ckeys_valid = _pp_ckeys[_pp_valid.to_numpy()]
+        _pp_idxs_valid = _pp_idx_series[_pp_valid].to_numpy(dtype=np.int64)
+        # Group by customer key using np.unique for speed
+        if len(_pp_ckeys_valid) > 0:
+            _sort_order = np.argsort(_pp_ckeys_valid)
+            _sorted_ckeys = _pp_ckeys_valid[_sort_order]
+            _sorted_idxs = _pp_idxs_valid[_sort_order]
+            _uniq_ckeys, _split_pos = np.unique(_sorted_ckeys, return_index=True)
+            _split_groups = np.split(_sorted_idxs, _split_pos[1:])
+            for _ck, _idxs in zip(_uniq_ckeys, _split_groups):
+                cust_purchased[int(_ck)] = _idxs
 
     unique_subcats = np.unique(prod_subcat)
     subcat_to_indices: Dict[int, np.ndarray] = {
@@ -407,14 +445,22 @@ def run_wishlist_pipeline(
     customers_fp = _find_parquet(parquet_dims, "customers")
     products_fp = _find_parquet(parquet_dims, "products")
 
-    customers = pd.read_parquet(
-        customers_fp,
-        columns=["CustomerKey", "CustomerStartDate", "CustomerEndDate"],
-    )
-    products = pd.read_parquet(
-        products_fp,
-        columns=["ProductKey", "UnitPrice", "SubcategoryKey", "Brand"],
-    )
+    _cust_cols = ["CustomerKey", "CustomerStartDate", "CustomerEndDate"]
+    _cust_schema_names = set(pq.read_schema(str(customers_fp)).names)
+    if "IsCurrent" in _cust_schema_names:
+        _cust_cols.append("IsCurrent")
+    customers = pd.read_parquet(customers_fp, columns=_cust_cols)
+    if "IsCurrent" in customers.columns:
+        customers = customers[customers["IsCurrent"] == 1].copy()
+        customers = customers.drop(columns=["IsCurrent"])
+    _prod_cols = ["ProductKey", "ListPrice", "SubcategoryKey", "Brand"]
+    _prod_schema_names = set(pq.read_schema(str(products_fp)).names) if hasattr(pq, "read_schema") else set()
+    if "IsCurrent" in _prod_schema_names:
+        _prod_cols.append("IsCurrent")
+    products = pd.read_parquet(products_fp, columns=_prod_cols)
+    if "IsCurrent" in products.columns:
+        products = products[products["IsCurrent"] == 1].copy()
+        products = products.drop(columns=["IsCurrent"])
 
     product_weights = _build_product_weights(products, parquet_dims)
     purchased_pairs = accumulator.finalize()

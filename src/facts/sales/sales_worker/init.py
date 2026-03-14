@@ -1025,6 +1025,15 @@ def init_sales_worker(worker_cfg: dict) -> None:
             # Product profile attributes for weighted sampling
             "product_popularity": worker_cfg.get("product_popularity"),
             "product_seasonality": worker_cfg.get("product_seasonality"),
+
+            # SCD2 version grids
+            "product_scd2_active": bool(worker_cfg.get("product_scd2_active", False)),
+            "product_scd2_starts": worker_cfg.get("product_scd2_starts"),
+            "product_scd2_data": worker_cfg.get("product_scd2_data"),
+            "customer_scd2_active": bool(worker_cfg.get("customer_scd2_active", False)),
+            "customer_scd2_starts": worker_cfg.get("customer_scd2_starts"),
+            "customer_scd2_keys": worker_cfg.get("customer_scd2_keys"),
+            "cust_key_to_pool_idx": worker_cfg.get("cust_key_to_pool_idx"),
         }
     )
 

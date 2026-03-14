@@ -1343,8 +1343,8 @@ def _generate_scd2_versions(
     NumberOfChildren).  Each event creates a new version row with updated
     EffectiveStartDate / EffectiveEndDate / VersionNumber / IsCurrent.
     """
-    change_rate = float(getattr(cust_cfg, "scd2_change_rate", 0.15))
-    max_versions = int(getattr(cust_cfg, "scd2_max_versions", 4))
+    change_rate = float(getattr(cust_cfg, "change_rate", 0.15))
+    max_versions = int(getattr(cust_cfg, "max_versions", 4))
 
     # Only individuals get SCD2 versions (orgs stay at version 1)
     person_mask = base_df["CustomerType"] == "Individual"
@@ -1385,12 +1385,15 @@ def _generate_scd2_versions(
             new_rows.append(row_dict)
             continue
 
-        # Generate sorted random event offsets (at least 90 days from start)
-        offsets = np.sort(rng.integers(90, total_days, size=n_events))
+        # Generate sorted random event offsets.
+        # Reserve at least 90 days at the end so the IsCurrent=1 version
+        # has meaningful coverage (otherwise it may never appear in sales).
+        max_offset = max(91, total_days - 90)
+        offsets = np.sort(rng.integers(90, max_offset, size=n_events))
         # Enforce minimum 60-day gap between events
         for i in range(1, len(offsets)):
             if offsets[i] - offsets[i - 1] < 60:
-                offsets[i] = min(offsets[i - 1] + 60, total_days - 1)
+                offsets[i] = min(offsets[i - 1] + 60, max_offset - 1)
         event_dates = [cust_start + pd.Timedelta(days=int(d)) for d in offsets]
 
         # Build version chain
@@ -2186,12 +2189,13 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     # =====================================================
     # SCD Type 2 expansion (if enabled)
     # =====================================================
-    scd2_enabled = bool(getattr(cust_cfg, "scd2_enabled", False))
+    scd2_cfg = getattr(cust_cfg, "scd2", None)
+    scd2_enabled = bool(getattr(scd2_cfg, "enabled", False)) if scd2_cfg else False
     if scd2_enabled:
         customers_df = _generate_scd2_versions(
             rng=rng,
             base_df=customers_df,
-            cust_cfg=cust_cfg,
+            cust_cfg=scd2_cfg,
             geo_keys=geo_keys,
             tier_keys=tier_keys,
             end_date=end_date,

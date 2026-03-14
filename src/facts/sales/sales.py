@@ -124,6 +124,135 @@ def _apply_cfg_default(current: Any, default: Any, cfg_value: Any) -> Any:
     return cfg_value if current == default else current
 
 
+def _build_scd2_product_versions(
+    products_path: Path,
+    pool_product_ids: np.ndarray,
+    pool_product_np: np.ndarray,
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Build per-entity version lookup tables for SCD2 product resolution.
+
+    Returns (starts, data):
+      - starts: shape (N_pool, max_ver) int64 — EffectiveStartDate as epoch days,
+        sorted ascending per entity, padded with INT64_MAX.
+      - data: shape (N_pool, max_ver, 3) float64 — [ProductKey, ListPrice, UnitCost]
+        per version slot, padded with IsCurrent=1 values.
+
+    At lookup time: for a sale with epoch-day D on product pool index P,
+    ``ver = searchsorted(starts[P], D, side='right') - 1`` gives the correct
+    version slot.
+    """
+    try:
+        all_df = pd.read_parquet(
+            str(products_path),
+            columns=["ProductID", "ProductKey", "ListPrice", "UnitCost",
+                     "EffectiveStartDate", "EffectiveEndDate"],
+        )
+    except (KeyError, ValueError):
+        return None
+
+    all_df["eff_start_days"] = pd.to_datetime(all_df["EffectiveStartDate"]).values.astype("datetime64[D]").astype(np.int64)
+
+    N_pool = len(pool_product_ids)
+
+    # Filter to active pool and map ProductID → pool index
+    pid_to_pool = {int(pid): i for i, pid in enumerate(pool_product_ids)}
+    active_pids = set(pool_product_ids.tolist())
+    active_df = all_df[all_df["ProductID"].isin(active_pids)].copy()
+    active_df["pool_idx"] = active_df["ProductID"].map(pid_to_pool).astype(np.int32)
+    active_df.sort_values(["pool_idx", "eff_start_days"], inplace=True)
+
+    # Determine max versions across all pool entries
+    max_ver = int(active_df.groupby("pool_idx").size().max()) if len(active_df) > 0 else 1
+
+    # Initialize: slot 0 = IsCurrent=1 fallback, rest padded
+    starts = np.full((N_pool, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
+    data = np.empty((N_pool, max_ver, 3), dtype=np.float64)
+    # Fill all slots with IsCurrent=1 values as default
+    for s in range(max_ver):
+        data[:, s, 0] = pool_product_np[:, 0]  # ProductKey
+        data[:, s, 1] = pool_product_np[:, 1]  # ListPrice
+        data[:, s, 2] = pool_product_np[:, 2]  # UnitCost
+
+    # Fill from actual versions (sorted by start date)
+    for pi, grp in active_df.groupby("pool_idx"):
+        rows = grp.sort_values("eff_start_days")
+        n = min(len(rows), max_ver)
+        s_vals = rows["eff_start_days"].to_numpy(copy=True)[:n]
+        # Clamp first version start to 0 (covers all time before second version)
+        s_vals[0] = 0
+        starts[pi, :n] = s_vals
+        data[pi, :n, 0] = rows["ProductKey"].to_numpy(dtype=np.float64)[:n]
+        data[pi, :n, 1] = rows["ListPrice"].to_numpy(dtype=np.float64)[:n]
+        data[pi, :n, 2] = rows["UnitCost"].to_numpy(dtype=np.float64)[:n]
+
+    return starts, data
+
+
+def _build_scd2_customer_versions(
+    customers_path: Path,
+    pool_customer_keys: np.ndarray,
+    pool_customer_ids: np.ndarray,
+) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Build per-entity version lookup tables for SCD2 customer resolution.
+
+    Returns (starts, keys, key_to_pool_idx):
+      - starts: shape (N_pool, max_ver) int64 — EffectiveStartDate as epoch days,
+        sorted ascending per entity, padded with INT64_MAX.
+      - keys: shape (N_pool, max_ver) int32 — CustomerKey per version slot,
+        padded with IsCurrent=1 key.
+      - key_to_pool_idx: dense int32 array mapping IsCurrent CustomerKey → pool index.
+
+    At lookup time: for a sale with epoch-day D on customer pool index P,
+    ``ver = searchsorted(starts[P], D, side='right') - 1`` gives the correct
+    version slot.
+    """
+    try:
+        all_df = pd.read_parquet(
+            str(customers_path),
+            columns=["CustomerID", "CustomerKey",
+                     "EffectiveStartDate", "EffectiveEndDate"],
+        )
+    except (KeyError, ValueError):
+        return None
+
+    all_df["eff_start_days"] = pd.to_datetime(all_df["EffectiveStartDate"]).values.astype("datetime64[D]").astype(np.int64)
+
+    N_pool = len(pool_customer_keys)
+
+    cid_to_pool = {int(cid): i for i, cid in enumerate(pool_customer_ids)}
+
+    # Build reverse lookup: IsCurrent CustomerKey → pool index
+    max_key = int(pool_customer_keys.max()) + 1
+    key_to_pool_idx = np.full(max_key, -1, dtype=np.int32)
+    for i, k in enumerate(pool_customer_keys):
+        key_to_pool_idx[int(k)] = i
+
+    # Filter to active pool and map CustomerID → pool index
+    active_cids = set(pool_customer_ids.tolist())
+    active_df = all_df[all_df["CustomerID"].isin(active_cids)].copy()
+    active_df["pool_idx"] = active_df["CustomerID"].map(cid_to_pool).astype(np.int32)
+    active_df.sort_values(["pool_idx", "eff_start_days"], inplace=True)
+
+    # Determine max versions across all pool entries
+    max_ver = int(active_df.groupby("pool_idx").size().max()) if len(active_df) > 0 else 1
+
+    # Initialize: all slots default to IsCurrent=1 key, starts padded with MAX
+    starts = np.full((N_pool, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
+    keys = np.tile(pool_customer_keys.astype(np.int32)[:, np.newaxis], (1, max_ver))  # (N_pool, max_ver)
+
+    # Fill from actual versions (sorted by start date)
+    for pi, grp in active_df.groupby("pool_idx"):
+        rows = grp.sort_values("eff_start_days")
+        n = min(len(rows), max_ver)
+        s_vals = rows["eff_start_days"].to_numpy(copy=True)[:n]
+        # Clamp first version start to 0 (covers all time before second version)
+        s_vals[0] = 0
+        starts[pi, :n] = s_vals
+        keys[pi, :n] = rows["CustomerKey"].to_numpy(dtype=np.int32)[:n]
+
+    return starts, keys, key_to_pool_idx
+
+
 def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional[str]) -> Tuple[str, str]:
     """
     Resolve the *Sales* fact date window (raw, unbuffered).
@@ -538,6 +667,26 @@ def generate_sales_fact(
     if cust_df.empty:
         raise RuntimeError("customers.parquet is empty; cannot generate sales")
 
+    # --- SCD2 customer deduplication ---
+    # Also try loading CustomerID + IsCurrent for SCD2 detection
+    _cust_scd2_detected = False
+    _cust_pool_ids = None   # CustomerID array (parallel to pool) — set if SCD2 active
+    try:
+        _cust_scd2_cols = pd.read_parquet(str(customers_path), columns=["CustomerID", "IsCurrent"])
+        if "CustomerID" in _cust_scd2_cols.columns and "IsCurrent" in _cust_scd2_cols.columns:
+            if (_cust_scd2_cols["IsCurrent"] == 0).any():
+                _cust_scd2_detected = True
+                # Merge SCD2 cols into cust_df for dedup
+                cust_df["CustomerID"] = _cust_scd2_cols["CustomerID"].to_numpy()
+                cust_df["IsCurrent"] = _cust_scd2_cols["IsCurrent"].to_numpy()
+                # Keep only IsCurrent=1 rows for the sampling pool
+                cust_df = cust_df[cust_df["IsCurrent"] == 1].reset_index(drop=True)
+                _cust_pool_ids = _as_np(cust_df["CustomerID"], np.int32)
+                info(f"Customer SCD2: dedup {len(_cust_scd2_cols):,} → {len(cust_df):,} rows (IsCurrent=1 pool)")
+        del _cust_scd2_cols
+    except (KeyError, ValueError, OSError):
+        pass
+
     customer_keys = _as_np(cust_df["CustomerKey"], np.int32)
 
     # --- Derive month indices from dates ---
@@ -656,22 +805,29 @@ def generate_sales_fact(
 
     else:
         # Full product path — single load with all needed columns
-        _prod_cols = ["ProductKey", "UnitPrice", "UnitCost"]
+        _prod_cols = ["ProductKey", "ListPrice", "UnitCost"]
         if _has_brand_col:
             _prod_cols.append("Brand")
         if _need_subcat:
             _prod_cols.append("SubcategoryKey")
+        # SCD2: load IsCurrent to filter to current versions
+        if "IsCurrent" in _prod_schema:
+            _prod_cols.append("IsCurrent")
 
         prod_df = load_parquet_df(products_path, _prod_cols)
+        # SCD2: only use current version rows for the product pool
+        if "IsCurrent" in prod_df.columns:
+            prod_df = prod_df[prod_df["IsCurrent"] == 1].copy()
+            prod_df = prod_df.drop(columns=["IsCurrent"])
         prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
-        prod_df["UnitPrice"] = pd.to_numeric(prod_df["UnitPrice"], errors="coerce")
+        prod_df["ListPrice"] = pd.to_numeric(prod_df["ListPrice"], errors="coerce")
         prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
-        prod_df = prod_df.dropna(subset=["ProductKey", "UnitPrice", "UnitCost"])
+        prod_df = prod_df.dropna(subset=["ProductKey", "ListPrice", "UnitCost"])
         prod_df["ProductKey"] = prod_df["ProductKey"].astype("int32", copy=False)
 
         product_np = np.column_stack([
             prod_df["ProductKey"].to_numpy(dtype=np.int32, copy=False),
-            prod_df["UnitPrice"].to_numpy(dtype=np.float64, copy=False),
+            prod_df["ListPrice"].to_numpy(dtype=np.float64, copy=False),
             prod_df["UnitCost"].to_numpy(dtype=np.float64, copy=False),
         ])
 
@@ -711,6 +867,69 @@ def generate_sales_fact(
             info(f"Could not load product profile ({type(exc).__name__}: {exc}); using uniform product sampling.")
             product_popularity = None
             product_seasonality = None
+
+    # Weighted date pool (deterministic) — needed by SCD2 grid builders below
+    date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
+
+    # --- SCD2 version lookup tables (per-entity, per-row resolution) ---
+    _product_scd2_active = False
+    _product_scd2_starts = None   # (N_pool, max_ver) int64
+    _product_scd2_data = None     # (N_pool, max_ver, 3) float64
+    _customer_scd2_active = False
+    _customer_scd2_starts = None  # (N_pool, max_ver) int64
+    _customer_scd2_keys = None    # (N_pool, max_ver) int32
+    _cust_key_to_pool_idx = None
+
+    # Detect product SCD2 and build version tables
+    _prod_has_scd2 = (
+        "ProductID" in _prod_schema
+        and "IsCurrent" in _prod_schema
+        and "EffectiveStartDate" in _prod_schema
+    )
+    if _prod_has_scd2:
+        try:
+            # Check if there are actually historical versions
+            _ic_check = pd.read_parquet(str(products_path), columns=["IsCurrent"])
+            _has_history = (_ic_check["IsCurrent"] == 0).any()
+            del _ic_check
+        except (KeyError, ValueError, OSError):
+            _has_history = False
+
+        if _has_history:
+            # Get ProductID for each product in the sampling pool
+            try:
+                _pid_df = pd.read_parquet(str(products_path), columns=["ProductKey", "ProductID", "IsCurrent"])
+                _pid_current = _pid_df[_pid_df["IsCurrent"] == 1].drop_duplicates("ProductKey", keep="first")
+                _pid_map = pd.Series(
+                    _pid_current["ProductID"].to_numpy(dtype=np.int32),
+                    index=_pid_current["ProductKey"].to_numpy(dtype=np.int32),
+                )
+                _pool_keys = np.asarray(product_np[:, 0], dtype=np.int32)
+                _pool_product_ids = _pid_map.reindex(_pool_keys).to_numpy(dtype=np.int32)
+                del _pid_df, _pid_current, _pid_map
+
+                _prod_result = _build_scd2_product_versions(
+                    products_path, _pool_product_ids, product_np,
+                )
+                if _prod_result is not None:
+                    _product_scd2_starts, _product_scd2_data = _prod_result
+                    _product_scd2_active = True
+                    info(f"Product SCD2: {_product_scd2_starts.shape[1]} max versions × "
+                         f"{_product_scd2_starts.shape[0]:,} products")
+            except Exception as exc:
+                info(f"Product SCD2 build failed ({type(exc).__name__}: {exc}); "
+                     "using current-version prices for all months.")
+
+    # Build customer SCD2 version tables (if dedup detected earlier)
+    if _cust_scd2_detected and _cust_pool_ids is not None:
+        _cust_result = _build_scd2_customer_versions(
+            customers_path, customer_keys, _cust_pool_ids,
+        )
+        if _cust_result is not None:
+            _customer_scd2_starts, _customer_scd2_keys, _cust_key_to_pool_idx = _cust_result
+            _customer_scd2_active = True
+            info(f"Customer SCD2: {_customer_scd2_starts.shape[1]} max versions × "
+                 f"{_customer_scd2_starts.shape[0]:,} customers")
 
     # Stores: read ONCE (keys + geography + StoreType + dates for eligibility)
     _store_cols = ["StoreKey", "GeographyKey"]
@@ -862,9 +1081,6 @@ def generate_sales_fact(
         employee_assign_fte = _as_np(emp_assign_df["FTE"], np.float64)
     if "IsPrimary" in emp_assign_df.columns:
         employee_assign_is_primary = _as_np(emp_assign_df["IsPrimary"], bool)
-
-    # Weighted date pool (deterministic)
-    date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
 
     # ------------------------------------------------------------
     # Chunk scheduling
@@ -1066,6 +1282,15 @@ def generate_sales_fact(
         # Product profile attributes for weighted sampling
         product_popularity=product_popularity,
         product_seasonality=product_seasonality,
+
+        # SCD2 version lookup tables
+        product_scd2_active=_product_scd2_active,
+        product_scd2_starts=_product_scd2_starts,
+        product_scd2_data=_product_scd2_data,
+        customer_scd2_active=_customer_scd2_active,
+        customer_scd2_starts=_customer_scd2_starts,
+        customer_scd2_keys=_customer_scd2_keys,
+        cust_key_to_pool_idx=_cust_key_to_pool_idx,
     )
 
     # ------------------------------------------------------------
@@ -1178,6 +1403,11 @@ def generate_sales_fact(
         "employee_assign_fte",
         "employee_assign_is_primary",
         "product_seasonality",
+        "product_scd2_starts",
+        "product_scd2_data",
+        "customer_scd2_starts",
+        "customer_scd2_keys",
+        "cust_key_to_pool_idx",
     ])
 
     # ------------------------------------------------------------

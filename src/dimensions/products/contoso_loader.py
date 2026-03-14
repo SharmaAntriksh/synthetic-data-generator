@@ -29,12 +29,15 @@ def load_contoso_products(output_folder: Path):
         rename_map["ProductSubcategoryKey"] = "SubcategoryKey"
     if "ProductCategoryKey" in df.columns:
         rename_map["ProductCategoryKey"] = "CategoryKey"
+    # Rename UnitPrice → ListPrice (canonical name for product sticker price)
+    if "UnitPrice" in df.columns:
+        rename_map["UnitPrice"] = "ListPrice"
 
     if rename_map:
         df = df.rename(columns=rename_map)
 
     # Validate required columns (SubcategoryKey is required downstream)
-    required = ["ProductKey", "SubcategoryKey", "UnitPrice", "UnitCost"]
+    required = ["ProductKey", "SubcategoryKey", "ListPrice", "UnitCost"]
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise ValueError(f"Contoso products file missing required fields: {missing}")
@@ -47,12 +50,12 @@ def load_contoso_products(output_folder: Path):
     if "CategoryKey" in df.columns:
         df["CategoryKey"] = pd.to_numeric(df["CategoryKey"], errors="coerce").astype("Int64")
 
-    df["UnitPrice"] = pd.to_numeric(df["UnitPrice"], errors="coerce").astype("float64")
+    df["ListPrice"] = pd.to_numeric(df["ListPrice"], errors="coerce").astype("float64")
     df["UnitCost"] = pd.to_numeric(df["UnitCost"], errors="coerce").astype("float64")
 
     # Basic sanity
-    df["UnitPrice"] = df["UnitPrice"].clip(lower=0.0)
+    df["ListPrice"] = df["ListPrice"].clip(lower=0.0)
     df["UnitCost"] = df["UnitCost"].clip(lower=0.0)
-    df["UnitCost"] = df[["UnitCost", "UnitPrice"]].min(axis=1)
+    df["UnitCost"] = df[["UnitCost", "ListPrice"]].min(axis=1)
 
     return df

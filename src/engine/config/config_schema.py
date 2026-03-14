@@ -220,10 +220,8 @@ class CustomersConfig(_Base):
     global_dates: Optional[Any] = None
     # Household grouping: fraction of individual customers in multi-person households
     household_pct: Optional[float] = None
-    # SCD Type 2 settings
-    scd2_enabled: bool = False
-    scd2_change_rate: float = 0.15
-    scd2_max_versions: int = 4
+    # SCD Type 2 settings (nested block)
+    scd2: Optional["CustomersSCD2Config"] = None
 
 
 
@@ -390,6 +388,21 @@ class PathsConfig(_Base):
     final_output: Optional[str] = None
 
 
+# -- SCD Type 2 sub-models --
+
+class CustomersSCD2Config(_Base):
+    enabled: bool = False
+    change_rate: float = 0.15
+    max_versions: int = 4
+
+
+class ProductsSCD2Config(_Base):
+    enabled: bool = False
+    revision_frequency: int = 12        # months between price revisions
+    price_drift: float = 0.05           # ~5% price change per revision
+    max_versions: int = 4               # max version rows per product
+
+
 # -- Products --
 
 class ProductsConfig(_Base):
@@ -402,6 +415,8 @@ class ProductsConfig(_Base):
     brand_normalize_alpha: float = 0.35
     # Expanded pricing dict (populated by _expand_products_pricing)
     pricing: Optional[Dict[str, Any]] = None
+    # SCD Type 2 settings (nested block)
+    scd2: Optional["ProductsSCD2Config"] = None
 
 
 # -- Promotions --

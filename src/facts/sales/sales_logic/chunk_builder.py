@@ -1132,9 +1132,29 @@ def build_chunk_table(
                 product_weight=_product_weight,
             )
 
-        product_keys = product_np[prod_idx, 0].astype(np.int32, copy=False)
-        unit_price   = product_np[prod_idx, 1].astype(np.float64, copy=False)
-        unit_cost    = product_np[prod_idx, 2].astype(np.float64, copy=False)
+        customer_keys_out = np.asarray(customer_keys_out, dtype=np.int32)
+        order_dates = np.asarray(order_dates, dtype="datetime64[D]")
+
+        # Convert order dates to epoch days for SCD2 per-row version lookups
+        _order_epoch_days = order_dates.astype(np.int64)  # datetime64[D] → epoch days
+
+        # SCD2: resolve per-row product version using actual OrderDate
+        _pscd2_starts = getattr(State, "product_scd2_starts", None)
+        _pscd2_data = getattr(State, "product_scd2_data", None)
+        if getattr(State, "product_scd2_active", False) and _pscd2_starts is not None and _pscd2_data is not None:
+            # For each sale: find the last version where start <= order_day
+            _p_starts = _pscd2_starts[prod_idx]         # (n_lines, max_ver)
+            _ver_idx = np.sum(_p_starts <= _order_epoch_days[:, np.newaxis], axis=1) - 1
+            _ver_idx = np.clip(_ver_idx, 0, _p_starts.shape[1] - 1)
+            _p_data = _pscd2_data[prod_idx]             # (n_lines, max_ver, 3)
+            _row_range = np.arange(len(prod_idx))
+            product_keys = _p_data[_row_range, _ver_idx, 0].astype(np.int32)
+            unit_price   = _p_data[_row_range, _ver_idx, 1].astype(np.float64)
+            unit_cost    = _p_data[_row_range, _ver_idx, 2].astype(np.float64)
+        else:
+            product_keys = product_np[prod_idx, 0].astype(np.int32, copy=False)
+            unit_price   = product_np[prod_idx, 1].astype(np.float64, copy=False)
+            unit_cost    = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
         geo_arr = st2g_arr[store_key_arr]
         if np.any(geo_arr < 0):
@@ -1142,10 +1162,6 @@ def build_chunk_table(
         currency_arr = g2c_arr[geo_arr]
         if np.any(currency_arr < 0):
             raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
-
-
-        customer_keys_out = np.asarray(customer_keys_out, dtype=np.int32)
-        order_dates = np.asarray(order_dates, dtype="datetime64[D]")
 
         # --------------------------------------------------------
         # DATE LOGIC
@@ -1304,6 +1320,29 @@ def build_chunk_table(
             cols["SalesOrderNumber"] = order_ids_int
             cols["SalesOrderLineNumber"] = line_num
 
+        # SCD2: remap IsCurrent CustomerKey → version-specific CustomerKey using actual OrderDate
+        _cscd2_starts = getattr(State, "customer_scd2_starts", None)
+        _cscd2_keys = getattr(State, "customer_scd2_keys", None)
+        _ckey_to_pidx = getattr(State, "cust_key_to_pool_idx", None)
+        if (getattr(State, "customer_scd2_active", False)
+                and _cscd2_starts is not None and _cscd2_keys is not None
+                and _ckey_to_pidx is not None):
+            _ckeys_i32 = np.asarray(customer_keys_out, dtype=np.int32)
+            _safe_keys = np.clip(_ckeys_i32, 0, len(_ckey_to_pidx) - 1)
+            _pool_idx = _ckey_to_pidx[_safe_keys]
+            _valid = _pool_idx >= 0
+            if _valid.any():
+                _v_pool = _pool_idx[_valid]
+                _v_days = _order_epoch_days[_valid]
+                _c_starts = _cscd2_starts[_v_pool]           # (N_valid, max_ver)
+                _ver_idx = np.sum(_c_starts <= _v_days[:, np.newaxis], axis=1) - 1
+                _ver_idx = np.clip(_ver_idx, 0, _c_starts.shape[1] - 1)
+                _c_keys = _cscd2_keys[_v_pool]               # (N_valid, max_ver)
+                _row_range = np.arange(len(_v_pool))
+                _remapped = np.array(customer_keys_out, dtype=np.int32, copy=True)
+                _remapped[_valid] = _c_keys[_row_range, _ver_idx]
+                customer_keys_out = _remapped
+
         cols["CustomerKey"] = customer_keys_out
         cols["ProductKey"] = product_keys
         cols["StoreKey"] = store_key_arr
@@ -1318,7 +1357,7 @@ def build_chunk_table(
         cols["Quantity"] = qty
         cols["NetPrice"] = price["final_net_price"]
         cols["UnitCost"] = price["final_unit_cost"]
-        cols["UnitPrice"] = price["final_unit_price"]
+        cols["ListPrice"] = price["final_unit_price"]
         cols["DiscountAmount"] = price["discount_amt"]
 
         cols["DeliveryStatus"] = dates["delivery_status"]

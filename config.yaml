@@ -8,7 +8,7 @@
 scale:
   sales_rows: 1032850
   products: 2517
-  customers: 18348
+  customers: 48348
   stores: 20
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
@@ -69,10 +69,17 @@ returns:
 products:
   active_ratio: 0.98
   value_scale: 1                      # multiplier on all base prices
-  price_range: [10, 3000]             # [min, max] UnitPrice
+  price_range: [10, 3000]             # [min, max] ListPrice
   margin_range: [0.20, 0.35]          # [min, max] cost margin pct
+  
   brand_normalize: false               # pull brand prices toward global median
   brand_normalize_alpha: 0.35         # brands keep 65% of price identity
+
+  scd2:
+    enabled: true                     # enable SCD Type 2 price history tracking
+    revision_frequency: 12             # months between price revisions
+    price_drift: 0.05                  # ~5% price change per revision
+    max_versions: 4                    # max version rows per product
 
 # ------------------------------------------------------------------
 # CUSTOMERS
@@ -87,9 +94,10 @@ customers:
   profile: steady                   # gradual | steady | aggressive | instant
   first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
 
-  scd2_enabled: true               # enable SCD Type 2 history tracking
-  scd2_change_rate: 0.15            # fraction of customers with life event changes
-  scd2_max_versions: 4              # max version rows per customer
+  scd2:
+    enabled: true                    # enable SCD Type 2 history tracking
+    change_rate: 0.15                # fraction of customers with life event changes
+    max_versions: 4                  # max version rows per customer
 
 # ------------------------------------------------------------------
 # WISHLISTS
