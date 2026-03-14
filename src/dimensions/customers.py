@@ -487,40 +487,52 @@ def _generate_phone_numbers(
     region: np.ndarray,
     N: int,
 ) -> np.ndarray:
-    """Regional-format synthetic phone numbers."""
+    """Regional-format synthetic phone numbers (vectorized string ops)."""
     phones = np.empty(N, dtype=object)
     raw = rng.integers(1_000_000_000, 9_999_999_999, size=N, dtype="int64")
 
-    def _batch(mask, fmt_fn):
-        if mask.any():
-            phones[mask] = np.array(
-                [fmt_fn(v) for v in raw[mask]], dtype=object
-            )
+    def _fmt_us(v: np.ndarray) -> np.ndarray:
+        area = ((v // 10_000_000) % 800 + 200).astype(str).astype(object)
+        mid = np.char.zfill(((v // 10_000) % 1000).astype(str), 3).astype(object)
+        last = np.char.zfill((v % 10_000).astype(str), 4).astype(object)
+        return "+1 (" + area + ") " + mid + "-" + last
 
-    _batch(
-        region == "US",
-        lambda v: f"+1 ({(v // 10_000_000) % 800 + 200}) "
-                  f"{(v // 10_000) % 1000:03d}-{v % 10_000:04d}",
-    )
-    _batch(
+    def _fmt_region(mask: np.ndarray, fmt_fn) -> None:
+        if mask.any():
+            phones[mask] = fmt_fn(raw[mask])
+
+    _fmt_region(region == "US", _fmt_us)
+    _fmt_region(
         region == "IN",
-        lambda v: f"+91 {(v // 100_000) % 100_000:05d} {v % 100_000:05d}",
+        lambda v: (
+            "+91 "
+            + np.char.zfill(((v // 100_000) % 100_000).astype(str), 5).astype(object)
+            + " "
+            + np.char.zfill((v % 100_000).astype(str), 5).astype(object)
+        ),
     )
-    _batch(
+    _fmt_region(
         region == "EU",
-        lambda v: f"+44 {(v // 1_000_000) % 10_000:04d} {v % 1_000_000:06d}",
+        lambda v: (
+            "+44 "
+            + np.char.zfill(((v // 1_000_000) % 10_000).astype(str), 4).astype(object)
+            + " "
+            + np.char.zfill((v % 1_000_000).astype(str), 6).astype(object)
+        ),
     )
-    _batch(
+    _fmt_region(
         region == "AS",
-        lambda v: f"+81 {(v // 10_000_000) % 100:02d}-"
-                  f"{(v // 10_000) % 1000:03d}-{v % 10_000:04d}",
+        lambda v: (
+            "+81 "
+            + np.char.zfill(((v // 10_000_000) % 100).astype(str), 2).astype(object)
+            + "-"
+            + np.char.zfill(((v // 10_000) % 1000).astype(str), 3).astype(object)
+            + "-"
+            + np.char.zfill((v % 10_000).astype(str), 4).astype(object)
+        ),
     )
     remaining = pd.isna(phones) | (phones == None)  # noqa: E711
-    _batch(
-        remaining,
-        lambda v: f"+1 ({(v // 10_000_000) % 800 + 200}) "
-                  f"{(v // 10_000) % 1000:03d}-{v % 10_000:04d}",
-    )
+    _fmt_region(remaining, _fmt_us)
     return phones
 
 
@@ -635,7 +647,7 @@ def _generate_postal_codes(
     region: np.ndarray,
     N: int,
 ) -> np.ndarray:
-    """Region-appropriate synthetic postal codes."""
+    """Region-appropriate synthetic postal codes (vectorized string ops)."""
     codes = np.empty(N, dtype=object)
     for rc, fmt in _POSTCODE_FMT.items():
         mask = region == rc
@@ -643,15 +655,13 @@ def _generate_postal_codes(
         if not n:
             continue
         if fmt == "5digit":
-            codes[mask] = np.array(
-                [f"{v:05d}" for v in rng.integers(10001, 99999, size=n)],
-                dtype=object,
-            )
+            codes[mask] = np.char.zfill(
+                rng.integers(10001, 99999, size=n).astype(str), 5
+            ).astype(object)
         elif fmt == "6digit":
-            codes[mask] = np.array(
-                [f"{v:06d}" for v in rng.integers(100001, 999999, size=n)],
-                dtype=object,
-            )
+            codes[mask] = np.char.zfill(
+                rng.integers(100001, 999999, size=n).astype(str), 6
+            ).astype(object)
         elif fmt == "uk":
             prefix = rng.choice(
                 np.array(["SW", "EC", "W", "SE", "N", "NW", "E", "WC"]),
@@ -666,17 +676,16 @@ def _generate_postal_codes(
                 + suffix.astype(object) + letter + letter2
             )
         elif fmt == "jp":
-            codes[mask] = np.array(
-                [f"{v // 10000:03d}-{v % 10000:04d}" for v in rng.integers(1000000, 9999999, size=n)],
-                dtype=object,
-            )
+            v = rng.integers(1000000, 9999999, size=n)
+            hi = np.char.zfill((v // 10000).astype(str), 3).astype(object)
+            lo = np.char.zfill((v % 10000).astype(str), 4).astype(object)
+            codes[mask] = hi + "-" + lo
     remaining = pd.isna(codes) | (codes == None)  # noqa: E711
     n_rem = int(remaining.sum())
     if n_rem:
-        codes[remaining] = np.array(
-            [f"{v:05d}" for v in rng.integers(10001, 99999, size=n_rem)],
-            dtype=object,
-        )
+        codes[remaining] = np.char.zfill(
+            rng.integers(10001, 99999, size=n_rem).astype(str), 5
+        ).astype(object)
     return codes
 
 
@@ -1365,8 +1374,7 @@ def _generate_scd2_versions(
 
     new_rows = []
 
-    for _, row in changed_df.iterrows():
-        row_dict = row.to_dict()
+    for row_dict in changed_df.to_dict("records"):
 
         # Determine number of life events (1 to max_versions-1)
         n_events = int(rng.integers(1, max_versions))

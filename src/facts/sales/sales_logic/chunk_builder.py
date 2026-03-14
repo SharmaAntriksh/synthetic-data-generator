@@ -1101,11 +1101,9 @@ def build_chunk_table(
                     # must share the same replacement store.
                     if order_idx is not None:
                         _bad_order_ids = order_idx[_date_rows]
-                        _unique_orders = np.unique(_bad_order_ids)
-                        for _oid in _unique_orders:
-                            _order_line_mask = order_idx[_date_rows] == _oid
-                            _replacement = _day_stores[rng.integers(0, len(_day_stores))]
-                            store_key_arr[_date_rows[_order_line_mask]] = _replacement
+                        _uniq_oids, _oid_inv = np.unique(_bad_order_ids, return_inverse=True)
+                        _repls = _day_stores[rng.integers(0, len(_day_stores), size=len(_uniq_oids))]
+                        store_key_arr[_date_rows] = _repls[_oid_inv]
                     else:
                         store_key_arr[_date_rows] = _day_stores[
                             rng.integers(0, len(_day_stores), size=len(_date_rows))
