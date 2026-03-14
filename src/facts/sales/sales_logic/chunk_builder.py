@@ -168,14 +168,21 @@ def _sample_product_row_indices(
     # Within-brand weighted sampling when product_weight is available
     if product_weight is not None:
         out = np.empty(n_int, dtype="int32")
+        # Group orders by brand via argsort (avoids O(B×n) per-brand mask scans)
+        _brand_order = np.argsort(brand_ids, kind="stable")
+        _brand_counts = np.bincount(brand_ids, minlength=B)
+        _brand_starts = np.zeros(B + 1, dtype=np.int64)
+        np.cumsum(_brand_counts, out=_brand_starts[1:])
+
         for b in range(B):
-            mask_b = brand_ids == b
-            cnt = int(mask_b.sum())
+            s, e = int(_brand_starts[b]), int(_brand_starts[b + 1])
+            cnt = e - s
             if cnt == 0:
                 continue
+            orig_idx = _brand_order[s:e]
             start, end = int(offsets[b]), int(offsets[b + 1])
             if start == end:
-                out[mask_b] = rng.integers(0, n_products, size=cnt).astype("int32", copy=False)
+                out[orig_idx] = rng.integers(0, n_products, size=cnt).astype("int32", copy=False)
                 continue
             rows = flat_idx[start:end]
             w = product_weight[rows]
@@ -184,7 +191,7 @@ def _sample_product_row_indices(
                 picks = rng.choice(len(rows), size=cnt, p=w / ws)
             else:
                 picks = rng.integers(0, len(rows), size=cnt)
-            out[mask_b] = rows[picks]
+            out[orig_idx] = rows[picks]
         return out
 
     rand_within = rng.integers(0, np.iinfo(np.int64).max, size=n_int, dtype="int64")
@@ -228,12 +235,17 @@ def _sample_products_per_store(
     max_sk = len(store_to_product_rows)
     out = np.empty(n, dtype=np.int32)
 
-    # Group lines by store for vectorized sampling per store
+    # Group lines by store via argsort (avoids O(stores×n) per-store mask scans)
     unique_stores, inverse = np.unique(store_key_arr, return_inverse=True)
+    _store_order = np.argsort(inverse, kind="stable")
+    _store_counts = np.bincount(inverse, minlength=len(unique_stores))
+    _store_starts = np.zeros(len(unique_stores) + 1, dtype=np.int64)
+    np.cumsum(_store_counts, out=_store_starts[1:])
 
     for i, sk in enumerate(unique_stores):
-        mask = inverse == i
-        count = int(mask.sum())
+        s, e = int(_store_starts[i]), int(_store_starts[i + 1])
+        count = e - s
+        orig_idx = _store_order[s:e]
         sk_int = int(sk)
 
         if sk_int < max_sk and store_to_product_rows[sk_int] is not None:
@@ -263,20 +275,20 @@ def _sample_products_per_store(
                     u = rng.random(count)
                     picks = np.searchsorted(cdf, u, side="right")
                     np.minimum(picks, len(pool) - 1, out=picks)
-                    out[mask] = pool[picks]
+                    out[orig_idx] = pool[picks]
                 else:
-                    out[mask] = pool[rng.integers(0, len(pool), size=count)]
+                    out[orig_idx] = pool[rng.integers(0, len(pool), size=count)]
             else:
-                out[mask] = pool[rng.integers(0, len(pool), size=count)]
+                out[orig_idx] = pool[rng.integers(0, len(pool), size=count)]
         else:
             if product_weight is not None:
                 ws = float(product_weight.sum())
                 if ws > 1e-12:
-                    out[mask] = rng.choice(n_products, size=count, p=product_weight / ws)
+                    out[orig_idx] = rng.choice(n_products, size=count, p=product_weight / ws)
                 else:
-                    out[mask] = rng.integers(0, n_products, size=count)
+                    out[orig_idx] = rng.integers(0, n_products, size=count)
             else:
-                out[mask] = rng.integers(0, n_products, size=count)
+                out[orig_idx] = rng.integers(0, n_products, size=count)
 
     return out
 

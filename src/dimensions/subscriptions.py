@@ -351,6 +351,10 @@ def _write_bridge_streaming(
     plan_types = dim_plans["PlanType"].astype(str).to_numpy()
     plan_monthly = dim_plans["MonthlyPrice"].to_numpy(dtype=np.float64, na_value=0.0)
     plan_cycles = dim_plans["BillingCycle"].astype(str).to_numpy()
+    # Pre-compute cycle months as array for direct indexing (avoids dict lookup per sub)
+    plan_cycle_months = np.array(
+        [_CYCLE_MONTHS.get(c, 1) for c in plan_cycles], dtype=np.int32
+    )
     n_plans = len(plan_keys)
     w = _compute_plan_weights(plan_types)
 
@@ -368,6 +372,17 @@ def _write_bridge_streaming(
     # Determine which customers participate
     n_cust = len(cust_keys)
     participate_mask = rng.random(n_cust) < c.participation_rate
+
+    # Pre-filter: eligible customers (participating + sufficient span)
+    _part_idx = np.where(participate_mask)[0]
+    _spans = np.maximum(0, (cust_end_ns[_part_idx] - cust_start_ns[_part_idx]) // _NS_PER_DAY)
+    _ok = _spans >= 30
+    eligible_idx = _part_idx[_ok]
+    eligible_ck = cust_keys[eligible_idx]
+    eligible_lo = cust_start_ns[eligible_idx]
+    eligible_hi = cust_end_ns[eligible_idx]
+    eligible_span = _spans[_ok]
+    n_eligible = len(eligible_idx)
 
     # Pre-allocate buffers
     buf_cap = write_chunk_rows + max_subs + 10
@@ -392,16 +407,9 @@ def _write_bridge_streaming(
         if n == 0:
             return
 
-        # Build CancelledDate array with nulls
-        cancel_ns_list = []
-        for j in range(n):
-            v = buf_cancel[j]
-            cancel_ns_list.append(v if v is not None else None)
-
-        trial_ns_list = []
-        for j in range(n):
-            v = buf_trial[j]
-            trial_ns_list.append(v if v is not None else None)
+        # Convert nullable object buffers to lists for PyArrow
+        cancel_ns_list = buf_cancel[:n].tolist()
+        trial_ns_list = buf_trial[:n].tolist()
 
         arrays: List[pa.Array] = [
             pa.array(buf_sk[:n], type=pa.int64()),
@@ -427,17 +435,11 @@ def _write_bridge_streaming(
         out_bridge.unlink()
 
     with pq.ParquetWriter(out_bridge, schema=schema, compression="snappy") as writer:
-        for i in range(n_cust):
-            if not participate_mask[i]:
-                continue
-
-            ck = int(cust_keys[i])
-            lo_ns = int(cust_start_ns[i])
-            hi_ns = int(cust_end_ns[i])
-            span_days = max(0, (hi_ns - lo_ns) // _NS_PER_DAY)
-
-            if span_days < 30:
-                continue
+        for i in range(n_eligible):
+            ck = int(eligible_ck[i])
+            lo_ns = int(eligible_lo[i])
+            hi_ns = int(eligible_hi[i])
+            span_days = int(eligible_span[i])
 
             # How many subscriptions for this customer
             n_subs = max(1, int(rng.poisson(c.avg_subscriptions)))
@@ -452,13 +454,12 @@ def _write_bridge_streaming(
             for s in range(n_subs):
                 pidx = chosen_idx[s]
                 pk = int(plan_keys[pidx])
-                cycle = plan_cycles[pidx]
 
                 # Subscribed date
                 sub_ns = lo_ns + int(sub_offsets[s]) * _NS_PER_DAY
 
                 # Duration based on billing cycle
-                cycle_months = _CYCLE_MONTHS.get(cycle, 1)
+                cycle_months = int(plan_cycle_months[pidx])
                 # Number of renewal periods the customer stays
                 n_periods = max(1, int(rng.geometric(0.3)))  # geometric: most stay 1-3 periods
                 base_duration_days = cycle_months * 30 * n_periods

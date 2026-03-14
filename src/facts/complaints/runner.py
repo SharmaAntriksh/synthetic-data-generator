@@ -218,10 +218,12 @@ def _generate_complaints(
 
     total_rows = int(complaints_per.sum())
 
-    # Build per-customer order lookup
-    cust_orders: Dict[int, pd.DataFrame] = {}
-    for ck in complainer_keys:
-        cust_orders[int(ck)] = order_data[order_data["CustomerKey"] == ck]
+    # Build per-customer order lookup (single groupby instead of per-key filter)
+    _complainer_set = set(int(k) for k in complainer_keys)
+    _complainer_mask = order_data["CustomerKey"].isin(_complainer_set)
+    cust_orders: Dict[int, pd.DataFrame] = {
+        int(ck): grp for ck, grp in order_data[_complainer_mask].groupby("CustomerKey")
+    }
 
     # Pre-allocate output arrays
     out_ckey = np.empty(total_rows, dtype=np.int64)

@@ -220,19 +220,24 @@ def _pick_products_for_customer(
         chosen = candidates[:n_items].copy()
         if affinity > 0 and n_items > 1:
             rolls = rng.random(n_items - 1)
+            chosen_excl: set = set()
+            chosen_excl.add(int(chosen[0]))
             for j in range(1, n_items):
                 if rolls[j - 1] < affinity:
                     anchor = chosen[rng.integers(0, j)]
                     sc = prod_subcat[anchor]
                     pool = subcat_to_indices[sc]
                     sc_w = subcat_weights[sc]
-                    chosen_set = set(chosen[:j].tolist())
-                    mask = ~np.isin(pool, list(chosen_set))
+                    # Direct mask for tiny exclusion set (faster than np.isin)
+                    mask = np.ones(len(pool), dtype=bool)
+                    for exc in chosen_excl:
+                        mask &= (pool != exc)
                     available = pool[mask]
                     if len(available) > 0:
                         w = sc_w[mask]
                         w_sum = w.sum()
                         chosen[j] = int(rng.choice(available, p=w / w_sum if w_sum > 0 else None))
+                chosen_excl.add(int(chosen[j]))
         return chosen
 
     # Slow path: has purchases — need per-slot conversion check
@@ -242,8 +247,8 @@ def _pick_products_for_customer(
     for j in range(n_items):
         # Conversion slot: pick from actual purchases
         if has_purchases and rng.random() < conversion_rate:
-            available = [p for p in purchased_indices if p not in chosen_set]
-            if available:
+            available = purchased_indices[~np.isin(purchased_indices, np.fromiter(chosen_set, dtype=np.int64, count=len(chosen_set)))] if chosen_set else purchased_indices
+            if len(available) > 0:
                 pick = int(rng.choice(available))
                 chosen[j] = pick
                 chosen_set.add(pick)
@@ -255,7 +260,10 @@ def _pick_products_for_customer(
             sc = prod_subcat[anchor]
             pool = subcat_to_indices[sc]
             sc_w = subcat_weights[sc]
-            mask = ~np.isin(pool, list(chosen_set))
+            # Direct mask for tiny exclusion set (faster than np.isin)
+            mask = np.ones(len(pool), dtype=bool)
+            for exc in chosen_set:
+                mask &= (pool != exc)
             available = pool[mask]
             if len(available) > 0:
                 w = sc_w[mask]
@@ -273,7 +281,7 @@ def _pick_products_for_customer(
                 chosen_set.add(pick)
                 break
         else:
-            remaining = np.setdiff1d(np.arange(n_products), np.array(list(chosen_set)))
+            remaining = np.setdiff1d(np.arange(n_products), np.fromiter(chosen_set, dtype=np.int64, count=len(chosen_set)))
             w = product_weights[remaining]
             w_sum = w.sum()
             pick = int(rng.choice(remaining, p=w / w_sum if w_sum > 0 else None))
