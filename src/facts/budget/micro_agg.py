@@ -31,12 +31,21 @@ def _extract_dimension_columns(
     channel_uniq, and the per-dimension cardinalities / strides needed for
     the flat composite key.
     """
-    store_keys = table.column("StoreKey").to_numpy(zero_copy_only=False)
-    product_keys = table.column("ProductKey").to_numpy(zero_copy_only=False)
+    store_keys = table.column("StoreKey").to_numpy(zero_copy_only=False).astype(np.int64)
+    product_keys = table.column("ProductKey").to_numpy(zero_copy_only=False).astype(np.int64)
     channel_raw = table.column("SalesChannelKey").to_numpy(zero_copy_only=False)
 
-    country_id = store_to_country[store_keys]
-    category_id = product_to_cat[product_keys]
+    # Bounds-safe lookup: keys beyond the lookup array map to 0 (first bucket)
+    # rather than raising IndexError or leaving -1 (which breaks np.bincount).
+    _sk_safe = np.clip(store_keys, 0, len(store_to_country) - 1)
+    _pk_safe = np.clip(product_keys, 0, len(product_to_cat) - 1)
+    country_id = store_to_country[_sk_safe]
+    category_id = product_to_cat[_pk_safe]
+
+    # Replace any -1 sentinel values (unmapped keys) with 0 so flat_key
+    # stays non-negative — np.bincount requires non-negative indices.
+    country_id = np.where(country_id < 0, 0, country_id)
+    category_id = np.where(category_id < 0, 0, category_id)
 
     order_dates = table.column("OrderDate").to_numpy(zero_copy_only=False)
     m_int = order_dates.astype("datetime64[M]").astype(np.int64)
@@ -252,13 +261,18 @@ def micro_aggregate_returns(
         ret_amt_raw = ret_amt_raw[matched]
 
     # ---- Extract dimension arrays from the SALES table at matched rows ----
-    store_keys = sales_table.column("StoreKey").to_numpy(zero_copy_only=False)[detail_row_idx]
-    product_keys = sales_table.column("ProductKey").to_numpy(zero_copy_only=False)[detail_row_idx]
+    store_keys = sales_table.column("StoreKey").to_numpy(zero_copy_only=False)[detail_row_idx].astype(np.int64)
+    product_keys = sales_table.column("ProductKey").to_numpy(zero_copy_only=False)[detail_row_idx].astype(np.int64)
     channel_raw = sales_table.column("SalesChannelKey").to_numpy(zero_copy_only=False)[detail_row_idx]
     order_dates = sales_table.column("OrderDate").to_numpy(zero_copy_only=False)[detail_row_idx]
 
-    country_id = store_to_country[store_keys]
-    category_id = product_to_cat[product_keys]
+    # Bounds-safe lookup (same guard as micro_aggregate_sales)
+    _sk_safe = np.clip(store_keys, 0, len(store_to_country) - 1)
+    _pk_safe = np.clip(product_keys, 0, len(product_to_cat) - 1)
+    country_id = store_to_country[_sk_safe]
+    category_id = product_to_cat[_pk_safe]
+    country_id = np.where(country_id < 0, 0, country_id)
+    category_id = np.where(category_id < 0, 0, category_id)
 
     m_int = order_dates.astype("datetime64[M]").astype(np.int64)
     year = (m_int // 12 + 1970).astype(np.int32)

@@ -408,9 +408,6 @@ def _load_inflation_cfg():
     annual_rate = float(np.clip(float(infl.get("annual_rate", 0.03)), -0.50, 2.0))
     month_sigma = float(np.clip(float(infl.get("month_volatility_sigma", 0.0)), 0.0, 0.25))
 
-    # NOTE: Default is False, matching models.yaml ("keep DiscountAmount in ladder buckets")
-    scale_discount = bool(infl.get("scale_discount", False))
-
     clip = infl.get("factor_clip", None)
     if not (isinstance(clip, (list, tuple)) and len(clip) == 2):
         # Default range: allow deflation down to 0.50× if annual_rate < 0,
@@ -427,7 +424,7 @@ def _load_inflation_cfg():
 
     vol_seed = int(infl.get("volatility_seed", 123))
 
-    return annual_rate, month_sigma, lo, hi, scale_discount, vol_seed
+    return annual_rate, month_sigma, lo, hi, vol_seed
 
 
 # ===============================================================
@@ -532,7 +529,7 @@ def build_prices(rng, order_dates, qty, price):
     """
     _ = qty
 
-    annual_rate, month_sigma, clip_lo, clip_hi, _scale_discount, vol_seed = (
+    annual_rate, month_sigma, clip_lo, clip_hi, vol_seed = (
         _load_inflation_cfg())
 
     order_dates = np.asarray(order_dates)

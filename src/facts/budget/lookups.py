@@ -26,8 +26,20 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
         budget_channel_keys:      int16[] (distinct SalesChannelKey values)
     """
     # ---- Store -> Geography -> Country ----
-    stores = pd.read_parquet(parquet_dims / "stores.parquet",
-                             columns=["StoreKey", "GeographyKey"])
+    _store_cols = ["StoreKey", "GeographyKey"]
+    _store_schema = set(pd.read_parquet(parquet_dims / "stores.parquet", columns=[]).columns)
+    # Fallback: read schema from first row if columns= trick doesn't work
+    try:
+        import pyarrow.parquet as pq
+        _store_schema = set(pq.read_schema(str(parquet_dims / "stores.parquet")).names)
+    except Exception:
+        pass
+    if "IsCurrent" in _store_schema:
+        _store_cols.append("IsCurrent")
+    stores = pd.read_parquet(parquet_dims / "stores.parquet", columns=_store_cols)
+    if "IsCurrent" in stores.columns:
+        stores = stores[stores["IsCurrent"] == 1].drop(columns=["IsCurrent"])
+
     geo = pd.read_parquet(parquet_dims / "geography.parquet",
                           columns=["GeographyKey", "Country", "ISOCode"])
 
@@ -44,8 +56,17 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
         store_to_country[sk] = country_to_id.get(row["Country"], -1)
 
     # ---- Product -> Subcategory -> Category ----
-    products = pd.read_parquet(parquet_dims / "products.parquet",
-                               columns=["ProductKey", "SubcategoryKey"])
+    _prod_cols = ["ProductKey", "SubcategoryKey"]
+    try:
+        import pyarrow.parquet as pq
+        _prod_schema = set(pq.read_schema(str(parquet_dims / "products.parquet")).names)
+    except Exception:
+        _prod_schema = set()
+    if "IsCurrent" in _prod_schema:
+        _prod_cols.append("IsCurrent")
+    products = pd.read_parquet(parquet_dims / "products.parquet", columns=_prod_cols)
+    if "IsCurrent" in products.columns:
+        products = products[products["IsCurrent"] == 1].drop(columns=["IsCurrent"])
     subcat = pd.read_parquet(parquet_dims / "product_subcategory.parquet",
                              columns=["SubcategoryKey", "CategoryKey"])
     cat = pd.read_parquet(parquet_dims / "product_category.parquet",

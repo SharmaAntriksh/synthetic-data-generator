@@ -316,7 +316,8 @@ def _generate_complaints(
                     out_status[row] = "Escalated"
                 else:
                     out_status[row] = "Open"
-                # ResolutionDate, ResolutionType, ResponseDays stay NULL
+                # Explicitly set nullable fields to None (not uninitialized)
+                out_res_type[row] = None
 
             row += 1
 

@@ -240,9 +240,9 @@ def _sample_products_per_store(
             pool = store_to_product_rows[sk_int]
             if product_weight is not None and pool.size > 1:
                 # --- CDF-cached weighted sampling ---
-                # Pool identity: (size, first, last) is a fast proxy.
-                # Collisions are harmless (same CDF reused — correct if pool content matches).
-                pool_key = id(pool)
+                # Content-based key: (size, first element, last element, month).
+                # This avoids id() reuse after GC while staying O(1).
+                pool_key = (pool.size, int(pool[0]), int(pool[-1]))
                 cache_key = (pool_key, _cal_month)
 
                 if _cdf_cache is not None and cache_key in _cdf_cache:
@@ -1328,8 +1328,10 @@ def build_chunk_table(
                 and _cscd2_starts is not None and _cscd2_keys is not None
                 and _ckey_to_pidx is not None):
             _ckeys_i32 = np.asarray(customer_keys_out, dtype=np.int32)
-            _safe_keys = np.clip(_ckeys_i32, 0, len(_ckey_to_pidx) - 1)
-            _pool_idx = _ckey_to_pidx[_safe_keys]
+            # Bounds check: keys outside the lookup array cannot be remapped
+            _in_bounds = (_ckeys_i32 >= 0) & (_ckeys_i32 < len(_ckey_to_pidx))
+            _pool_idx = np.full(len(_ckeys_i32), -1, dtype=np.int32)
+            _pool_idx[_in_bounds] = _ckey_to_pidx[_ckeys_i32[_in_bounds]]
             _valid = _pool_idx >= 0
             if _valid.any():
                 _v_pool = _pool_idx[_valid]

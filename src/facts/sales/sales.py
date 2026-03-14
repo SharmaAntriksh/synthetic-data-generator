@@ -377,6 +377,10 @@ def build_weighted_date_pool(start: str, end: str, seed: int = 42) -> Tuple[np.n
         weights[:] = 1.0 / n
     else:
         weights /= total
+        # Clamp last element to prevent FP rounding from leaving sum != 1.0,
+        # which causes searchsorted out-of-bounds (CLAUDE.md gotcha #16).
+        # max(0, ...) guards against FP overshoot making it negative.
+        weights[-1] = max(0.0, 1.0 - weights[:-1].sum())
 
     return dates.to_numpy("datetime64[D]"), weights
 
@@ -676,13 +680,17 @@ def generate_sales_fact(
         if "CustomerID" in _cust_scd2_cols.columns and "IsCurrent" in _cust_scd2_cols.columns:
             if (_cust_scd2_cols["IsCurrent"] == 0).any():
                 _cust_scd2_detected = True
-                # Merge SCD2 cols into cust_df for dedup
-                cust_df["CustomerID"] = _cust_scd2_cols["CustomerID"].to_numpy()
-                cust_df["IsCurrent"] = _cust_scd2_cols["IsCurrent"].to_numpy()
+                _n_before = len(cust_df)
+                # Align by shared index (both DataFrames loaded from same parquet in same order)
+                cust_df = cust_df.assign(
+                    CustomerID=_cust_scd2_cols["CustomerID"].values,
+                    IsCurrent=_cust_scd2_cols["IsCurrent"].values,
+                )
                 # Keep only IsCurrent=1 rows for the sampling pool
                 cust_df = cust_df[cust_df["IsCurrent"] == 1].reset_index(drop=True)
+                cust_df = cust_df.drop(columns=["IsCurrent"])
                 _cust_pool_ids = _as_np(cust_df["CustomerID"], np.int32)
-                info(f"Customer SCD2: dedup {len(_cust_scd2_cols):,} → {len(cust_df):,} rows (IsCurrent=1 pool)")
+                info(f"Customer SCD2: dedup {_n_before:,} → {len(cust_df):,} rows (IsCurrent=1 pool)")
         del _cust_scd2_cols
     except (KeyError, ValueError, OSError):
         pass
@@ -905,8 +913,13 @@ def generate_sales_fact(
                     index=_pid_current["ProductKey"].to_numpy(dtype=np.int32),
                 )
                 _pool_keys = np.asarray(product_np[:, 0], dtype=np.int32)
-                _pool_product_ids = _pid_map.reindex(_pool_keys).to_numpy(dtype=np.int32)
-                del _pid_df, _pid_current, _pid_map
+                _reindexed = _pid_map.reindex(_pool_keys)
+                _unmapped = _reindexed.isna()
+                if _unmapped.any():
+                    info(f"Product SCD2: {int(_unmapped.sum())} pool keys have no "
+                         f"IsCurrent=1 ProductID mapping; they will use current-version prices.")
+                _pool_product_ids = _reindexed.fillna(-1).to_numpy(dtype=np.int32)
+                del _pid_df, _pid_current, _pid_map, _reindexed
 
                 _prod_result = _build_scd2_product_versions(
                     products_path, _pool_product_ids, product_np,
