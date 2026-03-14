@@ -2,25 +2,17 @@
 SalesOrderLineNumber) triples streamed from sales worker chunks."""
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 import numpy as np
 import pandas as pd
 
+from src.facts.shared.base_accumulator import BaseAccumulator
 
-class ComplaintsAccumulator:
+
+class ComplaintsAccumulator(BaseAccumulator):
     """Collects customer-order-line triples across all sales chunks."""
 
     def __init__(self) -> None:
-        self._parts: List[Dict[str, np.ndarray]] = []
-
-    def add(self, micro: Optional[Dict[str, np.ndarray]]) -> None:
-        if micro is not None and len(micro.get("customer_key", [])) > 0:
-            self._parts.append(micro)
-
-    @property
-    def has_data(self) -> bool:
-        return len(self._parts) > 0
+        super().__init__(validator_key="customer_key")
 
     def finalize(self) -> pd.DataFrame:
         """Return deduplicated (CustomerKey, SalesOrderNumber,
@@ -34,11 +26,10 @@ class ComplaintsAccumulator:
         all_so = np.concatenate([p["sales_order_number"] for p in self._parts])
         all_ln = np.concatenate([p["line_number"] for p in self._parts])
 
-        triples = np.column_stack([all_ck, all_so, all_ln])
-        unique = np.unique(triples, axis=0)
-
-        return pd.DataFrame({
-            "CustomerKey": unique[:, 0],
-            "SalesOrderNumber": unique[:, 1],
-            "SalesOrderLineNumber": unique[:, 2],
+        # Hash-based dedup — O(n) vs O(n log n) for np.unique(axis=0)
+        df = pd.DataFrame({
+            "CustomerKey": all_ck,
+            "SalesOrderNumber": all_so,
+            "SalesOrderLineNumber": all_ln,
         })
+        return df.drop_duplicates(ignore_index=True)

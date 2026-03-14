@@ -10,10 +10,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 from src.utils.logging_utils import stage, info, done, short_path
+from src.facts.shared.writers import write_fact_table
 
 from .accumulator import BudgetAccumulator
 from .engine import load_budget_config, compute_budget
@@ -69,8 +68,12 @@ def run_budget_pipeline(
     budget_out = fact_out / "budget"
     budget_out.mkdir(parents=True, exist_ok=True)
 
-    _write_budget(yearly, budget_out, "budget_yearly", file_format)
-    _write_budget(monthly, budget_out, "budget_monthly", file_format)
+    write_fact_table(yearly, budget_out, "budget_yearly", file_format,
+                     csv_prep_fn=lambda df: _prepare_budget_csv(df, "budget_yearly"),
+                     csv_float_format="%.6f")
+    write_fact_table(monthly, budget_out, "budget_monthly", file_format,
+                     csv_prep_fn=lambda df: _prepare_budget_csv(df, "budget_monthly"),
+                     csv_float_format="%.6f")
 
     # For deltaparquet the delta tables are written outside budget_out;
     # remove the empty temporary directory.
@@ -89,39 +92,6 @@ def run_budget_pipeline(
         "monthly_rows": monthly_rows,
         "elapsed_sec": elapsed,
     }
-
-
-def _write_budget(df: pd.DataFrame, out_dir: Path, name: str, file_format: str) -> None:
-    """Write a budget DataFrame in the requested format (parquet, csv, or delta)."""
-    table = pa.Table.from_pandas(df, preserve_index=False)
-
-    if file_format == "deltaparquet":
-        delta_dir = out_dir.parent / name
-        delta_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            from deltalake import write_deltalake
-        except ImportError:
-            from deltalake.writer import write_deltalake
-        write_deltalake(str(delta_dir), table, mode="overwrite")
-        info(f"Wrote {name}/ ({len(df):,} rows)")
-        return
-
-    # Parquet (always written for parquet and csv formats)
-    parquet_path = out_dir / f"{name}.parquet"
-    pq.write_table(
-        table, str(parquet_path),
-        compression="snappy",
-        row_group_size=500_000,
-        use_dictionary=True,
-    )
-
-    if file_format == "csv":
-        csv_path = out_dir / f"{name}.csv"
-        csv_df = _prepare_budget_csv(df, name)
-        csv_df.to_csv(str(csv_path), index=False, float_format="%.6f")
-        info(f"Wrote {csv_path.name} ({len(df):,} rows)")
-    else:
-        info(f"Wrote {parquet_path.name} ({len(df):,} rows)")
 
 
 # ----------------------------------------------------------------

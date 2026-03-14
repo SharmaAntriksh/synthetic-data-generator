@@ -8,7 +8,7 @@
 scale:
   sales_rows: 1032850
   products: 2517
-  customers: 18348
+  customers: 48348
   stores: 20
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
@@ -17,6 +17,7 @@ scale:
 # ------------------------------------------------------------------
 defaults:
   seed: 42
+  random: false                    # true = ignore seeds, use OS entropy (non-deterministic)
   dates:
     start: "2021-01-01"
     end: "2025-12-31"
@@ -44,7 +45,7 @@ sales:
 
   partition_by: ["Year", "Month"]     # null or [] to disable
 
-  optimize: true                      # sort merged files for better query perf
+  optimize: false                      # sort merged files for better query perf
 
   advanced:
     chunk_size: 1_000_000
@@ -68,11 +69,17 @@ returns:
 products:
   active_ratio: 0.98
   value_scale: 1                      # multiplier on all base prices
-  price_range: [10, 3000]             # [min, max] UnitPrice
+  price_range: [10, 3000]             # [min, max] ListPrice
   margin_range: [0.20, 0.35]          # [min, max] cost margin pct
+  
   brand_normalize: false               # pull brand prices toward global median
   brand_normalize_alpha: 0.35         # brands keep 65% of price identity
 
+  scd2:
+    enabled: true                     # enable SCD Type 2 price history tracking
+    revision_frequency: 12             # months between price revisions
+    price_drift: 0.05                  # ~5% price change per revision
+    max_versions: 4                    # max version rows per product
 
 # ------------------------------------------------------------------
 # CUSTOMERS
@@ -87,7 +94,10 @@ customers:
   profile: steady                   # gradual | steady | aggressive | instant
   first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
 
-
+  scd2:
+    enabled: true                    # enable SCD Type 2 history tracking
+    change_rate: 0.15                # fraction of customers with life event changes
+    max_versions: 4                  # max version rows per customer
 
 # ------------------------------------------------------------------
 # WISHLISTS
@@ -117,22 +127,19 @@ complaints:
   seed: 600
 
 # ------------------------------------------------------------------
-# SUPERPOWERS (disabled by default)
+# SUBSCRIPTIONS (bridge table for DAX many-to-many patterns)
 # ------------------------------------------------------------------
-superpowers:
-  enabled: false
-  generate_bridge: false
+subscriptions:
+  enabled: true
+  generate_bridge: true
 
-  powers_count: 20
-  powers_per_customer_min: 1
-  powers_per_customer_max: 3
+  participation_rate: 0.65          # fraction of customers who subscribe
+  avg_subscriptions_per_customer: 1.5
+  max_subscriptions: 5
+  churn_rate: 0.25                  # fraction that cancel before expiry
+  trial_rate: 0.30                  # fraction that start with a trial
 
-  include_power_level: true
-  include_primary_flag: true
-  include_acquired_date: true
-  include_validity: false
-
-  seed: 123
+  seed: 700
 
 # ------------------------------------------------------------------
 # GEOGRAPHY (static — derived from CURATED_ROWS in geography.py)
@@ -273,7 +280,7 @@ inventory:
   abc_stock_multiplier:
     A: 1.20                            # was 1.30
     B: 1.00
-    C: 0.60                            # was 0.70 — C-class products are more neglected
+    C: 0.60                            # C-class products are more neglected
 
   shrinkage:
     enabled: true

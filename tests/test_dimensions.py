@@ -540,7 +540,7 @@ class TestApplyProductPricing:
         rng = np.random.default_rng(seed)
         return pd.DataFrame({
             "ProductKey": np.arange(1, n + 1),
-            "UnitPrice": rng.uniform(5.0, 500.0, n),
+            "ListPrice": rng.uniform(5.0, 500.0, n),
             "UnitCost": rng.uniform(3.0, 300.0, n),
             "Brand": rng.choice(["BrandA", "BrandB", "BrandC"], n),
         })
@@ -562,9 +562,9 @@ class TestApplyProductPricing:
         }
         result = apply_product_pricing(df, cfg, seed=42)
         # UnitCost should be less than UnitPrice
-        assert (result["UnitCost"] <= result["UnitPrice"]).all()
+        assert (result["UnitCost"] <= result["ListPrice"]).all()
         # Margins should be in configured range (approximately)
-        margins = 1.0 - result["UnitCost"] / result["UnitPrice"]
+        margins = 1.0 - result["UnitCost"] / result["ListPrice"]
         assert margins.min() >= 0.19  # allow small rounding tolerance
         assert margins.max() <= 0.41
 
@@ -580,7 +580,7 @@ class TestApplyProductPricing:
         }
         result = apply_product_pricing(df, cfg, seed=42)
         # Scaled prices should be roughly 2x original
-        ratio = result["UnitPrice"].median() / df["UnitPrice"].median()
+        ratio = result["ListPrice"].median() / df["ListPrice"].median()
         assert 1.5 < ratio < 2.5
 
     def test_snap_unit_price(self):
@@ -596,8 +596,8 @@ class TestApplyProductPricing:
         }
         result = apply_product_pricing(df, cfg, seed=42)
         # Prices should end in .99 (for prices > 1.0)
-        decimals = result["UnitPrice"] % 1
-        big = result["UnitPrice"] > 2.0
+        decimals = result["ListPrice"] % 1
+        big = result["ListPrice"] > 2.0
         if big.any():
             assert (decimals[big].round(2) == 0.99).all()
 
@@ -626,7 +626,7 @@ class TestApplyProductPricing:
             },
         }
         result = apply_product_pricing(df, cfg, seed=42)
-        assert result["UnitPrice"].notna().all()
+        assert result["ListPrice"].notna().all()
         assert result["UnitCost"].notna().all()
 
     def test_unit_cost_le_unit_price(self):
@@ -640,7 +640,7 @@ class TestApplyProductPricing:
             },
         }
         result = apply_product_pricing(df, cfg, seed=42)
-        assert (result["UnitCost"] <= result["UnitPrice"]).all()
+        assert (result["UnitCost"] <= result["ListPrice"]).all()
 
     def test_prices_non_negative(self):
         df = self._make_products()
@@ -653,7 +653,7 @@ class TestApplyProductPricing:
             },
         }
         result = apply_product_pricing(df, cfg, seed=42)
-        assert (result["UnitPrice"] >= 0).all()
+        assert (result["ListPrice"] >= 0).all()
         assert (result["UnitCost"] >= 0).all()
 
     def test_min_max_price_clamp(self):
@@ -671,8 +671,8 @@ class TestApplyProductPricing:
             },
         }
         result = apply_product_pricing(df, cfg, seed=42)
-        assert (result["UnitPrice"] >= 50.0).all()
-        assert (result["UnitPrice"] <= 200.0).all()
+        assert (result["ListPrice"] >= 50.0).all()
+        assert (result["ListPrice"] <= 200.0).all()
 
     def test_keep_mode(self):
         df = self._make_products()
@@ -682,7 +682,7 @@ class TestApplyProductPricing:
         }
         result = apply_product_pricing(df, cfg, seed=42)
         assert result["UnitCost"].notna().all()
-        assert (result["UnitCost"] <= result["UnitPrice"]).all()
+        assert (result["UnitCost"] <= result["ListPrice"]).all()
 
 
 # ===================================================================

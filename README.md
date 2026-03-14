@@ -14,7 +14,7 @@ The generator produces a full star-schema data model across dimension and fact t
 
 **Fact tables:** Sales (flat or split into SalesOrderHeader + SalesOrderDetail), SalesReturn, ExchangeRates, BudgetYearly, BudgetMonthly, InventorySnapshot
 
-**Optional dimension tables (disabled by default):** Superpowers + CustomerSuperpowers
+**Optional dimension tables:** Plans + CustomerSubscriptions (many-to-many bridge for DAX patterns)
 
 ### Output formats
 
@@ -173,7 +173,7 @@ Controls the shape and scale of the dataset: row counts, date ranges, customer p
 | `products` | Active ratio, price range, margin range, brand normalization |
 | `customers` | Region mix (US/EU/India), org percentage, acquisition profile |
 | `customer_segments` | Segment count, membership rules, churn modeling (disabled by default) |
-| `superpowers` | Fun many-to-many dimension for testing bridge tables (disabled by default) |
+| `subscriptions` | Plans + CustomerSubscriptions bridge for DAX many-to-many patterns |
 | `employees` | Staff-per-store range, HR fields, store assignment rules with role profiles |
 | `dates` | Fiscal start month, calendar/ISO/fiscal/weekly-fiscal toggles |
 | `exchange_rates` | Currency list, base currency, volatility |

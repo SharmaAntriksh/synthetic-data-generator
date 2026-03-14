@@ -7,7 +7,7 @@ GO
 --
 -- Every view is guarded with IF OBJECT_ID so the script is resilient
 -- to partial deployments (e.g. a minimal config that omits LoyaltyTiers,
--- Superpowers, etc.).
+-- Subscriptions, etc.).
 --
 -- All guards use EXEC() to work around the CREATE VIEW must-be-first-
 -- statement-in-batch rule.
@@ -48,14 +48,14 @@ IF OBJECT_ID(N'dbo.Complaints', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_Complaints] AS SELECT * FROM [dbo].[Complaints];');
 GO
 
--- CustomerSuperpowers (optional)
-IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerSuperpowers] AS SELECT * FROM [dbo].[CustomerSuperpowers];');
+-- CustomerSubscriptions (optional)
+IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_CustomerSubscriptions] AS SELECT * FROM [dbo].[CustomerSubscriptions];');
 GO
 
--- Superpowers (optional)
-IF OBJECT_ID(N'dbo.Superpowers', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Superpowers] AS SELECT * FROM [dbo].[Superpowers];');
+-- Plans (optional)
+IF OBJECT_ID(N'dbo.Plans', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Plans] AS SELECT * FROM [dbo].[Plans];');
 GO
 
 -- Dates
@@ -228,7 +228,7 @@ SELECT
     Quantity,
     CAST(NetPrice       AS decimal(19,4)) AS NetPrice,
     CAST(UnitCost       AS decimal(19,4)) AS UnitCost,
-    CAST(UnitPrice      AS decimal(19,4)) AS UnitPrice,
+    CAST(ListPrice      AS decimal(19,4)) AS ListPrice,
     CAST(DiscountAmount AS decimal(19,4)) AS DiscountAmount,
     DeliveryStatus
 FROM ' + @DtlFrom + N';';
@@ -316,7 +316,7 @@ SELECT'
         Quantity,
         CAST(NetPrice         AS decimal(19,4)) AS NetPrice,
         CAST(UnitCost         AS decimal(19,4)) AS UnitCost,
-        CAST(UnitPrice        AS decimal(19,4)) AS UnitPrice,
+        CAST(ListPrice        AS decimal(19,4)) AS ListPrice,
         CAST(DiscountAmount   AS decimal(19,4)) AS DiscountAmount,
         DeliveryStatus,
         IsOrderDelayed
@@ -352,7 +352,7 @@ SELECT
     d.Quantity,
     CAST(d.NetPrice         AS decimal(19,4)) AS NetPrice,
     CAST(d.UnitCost         AS decimal(19,4)) AS UnitCost,
-    CAST(d.UnitPrice        AS decimal(19,4)) AS UnitPrice,
+    CAST(d.ListPrice        AS decimal(19,4)) AS ListPrice,
     CAST(d.DiscountAmount   AS decimal(19,4)) AS DiscountAmount,
     d.DeliveryStatus,
     h.IsOrderDelayed

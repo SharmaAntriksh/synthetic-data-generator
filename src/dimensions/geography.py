@@ -271,4 +271,4 @@ def run_geography(cfg: Dict, parquet_folder: Path) -> None:
         df.to_parquet(out_path, index=False)
 
     save_version("geography", version_cfg, out_path)
-    info(f"Geography dimension written: {out_path}  ({len(df)} rows)")
+    info(f"Geography dimension written: {out_path.name}  ({len(df)} rows)")

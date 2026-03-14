@@ -7,6 +7,14 @@ from typing import Mapping, Sequence, Tuple
 
 from src.utils.static_schemas import STATIC_SCHEMAS, get_dates_schema, get_sales_schema
 from src.utils.logging_utils import work
+from src.tools.sql.sql_helpers import (
+    sql_escape_literal as _sql_escape_literal,
+    quote_ident as _quote_ident,
+    returns_enabled as _returns_enabled,
+    budget_enabled as _budget_enabled,
+    inventory_enabled as _inventory_enabled,
+    complaints_enabled as _complaints_enabled,
+)
 
 ColumnSpec = Sequence[Tuple[str, str]]
 
@@ -43,15 +51,6 @@ def _validate_sql_identifier(name: str, label: str = "identifier") -> None:
         raise ValueError(f"Unsafe SQL {label}: {name!r}")
 
 
-def _sql_escape_literal(value: str) -> str:
-    """Escape a string for use inside a single-quoted SQL literal."""
-    return value.replace("'", "''")
-
-
-def _quote_ident(name: str) -> str:
-    return f"[{str(name).replace(']', ']]')}]"
-
-
 def _qualify(schema: str, table: str) -> str:
     return f"{_quote_ident(schema)}.{_quote_ident(table)}"
 
@@ -67,44 +66,6 @@ def _sales_output_mode(cfg: Mapping) -> str:
 def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
     sales_cfg = getattr(cfg, "sales", None)
     return bool(getattr(sales_cfg, "skip_order_cols", default) if sales_cfg else default)
-
-
-def _returns_enabled(cfg: Mapping) -> bool:
-    """Return True if returns are effectively enabled (not disabled by config or skip_order_cols)."""
-    returns_cfg = getattr(cfg, "returns", None)
-    if isinstance(returns_cfg, Mapping) and isinstance(getattr(returns_cfg, "enabled", None), (bool, int)):
-        if not bool(returns_cfg.enabled):
-            return False
-    sales_cfg = getattr(cfg, "sales", None)
-    skip_order = bool(getattr(sales_cfg, "skip_order_cols", False) if sales_cfg else False)
-    sales_output = str(getattr(sales_cfg, "sales_output", "sales") if sales_cfg else "sales").strip().lower()
-    if skip_order and sales_output == "sales":
-        return False
-    return True
-
-
-def _budget_enabled(cfg: Mapping) -> bool:
-    """Return True if budget generation is enabled in config."""
-    budget_cfg = getattr(cfg, "budget", None)
-    if budget_cfg is None or not isinstance(budget_cfg, Mapping):
-        return False
-    return bool(getattr(budget_cfg, "enabled", False))
-
-
-def _inventory_enabled(cfg: Mapping) -> bool:
-    """Return True if inventory snapshot generation is enabled in config."""
-    inv_cfg = getattr(cfg, "inventory", None)
-    if inv_cfg is None or not isinstance(inv_cfg, Mapping):
-        return False
-    return bool(getattr(inv_cfg, "enabled", False))
-
-
-def _complaints_enabled(cfg: Mapping) -> bool:
-    """Return True if complaints generation is enabled in config."""
-    cc = getattr(cfg, "complaints", None)
-    if cc is None or not isinstance(cc, Mapping):
-        return False
-    return bool(getattr(cc, "enabled", False))
 
 
 def _require_static_schema(table_name: str) -> ColumnSpec:
@@ -190,13 +151,13 @@ def generate_all_create_tables(
     ]
 
     skip_tables: set[str] = {"CustomerSegment", "CustomerSegmentMembership"}
-    sp_cfg = getattr(cfg, "superpowers", None) or {}
-    if isinstance(sp_cfg, Mapping):
-        if not bool(getattr(sp_cfg, "enabled", True)):
-            skip_tables.add("Superpowers")
-            skip_tables.add("CustomerSuperpowers")
-        elif not bool(getattr(sp_cfg, "generate_bridge", True)):
-            skip_tables.add("CustomerSuperpowers")
+    sub_cfg = getattr(cfg, "subscriptions", None) or {}
+    if isinstance(sub_cfg, Mapping):
+        if not bool(getattr(sub_cfg, "enabled", True)):
+            skip_tables.add("Plans")
+            skip_tables.add("CustomerSubscriptions")
+        elif not bool(getattr(sub_cfg, "generate_bridge", True)):
+            skip_tables.add("CustomerSubscriptions")
 
     if not _returns_enabled(cfg):
         skip_tables.add("ReturnReason")

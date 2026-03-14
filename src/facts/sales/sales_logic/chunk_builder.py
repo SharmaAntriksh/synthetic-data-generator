@@ -168,14 +168,21 @@ def _sample_product_row_indices(
     # Within-brand weighted sampling when product_weight is available
     if product_weight is not None:
         out = np.empty(n_int, dtype="int32")
+        # Group orders by brand via argsort (avoids O(B×n) per-brand mask scans)
+        _brand_order = np.argsort(brand_ids, kind="stable")
+        _brand_counts = np.bincount(brand_ids, minlength=B)
+        _brand_starts = np.zeros(B + 1, dtype=np.int64)
+        np.cumsum(_brand_counts, out=_brand_starts[1:])
+
         for b in range(B):
-            mask_b = brand_ids == b
-            cnt = int(mask_b.sum())
+            s, e = int(_brand_starts[b]), int(_brand_starts[b + 1])
+            cnt = e - s
             if cnt == 0:
                 continue
+            orig_idx = _brand_order[s:e]
             start, end = int(offsets[b]), int(offsets[b + 1])
             if start == end:
-                out[mask_b] = rng.integers(0, n_products, size=cnt).astype("int32", copy=False)
+                out[orig_idx] = rng.integers(0, n_products, size=cnt).astype("int32", copy=False)
                 continue
             rows = flat_idx[start:end]
             w = product_weight[rows]
@@ -184,7 +191,7 @@ def _sample_product_row_indices(
                 picks = rng.choice(len(rows), size=cnt, p=w / ws)
             else:
                 picks = rng.integers(0, len(rows), size=cnt)
-            out[mask_b] = rows[picks]
+            out[orig_idx] = rows[picks]
         return out
 
     rand_within = rng.integers(0, np.iinfo(np.int64).max, size=n_int, dtype="int64")
@@ -228,21 +235,26 @@ def _sample_products_per_store(
     max_sk = len(store_to_product_rows)
     out = np.empty(n, dtype=np.int32)
 
-    # Group lines by store for vectorized sampling per store
+    # Group lines by store via argsort (avoids O(stores×n) per-store mask scans)
     unique_stores, inverse = np.unique(store_key_arr, return_inverse=True)
+    _store_order = np.argsort(inverse, kind="stable")
+    _store_counts = np.bincount(inverse, minlength=len(unique_stores))
+    _store_starts = np.zeros(len(unique_stores) + 1, dtype=np.int64)
+    np.cumsum(_store_counts, out=_store_starts[1:])
 
     for i, sk in enumerate(unique_stores):
-        mask = inverse == i
-        count = int(mask.sum())
+        s, e = int(_store_starts[i]), int(_store_starts[i + 1])
+        count = e - s
+        orig_idx = _store_order[s:e]
         sk_int = int(sk)
 
         if sk_int < max_sk and store_to_product_rows[sk_int] is not None:
             pool = store_to_product_rows[sk_int]
             if product_weight is not None and pool.size > 1:
                 # --- CDF-cached weighted sampling ---
-                # Pool identity: (size, first, last) is a fast proxy.
-                # Collisions are harmless (same CDF reused — correct if pool content matches).
-                pool_key = id(pool)
+                # Content-based key: (size, first element, last element, month).
+                # This avoids id() reuse after GC while staying O(1).
+                pool_key = (pool.size, int(pool[0]), int(pool[-1]))
                 cache_key = (pool_key, _cal_month)
 
                 if _cdf_cache is not None and cache_key in _cdf_cache:
@@ -263,20 +275,20 @@ def _sample_products_per_store(
                     u = rng.random(count)
                     picks = np.searchsorted(cdf, u, side="right")
                     np.minimum(picks, len(pool) - 1, out=picks)
-                    out[mask] = pool[picks]
+                    out[orig_idx] = pool[picks]
                 else:
-                    out[mask] = pool[rng.integers(0, len(pool), size=count)]
+                    out[orig_idx] = pool[rng.integers(0, len(pool), size=count)]
             else:
-                out[mask] = pool[rng.integers(0, len(pool), size=count)]
+                out[orig_idx] = pool[rng.integers(0, len(pool), size=count)]
         else:
             if product_weight is not None:
                 ws = float(product_weight.sum())
                 if ws > 1e-12:
-                    out[mask] = rng.choice(n_products, size=count, p=product_weight / ws)
+                    out[orig_idx] = rng.choice(n_products, size=count, p=product_weight / ws)
                 else:
-                    out[mask] = rng.integers(0, n_products, size=count)
+                    out[orig_idx] = rng.integers(0, n_products, size=count)
             else:
-                out[mask] = rng.integers(0, n_products, size=count)
+                out[orig_idx] = rng.integers(0, n_products, size=count)
 
     return out
 
@@ -1089,11 +1101,9 @@ def build_chunk_table(
                     # must share the same replacement store.
                     if order_idx is not None:
                         _bad_order_ids = order_idx[_date_rows]
-                        _unique_orders = np.unique(_bad_order_ids)
-                        for _oid in _unique_orders:
-                            _order_line_mask = order_idx[_date_rows] == _oid
-                            _replacement = _day_stores[rng.integers(0, len(_day_stores))]
-                            store_key_arr[_date_rows[_order_line_mask]] = _replacement
+                        _uniq_oids, _oid_inv = np.unique(_bad_order_ids, return_inverse=True)
+                        _repls = _day_stores[rng.integers(0, len(_day_stores), size=len(_uniq_oids))]
+                        store_key_arr[_date_rows] = _repls[_oid_inv]
                     else:
                         store_key_arr[_date_rows] = _day_stores[
                             rng.integers(0, len(_day_stores), size=len(_date_rows))
@@ -1132,9 +1142,29 @@ def build_chunk_table(
                 product_weight=_product_weight,
             )
 
-        product_keys = product_np[prod_idx, 0].astype(np.int32, copy=False)
-        unit_price   = product_np[prod_idx, 1].astype(np.float64, copy=False)
-        unit_cost    = product_np[prod_idx, 2].astype(np.float64, copy=False)
+        customer_keys_out = np.asarray(customer_keys_out, dtype=np.int32)
+        order_dates = np.asarray(order_dates, dtype="datetime64[D]")
+
+        # Convert order dates to epoch days for SCD2 per-row version lookups
+        _order_epoch_days = order_dates.astype(np.int64)  # datetime64[D] → epoch days
+
+        # SCD2: resolve per-row product version using actual OrderDate
+        _pscd2_starts = getattr(State, "product_scd2_starts", None)
+        _pscd2_data = getattr(State, "product_scd2_data", None)
+        if getattr(State, "product_scd2_active", False) and _pscd2_starts is not None and _pscd2_data is not None:
+            # For each sale: find the last version where start <= order_day
+            _p_starts = _pscd2_starts[prod_idx]         # (n_lines, max_ver)
+            _ver_idx = np.sum(_p_starts <= _order_epoch_days[:, np.newaxis], axis=1) - 1
+            _ver_idx = np.clip(_ver_idx, 0, _p_starts.shape[1] - 1)
+            _p_data = _pscd2_data[prod_idx]             # (n_lines, max_ver, 3)
+            _row_range = np.arange(len(prod_idx))
+            product_keys = _p_data[_row_range, _ver_idx, 0].astype(np.int32)
+            unit_price   = _p_data[_row_range, _ver_idx, 1].astype(np.float64)
+            unit_cost    = _p_data[_row_range, _ver_idx, 2].astype(np.float64)
+        else:
+            product_keys = product_np[prod_idx, 0].astype(np.int32, copy=False)
+            unit_price   = product_np[prod_idx, 1].astype(np.float64, copy=False)
+            unit_cost    = product_np[prod_idx, 2].astype(np.float64, copy=False)
 
         geo_arr = st2g_arr[store_key_arr]
         if np.any(geo_arr < 0):
@@ -1142,10 +1172,6 @@ def build_chunk_table(
         currency_arr = g2c_arr[geo_arr]
         if np.any(currency_arr < 0):
             raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
-
-
-        customer_keys_out = np.asarray(customer_keys_out, dtype=np.int32)
-        order_dates = np.asarray(order_dates, dtype="datetime64[D]")
 
         # --------------------------------------------------------
         # DATE LOGIC
@@ -1304,6 +1330,31 @@ def build_chunk_table(
             cols["SalesOrderNumber"] = order_ids_int
             cols["SalesOrderLineNumber"] = line_num
 
+        # SCD2: remap IsCurrent CustomerKey → version-specific CustomerKey using actual OrderDate
+        _cscd2_starts = getattr(State, "customer_scd2_starts", None)
+        _cscd2_keys = getattr(State, "customer_scd2_keys", None)
+        _ckey_to_pidx = getattr(State, "cust_key_to_pool_idx", None)
+        if (getattr(State, "customer_scd2_active", False)
+                and _cscd2_starts is not None and _cscd2_keys is not None
+                and _ckey_to_pidx is not None):
+            _ckeys_i32 = np.asarray(customer_keys_out, dtype=np.int32)
+            # Bounds check: keys outside the lookup array cannot be remapped
+            _in_bounds = (_ckeys_i32 >= 0) & (_ckeys_i32 < len(_ckey_to_pidx))
+            _pool_idx = np.full(len(_ckeys_i32), -1, dtype=np.int32)
+            _pool_idx[_in_bounds] = _ckey_to_pidx[_ckeys_i32[_in_bounds]]
+            _valid = _pool_idx >= 0
+            if _valid.any():
+                _v_pool = _pool_idx[_valid]
+                _v_days = _order_epoch_days[_valid]
+                _c_starts = _cscd2_starts[_v_pool]           # (N_valid, max_ver)
+                _ver_idx = np.sum(_c_starts <= _v_days[:, np.newaxis], axis=1) - 1
+                _ver_idx = np.clip(_ver_idx, 0, _c_starts.shape[1] - 1)
+                _c_keys = _cscd2_keys[_v_pool]               # (N_valid, max_ver)
+                _row_range = np.arange(len(_v_pool))
+                _remapped = np.array(customer_keys_out, dtype=np.int32, copy=True)
+                _remapped[_valid] = _c_keys[_row_range, _ver_idx]
+                customer_keys_out = _remapped
+
         cols["CustomerKey"] = customer_keys_out
         cols["ProductKey"] = product_keys
         cols["StoreKey"] = store_key_arr
@@ -1318,7 +1369,7 @@ def build_chunk_table(
         cols["Quantity"] = qty
         cols["NetPrice"] = price["final_net_price"]
         cols["UnitCost"] = price["final_unit_cost"]
-        cols["UnitPrice"] = price["final_unit_price"]
+        cols["ListPrice"] = price["final_unit_price"]
         cols["DiscountAmount"] = price["discount_amt"]
 
         cols["DeliveryStatus"] = dates["delivery_status"]

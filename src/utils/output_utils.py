@@ -21,8 +21,8 @@ __all__ = [
 # Dimension filenames — single source of truth for exclusion logic.
 # If a dimension's output filename changes, update here only.
 # ---------------------------------------------------------------------------
-_DIM_FILE_SUPERPOWERS = "superpowers.parquet"
-_DIM_FILE_SUPERPOWERS_BRIDGE = "customer_superpowers.parquet"
+_DIM_FILE_PLANS = "plans.parquet"
+_DIM_FILE_SUBSCRIPTIONS_BRIDGE = "customer_subscriptions.parquet"
 _DIM_FILE_WISHLISTS = "customer_wishlists.parquet"
 _DIM_FILE_RETURN_REASON = "return_reason.parquet"
 
@@ -95,7 +95,7 @@ def _guess_date_cols(df: pd.DataFrame) -> list[str]:
     """
     Heuristic: return column names that should be written as Arrow date32.
 
-    Rules (conservative — won't touch OpenMinute/CloseMinute etc.):
+    Rules (conservative — won't touch time strings like OpenTime/CloseTime etc.):
       1. datetime64 columns whose names contain a date-like token.
       2. object-dtype columns whose names contain "date" AND whose values look
          date-like (or are all-null), to prevent Arrow NullType on rewrite.
@@ -284,13 +284,13 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
     """
     excluded: set[str] = set()
 
-    sp_cfg = getattr(cfg, "superpowers", None)
-    if sp_cfg is not None:
-        if not bool(getattr(sp_cfg, "enabled", True)):
-            excluded.add(_DIM_FILE_SUPERPOWERS)
-            excluded.add(_DIM_FILE_SUPERPOWERS_BRIDGE)
-        elif not bool(getattr(sp_cfg, "generate_bridge", True)):
-            excluded.add(_DIM_FILE_SUPERPOWERS_BRIDGE)
+    sub_cfg = getattr(cfg, "subscriptions", None)
+    if sub_cfg is not None:
+        if not bool(getattr(sub_cfg, "enabled", True)):
+            excluded.add(_DIM_FILE_PLANS)
+            excluded.add(_DIM_FILE_SUBSCRIPTIONS_BRIDGE)
+        elif not bool(getattr(sub_cfg, "generate_bridge", True)):
+            excluded.add(_DIM_FILE_SUBSCRIPTIONS_BRIDGE)
 
     wl_cfg = getattr(cfg, "wishlists", None)
     if wl_cfg is not None:

@@ -836,4 +836,4 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
         )
 
     save_version("dates", version_cfg, out_path)
-    info(f"Dates dimension written: {out_path}")
+    info(f"Dates dimension written: {out_path.name}")

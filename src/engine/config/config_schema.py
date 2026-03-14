@@ -220,6 +220,8 @@ class CustomersConfig(_Base):
     global_dates: Optional[Any] = None
     # Household grouping: fraction of individual customers in multi-person households
     household_pct: Optional[float] = None
+    # SCD Type 2 settings (nested block)
+    scd2: Optional["CustomersSCD2Config"] = None
 
 
 
@@ -264,6 +266,7 @@ class GlobalDatesConfig(_Base):
 
 class DefaultsConfig(_Base):
     seed: int = 42
+    random: bool = False
     dates: GlobalDatesConfig = GlobalDatesConfig()
     paths: Optional[Dict[str, str]] = None
 
@@ -385,6 +388,21 @@ class PathsConfig(_Base):
     final_output: Optional[str] = None
 
 
+# -- SCD Type 2 sub-models --
+
+class CustomersSCD2Config(_Base):
+    enabled: bool = False
+    change_rate: float = 0.15
+    max_versions: int = 4
+
+
+class ProductsSCD2Config(_Base):
+    enabled: bool = False
+    revision_frequency: int = 12        # months between price revisions
+    price_drift: float = 0.05           # ~5% price change per revision
+    max_versions: int = 4               # max version rows per product
+
+
 # -- Products --
 
 class ProductsConfig(_Base):
@@ -397,6 +415,8 @@ class ProductsConfig(_Base):
     brand_normalize_alpha: float = 0.35
     # Expanded pricing dict (populated by _expand_products_pricing)
     pricing: Optional[Dict[str, Any]] = None
+    # SCD Type 2 settings (nested block)
+    scd2: Optional["ProductsSCD2Config"] = None
 
 
 # -- Promotions --
@@ -573,19 +593,17 @@ class ComplaintsConfig(_Base):
     write_chunk_rows: int = 250_000
 
 
-# -- Superpowers --
+# -- Subscriptions --
 
-class SuperpowersConfig(_Base):
+class SubscriptionsConfig(_Base):
     enabled: bool = False
     generate_bridge: bool = False
-    powers_count: int = 20
-    powers_per_customer_min: int = 1
-    powers_per_customer_max: int = 3
-    include_power_level: bool = True
-    include_primary_flag: bool = True
-    include_acquired_date: bool = True
-    include_validity: bool = False
-    seed: Optional[int] = 123
+    participation_rate: float = 0.65
+    avg_subscriptions_per_customer: float = 1.5
+    max_subscriptions: int = 5
+    churn_rate: float = 0.25
+    trial_rate: float = 0.30
+    seed: Optional[int] = 700
     write_chunk_rows: int = 250_000
     # Injected by dimensions_runner
     global_dates: Optional[Any] = None
@@ -618,7 +636,7 @@ class AppConfig(_Base):
 
     products: ProductsConfig = ProductsConfig()
     customers: CustomersConfig = CustomersConfig()
-    superpowers: SuperpowersConfig = SuperpowersConfig()
+    subscriptions: SubscriptionsConfig = SubscriptionsConfig()
     wishlists: WishlistsConfig = WishlistsConfig()
     complaints: ComplaintsConfig = ComplaintsConfig()
 

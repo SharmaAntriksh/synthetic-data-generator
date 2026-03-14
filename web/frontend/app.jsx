@@ -24,8 +24,8 @@ function validate(config) {
   if (config.marginMax <= config.marginMin) warnings.push("Max margin should exceed min margin.");
   if (config.csEnabled && config.csPerCustomerMax < config.csPerCustomerMin) errors.push("Segment max per customer must be >= min.");
   if (config.csEnabled && config.csPerCustomerMax > config.csSegmentCount) errors.push("Segment max per customer must be <= segment count.");
-  if (config.spEnabled && config.spPerCustomerMax < config.spPerCustomerMin) errors.push("Superpowers max per customer must be >= min.");
-  if (config.spEnabled && config.spPerCustomerMax > config.spPowersCount) errors.push("Superpowers max per customer must be <= powers count.");
+  if (config.subEnabled && config.subMaxSubscriptions < 1) errors.push("Subscriptions max must be >= 1.");
+  if (config.subEnabled && config.subParticipationRate > 1) errors.push("Subscription participation rate must be <= 1.0.");
   if (config.employeeMaxStaff < config.employeeMinStaff) warnings.push("Employee max staff should be >= min staff.");
 
   return {errors, warnings};
@@ -112,7 +112,7 @@ function App() {
       setCfg(data);
     }).catch(() => {
       setLoadError("Failed to load config from server");
-      setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, profile: "steady", firstYearPct: .27, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, geoWeights: {"United States": .35, India: .2, "United Kingdom": .1, Germany: .1, France: .1, Australia: .07, Canada: .08}, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, csEnabled: false, csGenerateBridge: false, csSegmentCount: 10, csPerCustomerMin: 1, csPerCustomerMax: 2, csIncludeScore: true, csIncludePrimaryFlag: true, csIncludeValidity: true, csValidityGrain: "month", csChurnRateQtr: .08, csNewCustomerMonths: 2, csSeed: 123, spEnabled: false, spGenerateBridge: false, spPowersCount: 20, spPerCustomerMin: 1, spPerCustomerMax: 3, spIncludePowerLevel: true, spIncludePrimaryFlag: true, spIncludeAcquiredDate: true, spIncludeValidity: false, spSeed: 123, storeEnsureIsoCoverage: true, storeDistrictSize: 10, storeDistrictsPerRegion: 8, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, employeeMinStaff: 3, employeeMaxStaff: 5, employeeEmailDomain: "contoso.com", employeeStoreAssignments: true, erCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erVolatility: .02, erFutureDrift: .02, erUseGlobalDates: true, budgetEnabled: true, budgetReportCurrency: "USD", budgetDefaultGrowth: .05, budgetReturnRateCap: .30, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
+      setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, profile: "steady", firstYearPct: .27, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, geoWeights: {"United States": .35, India: .2, "United Kingdom": .1, Germany: .1, France: .1, Australia: .07, Canada: .08}, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, csEnabled: false, csGenerateBridge: false, csSegmentCount: 10, csPerCustomerMin: 1, csPerCustomerMax: 2, csIncludeScore: true, csIncludePrimaryFlag: true, csIncludeValidity: true, csValidityGrain: "month", csChurnRateQtr: .08, csNewCustomerMonths: 2, csSeed: 123, subEnabled: false, subGenerateBridge: false, subParticipationRate: .65, subAvgSubscriptions: 1.5, subMaxSubscriptions: 5, subChurnRate: .25, subTrialRate: .30, subSeed: 700, storeEnsureIsoCoverage: true, storeDistrictSize: 10, storeDistrictsPerRegion: 8, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, employeeMinStaff: 3, employeeMaxStaff: 5, employeeEmailDomain: "contoso.com", employeeStoreAssignments: true, erCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erVolatility: .02, erFutureDrift: .02, erUseGlobalDates: true, budgetEnabled: true, budgetReportCurrency: "USD", budgetDefaultGrowth: .05, budgetReturnRateCap: .30, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
     });
     fetch(API + "/presets").then(r => r.json()).then(data => { setPresets(data); setPresetBucket(Object.keys(data)[0] || ""); }).catch(() => {});
     fetch(API + "/models").then(r => r.text()).then(text => { setModelsYaml(text); setModelsOrig(text); setModelsDisk(text); }).catch(() => {});
@@ -330,7 +330,7 @@ function App() {
             {[
               ["customers", "Customers"], ["products", "Products"], ["stores", "Stores"], ["employees", "Employees"],
               ["returns", "Returns", cfg.returnsEnabled], ["promotions", "Promos"],
-              ["segments", "Segments", cfg.csEnabled], ["superpowers", "Powers", cfg.spEnabled],
+              ["segments", "Segments", cfg.csEnabled], ["subscriptions", "Subscriptions", cfg.subEnabled],
               ["exchange", "FX Rates"], ["budget", "Budget", cfg.budgetEnabled], ["inventory", "Inventory", cfg.inventoryEnabled],
             ].map(([tabKey, label, flag]) => {
               const active = dimTab === tabKey;
@@ -480,25 +480,21 @@ function App() {
             </>}
           </div>}
 
-          {/* ── Superpowers ── */}
-          {dimTab === "superpowers" && <div style={{marginTop: 8}}>
-            <div style={{marginTop: 4}}><Check checked={cfg.spEnabled} onChange={v => s("spEnabled", v)} label="Enable superpowers" /></div>
-            {cfg.spEnabled && <>
-              <div style={{marginTop: 8}}><Check checked={cfg.spGenerateBridge} onChange={v => s("spGenerateBridge", v)} label="Generate bridge table" /></div>
+          {/* ── Subscriptions ── */}
+          {dimTab === "subscriptions" && <div style={{marginTop: 8}}>
+            <div style={{marginTop: 4}}><Check checked={cfg.subEnabled} onChange={v => s("subEnabled", v)} label="Enable subscriptions" /></div>
+            {cfg.subEnabled && <>
+              <div style={{marginTop: 8}}><Check checked={cfg.subGenerateBridge} onChange={v => s("subGenerateBridge", v)} label="Generate bridge table" /></div>
               <R3>
-                <F label="Powers count"><N value={cfg.spPowersCount} onChange={v => s("spPowersCount", v)} min={1} step={1} /></F>
-                <F label="Min per customer"><N value={cfg.spPerCustomerMin} onChange={v => s("spPerCustomerMin", v)} min={1} step={1} /></F>
-                <F label="Max per customer"><N value={cfg.spPerCustomerMax} onChange={v => s("spPerCustomerMax", v)} min={1} step={1} /></F>
+                <F label="Participation rate"><N value={cfg.subParticipationRate} onChange={v => s("subParticipationRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Avg subscriptions"><N value={cfg.subAvgSubscriptions} onChange={v => s("subAvgSubscriptions", v)} min={1} step={0.5} /></F>
+                <F label="Max subscriptions"><N value={cfg.subMaxSubscriptions} onChange={v => s("subMaxSubscriptions", v)} min={1} step={1} /></F>
               </R3>
-              <Box title="Include columns">
-                <div style={{display: "flex", gap: 16, flexWrap: "wrap"}}>
-                  <Check checked={cfg.spIncludePowerLevel} onChange={v => s("spIncludePowerLevel", v)} label="Power level" />
-                  <Check checked={cfg.spIncludePrimaryFlag} onChange={v => s("spIncludePrimaryFlag", v)} label="Primary flag" />
-                  <Check checked={cfg.spIncludeAcquiredDate} onChange={v => s("spIncludeAcquiredDate", v)} label="Acquired date" />
-                  <Check checked={cfg.spIncludeValidity} onChange={v => s("spIncludeValidity", v)} label="Validity periods" />
-                </div>
-              </Box>
-              <F label="Seed"><N value={cfg.spSeed} onChange={v => s("spSeed", v)} min={0} step={1} /></F>
+              <R3>
+                <F label="Churn rate"><N value={cfg.subChurnRate} onChange={v => s("subChurnRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Trial rate"><N value={cfg.subTrialRate} onChange={v => s("subTrialRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Seed"><N value={cfg.subSeed} onChange={v => s("subSeed", v)} min={0} step={1} /></F>
+              </R3>
             </>}
           </div>}
 
@@ -877,7 +873,7 @@ function App() {
             {cfg.budgetEnabled && <>{" · "}<Badge>Budget</Badge></>}
             {cfg.inventoryEnabled && <>{" · "}<Badge>Inventory</Badge></>}
             {cfg.csEnabled && <>{" · "}<Badge>Segments</Badge></>}
-            {cfg.spEnabled && <>{" · "}<Badge>Superpowers</Badge></>}
+            {cfg.subEnabled && <>{" · "}<Badge>Subscriptions</Badge></>}
           </div>
           <div style={{marginTop: 14}}>
             <button onClick={runGenerate} disabled={errors.length > 0 || isRunning} style={{width: "100%", padding: "12px 24px", borderRadius: 10, border: "none", fontSize: 14, fontWeight: 700, cursor: errors.length > 0 ? "not-allowed" : "pointer", fontFamily: "var(--sans)", transition: "all .15s", background: errors.length > 0 ? "var(--alt)" : "var(--accent)", color: errors.length > 0 ? "var(--muted)" : "#fff", opacity: isRunning ? .7 : 1, boxShadow: errors.length === 0 && !isRunning ? "0 4px 16px rgba(79,91,213,.2)" : "none"}}>{isRunning ? "Generating..." : "Generate Data"}</button>

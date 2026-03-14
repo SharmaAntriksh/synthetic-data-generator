@@ -25,10 +25,10 @@ from src.utils.config_helpers import (
     int_or,
     float_or,
     str_or,
-    pick_seed_nested,
     parse_global_dates,
     rand_single_date,
 )
+from src.utils.config_precedence import resolve_seed
 
 
 # -----------------------------------------------------------------------------
@@ -1001,7 +1001,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     if not employees_path.exists():
         raise FileNotFoundError(f"Missing employees parquet: {employees_path}")
 
-    seed = pick_seed_nested(cfg, a_cfg, fallback=42)
+    seed = resolve_seed(cfg, a_cfg, fallback=42)
     global_start, global_end = parse_global_dates(
         cfg, a_cfg,
         allow_override=True,
@@ -1248,4 +1248,4 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
         )
 
     save_version("employee_store_assignments", version_cfg, out_path)
-    info(f"Employee Store Assignments written: {out_path}")
+    info(f"Employee Store Assignments written: {out_path.name}")

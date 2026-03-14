@@ -27,6 +27,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.utils.logging_utils import info, work, short_path
+from src.facts.shared.writers import write_fact_table
 
 from .accumulator import InventoryAccumulator
 from .engine import load_inventory_config, compute_inventory_snapshots, InventoryConfig, _load_product_attrs
@@ -403,9 +404,9 @@ def _write_inventory(
     partition_by: Optional[List[str]] = None,
 ) -> None:
     """Write an inventory DataFrame in the requested format."""
-    table = pa.Table.from_pandas(df, preserve_index=False)
-
     if file_format == "deltaparquet":
+        # Inventory-specific: partition by Year/Month for Delta Lake
+        table = pa.Table.from_pandas(df, preserve_index=False)
         delta_dir = out_dir.parent / name
         delta_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -429,21 +430,8 @@ def _write_inventory(
         )
         return
 
-    parquet_path = out_dir / f"{name}.parquet"
-    pq.write_table(
-        table, str(parquet_path),
-        compression="snappy",
-        row_group_size=500_000,
-        use_dictionary=True,
-    )
-
-    if file_format == "csv":
-        csv_path = out_dir / f"{name}.csv"
-        csv_df = _prepare_inventory_csv(df)
-        csv_df.to_csv(str(csv_path), index=False)
-        info(f"Wrote {name}: {len(df):,} rows -> {short_path(csv_path)}")
-    else:
-        info(f"Wrote {name}: {len(df):,} rows -> {short_path(parquet_path)}")
+    write_fact_table(df, out_dir, name, file_format,
+                     csv_prep_fn=_prepare_inventory_csv)
 
 
 _INVENTORY_CSV_COLUMNS = [

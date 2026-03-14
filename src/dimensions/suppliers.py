@@ -238,5 +238,5 @@ def run_suppliers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     )
 
     save_version("suppliers", version_cfg, out_path)
-    info(f"Suppliers dimension written: {out_path}")
+    info(f"Suppliers dimension written: {out_path.name}")
 

@@ -3,7 +3,7 @@
 -- Columns (expected):
 --   SalesOrderNumber, SalesOrderLineNumber, ProductKey,
 --   PromotionKey, CurrencyKey,
---   DueDate, DeliveryDate, Quantity, NetPrice, UnitCost, UnitPrice,
+--   DueDate, DeliveryDate, Quantity, NetPrice, UnitCost, ListPrice,
 --   DiscountAmount, DeliveryStatus
 -----------------------------------------------------------------------
 

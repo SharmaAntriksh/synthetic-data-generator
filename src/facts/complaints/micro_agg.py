@@ -7,6 +7,12 @@ from typing import Dict, Optional
 import numpy as np
 import pyarrow as pa
 
+from src.facts.shared.micro_agg_helpers import (
+    validate_required_columns,
+    extract_column,
+    deduplicate_tuples,
+)
+
 
 def micro_aggregate_complaints(detail_table: pa.Table) -> Optional[Dict[str, np.ndarray]]:
     """Extract unique (CustomerKey, SalesOrderNumber, SalesOrderLineNumber)
@@ -15,23 +21,16 @@ def micro_aggregate_complaints(detail_table: pa.Table) -> Optional[Dict[str, np.
     Returns a compact dict of three arrays, or None if required columns
     are missing.
     """
-    required = {"CustomerKey", "SalesOrderNumber", "SalesOrderLineNumber"}
-    if not required.issubset(detail_table.column_names):
+    if not validate_required_columns(
+        detail_table, {"CustomerKey", "SalesOrderNumber", "SalesOrderLineNumber"}
+    ):
         return None
 
-    ck = detail_table.column("CustomerKey").to_numpy().astype(np.int64)
-    so = detail_table.column("SalesOrderNumber").to_numpy().astype(np.int64)
-    ln = detail_table.column("SalesOrderLineNumber").to_numpy().astype(np.int64)
+    ck = extract_column(detail_table, "CustomerKey", np.int64)
+    so = extract_column(detail_table, "SalesOrderNumber", np.int64)
+    ln = extract_column(detail_table, "SalesOrderLineNumber", np.int64)
 
-    # Deduplicate within this chunk
-    triples = np.column_stack([ck, so, ln])
-    unique = np.unique(triples, axis=0)
-
-    if len(unique) == 0:
-        return None
-
-    return {
-        "customer_key": unique[:, 0],
-        "sales_order_number": unique[:, 1],
-        "line_number": unique[:, 2],
-    }
+    return deduplicate_tuples(
+        [ck, so, ln],
+        ["customer_key", "sales_order_number", "line_number"],
+    )

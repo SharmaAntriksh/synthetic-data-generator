@@ -6,24 +6,14 @@ from pathlib import Path
 from typing import Iterable, Mapping, Optional, Set
 
 from src.utils.logging_utils import work, skip
-
-# -----------------------------
-# Small SQL helpers
-# -----------------------------
-
-def _sql_escape_literal(value: str) -> str:
-    """Escape a string for use inside a single-quoted SQL literal."""
-    return value.replace("'", "''")
-
-
-def _quote_ident(part: str) -> str:
-    """Bracket-quote an identifier; escape closing brackets."""
-    raw = str(part).strip()
-    if raw.startswith("[") and raw.endswith("]"):
-        raw = raw[1:-1]
-    if raw.startswith('"') and raw.endswith('"'):
-        raw = raw[1:-1]
-    return f"[{raw.replace(']', ']]')}]"
+from src.tools.sql.sql_helpers import (
+    sql_escape_literal as _sql_escape_literal,
+    quote_ident as _quote_ident,
+    returns_enabled as _returns_enabled_from_cfg,
+    budget_enabled as _budget_enabled_from_cfg,
+    inventory_enabled as _inventory_enabled_from_cfg,
+    complaints_enabled as _complaints_enabled_from_cfg,
+)
 
 
 def _quote_table(name: str) -> str:
@@ -107,56 +97,6 @@ def _pick_target_table(csv_path: Path, *, allowed_tables: Optional[Set[str]]) ->
         return candidate
 
     return allowed_map.get(candidate.strip().lower())
-
-
-# -----------------------------
-# Config-driven allowlist
-# -----------------------------
-
-def _returns_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
-    """Return True if returns are effectively enabled (not disabled by config or skip_order_cols)."""
-    if cfg is None:
-        return True
-    returns_cfg = getattr(cfg, "returns", None)
-    if isinstance(returns_cfg, Mapping) and isinstance(getattr(returns_cfg, "enabled", None), (bool, int)):
-        if not bool(returns_cfg.enabled):
-            return False
-    sales_cfg = getattr(cfg, "sales", None)
-    skip_order = bool(getattr(sales_cfg, "skip_order_cols", False) if sales_cfg else False)
-    sales_output = str(getattr(sales_cfg, "sales_output", "sales") if sales_cfg else "sales").strip().lower()
-    if skip_order and sales_output == "sales":
-        return False
-    return True
-
-
-def _budget_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
-    """Return True if budget generation is enabled in config."""
-    if cfg is None:
-        return False
-    budget_cfg = getattr(cfg, "budget", None)
-    if budget_cfg is None or not isinstance(budget_cfg, Mapping):
-        return False
-    return bool(getattr(budget_cfg, "enabled", False))
-
-
-def _inventory_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
-    """Return True if inventory snapshot generation is enabled in config."""
-    if cfg is None:
-        return False
-    inv_cfg = getattr(cfg, "inventory", None)
-    if inv_cfg is None or not isinstance(inv_cfg, Mapping):
-        return False
-    return bool(getattr(inv_cfg, "enabled", False))
-
-
-def _complaints_enabled_from_cfg(cfg: Optional[Mapping]) -> bool:
-    """Return True if complaints generation is enabled in config."""
-    if cfg is None:
-        return False
-    cc = getattr(cfg, "complaints", None)
-    if cc is None or not isinstance(cc, Mapping):
-        return False
-    return bool(getattr(cc, "enabled", False))
 
 
 def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:

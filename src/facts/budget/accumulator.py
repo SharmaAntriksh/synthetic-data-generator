@@ -114,13 +114,49 @@ class BudgetAccumulator:
         Merge return micro-aggregates into annual grain.
 
         Returns DataFrame with columns:
-            Country, Category, Year, SalesChannelKey, ReturnAmount
+            Country, Category, Year, Month, SalesChannelKey,
+            ReturnAmount, ReturnQuantity
         """
         if not self._returns_parts:
             return None
 
-        # TODO: same concat + groupby + label mapping as finalize_sales
-        return None
+        df = pd.DataFrame({
+            "country_id": np.concatenate([p["country_id"] for p in self._returns_parts]),
+            "category_id": np.concatenate([p["category_id"] for p in self._returns_parts]),
+            "year": np.concatenate([p["year"] for p in self._returns_parts]),
+            "month": np.concatenate([p["month"] for p in self._returns_parts]),
+            "channel_key": np.concatenate([p["channel_key"] for p in self._returns_parts]),
+            "return_amount": np.concatenate([p["return_amount"] for p in self._returns_parts]),
+            "return_qty": np.concatenate([p["return_qty"] for p in self._returns_parts]),
+        })
+
+        monthly = df.groupby(
+            ["country_id", "category_id", "year", "month", "channel_key"],
+            as_index=False,
+        ).agg({"return_amount": "sum", "return_qty": "sum"})
+
+        country_ids = monthly["country_id"].to_numpy()
+        category_ids = monthly["category_id"].to_numpy()
+        if country_ids.size > 0 and int(country_ids.max()) >= len(self._country_labels):
+            raise IndexError(
+                f"country_id {int(country_ids.max())} >= country_labels length {len(self._country_labels)}"
+            )
+        if category_ids.size > 0 and int(category_ids.max()) >= len(self._category_labels):
+            raise IndexError(
+                f"category_id {int(category_ids.max())} >= category_labels length {len(self._category_labels)}"
+            )
+        monthly["Country"] = self._country_labels[country_ids]
+        monthly["Category"] = self._category_labels[category_ids]
+        monthly.rename(columns={
+            "year": "Year",
+            "month": "Month",
+            "channel_key": "SalesChannelKey",
+            "return_amount": "ReturnAmount",
+            "return_qty": "ReturnQuantity",
+        }, inplace=True)
+
+        return monthly[["Country", "Category", "Year", "Month",
+                         "SalesChannelKey", "ReturnAmount", "ReturnQuantity"]]
 
     @property
     def has_data(self) -> bool:

@@ -15,6 +15,12 @@ from typing import Dict, Optional
 import numpy as np
 import pyarrow as pa
 
+from src.facts.shared.micro_agg_helpers import (
+    validate_required_columns,
+    extract_column,
+    decompose_dates,
+)
+
 
 def micro_aggregate_inventory(
     table: pa.Table,
@@ -29,21 +35,15 @@ def micro_aggregate_inventory(
 
     Uses np.bincount with a flat composite key — O(n) single pass.
     """
-    required = {"ProductKey", "StoreKey", "OrderDate", "Quantity"}
-    if not required.issubset(table.schema.names):
+    if not validate_required_columns(table, {"ProductKey", "StoreKey", "OrderDate", "Quantity"}):
         return None
 
-    if table.num_rows == 0:
-        return None
-
-    product_keys = table.column("ProductKey").to_numpy(zero_copy_only=False).astype(np.int32, copy=False)
-    store_keys = table.column("StoreKey").to_numpy(zero_copy_only=False).astype(np.int32, copy=False)
+    product_keys = extract_column(table, "ProductKey", np.int32)
+    store_keys = extract_column(table, "StoreKey", np.int32)
     order_dates = table.column("OrderDate").to_numpy(zero_copy_only=False)
-    qty = table.column("Quantity").to_numpy(zero_copy_only=False).astype(np.float64, copy=False)
+    qty = extract_column(table, "Quantity", np.float64)
 
-    m_int = order_dates.astype("datetime64[M]").astype(np.int64)
-    year = (m_int // 12 + 1970).astype(np.int32)
-    month = (m_int % 12 + 1).astype(np.int32)
+    year, month = decompose_dates(order_dates)
 
     max_prod = int(product_keys.max())
     max_store = int(store_keys.max())

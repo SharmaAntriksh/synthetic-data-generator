@@ -20,11 +20,11 @@ from src.utils.config_helpers import (
     int_or,
     float_or,
     bool_or,
-    pick_seed_nested,
     parse_global_dates,
     rand_dates_between,
     region_from_iso_code,
 )
+from src.utils.config_precedence import resolve_seed
 from src.defaults import (
     EMPLOYEE_PART_TIME_RATE_BY_ROLE,
     EMPLOYEE_PART_TIME_FTE_VALUES,
@@ -364,23 +364,26 @@ def _generate_attrition_replacements(
 
     # Track highest within-store seq per store for key allocation
     # Current keys: STAFF_KEY_BASE + store * STAFF_KEY_STORE_MULT + seq
+    # Vectorised store_max_seq extraction
+    _ek_vals = ek_col.to_numpy()
+    _staff_mask = _ek_vals >= STAFF_KEY_BASE
+    _staff_keys = _ek_vals[_staff_mask]
+    _sk_arr = (_staff_keys - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
+    _seq_arr = (_staff_keys - STAFF_KEY_BASE) % STAFF_KEY_STORE_MULT
     store_max_seq: dict[int, int] = {}
-    for i in range(len(df)):
-        ek_val = int(ek_col.iloc[i])
-        if ek_val >= STAFF_KEY_BASE:
-            sk = (ek_val - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
-            seq = (ek_val - STAFF_KEY_BASE) % STAFF_KEY_STORE_MULT
-            store_max_seq[sk] = max(store_max_seq.get(sk, 0), seq)
+    _uniq_sk = np.unique(_sk_arr)
+    for sk_val in _uniq_sk:
+        sk_mask = _sk_arr == sk_val
+        store_max_seq[int(sk_val)] = int(_seq_arr[sk_mask].max())
 
     replacement_rows: list[dict] = []
     term_date_col = df.columns.get_loc("TerminationDate")
     is_active_col = df.columns.get_loc("IsActive")
 
     # Per-store RNG spawn for determinism regardless of iteration order
-    store_keys_sorted = sorted({
-        int((int(ek_col.iloc[i]) - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT)
-        for i in sa_idx
-    })
+    store_keys_sorted = sorted(set(
+        ((_ek_vals[sa_idx] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT).astype(int).tolist()
+    ))
     store_rng_map: dict[int, np.random.Generator] = {}
     spawned = rng.spawn(len(store_keys_sorted))
     for sk, child_rng in zip(store_keys_sorted, spawned):
@@ -1144,7 +1147,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     if not stores_path.exists():
         raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
 
-    seed = pick_seed_nested(cfg, dict(emp_cfg), fallback=42)
+    seed = resolve_seed(cfg, dict(emp_cfg), fallback=42)
     global_start, global_end = _parse_employee_dates(cfg, dict(emp_cfg))
 
     _STORES_READ_COLS = [
@@ -1305,7 +1308,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
                 compression_level=None,
                 force_date32=True,
             )
-            info(f"Employee transfers written: {transfers_path} ({len(transfers)} employees)")
+            info(f"Employee transfers written: {transfers_path.name} ({len(transfers)} employees)")
         elif transfers_path.exists():
             transfers_path.unlink()
 
@@ -1343,7 +1346,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         )
 
     save_version("employees", version_cfg, out_path)
-    info(f"Employees dimension written: {out_path}")
+    info(f"Employees dimension written: {out_path.name}")
 
     # --- Sync stores.parquet EmployeeCount with actual generated counts ---
     _sync_stores_employee_count(df, stores_path)

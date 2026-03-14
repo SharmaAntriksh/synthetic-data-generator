@@ -2,25 +2,17 @@
 streamed from sales worker chunks."""
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 import numpy as np
 import pandas as pd
 
+from src.facts.shared.base_accumulator import BaseAccumulator
 
-class WishlistAccumulator:
+
+class WishlistAccumulator(BaseAccumulator):
     """Collects customer-product purchase pairs across all sales chunks."""
 
     def __init__(self) -> None:
-        self._parts: List[Dict[str, np.ndarray]] = []
-
-    def add(self, micro: Optional[Dict[str, np.ndarray]]) -> None:
-        if micro is not None and len(micro.get("customer_key", [])) > 0:
-            self._parts.append(micro)
-
-    @property
-    def has_data(self) -> bool:
-        return len(self._parts) > 0
+        super().__init__(validator_key="customer_key")
 
     def finalize(self) -> pd.DataFrame:
         """Return deduplicated (CustomerKey, ProductKey) pairs as a DataFrame."""
@@ -30,11 +22,6 @@ class WishlistAccumulator:
         all_ck = np.concatenate([p["customer_key"] for p in self._parts])
         all_pk = np.concatenate([p["product_key"] for p in self._parts])
 
-        # Global dedup across chunks
-        pairs = np.column_stack([all_ck, all_pk])
-        unique_pairs = np.unique(pairs, axis=0)
-
-        return pd.DataFrame({
-            "CustomerKey": unique_pairs[:, 0],
-            "ProductKey": unique_pairs[:, 1],
-        })
+        # Hash-based dedup — O(n) vs O(n log n) for np.unique(axis=0)
+        df = pd.DataFrame({"CustomerKey": all_ck, "ProductKey": all_pk})
+        return df.drop_duplicates(ignore_index=True)

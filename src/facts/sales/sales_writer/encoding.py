@@ -11,7 +11,7 @@ from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL
 DICT_EXCLUDE: frozenset[str] = frozenset({"SalesOrderNumber", "CustomerKey"})
 
 REQUIRED_PRICING_COLS: frozenset[str] = frozenset({
-    "UnitPrice",
+    "ListPrice",
     "NetPrice",
     "UnitCost",
     "DiscountAmount",

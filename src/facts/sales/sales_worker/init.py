@@ -1012,6 +1012,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "salesperson_by_store_month": salesperson_by_store_month,
             "salesperson_global_pool": salesperson_global_pool,
 
+            "parquet_folder": worker_cfg.get("parquet_folder"),
+
             "budget_enabled": budget_enabled,
             "budget_store_to_country": budget_store_to_country,
             "budget_product_to_cat": budget_product_to_cat,
@@ -1025,6 +1027,15 @@ def init_sales_worker(worker_cfg: dict) -> None:
             # Product profile attributes for weighted sampling
             "product_popularity": worker_cfg.get("product_popularity"),
             "product_seasonality": worker_cfg.get("product_seasonality"),
+
+            # SCD2 version grids
+            "product_scd2_active": bool(worker_cfg.get("product_scd2_active", False)),
+            "product_scd2_starts": worker_cfg.get("product_scd2_starts"),
+            "product_scd2_data": worker_cfg.get("product_scd2_data"),
+            "customer_scd2_active": bool(worker_cfg.get("customer_scd2_active", False)),
+            "customer_scd2_starts": worker_cfg.get("customer_scd2_starts"),
+            "customer_scd2_keys": worker_cfg.get("customer_scd2_keys"),
+            "cust_key_to_pool_idx": worker_cfg.get("cust_key_to_pool_idx"),
         }
     )
 

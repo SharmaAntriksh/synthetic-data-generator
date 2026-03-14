@@ -226,6 +226,9 @@ def run_pipeline(
         # ----------------------------
         # Run pipelines
         # ----------------------------
+        from src.utils.config_precedence import _is_random_mode
+        if _is_random_mode(cfg):
+            info("Random mode ON — all seeds will use OS entropy (non-deterministic run).")
         info("Starting full pipeline.")
         dim_summary = None
 

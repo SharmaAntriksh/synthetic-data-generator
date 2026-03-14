@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils import info, skip, stage
+from src.utils.config_precedence import resolve_seed
 from src.versioning import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
 from src.utils.name_pools import (
@@ -486,40 +487,52 @@ def _generate_phone_numbers(
     region: np.ndarray,
     N: int,
 ) -> np.ndarray:
-    """Regional-format synthetic phone numbers."""
+    """Regional-format synthetic phone numbers (vectorized string ops)."""
     phones = np.empty(N, dtype=object)
     raw = rng.integers(1_000_000_000, 9_999_999_999, size=N, dtype="int64")
 
-    def _batch(mask, fmt_fn):
-        if mask.any():
-            phones[mask] = np.array(
-                [fmt_fn(v) for v in raw[mask]], dtype=object
-            )
+    def _fmt_us(v: np.ndarray) -> np.ndarray:
+        area = ((v // 10_000_000) % 800 + 200).astype(str).astype(object)
+        mid = np.char.zfill(((v // 10_000) % 1000).astype(str), 3).astype(object)
+        last = np.char.zfill((v % 10_000).astype(str), 4).astype(object)
+        return "+1 (" + area + ") " + mid + "-" + last
 
-    _batch(
-        region == "US",
-        lambda v: f"+1 ({(v // 10_000_000) % 800 + 200}) "
-                  f"{(v // 10_000) % 1000:03d}-{v % 10_000:04d}",
-    )
-    _batch(
+    def _fmt_region(mask: np.ndarray, fmt_fn) -> None:
+        if mask.any():
+            phones[mask] = fmt_fn(raw[mask])
+
+    _fmt_region(region == "US", _fmt_us)
+    _fmt_region(
         region == "IN",
-        lambda v: f"+91 {(v // 100_000) % 100_000:05d} {v % 100_000:05d}",
+        lambda v: (
+            "+91 "
+            + np.char.zfill(((v // 100_000) % 100_000).astype(str), 5).astype(object)
+            + " "
+            + np.char.zfill((v % 100_000).astype(str), 5).astype(object)
+        ),
     )
-    _batch(
+    _fmt_region(
         region == "EU",
-        lambda v: f"+44 {(v // 1_000_000) % 10_000:04d} {v % 1_000_000:06d}",
+        lambda v: (
+            "+44 "
+            + np.char.zfill(((v // 1_000_000) % 10_000).astype(str), 4).astype(object)
+            + " "
+            + np.char.zfill((v % 1_000_000).astype(str), 6).astype(object)
+        ),
     )
-    _batch(
+    _fmt_region(
         region == "AS",
-        lambda v: f"+81 {(v // 10_000_000) % 100:02d}-"
-                  f"{(v // 10_000) % 1000:03d}-{v % 10_000:04d}",
+        lambda v: (
+            "+81 "
+            + np.char.zfill(((v // 10_000_000) % 100).astype(str), 2).astype(object)
+            + "-"
+            + np.char.zfill(((v // 10_000) % 1000).astype(str), 3).astype(object)
+            + "-"
+            + np.char.zfill((v % 10_000).astype(str), 4).astype(object)
+        ),
     )
     remaining = pd.isna(phones) | (phones == None)  # noqa: E711
-    _batch(
-        remaining,
-        lambda v: f"+1 ({(v // 10_000_000) % 800 + 200}) "
-                  f"{(v // 10_000) % 1000:03d}-{v % 10_000:04d}",
-    )
+    _fmt_region(remaining, _fmt_us)
     return phones
 
 
@@ -634,7 +647,7 @@ def _generate_postal_codes(
     region: np.ndarray,
     N: int,
 ) -> np.ndarray:
-    """Region-appropriate synthetic postal codes."""
+    """Region-appropriate synthetic postal codes (vectorized string ops)."""
     codes = np.empty(N, dtype=object)
     for rc, fmt in _POSTCODE_FMT.items():
         mask = region == rc
@@ -642,15 +655,13 @@ def _generate_postal_codes(
         if not n:
             continue
         if fmt == "5digit":
-            codes[mask] = np.array(
-                [f"{v:05d}" for v in rng.integers(10001, 99999, size=n)],
-                dtype=object,
-            )
+            codes[mask] = np.char.zfill(
+                rng.integers(10001, 99999, size=n).astype(str), 5
+            ).astype(object)
         elif fmt == "6digit":
-            codes[mask] = np.array(
-                [f"{v:06d}" for v in rng.integers(100001, 999999, size=n)],
-                dtype=object,
-            )
+            codes[mask] = np.char.zfill(
+                rng.integers(100001, 999999, size=n).astype(str), 6
+            ).astype(object)
         elif fmt == "uk":
             prefix = rng.choice(
                 np.array(["SW", "EC", "W", "SE", "N", "NW", "E", "WC"]),
@@ -665,17 +676,16 @@ def _generate_postal_codes(
                 + suffix.astype(object) + letter + letter2
             )
         elif fmt == "jp":
-            codes[mask] = np.array(
-                [f"{v // 10000:03d}-{v % 10000:04d}" for v in rng.integers(1000000, 9999999, size=n)],
-                dtype=object,
-            )
+            v = rng.integers(1000000, 9999999, size=n)
+            hi = np.char.zfill((v // 10000).astype(str), 3).astype(object)
+            lo = np.char.zfill((v % 10000).astype(str), 4).astype(object)
+            codes[mask] = hi + "-" + lo
     remaining = pd.isna(codes) | (codes == None)  # noqa: E711
     n_rem = int(remaining.sum())
     if n_rem:
-        codes[remaining] = np.array(
-            [f"{v:05d}" for v in rng.integers(10001, 99999, size=n_rem)],
-            dtype=object,
-        )
+        codes[remaining] = np.char.zfill(
+            rng.integers(10001, 99999, size=n_rem).astype(str), 5
+        ).astype(object)
     return codes
 
 
@@ -777,20 +787,36 @@ def _generate_org_profile(
         "China": ("Shanghai,Beijing,Shenzhen,Guangzhou,Chengdu", "SH,BJ,GD,GD,SC"),
         "Australia": ("Sydney,Melbourne,Brisbane,Perth,Adelaide", "NSW,VIC,QLD,WA,SA"),
     }
+    # Vectorised hq_city / hq_state: iterate 8 countries not M orgs
+    _hq_countries_list = list(geo_lookup_hq.keys())
+    _hq_cities_split = [geo_lookup_hq[c][0].split(",") for c in _hq_countries_list]
+    _hq_states_split = [geo_lookup_hq[c][1].split(",") for c in _hq_countries_list]
+    _hq_country_to_idx = {c: i for i, c in enumerate(_hq_countries_list)}
+    _hq_mapped = np.array([_hq_country_to_idx.get(str(c), -1) for c in HeadquarterCountry])
+    _hq_known_mask = _hq_mapped >= 0
+    _hq_n_known = int(_hq_known_mask.sum())
+
+    # Batch RNG draw for known-country orgs (all have 5 options)
+    _hq_rand_all = rng.integers(0, 5, size=_hq_n_known)
+
     hq_city = np.empty(M, dtype=object)
     hq_state = np.empty(M, dtype=object)
-    for i in range(M):
-        country = str(HeadquarterCountry[i])
-        if country in geo_lookup_hq:
-            cities_str, states_str = geo_lookup_hq[country]
-            cities = cities_str.split(",")
-            states = states_str.split(",")
-            idx = rng.integers(0, len(cities))
-            hq_city[i] = cities[idx]
-            hq_state[i] = states[idx]
-        else:
-            hq_city[i] = "New York"
-            hq_state[i] = "NY"
+    hq_city[:] = "New York"
+    hq_state[:] = "NY"
+
+    # Map batch RNG draws back to positions via cumulative indexing
+    _hq_known_positions = np.flatnonzero(_hq_known_mask)
+    _hq_rand_by_pos = np.empty(M, dtype=np.intp)
+    _hq_rand_by_pos[_hq_known_positions] = _hq_rand_all
+
+    for ci in range(len(_hq_countries_list)):
+        mask = _hq_mapped == ci
+        if not mask.any():
+            continue
+        n_opts = len(_hq_cities_split[ci])
+        idxs = _hq_rand_by_pos[mask] % n_opts
+        hq_city[mask] = np.array(_hq_cities_split[ci], dtype=object)[idxs]
+        hq_state[mask] = np.array(_hq_states_split[ci], dtype=object)[idxs]
 
     OrgAddress = (
         org_street_num.astype(object) + " " + org_street_name + " " + org_street_type
@@ -1136,6 +1162,315 @@ def _assign_households(
 
 
 # ---------------------------------------------------------
+# SCD Type 2 — Life Event Engine
+# ---------------------------------------------------------
+
+def _income_to_group(income: float) -> str:
+    """Map a yearly income value to its income group label."""
+    idx = int(np.searchsorted(INCOME_GROUP_EDGES, income))
+    return str(INCOME_GROUP_LABELS[min(idx, len(INCOME_GROUP_LABELS) - 1)])
+
+
+def _available_events(state: dict, tier_keys: np.ndarray) -> list:
+    """Return list of (event_name, weight) tuples based on current state."""
+    events = []
+    ms = state.get("MaritalStatus")
+    ho = state.get("HomeOwnership")
+    nc = int(state.get("NumberOfChildren") or 0)
+    tier = int(state.get("LoyaltyTierKey") or 0)
+
+    # Career growth — always available
+    events.append(("career_growth", 0.30))
+
+    # Marriage — if single or divorced
+    if ms in ("Single", "Divorced"):
+        events.append(("marriage", 0.20))
+
+    # Family growth — if married and room for more children
+    if ms == "Married" and nc < MAX_CHILDREN:
+        events.append(("family_growth", 0.15))
+
+    # Home purchase — if not already owning
+    if ho in ("Rent", "Other"):
+        events.append(("home_purchase", 0.10))
+
+    # Relocation — always available
+    events.append(("relocation", 0.10))
+
+    # Divorce — if married
+    if ms == "Married":
+        events.append(("divorce", 0.05))
+
+    # Tier upgrade — if not at max tier
+    if len(tier_keys) > 0 and tier < int(tier_keys[-1]):
+        events.append(("tier_upgrade", 0.15))
+
+    return events
+
+
+def _relocate(rng: np.random.Generator, state: dict,
+              geo_keys: np.ndarray, geo_lookup: pd.DataFrame) -> None:
+    """Change GeographyKey and regenerate address columns to match.
+
+    HomeAddress always changes on relocation.  WorkAddress only changes
+    when the customer moves to a different country (cross-country
+    relocation implies a job change; within the same country, the old
+    workplace is still reachable).
+    """
+    old_gk = state.get("GeographyKey")
+    new_gk = int(rng.choice(geo_keys))
+    state["GeographyKey"] = new_gk
+
+    # Resolve old and new country
+    old_country = (
+        str(geo_lookup.loc[old_gk, "Country"])
+        if old_gk in geo_lookup.index else ""
+    )
+    new_country = (
+        str(geo_lookup.loc[new_gk, "Country"])
+        if new_gk in geo_lookup.index else ""
+    )
+    cross_country = old_country != new_country
+
+    # Look up city/state for the new geography
+    if new_gk in geo_lookup.index:
+        row = geo_lookup.loc[new_gk]
+        city = str(row["City"])
+        st = str(row["State"])
+    else:
+        city, st = "Unknown", "Unknown"
+
+    # --- Helper: generate a single address string ---
+    def _make_address(c, s):
+        sn = str(rng.integers(1, 9999))
+        sname = str(rng.choice(_STREET_NAMES))
+        stype = str(rng.choice(_STREET_TYPES))
+        ulabel = str(rng.choice(np.array(["Apt", "Suite", "Unit", "Fl", "#"])))
+        unum = str(state.get("CustomerID", 0))
+        return f"{sn} {sname} {stype}, {ulabel} {unum}, {c}, {s}"
+
+    # Regenerate home address (always)
+    state["HomeAddress"] = _make_address(city, st)
+
+    # Regenerate work address only on cross-country moves
+    if cross_country:
+        state["WorkAddress"] = _make_address(city, st)
+
+    # Map country to region code for lat/lon and postal code generation
+    _country_to_region = {
+        "United States": "US", "India": "IN",
+        "United Kingdom": "EU", "Germany": "EU", "France": "EU",
+        "Japan": "AS", "China": "AS", "Australia": "AS",
+    }
+    rc = _country_to_region.get(new_country, "US")
+
+    # Regenerate lat/lon
+    clat, clon = _REGION_LAT_LON_CENTER.get(rc, (39.8, -98.5))
+    jlat, jlon = _LAT_LON_JITTER.get(rc, (5.0, 5.0))
+    state["Latitude"] = round(float(clat + rng.uniform(-jlat, jlat)), 4)
+    state["Longitude"] = round(float(clon + rng.uniform(-jlon, jlon)), 4)
+
+    # Regenerate postal code
+    fmt = _POSTCODE_FMT.get(rc, "5digit")
+    if fmt == "5digit":
+        state["PostalCode"] = f"{rng.integers(10001, 99999):05d}"
+    elif fmt == "6digit":
+        state["PostalCode"] = f"{rng.integers(100001, 999999):06d}"
+    elif fmt == "uk":
+        pfx = str(rng.choice(np.array(["SW", "EC", "W", "SE", "N", "NW", "E", "WC"])))
+        state["PostalCode"] = f"{pfx}{rng.integers(1, 19)} {rng.integers(1, 9)}{chr(rng.integers(65, 91))}{chr(rng.integers(65, 91))}"
+    elif fmt == "jp":
+        v = int(rng.integers(1000000, 9999999))
+        state["PostalCode"] = f"{v // 10000:03d}-{v % 10000:04d}"
+
+
+def _apply_life_event(
+    rng: np.random.Generator,
+    state: dict,
+    event: str,
+    geo_keys: np.ndarray,
+    tier_keys: np.ndarray,
+    geo_lookup: pd.DataFrame,
+) -> None:
+    """Apply a life event to the customer state dict (mutates in place)."""
+
+    if event == "career_growth":
+        bump = rng.uniform(0.12, 0.35)
+        income = int(state.get("YearlyIncome") or 0)
+        new_income = int(np.clip(income * (1 + bump), INCOME_MIN, INCOME_MAX))
+        state["YearlyIncome"] = new_income
+        state["IncomeGroup"] = _income_to_group(new_income)
+        # 30% chance of tier upgrade alongside career growth
+        if rng.random() < 0.30 and len(tier_keys) > 0:
+            current_idx = int(np.searchsorted(tier_keys, state["LoyaltyTierKey"]))
+            if current_idx < len(tier_keys) - 1:
+                state["LoyaltyTierKey"] = int(tier_keys[current_idx + 1])
+
+    elif event == "marriage":
+        state["MaritalStatus"] = "Married"
+        # 30% chance of relocation with marriage
+        if rng.random() < 0.30:
+            _relocate(rng, state, geo_keys, geo_lookup)
+
+    elif event == "family_growth":
+        nc = int(state.get("NumberOfChildren") or 0)
+        state["NumberOfChildren"] = nc + 1
+        # 40% chance of buying home when having kids
+        if state.get("HomeOwnership") in ("Rent", "Other") and rng.random() < 0.40:
+            state["HomeOwnership"] = "Own"
+        # 20% chance of relocation
+        if rng.random() < 0.20:
+            _relocate(rng, state, geo_keys, geo_lookup)
+
+    elif event == "home_purchase":
+        state["HomeOwnership"] = "Own"
+
+    elif event == "relocation":
+        _relocate(rng, state, geo_keys, geo_lookup)
+
+    elif event == "divorce":
+        state["MaritalStatus"] = "Divorced"
+        # 50% chance income decreases
+        if rng.random() < 0.50:
+            income = int(state.get("YearlyIncome") or 0)
+            new_income = int(np.clip(income * rng.uniform(0.75, 0.90), INCOME_MIN, INCOME_MAX))
+            state["YearlyIncome"] = new_income
+            state["IncomeGroup"] = _income_to_group(new_income)
+        # 60% chance of relocation
+        if rng.random() < 0.60:
+            _relocate(rng, state, geo_keys, geo_lookup)
+        # 35% chance of losing home
+        if state.get("HomeOwnership") == "Own" and rng.random() < 0.35:
+            state["HomeOwnership"] = "Rent"
+
+    elif event == "tier_upgrade":
+        if len(tier_keys) > 0:
+            current_idx = int(np.searchsorted(tier_keys, state["LoyaltyTierKey"]))
+            if current_idx < len(tier_keys) - 1:
+                state["LoyaltyTierKey"] = int(tier_keys[current_idx + 1])
+
+
+def _generate_scd2_versions(
+    rng: np.random.Generator,
+    base_df: pd.DataFrame,
+    cust_cfg,
+    geo_keys: np.ndarray,
+    tier_keys: np.ndarray,
+    end_date: pd.Timestamp,
+    geo_lookup: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Expand customer rows with SCD Type 2 version history.
+
+    For a fraction of individual customers (scd2_change_rate), generates
+    coherent life events that modify tracked attributes (GeographyKey,
+    LoyaltyTierKey, YearlyIncome, IncomeGroup, MaritalStatus, HomeOwnership,
+    NumberOfChildren).  Each event creates a new version row with updated
+    EffectiveStartDate / EffectiveEndDate / VersionNumber / IsCurrent.
+    """
+    change_rate = float(getattr(cust_cfg, "change_rate", 0.15))
+    max_versions = int(getattr(cust_cfg, "max_versions", 4))
+
+    # Only individuals get SCD2 versions (orgs stay at version 1)
+    person_mask = base_df["CustomerType"] == "Individual"
+    person_ids = base_df.loc[person_mask, "CustomerID"].to_numpy()
+
+    if len(person_ids) == 0:
+        return base_df
+
+    n_change = max(1, int(len(person_ids) * change_rate))
+    n_change = min(n_change, len(person_ids))
+    change_id_set = set(
+        rng.choice(person_ids, size=n_change, replace=False).tolist()
+    )
+
+    # Separate unchanged customers (pass through) from changed ones
+    unchanged_df = base_df[~base_df["CustomerID"].isin(change_id_set)]
+    changed_df = base_df[base_df["CustomerID"].isin(change_id_set)]
+
+    new_rows = []
+
+    for row_dict in changed_df.to_dict("records"):
+
+        # Determine number of life events (1 to max_versions-1)
+        n_events = int(rng.integers(1, max_versions))
+
+        # Space event dates across customer's active period
+        cust_start = pd.Timestamp(row_dict["EffectiveStartDate"])
+        total_days = (end_date - cust_start).days
+
+        # Need at least 90 days per event segment
+        if total_days <= 90:
+            new_rows.append(row_dict)
+            continue
+
+        n_events = min(n_events, (total_days - 90) // 90)
+        if n_events <= 0:
+            new_rows.append(row_dict)
+            continue
+
+        # Generate sorted random event offsets.
+        # Reserve at least 90 days at the end so the IsCurrent=1 version
+        # has meaningful coverage (otherwise it may never appear in sales).
+        max_offset = max(91, total_days - 90)
+        offsets = np.sort(rng.integers(90, max_offset, size=n_events))
+        # Enforce minimum 60-day gap between events
+        for i in range(1, len(offsets)):
+            if offsets[i] - offsets[i - 1] < 60:
+                offsets[i] = min(offsets[i - 1] + 60, max_offset - 1)
+        event_dates = [cust_start + pd.Timedelta(days=int(d)) for d in offsets]
+
+        # Build version chain
+        versions = []
+        current_state = dict(row_dict)
+
+        for i, event_date in enumerate(event_dates):
+            # Close the current version
+            current_state["EffectiveEndDate"] = event_date - pd.Timedelta(days=1)
+            current_state["IsCurrent"] = 0
+            versions.append(dict(current_state))
+
+            # Create new version
+            new_state = dict(current_state)
+            new_state["VersionNumber"] = i + 2
+            new_state["EffectiveStartDate"] = event_date
+            new_state["EffectiveEndDate"] = pd.Timestamp("9999-12-31")
+            new_state["IsCurrent"] = 1
+
+            # Pick and apply a coherent life event
+            available = _available_events(new_state, tier_keys)
+            if not available:
+                break
+            event_names, weights = zip(*available)
+            weights_arr = np.array(weights, dtype="float64")
+            weights_arr /= weights_arr.sum()
+            chosen = str(rng.choice(list(event_names), p=weights_arr))
+            _apply_life_event(rng, new_state, chosen, geo_keys, tier_keys, geo_lookup)
+
+            current_state = new_state
+
+        # Add the final (current) version
+        versions.append(dict(current_state))
+        new_rows.extend(versions)
+
+    # Combine unchanged + expanded rows
+    expanded_df = pd.concat(
+        [unchanged_df, pd.DataFrame(new_rows)],
+        ignore_index=True,
+    )
+
+    # Reassign CustomerKey to be sequential across all version rows
+    expanded_df["CustomerKey"] = np.arange(1, len(expanded_df) + 1, dtype="int64")
+
+    n_total = len(expanded_df)
+    n_base = len(base_df)
+    n_versions = n_total - n_base
+    info(f"SCD2: {n_change} customers expanded, {n_versions} version rows added ({n_total} total)")
+
+    return expanded_df
+
+
+# ---------------------------------------------------------
 # Main generator
 # ---------------------------------------------------------
 def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
@@ -1144,10 +1479,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     if total_customers <= 0:
         raise ValueError("customers.total_customers must be > 0")
 
-    default_seed = cfg.defaults.seed if hasattr(cfg, "defaults") else 42
-    override_seed = (cust_cfg.override or {}).get("seed")
-    seed = override_seed if override_seed is not None else default_seed
-    rng = np.random.default_rng(int(seed))
+    seed = resolve_seed(cfg, cust_cfg, fallback=42)
+    rng = np.random.default_rng(seed)
 
     start_date, end_date = _parse_cfg_dates(cfg)
     start_month0, _end_month0, T = _month_index_space(start_date, end_date)
@@ -1556,7 +1889,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     CustomerStartDate = CustomerStartDate + day_offsets
 
     if enable_churn:
-        end_idx = np.array([int(x) if not pd.isna(x) else -1 for x in CustomerEndMonth], dtype="int64")
+        _cem = pd.to_numeric(CustomerEndMonth, errors="coerce")
+        end_idx = np.where(np.isnan(_cem), -1, _cem).astype(np.int64)
         has_end = end_idx >= 0
         CustomerEndDate = np.empty(N, dtype="datetime64[ns]")
         CustomerEndDate[:] = np.datetime64("NaT")
@@ -1780,11 +2114,12 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     )
 
     # =====================================================
-    # Build Customers dataframe (identity + engine)
+    # Build Customers dataframe (identity + engine + SCD2 tracked cols)
     # =====================================================
     customers_df = pd.DataFrame(
         {
             "CustomerKey": CustomerKey,
+            "CustomerID": CustomerKey.copy(),       # durable business key (= CustomerKey initially)
             "CustomerName": CustomerName,
             "DOB": BirthDate,
             "Gender": Gender,
@@ -1802,25 +2137,32 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
             "HouseholdRole": HouseholdRole,
             "LoyaltyTierKey": pd.Series(LoyaltyTierKey, dtype="Int64"),
             "CustomerAcquisitionChannelKey": pd.Series(CustomerAcquisitionChannelKey, dtype="Int64"),
+            # --- Columns moved from CustomerProfile (SCD2 tracked) ---
+            "YearlyIncome": YearlyIncome,
+            "IncomeGroup": IncomeGroup,
+            "MaritalStatus": MaritalStatus,
+            "HomeOwnership": HomeOwnership,
+            "NumberOfChildren": TotalChildren,
+            # --- Lifecycle dates ---
             "CustomerStartDate": pd.to_datetime(CustomerStartDate),
             "CustomerEndDate": pd.to_datetime(CustomerEndDate),
+            # --- SCD2 metadata (always present, defaults for Type 1 mode) ---
+            "VersionNumber": np.ones(N, dtype="int64"),
+            "EffectiveStartDate": pd.to_datetime(CustomerStartDate),
+            "EffectiveEndDate": pd.Timestamp("9999-12-31"),
+            "IsCurrent": np.ones(N, dtype="int64"),
         }
     )
 
     # =====================================================
-    # Build CustomerProfile dataframe (analytical slicers)
+    # Build CustomerProfile dataframe (analytical slicers — minus moved cols)
     # =====================================================
     profile_df = pd.DataFrame(
         {
-            "CustomerKey": CustomerKey,
+            "CustomerKey": CustomerKey,          # links to IsCurrent=1 row after SCD2 expansion
             "AgeGroup": AgeGroup,
-            "YearlyIncome": YearlyIncome,
-            "IncomeGroup": IncomeGroup,
-            "MaritalStatus": MaritalStatus,
             "Education": Education,
             "Occupation": Occupation,
-            "TotalChildren": TotalChildren,
-            "HomeOwnership": HomeOwnership,
             "NumberOfCars": pd.Series(NumberOfCars, dtype="Int64"),
             "CreditScore": pd.Series(CreditScore, dtype="Int64"),
             "UrbanRural": UrbanRural,
@@ -1869,6 +2211,35 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         seed=int(seed),
     )
 
+    # =====================================================
+    # SCD Type 2 expansion (if enabled)
+    # =====================================================
+    scd2_cfg = getattr(cust_cfg, "scd2", None)
+    scd2_enabled = bool(getattr(scd2_cfg, "enabled", False)) if scd2_cfg else False
+    if scd2_enabled:
+        customers_df = _generate_scd2_versions(
+            rng=rng,
+            base_df=customers_df,
+            cust_cfg=scd2_cfg,
+            geo_keys=geo_keys,
+            tier_keys=tier_keys,
+            end_date=end_date,
+            geo_lookup=geo_lookup,
+        )
+
+        # Remap profile/org-profile CustomerKey → IsCurrent=1 version's CustomerKey
+        current_map = (
+            customers_df.loc[customers_df["IsCurrent"] == 1, ["CustomerID", "CustomerKey"]]
+            .set_index("CustomerID")["CustomerKey"]
+        )
+        profile_df["CustomerKey"] = (
+            profile_df["CustomerKey"].map(current_map).astype("int64")
+        )
+        if not org_profile_df.empty:
+            org_profile_df["CustomerKey"] = (
+                org_profile_df["CustomerKey"].map(current_map).astype("int64")
+            )
+
     active_customer_set = set(active_customer_keys.tolist())
     return customers_df, profile_df, org_profile_df, active_customer_set
 
@@ -1884,11 +2255,12 @@ def run_customers(cfg: Dict, parquet_folder: Path):
     cust_cfg = cfg.customers
 
     version_cfg = dict(cust_cfg)
-    version_cfg["_schema_version"] = 5
+    version_cfg["_schema_version"] = 6
     version_cfg["_has_loyalty_tier"] = True
     version_cfg["_has_acquisition_channel"] = True
     version_cfg["_has_customer_profile"] = True
     version_cfg["_has_org_profile"] = True
+    version_cfg["_has_scd2"] = True
 
     if not should_regenerate("customers", version_cfg, out_path):
         skip("Customers up-to-date")

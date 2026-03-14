@@ -44,6 +44,37 @@ BEGIN
     ADD CONSTRAINT PK_Customers PRIMARY KEY NONCLUSTERED ([CustomerKey]);
 END;
 
+-- Customers — SCD2 constraints
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Customers', N'IsCurrent') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = N'CK_Customers_IsCurrent'
+      AND parent_object_id = OBJECT_ID(N'dbo.Customers')
+)
+BEGIN
+    ALTER TABLE dbo.Customers WITH CHECK
+    ADD CONSTRAINT CK_Customers_IsCurrent
+        CHECK ([IsCurrent] IN (0, 1));
+    ALTER TABLE dbo.Customers CHECK CONSTRAINT CK_Customers_IsCurrent;
+END;
+
+IF OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Customers', N'VersionNumber') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = N'CK_Customers_VersionNumber'
+      AND parent_object_id = OBJECT_ID(N'dbo.Customers')
+)
+BEGIN
+    ALTER TABLE dbo.Customers WITH CHECK
+    ADD CONSTRAINT CK_Customers_VersionNumber
+        CHECK ([VersionNumber] >= 1);
+    ALTER TABLE dbo.Customers CHECK CONSTRAINT CK_Customers_VersionNumber;
+END;
+
 
 -- CustomerProfile (1:1 with Customers)
 IF OBJECT_ID(N'dbo.CustomerProfile', N'U') IS NOT NULL
@@ -82,6 +113,37 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.Products
     ADD CONSTRAINT PK_Products PRIMARY KEY NONCLUSTERED ([ProductKey]);
+END;
+
+-- Products — SCD2 constraints
+IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Products', N'IsCurrent') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = N'CK_Products_IsCurrent'
+      AND parent_object_id = OBJECT_ID(N'dbo.Products')
+)
+BEGIN
+    ALTER TABLE dbo.Products WITH CHECK
+    ADD CONSTRAINT CK_Products_IsCurrent
+        CHECK ([IsCurrent] IN (0, 1));
+    ALTER TABLE dbo.Products CHECK CONSTRAINT CK_Products_IsCurrent;
+END;
+
+IF OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Products', N'VersionNumber') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.check_constraints
+    WHERE name = N'CK_Products_VersionNumber'
+      AND parent_object_id = OBJECT_ID(N'dbo.Products')
+)
+BEGIN
+    ALTER TABLE dbo.Products WITH CHECK
+    ADD CONSTRAINT CK_Products_VersionNumber
+        CHECK ([VersionNumber] >= 1);
+    ALTER TABLE dbo.Products CHECK CONSTRAINT CK_Products_VersionNumber;
 END;
 
 -- ProductProfile (1:1 with Products)
@@ -685,164 +747,157 @@ END;
 GO
 
 -----------------------------------------------------------------------
--- 6. SUPERPOWERS + CUSTOMER SUPERPOWERS BRIDGE
+-- 6. PLANS + CUSTOMER SUBSCRIPTIONS BRIDGE
 -----------------------------------------------------------------------
 
--- Superpowers: PK
-IF OBJECT_ID(N'dbo.Superpowers', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Superpowers', N'SuperpowerKey') IS NOT NULL
+-- Plans: PK
+IF OBJECT_ID(N'dbo.Plans', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Plans', N'PlanKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.key_constraints
-    WHERE name = N'PK_Superpowers'
-      AND parent_object_id = OBJECT_ID(N'dbo.Superpowers')
+    WHERE name = N'PK_Plans'
+      AND parent_object_id = OBJECT_ID(N'dbo.Plans')
 )
 BEGIN
-    ALTER TABLE dbo.Superpowers
-    ADD CONSTRAINT PK_Superpowers PRIMARY KEY NONCLUSTERED ([SuperpowerKey]);
+    ALTER TABLE dbo.Plans
+    ADD CONSTRAINT PK_Plans PRIMARY KEY NONCLUSTERED ([PlanKey]);
 END;
 GO
 
--- CustomerSuperpowers: composite PK (each customer holds a given power at most once)
-IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'CustomerKey') IS NOT NULL
-AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'SuperpowerKey') IS NOT NULL
+-- CustomerSubscriptions: PK on SubscriptionKey
+IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerSubscriptions', N'SubscriptionKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.key_constraints
-    WHERE name = N'PK_CustomerSuperpowers'
-      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    WHERE name = N'PK_CustomerSubscriptions'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
 )
 BEGIN
-    ALTER TABLE dbo.CustomerSuperpowers
-    ADD CONSTRAINT PK_CustomerSuperpowers
-        PRIMARY KEY NONCLUSTERED ([CustomerKey], [SuperpowerKey]);
+    ALTER TABLE dbo.CustomerSubscriptions
+    ADD CONSTRAINT PK_CustomerSubscriptions
+        PRIMARY KEY NONCLUSTERED ([SubscriptionKey]);
 END;
 GO
 
--- CustomerSuperpowers -> Customers FK
-IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
+-- CustomerSubscriptions -> Customers FK
+IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Customers', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'CustomerKey') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerSubscriptions', N'CustomerKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
-    WHERE name = N'FK_CustomerSuperpowers_Customers'
-      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    WHERE name = N'FK_CustomerSubscriptions_Customers'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
 )
 BEGIN
-    ALTER TABLE dbo.CustomerSuperpowers WITH CHECK
-    ADD CONSTRAINT FK_CustomerSuperpowers_Customers
+    ALTER TABLE dbo.CustomerSubscriptions WITH CHECK
+    ADD CONSTRAINT FK_CustomerSubscriptions_Customers
         FOREIGN KEY ([CustomerKey])
         REFERENCES dbo.Customers ([CustomerKey]);
 
-    ALTER TABLE dbo.CustomerSuperpowers CHECK CONSTRAINT FK_CustomerSuperpowers_Customers;
+    ALTER TABLE dbo.CustomerSubscriptions CHECK CONSTRAINT FK_CustomerSubscriptions_Customers;
 END;
 GO
 
--- CustomerSuperpowers -> Superpowers FK
-IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
-AND OBJECT_ID(N'dbo.Superpowers', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'SuperpowerKey') IS NOT NULL
+-- CustomerSubscriptions -> Plans FK
+IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Plans', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerSubscriptions', N'PlanKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
-    WHERE name = N'FK_CustomerSuperpowers_Superpowers'
-      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+    WHERE name = N'FK_CustomerSubscriptions_Plans'
+      AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
 )
 BEGIN
-    ALTER TABLE dbo.CustomerSuperpowers WITH CHECK
-    ADD CONSTRAINT FK_CustomerSuperpowers_Superpowers
-        FOREIGN KEY ([SuperpowerKey])
-        REFERENCES dbo.Superpowers ([SuperpowerKey]);
+    ALTER TABLE dbo.CustomerSubscriptions WITH CHECK
+    ADD CONSTRAINT FK_CustomerSubscriptions_Plans
+        FOREIGN KEY ([PlanKey])
+        REFERENCES dbo.Plans ([PlanKey]);
 
-    ALTER TABLE dbo.CustomerSuperpowers CHECK CONSTRAINT FK_CustomerSuperpowers_Superpowers;
+    ALTER TABLE dbo.CustomerSubscriptions CHECK CONSTRAINT FK_CustomerSubscriptions_Plans;
 END;
 GO
 
--- CustomerSuperpowers: CHECK constraints on analytical columns
-IF OBJECT_ID(N'dbo.CustomerSuperpowers', N'U') IS NOT NULL
+-- Plans: CHECK constraints
+IF OBJECT_ID(N'dbo.Plans', N'U') IS NOT NULL
 BEGIN
-    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'PowerLevel') IS NOT NULL
+    IF COL_LENGTH(N'dbo.Plans', N'BillingCycle') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSuperpowers_PowerLevel'
-          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+        WHERE name = N'CK_Plans_BillingCycle'
+          AND parent_object_id = OBJECT_ID(N'dbo.Plans')
     )
-        ALTER TABLE dbo.CustomerSuperpowers
-        ADD CONSTRAINT CK_CustomerSuperpowers_PowerLevel
-            CHECK ([PowerLevel] BETWEEN 1 AND 5);
+        ALTER TABLE dbo.Plans
+        ADD CONSTRAINT CK_Plans_BillingCycle
+            CHECK ([BillingCycle] IN ('Monthly', 'Quarterly', 'Half-Yearly', 'Annual'));
 
-    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'IsPrimaryFlag') IS NOT NULL
+    IF COL_LENGTH(N'dbo.Plans', N'Discount') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSuperpowers_IsPrimaryFlag'
-          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+        WHERE name = N'CK_Plans_Discount'
+          AND parent_object_id = OBJECT_ID(N'dbo.Plans')
     )
-        ALTER TABLE dbo.CustomerSuperpowers
-        ADD CONSTRAINT CK_CustomerSuperpowers_IsPrimaryFlag
-            CHECK ([IsPrimaryFlag] IN (0, 1));
+        ALTER TABLE dbo.Plans
+        ADD CONSTRAINT CK_Plans_Discount
+            CHECK ([Discount] >= 0 AND [Discount] < 1);
 
-    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'PowerRank') IS NOT NULL
+    IF COL_LENGTH(N'dbo.Plans', N'MonthlyPrice') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSuperpowers_PowerRank'
-          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+        WHERE name = N'CK_Plans_MonthlyPrice'
+          AND parent_object_id = OBJECT_ID(N'dbo.Plans')
     )
-        ALTER TABLE dbo.CustomerSuperpowers
-        ADD CONSTRAINT CK_CustomerSuperpowers_PowerRank
-            CHECK ([PowerRank] >= 1);
+        ALTER TABLE dbo.Plans
+        ADD CONSTRAINT CK_Plans_MonthlyPrice
+            CHECK ([MonthlyPrice] >= 0);
+END;
+GO
 
-    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'AcquisitionOrder') IS NOT NULL
+-- CustomerSubscriptions: CHECK constraints
+IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'Status') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSuperpowers_AcquisitionOrder'
-          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+        WHERE name = N'CK_CustomerSubscriptions_Status'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
     )
-        ALTER TABLE dbo.CustomerSuperpowers
-        ADD CONSTRAINT CK_CustomerSuperpowers_AcquisitionOrder
-            CHECK ([AcquisitionOrder] >= 1);
+        ALTER TABLE dbo.CustomerSubscriptions
+        ADD CONSTRAINT CK_CustomerSubscriptions_Status
+            CHECK ([Status] IN ('Active', 'Cancelled', 'Expired'));
 
-    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'RarityWeight') IS NOT NULL
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'AutoRenew') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSuperpowers_RarityWeight'
-          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+        WHERE name = N'CK_CustomerSubscriptions_AutoRenew'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
     )
-        ALTER TABLE dbo.CustomerSuperpowers
-        ADD CONSTRAINT CK_CustomerSuperpowers_RarityWeight
-            CHECK ([RarityWeight] >= 0.0 AND [RarityWeight] <= 1.0);
+        ALTER TABLE dbo.CustomerSubscriptions
+        ADD CONSTRAINT CK_CustomerSubscriptions_AutoRenew
+            CHECK ([AutoRenew] IN (0, 1));
 
-    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'DaysToAcquire') IS NOT NULL
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'MonthlyPrice') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSuperpowers_DaysToAcquire'
-          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+        WHERE name = N'CK_CustomerSubscriptions_MonthlyPrice'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
     )
-        ALTER TABLE dbo.CustomerSuperpowers
-        ADD CONSTRAINT CK_CustomerSuperpowers_DaysToAcquire
-            CHECK ([DaysToAcquire] >= 0);
+        ALTER TABLE dbo.CustomerSubscriptions
+        ADD CONSTRAINT CK_CustomerSubscriptions_MonthlyPrice
+            CHECK ([MonthlyPrice] >= 0);
 
-    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'IsLatestPower') IS NOT NULL
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'LoyaltyDiscount') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSuperpowers_IsLatestPower'
-          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
+        WHERE name = N'CK_CustomerSubscriptions_LoyaltyDiscount'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
     )
-        ALTER TABLE dbo.CustomerSuperpowers
-        ADD CONSTRAINT CK_CustomerSuperpowers_IsLatestPower
-            CHECK ([IsLatestPower] IN (0, 1));
-
-    IF COL_LENGTH(N'dbo.CustomerSuperpowers', N'ValidFromDate') IS NOT NULL
-    AND COL_LENGTH(N'dbo.CustomerSuperpowers', N'ValidToDate') IS NOT NULL
-    AND NOT EXISTS (
-        SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSuperpowers_ValidDateRange'
-          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSuperpowers')
-    )
-        ALTER TABLE dbo.CustomerSuperpowers
-        ADD CONSTRAINT CK_CustomerSuperpowers_ValidDateRange
-            CHECK ([ValidFromDate] <= [ValidToDate]);
+        ALTER TABLE dbo.CustomerSubscriptions
+        ADD CONSTRAINT CK_CustomerSubscriptions_LoyaltyDiscount
+            CHECK ([LoyaltyDiscount] >= 0 AND [LoyaltyDiscount] <= 1);
 END;
 GO
 

@@ -47,96 +47,57 @@ def _df_time_table(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     """
     include_labels = bool(dim_cfg.get("include_labels", True))
 
-    rows = []
-    for t in range(24 * 60):  # 0..1439
-        hour = t // 60
-        minute = t % 60
+    # Vectorised construction of 1440-row time dimension
+    t_arr = np.arange(24 * 60, dtype=np.int16)
+    hour = t_arr // 60
+    minute = t_arr % 60
+    k15 = t_arr // 15
+    k30 = t_arr // 30
+    k60 = t_arr // 60
+    k360 = t_arr // 360
+    k720 = t_arr // 720
 
-        # Bin keys (integer rollups)
-        k15 = t // 15     # 0..95
-        k30 = t // 30     # 0..47
-        k60 = t // 60     # 0..23
-        k360 = t // 360   # 0..3 (6h)
-        k720 = t // 720   # 0..1 (12h)
+    _bucket_names = np.array(["Night", "Morning", "Afternoon", "Evening"])
+    bucket_name4 = _bucket_names[k360]
 
-        # 6h-block-derived "4 bucket" names
-        # 00:00–05:59 Night, 06:00–11:59 Morning, 12:00–17:59 Afternoon, 18:00–23:59 Evening
-        bucket_key4 = k360
-        bucket_name4 = ("Night", "Morning", "Afternoon", "Evening")[bucket_key4]
+    # TimeText: "HH:MM"
+    time_text = np.char.add(
+        np.char.zfill(hour.astype(str), 2),
+        np.char.add(":", np.char.zfill(minute.astype(str), 2)),
+    )
 
-        if include_labels:
-            rows.append(
-                (
-                    t,
-                    hour,
-                    minute,
-                    f"{hour:02d}:{minute:02d}",
-                    k15,
-                    _label_range(k15 * 15, 15),
-                    k30,
-                    _label_range(k30 * 30, 30),
-                    k60,
-                    _label_range(k60 * 60, 60),
-                    k360,
-                    _label_block_inclusive(k360 * 360, 360),
-                    k720,
-                    _label_block_inclusive(k720 * 720, 720),
-                    bucket_key4,
-                    bucket_name4,
-                )
-            )
-        else:
-            rows.append(
-                (
-                    t,
-                    hour,
-                    minute,
-                    f"{hour:02d}:{minute:02d}",
-                    k15,
-                    k30,
-                    k60,
-                    k360,
-                    k720,
-                    bucket_key4,
-                    bucket_name4,
-                )
-            )
+    data: dict = {
+        "TimeKey": t_arr,
+        "Hour": hour,
+        "Minute": minute,
+        "TimeText": time_text,
+    }
 
     if include_labels:
-        cols = [
-            "TimeKey",
-            "Hour",
-            "Minute",
-            "TimeText",
-            "TimeKey15",
-            "Bin15Label",
-            "TimeKey30",
-            "Bin30Label",
-            "TimeKey60",
-            "Bin60Label",
-            "TimeKey360",
-            "Bin6hLabel",
-            "TimeKey720",
-            "Bin12hLabel",
-            "TimeBucketKey4",
-            "TimeBucket4",
-        ]
+        _v_label_range = np.vectorize(lambda k, w: _label_range(int(k) * w, w), otypes=[object])
+        _v_label_block = np.vectorize(lambda k, w: _label_block_inclusive(int(k) * w, w), otypes=[object])
+        data["TimeKey15"] = k15
+        data["Bin15Label"] = _v_label_range(k15, 15)
+        data["TimeKey30"] = k30
+        data["Bin30Label"] = _v_label_range(k30, 30)
+        data["TimeKey60"] = k60
+        data["Bin60Label"] = _v_label_range(k60, 60)
+        data["TimeKey360"] = k360
+        data["Bin6hLabel"] = _v_label_block(k360, 360)
+        data["TimeKey720"] = k720
+        data["Bin12hLabel"] = _v_label_block(k720, 720)
+        data["TimeBucketKey4"] = k360
+        data["TimeBucket4"] = bucket_name4
     else:
-        cols = [
-            "TimeKey",
-            "Hour",
-            "Minute",
-            "TimeText",
-            "TimeKey15",
-            "TimeKey30",
-            "TimeKey60",
-            "TimeKey360",
-            "TimeKey720",
-            "TimeBucketKey4",
-            "TimeBucket4",
-        ]
+        data["TimeKey15"] = k15
+        data["TimeKey30"] = k30
+        data["TimeKey60"] = k60
+        data["TimeKey360"] = k360
+        data["TimeKey720"] = k720
+        data["TimeBucketKey4"] = k360
+        data["TimeBucket4"] = bucket_name4
 
-    df = pd.DataFrame(rows, columns=cols)
+    df = pd.DataFrame(data)
     # Duration since midnight as a proper duration type (timedelta64[ns])
 
     # ---- Power Query friendly time columns ----

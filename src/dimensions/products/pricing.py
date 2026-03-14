@@ -126,10 +126,10 @@ def _round_to_step(x: np.ndarray, bands) -> np.ndarray:
 
 def _sanitize_unit_price(out: pd.DataFrame, min_price: float | None, max_price: float | None) -> None:
     """
-    Ensure UnitPrice is finite and > 0 (or >= min_price when provided).
+    Ensure ListPrice is finite and > 0 (or >= min_price when provided).
     Replace bad values with min_price (preferred) or median of valid prices.
     """
-    up = out["UnitPrice"].to_numpy(dtype=np.float64, copy=False)
+    up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
     bad = ~np.isfinite(up) | (up <= 0.0)
     if bad.any():
         if min_price is not None and np.isfinite(min_price) and min_price > 0:
@@ -140,12 +140,12 @@ def _sanitize_unit_price(out: pd.DataFrame, min_price: float | None, max_price: 
 
         up2 = up.copy()
         up2[bad] = fallback
-        out["UnitPrice"] = up2
+        out["ListPrice"] = up2
 
     if min_price is not None:
-        out["UnitPrice"] = out["UnitPrice"].clip(lower=float(min_price))
+        out["ListPrice"] = out["ListPrice"].clip(lower=float(min_price))
     if max_price is not None:
-        out["UnitPrice"] = out["UnitPrice"].clip(upper=float(max_price))
+        out["ListPrice"] = out["ListPrice"].clip(upper=float(max_price))
 
 
 def _sample_margin(rng: np.random.Generator, n: int, min_margin: float, max_margin: float) -> np.ndarray:
@@ -161,9 +161,9 @@ def _sanitize_unit_cost_from_price(
     max_margin: float | None,
 ) -> None:
     """
-    If UnitCost has NaN/inf/negative values, fill using UnitPrice and a margin band.
+    If UnitCost has NaN/inf/negative values, fill using ListPrice and a margin band.
     """
-    up = out["UnitPrice"].to_numpy(dtype=np.float64, copy=False)
+    up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
     uc = out["UnitCost"].to_numpy(dtype=np.float64, copy=False)
 
     bad = ~np.isfinite(uc) | (uc < 0.0)
@@ -231,7 +231,7 @@ def _apply_brand_price_normalization(
     noise_sd = _to_float(brand_cfg.get("noise_sd"), 0.0) or 0.0
     noise_sd = float(max(0.0, noise_sd))
 
-    up = out["UnitPrice"].to_numpy(dtype=np.float64, copy=False)
+    up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
     finite = np.isfinite(up) & (up > 0.0)
     if not finite.any():
         return
@@ -262,12 +262,12 @@ def _apply_brand_price_normalization(
     f_row = tmp["_brand"].map(factor).to_numpy(dtype=np.float64, copy=False)
     f_row = np.where(np.isfinite(f_row), f_row, 1.0)
 
-    out["UnitPrice"] = up * f_row
+    out["ListPrice"] = up * f_row
 
     if min_price is not None:
-        out["UnitPrice"] = out["UnitPrice"].clip(lower=float(min_price))
+        out["ListPrice"] = out["ListPrice"].clip(lower=float(min_price))
     if max_price is not None:
-        out["UnitPrice"] = out["UnitPrice"].clip(upper=float(max_price))
+        out["ListPrice"] = out["ListPrice"].clip(upper=float(max_price))
 
 
 def _scale_unit_cost_keep_mode(
@@ -280,7 +280,7 @@ def _scale_unit_cost_keep_mode(
 ) -> np.ndarray:
     """
     KEEP mode, but sane:
-      - scale UnitCost by (new_up / orig_up) so costs track UnitPrice transformations
+      - scale UnitCost by (new_up / orig_up) so costs track ListPrice transformations
       - fill missing/invalid with margin-derived cost
       - optionally clip into configured margin band if provided
     """
@@ -327,10 +327,10 @@ def _scale_unit_cost_keep_mode(
 
 def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None = None) -> pd.DataFrame:
     """
-    Finalize Products.UnitPrice and Products.UnitCost based on config.
+    Finalize Products.ListPrice and Products.UnitCost based on config.
 
     Changes vs old behavior:
-      - In keep mode, UnitCost is scaled by the UnitPrice transformation ratio, so it stays consistent.
+      - In keep mode, UnitCost is scaled by the ListPrice transformation ratio, so it stays consistent.
       - Prevent NaN/inf from turning into 0.00 via rounding.
       - Correctly assign rounding steps from bands.
     """
@@ -340,10 +340,10 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     rng = np.random.default_rng(seed)
     out = df.copy()
 
-    if "UnitPrice" not in out.columns:
-        raise ValueError("Products dataframe must contain a UnitPrice column before pricing is applied")
+    if "ListPrice" not in out.columns:
+        raise ValueError("Products dataframe must contain a ListPrice column before pricing is applied")
 
-    out["UnitPrice"] = pd.to_numeric(out["UnitPrice"], errors="coerce").astype("float64")
+    out["ListPrice"] = pd.to_numeric(out["ListPrice"], errors="coerce").astype("float64")
 
     if "UnitCost" in out.columns:
         out["UnitCost"] = pd.to_numeric(out["UnitCost"], errors="coerce").astype("float64")
@@ -351,7 +351,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
         out["UnitCost"] = np.nan
 
     # snapshot originals for keep-mode scaling
-    orig_up = out["UnitPrice"].to_numpy(dtype=np.float64, copy=True)
+    orig_up = out["ListPrice"].to_numpy(dtype=np.float64, copy=True)
     orig_uc = out["UnitCost"].to_numpy(dtype=np.float64, copy=True)
 
     base_cfg = pricing_cfg.get("base", {}) or {}
@@ -376,17 +376,17 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     qlo = _to_float(base_cfg.get("stretch_low_quantile"), 0.01)
     qhi = _to_float(base_cfg.get("stretch_high_quantile"), 0.99)
 
-    out["UnitPrice"] = out["UnitPrice"] * float(value_scale)
+    out["ListPrice"] = out["ListPrice"] * float(value_scale)
 
     if stretch and (min_price is not None) and (max_price is not None):
         if float(max_price) <= float(min_price):
             raise ValueError("products.pricing.base.max_unit_price must be > min_unit_price when stretching")
-        out["UnitPrice"] = _stretch_to_range(out["UnitPrice"], float(min_price), float(max_price), float(qlo), float(qhi))
+        out["ListPrice"] = _stretch_to_range(out["ListPrice"], float(min_price), float(max_price), float(qlo), float(qhi))
 
     if min_price is not None:
-        out["UnitPrice"] = out["UnitPrice"].clip(lower=float(min_price))
+        out["ListPrice"] = out["ListPrice"].clip(lower=float(min_price))
     if max_price is not None:
-        out["UnitPrice"] = out["UnitPrice"].clip(upper=float(max_price))
+        out["ListPrice"] = out["ListPrice"].clip(upper=float(max_price))
 
     _sanitize_unit_price(out, min_price, max_price)
 
@@ -408,11 +408,11 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     price_pct = float(jitter_cfg.get("price_pct", 0.0) or 0.0)
     if price_pct > 0:
         mult = rng.uniform(1.0 - price_pct, 1.0 + price_pct, size=len(out))
-        out["UnitPrice"] = out["UnitPrice"].to_numpy(dtype="float64") * mult
+        out["ListPrice"] = out["ListPrice"].to_numpy(dtype="float64") * mult
         _sanitize_unit_price(out, min_price, max_price)
 
     # ----------------------------
-    # Appearance: snap UnitPrice
+    # Appearance: snap ListPrice
     # ----------------------------
     snap_unit_price = _to_bool(appearance_cfg.get("snap_unit_price"), False)
     round_unit_cost = _to_bool(appearance_cfg.get("round_unit_cost"), False)
@@ -428,9 +428,9 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
         price_ending = 0.99
 
     if snap_unit_price:
-        up = out["UnitPrice"].to_numpy(dtype=np.float64, copy=False)
+        up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
         up = _snap_unit_price_to_points(up, price_bands, price_ending)
-        out["UnitPrice"] = up
+        out["ListPrice"] = up
         _sanitize_unit_price(out, min_price, max_price)
 
     # ----------------------------
@@ -456,10 +456,10 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
         if not (0.0 < float(min_margin) < float(max_margin) < 1.0):
             raise ValueError("products.pricing.cost: require 0 < min_margin_pct < max_margin_pct < 1")
         m = _sample_margin(rng, len(out), float(min_margin), float(max_margin))
-        out["UnitCost"] = out["UnitPrice"].to_numpy(dtype=np.float64, copy=False) * (1.0 - m)
+        out["UnitCost"] = out["ListPrice"].to_numpy(dtype=np.float64, copy=False) * (1.0 - m)
     else:
-        # Keep-but-scale: cost tracks UnitPrice changes (scale/stretch/brand/snap/jitter)
-        new_up = out["UnitPrice"].to_numpy(dtype=np.float64, copy=False)
+        # Keep-but-scale: cost tracks ListPrice changes (scale/stretch/brand/snap/jitter)
+        new_up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
         out["UnitCost"] = _scale_unit_cost_keep_mode(
             rng=rng,
             orig_up=orig_up,
@@ -491,20 +491,20 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     # ----------------------------
     # Final invariants
     # ----------------------------
-    out["UnitPrice"] = pd.to_numeric(out["UnitPrice"], errors="coerce").astype("float64")
+    out["ListPrice"] = pd.to_numeric(out["ListPrice"], errors="coerce").astype("float64")
     out["UnitCost"] = pd.to_numeric(out["UnitCost"], errors="coerce").astype("float64")
 
     _sanitize_unit_price(out, min_price, max_price)
     _sanitize_unit_cost_from_price(out, rng=rng, min_margin=min_margin, max_margin=max_margin)
 
-    out["UnitPrice"] = out["UnitPrice"].clip(lower=0.0)
+    out["ListPrice"] = out["ListPrice"].clip(lower=0.0)
     out["UnitCost"] = out["UnitCost"].clip(lower=0.0)
 
-    up_arr = out["UnitPrice"].to_numpy(dtype="float64", copy=False)
+    up_arr = out["ListPrice"].to_numpy(dtype="float64", copy=False)
     uc_arr = out["UnitCost"].to_numpy(dtype="float64", copy=False)
     out["UnitCost"] = np.minimum(uc_arr, up_arr)
 
-    out["UnitPrice"] = out["UnitPrice"].round(2)
+    out["ListPrice"] = out["ListPrice"].round(2)
     out["UnitCost"] = out["UnitCost"].round(2)
 
     return out

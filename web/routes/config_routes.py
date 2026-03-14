@@ -65,7 +65,7 @@ def get_config():
     # Extra sections
     wl = _g(cfg, "wishlists", default={})
     cc = _g(cfg, "complaints", default={})
-    sp = _g(cfg, "superpowers", default={})
+    sub = _g(cfg, "subscriptions", default={})
     emp = _g(cfg, "employees", default={})
     er = _g(cfg, "exchange_rates", default={})
     budget = _g(cfg, "budget", default={})
@@ -144,7 +144,7 @@ def get_config():
         "promoLoyalty": int(getattr(promos, "num_loyalty", 3) or 3),
         "promoBundle": int(getattr(promos, "num_bundle", 3) or 3),
         "promoNewCustomer": int(getattr(promos, "num_new_customer", 3) or 3),
-        # Superpowers
+        # Subscriptions
         # Wishlists
         "wlEnabled": bool(getattr(wl, "enabled", False)),
         "wlParticipationRate": float(getattr(wl, "participation_rate", 0.35)),
@@ -164,17 +164,15 @@ def get_config():
         "ccAvgResponseDays": int(getattr(cc, "avg_response_days", 5)),
         "ccMaxResponseDays": int(getattr(cc, "max_response_days", 30)),
         "ccSeed": int(getattr(cc, "seed", 600) or 600),
-        # Superpowers
-        "spEnabled": bool(getattr(sp, "enabled", False)),
-        "spGenerateBridge": bool(getattr(sp, "generate_bridge", False)),
-        "spPowersCount": int(getattr(sp, "powers_count", 20)),
-        "spPerCustomerMin": int(getattr(sp, "powers_per_customer_min", 1)),
-        "spPerCustomerMax": int(getattr(sp, "powers_per_customer_max", 3)),
-        "spIncludePowerLevel": bool(getattr(sp, "include_power_level", True)),
-        "spIncludePrimaryFlag": bool(getattr(sp, "include_primary_flag", True)),
-        "spIncludeAcquiredDate": bool(getattr(sp, "include_acquired_date", True)),
-        "spIncludeValidity": bool(getattr(sp, "include_validity", False)),
-        "spSeed": int(getattr(sp, "seed", 123) or 123),
+        # Subscriptions
+        "subEnabled": bool(getattr(sub, "enabled", False)),
+        "subGenerateBridge": bool(getattr(sub, "generate_bridge", False)),
+        "subParticipationRate": float(getattr(sub, "participation_rate", 0.65)),
+        "subAvgSubscriptions": float(getattr(sub, "avg_subscriptions_per_customer", 1.5)),
+        "subMaxSubscriptions": int(getattr(sub, "max_subscriptions", 5)),
+        "subChurnRate": float(getattr(sub, "churn_rate", 0.25)),
+        "subTrialRate": float(getattr(sub, "trial_rate", 0.30)),
+        "subSeed": int(getattr(sub, "seed", 700) or 700),
         # Stores detail
         "storeEnsureIsoCoverage": bool(getattr(stores, "ensure_iso_coverage", True)),
         "storeDistrictSize": int(getattr(stores, "district_size", 10)),
@@ -334,17 +332,15 @@ def update_config(body: ConfigUpdate):
         if "ccMaxResponseDays" in v: cfg.complaints.max_response_days = int(v["ccMaxResponseDays"])
         if "ccSeed" in v: cfg.complaints.seed = int(v["ccSeed"])
 
-        # Superpowers
-        if "spEnabled" in v: cfg.superpowers.enabled = bool(v["spEnabled"])
-        if "spGenerateBridge" in v: cfg.superpowers.generate_bridge = bool(v["spGenerateBridge"])
-        if "spPowersCount" in v: cfg.superpowers.powers_count = int(v["spPowersCount"])
-        if "spPerCustomerMin" in v: cfg.superpowers.powers_per_customer_min = int(v["spPerCustomerMin"])
-        if "spPerCustomerMax" in v: cfg.superpowers.powers_per_customer_max = int(v["spPerCustomerMax"])
-        if "spIncludePowerLevel" in v: cfg.superpowers.include_power_level = bool(v["spIncludePowerLevel"])
-        if "spIncludePrimaryFlag" in v: cfg.superpowers.include_primary_flag = bool(v["spIncludePrimaryFlag"])
-        if "spIncludeAcquiredDate" in v: cfg.superpowers.include_acquired_date = bool(v["spIncludeAcquiredDate"])
-        if "spIncludeValidity" in v: cfg.superpowers.include_validity = bool(v["spIncludeValidity"])
-        if "spSeed" in v: cfg.superpowers.seed = int(v["spSeed"])
+        # Subscriptions
+        if "subEnabled" in v: cfg.subscriptions.enabled = bool(v["subEnabled"])
+        if "subGenerateBridge" in v: cfg.subscriptions.generate_bridge = bool(v["subGenerateBridge"])
+        if "subParticipationRate" in v: cfg.subscriptions.participation_rate = float(v["subParticipationRate"])
+        if "subAvgSubscriptions" in v: cfg.subscriptions.avg_subscriptions_per_customer = float(v["subAvgSubscriptions"])
+        if "subMaxSubscriptions" in v: cfg.subscriptions.max_subscriptions = int(v["subMaxSubscriptions"])
+        if "subChurnRate" in v: cfg.subscriptions.churn_rate = float(v["subChurnRate"])
+        if "subTrialRate" in v: cfg.subscriptions.trial_rate = float(v["subTrialRate"])
+        if "subSeed" in v: cfg.subscriptions.seed = int(v["subSeed"])
 
         # Stores detail
         if "storeEnsureIsoCoverage" in v: cfg.stores.ensure_iso_coverage = bool(v["storeEnsureIsoCoverage"])

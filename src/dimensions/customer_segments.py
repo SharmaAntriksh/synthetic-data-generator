@@ -130,6 +130,18 @@ def _stable_float01(key: Any, seed: int, salt: int = 0) -> float:
     return _stable_u32(key, seed, salt) / float(0x7FFFFFFF)
 
 
+def _stable_u32_vec(keys: np.ndarray, seed: int, salt: int = 0) -> np.ndarray:
+    """Vectorized _stable_u32 for integer key arrays. Matches scalar version exactly."""
+    k = keys.astype(np.int64)
+    seed_mix = np.int64((seed * 0x9E3779B1) & 0xFFFFFFFF)
+    salt_mix = np.int64((salt * 0x85EBCA6B) & 0xFFFFFFFF)
+    x = (k ^ seed_mix ^ salt_mix) & np.int64(0xFFFFFFFF)
+    x ^= (x << np.int64(13)) & np.int64(0xFFFFFFFF)
+    x ^= x >> np.int64(17)
+    x ^= (x << np.int64(5)) & np.int64(0xFFFFFFFF)
+    return x & np.int64(0x7FFFFFFF)
+
+
 # -----------------------------------------------------------------------------
 # Helpers: dates/months
 # -----------------------------------------------------------------------------
@@ -440,10 +452,25 @@ def _build_bridge_simple(
     cust_start_arr = cust_start.to_numpy()
     cust_end_arr = cust_end.to_numpy()
 
-    out_rows: List[Dict[str, Any]] = []
+    # Pre-compute k for all customers (vectorized hash)
+    span = max_k - min_k + 1
+    if span > 1:
+        k_hashes = _stable_u32_vec(ck_arr.astype(np.int64), seed, 6001)
+        k_arr = (min_k + k_hashes % span).astype(np.int32)
+    else:
+        k_arr = np.full(N, min_k, dtype=np.int32)
+
+    # Output accumulators (lists of scalars — avoids _membership_row dict overhead)
+    out_ck_list: List[int] = []
+    out_sk_list: List[int] = []
+    out_from_list: List[Any] = []
+    out_to_list: List[Any] = []
+    out_primary_list: Optional[List[int]] = [] if c.include_primary_flag else None
+    out_score_list: Optional[List[float]] = [] if c.include_score else None
 
     for i in range(N):
-        ck = ck_arr[i]
+        ck = int(ck_arr[i])
+        k = int(k_arr[i])
 
         base = [str(value_arr[i]), str(type_arr[i]), str(lifecycle_arr[i])]
 
@@ -458,10 +485,6 @@ def _build_bridge_simple(
         # Deterministic shuffle of extras so it doesn't look too repetitive
         extras.sort(key=lambda nm: _stable_u32((ck, nm), seed, 5001))
 
-        # Determine k for this customer deterministically
-        span = max_k - min_k + 1
-        k = min_k + (int(_stable_u32(ck, seed, 6001) % span) if span > 1 else 0)
-
         chosen_names = base + extras
         # Deduplicate while preserving order
         seen: set = set()
@@ -474,6 +497,7 @@ def _build_bridge_simple(
 
         primary_name = base[0]  # value segment is primary
         primary_sk = name_to_key.get(primary_name)
+        primary_sk_int = int(primary_sk) if primary_sk is not None else None
 
         # Validity: in simple mode, we keep it intuitive but cheap:
         # - default validity: customer start->end if include_validity else global start->end
@@ -488,6 +512,7 @@ def _build_bridge_simple(
             sk = name_to_key.get(seg_name)
             if sk is None:
                 continue
+            sk_int = int(sk)
 
             # Special-case: New Customer covers only first N months if validity enabled
             v_from, v_to = v_from_base, v_to_base
@@ -501,20 +526,33 @@ def _build_bridge_simple(
                 v_from = cust_end_arr[i]
                 v_to = end_ts
 
-            out_rows.append(
-                _membership_row(
-                    ck=ck,
-                    sk=int(sk),
-                    from_date=v_from,
-                    to_date=v_to,
-                    primary_sk=int(primary_sk) if primary_sk is not None else int(sk),
-                    score=_score_for_segment_name(seg_name, ck, seed) if c.include_score else None,
-                    include_primary=c.include_primary_flag,
-                    include_score=c.include_score,
-                )
-            )
+            out_ck_list.append(ck)
+            out_sk_list.append(sk_int)
+            out_from_list.append(v_from)
+            out_to_list.append(v_to)
+            if out_primary_list is not None:
+                out_primary_list.append(1 if sk_int == (primary_sk_int or sk_int) else 0)
+            if out_score_list is not None:
+                out_score_list.append(_score_for_segment_name(seg_name, ck, seed))
 
-    return _finalize_bridge_df(pd.DataFrame(out_rows), include_score=c.include_score, include_primary=c.include_primary_flag)
+    if not out_ck_list:
+        return _finalize_bridge_df(
+            pd.DataFrame(columns=["CustomerKey", "SegmentKey", "ValidFromDate", "ValidToDate"]),
+            include_score=c.include_score, include_primary=c.include_primary_flag,
+        )
+
+    result = pd.DataFrame({
+        "CustomerKey": np.array(out_ck_list, dtype=np.int64),
+        "SegmentKey": np.array(out_sk_list, dtype=np.int32),
+        "ValidFromDate": pd.to_datetime(pd.Series(out_from_list)).dt.normalize(),
+        "ValidToDate": pd.to_datetime(pd.Series(out_to_list)).dt.normalize(),
+    })
+    if out_primary_list is not None:
+        result["IsPrimaryFlag"] = np.array(out_primary_list, dtype=np.int8)
+    if out_score_list is not None:
+        result["Score"] = np.array(out_score_list, dtype=np.float32)
+
+    return _finalize_bridge_df(result, include_score=c.include_score, include_primary=c.include_primary_flag)
 
 
 # -----------------------------------------------------------------------------
@@ -533,6 +571,8 @@ def _build_bridge_scd2(
     if not month_starts:
         return pd.DataFrame(columns=["CustomerKey", "SegmentKey", "ValidFromDate", "ValidToDate"])
 
+    n_months = len(month_starts)
+
     # month boundaries as datetime64[ns] arrays (fast indexing)
     ms_ts = pd.to_datetime(pd.Series(month_starts)).dt.normalize().to_numpy(dtype="datetime64[ns]")
     me_ts = pd.to_datetime(pd.Series([_month_end(ms) for ms in month_starts])).dt.normalize().to_numpy(dtype="datetime64[ns]")
@@ -540,27 +580,39 @@ def _build_bridge_scd2(
     name_to_key: Dict[str, int] = dim_seg.set_index("SegmentName")["SegmentKey"].astype(int).to_dict()
     new_customer_key = name_to_key.get("New Customer")
 
-    cust_keys = customers["CustomerKey"].tolist()
+    ck_arr = customers["CustomerKey"].to_numpy(dtype=np.int64)
+    N = len(ck_arr)
+    if N == 0:
+        return pd.DataFrame(columns=["CustomerKey", "SegmentKey", "ValidFromDate", "ValidToDate"])
+
+    seg_keys_all = list(range(1, c.segment_count + 1))
+    k_min = max(0, c.segs_per_cust_min)
+    k_max = max(k_min, min(c.segs_per_cust_max, c.segment_count))
+    span = k_max - k_min + 1
+
+    # --- Vectorized: batch hash all base_h and k values ---
+    base_h = _stable_u32_vec(ck_arr, seed, 100)
+    k_all = (k_min + base_h % span).astype(np.int32)
 
     # -----------------------------------------------------------------
     # Fast-path: include_validity=False → single interval per segment
     # -----------------------------------------------------------------
     if not c.include_validity:
-        seg_keys_all = list(range(1, c.segment_count + 1))
-        k_min = max(0, c.segs_per_cust_min)
-        k_max = max(k_min, min(c.segs_per_cust_max, c.segment_count))
+        fp_start = pd.to_datetime(start_dt).normalize()
+        fp_end = pd.to_datetime(end_dt).normalize()
 
-        fp_start_ts = pd.to_datetime(start_dt).normalize()
-        fp_end_ts = pd.to_datetime(end_dt).normalize()
+        out_ck: List[int] = []
+        out_sk: List[int] = []
+        out_primary_sk: List[int] = []
 
-        fast_rows: List[Dict[str, Any]] = []
-        for ck in cust_keys:
-            base_h = _stable_u32(ck, seed, 100)
-            k = k_min + (base_h % (k_max - k_min + 1)) if k_max >= k_min else k_min
+        for ci in range(N):
+            ck = int(ck_arr[ci])
+            bh = int(base_h[ci])
+            k = int(k_all[ci])
 
             chosen: List[int] = []
             for i in range(1, k + 1):
-                idx = (base_h + i * 17) % c.segment_count
+                idx = (bh + i * 17) % c.segment_count
                 sk = seg_keys_all[idx]
                 if sk not in chosen:
                     chosen.append(sk)
@@ -573,86 +625,132 @@ def _build_bridge_scd2(
             base_set.add(primary_sk)
 
             for sk in base_set:
-                fast_rows.append(
-                    _membership_row(
-                        ck=ck,
-                        sk=int(sk),
-                        from_date=fp_start_ts,
-                        to_date=fp_end_ts,
-                        primary_sk=int(primary_sk),
-                        score=(float(np.float32(0.50 + (_stable_u32((ck, sk), seed, 777) % 50) / 100.0)) if c.include_score else None),
-                        include_primary=c.include_primary_flag,
-                        include_score=c.include_score,
-                    )
-                )
+                out_ck.append(ck)
+                out_sk.append(sk)
+                out_primary_sk.append(primary_sk)
 
-        return _finalize_bridge_df(pd.DataFrame(fast_rows), include_score=c.include_score, include_primary=c.include_primary_flag)
+        if not out_ck:
+            return _finalize_bridge_df(
+                pd.DataFrame(columns=["CustomerKey", "SegmentKey", "ValidFromDate", "ValidToDate"]),
+                include_score=c.include_score, include_primary=c.include_primary_flag,
+            )
+
+        result = pd.DataFrame({
+            "CustomerKey": np.array(out_ck, dtype=np.int64),
+            "SegmentKey": np.array(out_sk, dtype=np.int32),
+            "ValidFromDate": fp_start,
+            "ValidToDate": fp_end,
+        })
+        if c.include_primary_flag:
+            sk_a = np.array(out_sk, dtype=np.int32)
+            psk_a = np.array(out_primary_sk, dtype=np.int32)
+            result["IsPrimaryFlag"] = np.where(sk_a == psk_a, np.int8(1), np.int8(0))
+        if c.include_score:
+            ck_a = np.array(out_ck, dtype=np.int64)
+            sk_a2 = np.array(out_sk, dtype=np.int32)
+            scores = np.empty(len(out_ck), dtype=np.float32)
+            for ri in range(len(out_ck)):
+                scores[ri] = np.float32(0.50 + (_stable_u32((int(ck_a[ri]), int(sk_a2[ri])), seed, 777) % 50) / 100.0)
+            result["Score"] = scores
+
+        return _finalize_bridge_df(result, include_score=c.include_score, include_primary=c.include_primary_flag)
 
     # -----------------------------------------------------------------
-    # include_validity=True: legacy churn simulation
+    # include_validity=True: churn simulation with vectorized pre-computation
     # -----------------------------------------------------------------
     join_candidates = ["JoinDateKey", "CustomerStartDateKey", "StartDateKey", "CreatedDateKey"]
     join_col = next((col for col in join_candidates if col in customers.columns), None)
 
-    # Build year-month -> month index map for faster join month lookup
-    ym_to_idx = {(ms.year * 100 + ms.month): i for i, ms in enumerate(month_starts)}
+    # Vectorized join month index computation
+    fallback_jm = (_stable_u32_vec(ck_arr, seed, 9001) % n_months).astype(np.int32)
+    join_mi = fallback_jm.copy()
 
-    join_month_idx: Dict[Any, int] = {}
     if join_col is not None:
-        join_keys = customers.set_index("CustomerKey")[join_col].to_dict()
-        for ck in cust_keys:
-            jk = join_keys.get(ck)
-            if pd.isna(jk) or jk is None:
-                join_month_idx[ck] = int(_stable_u32(ck, seed, 9001) % len(month_starts))
-                continue
-            jk = int(jk)
-            ym = (jk // 100)  # YYYYMM
-            join_month_idx[ck] = ym_to_idx.get(ym, int(_stable_u32(ck, seed, 9001) % len(month_starts)))
+        ym_to_idx = {(ms.year * 100 + ms.month): i for i, ms in enumerate(month_starts)}
+        jk_raw = customers[join_col].to_numpy()
+        valid = pd.notna(jk_raw)
+        if valid.any():
+            valid_idx = np.where(valid)[0]
+            jk_int = np.array(jk_raw[valid], dtype=np.int64)
+            ym = jk_int // 100
+            for j, ci in enumerate(valid_idx):
+                mapped = ym_to_idx.get(int(ym[j]))
+                if mapped is not None:
+                    join_mi[ci] = mapped
+
+    # Pre-compute churn decisions for all (customer, quarter) pairs
+    quarter_mis = [mi for mi, ms in enumerate(month_starts) if mi > 0 and _is_quarter_start(ms)]
+    n_quarters = len(quarter_mis)
+
+    if n_quarters > 0:
+        churn_vals = np.empty((N, n_quarters), dtype=np.float64)
+        victim_vals = np.empty((N, n_quarters), dtype=np.int64)
+        repl_vals = np.empty((N, n_quarters), dtype=np.int64)
+        for qi, mi in enumerate(quarter_mis):
+            churn_vals[:, qi] = _stable_u32_vec(ck_arr, seed, 10_000 + mi).astype(np.float64) / 0x7FFFFFFF
+            victim_vals[:, qi] = _stable_u32_vec(ck_arr, seed, 20_000 + mi)
+            repl_vals[:, qi] = _stable_u32_vec(ck_arr, seed, 30_000 + mi)
     else:
-        for ck in cust_keys:
-            join_month_idx[ck] = int(_stable_u32(ck, seed, 9001) % len(month_starts))
+        churn_vals = np.empty((N, 0), dtype=np.float64)
+        victim_vals = np.empty((N, 0), dtype=np.int64)
+        repl_vals = np.empty((N, 0), dtype=np.int64)
 
-    scd2_rows: List[Dict[str, Any]] = []
+    # Build quarter lookup: month_index -> quarter_index (-1 if not a quarter start)
+    month_to_qi = np.full(n_months, -1, dtype=np.int32)
+    for qi, mi in enumerate(quarter_mis):
+        month_to_qi[mi] = qi
 
-    seg_keys_all = list(range(1, c.segment_count + 1))
-    k_min = max(0, c.segs_per_cust_min)
-    k_max = max(k_min, min(c.segs_per_cust_max, c.segment_count))
+    new_cust_months = max(0, c.new_customer_months)
+    nck = int(new_customer_key) if new_customer_key is not None else -1
 
-    for ck in cust_keys:
-        base_h = _stable_u32(ck, seed, 100)
-        k = k_min + (base_h % (k_max - k_min + 1))
+    # Output accumulators (lists of scalars — avoids _membership_row dict overhead)
+    out_ck_list: List[int] = []
+    out_sk_list: List[int] = []
+    out_from_list: List[Any] = []
+    out_to_list: List[Any] = []
+    out_primary_list: Optional[List[int]] = [] if c.include_primary_flag else None
+    out_score_list: Optional[List[float]] = [] if c.include_score else None
 
+    for ci in range(N):
+        ck = int(ck_arr[ci])
+        bh = int(base_h[ci])
+        k = int(k_all[ci])
+
+        # Initial segment selection
         chosen: List[int] = []
         for i in range(1, k + 1):
-            idx = (base_h + i * 17) % c.segment_count
+            idx = (bh + i * 17) % c.segment_count
             sk = seg_keys_all[idx]
             if sk not in chosen:
                 chosen.append(sk)
 
         primary_sk = chosen[0] if chosen else 1
-        base_set = set(chosen)
-        base_set.add(primary_sk)
+        cur_base_set = set(chosen)
+        cur_base_set.add(primary_sk)
 
+        # Scores (scalar hash for tuple keys — infrequent, ~k per customer)
         score_by_seg: Dict[int, float] = {}
         if c.include_score:
-            extra = {int(new_customer_key)} if new_customer_key is not None else set()
-            for sk in base_set.union(extra):
-                score_by_seg[int(sk)] = float(np.float32(0.50 + (_stable_u32((ck, sk), seed, 777) % 50) / 100.0))
+            extra = {nck} if nck >= 0 else set()
+            for sk in cur_base_set | extra:
+                score_by_seg[sk] = float(np.float32(
+                    0.50 + (_stable_u32((ck, sk), seed, 777) % 50) / 100.0
+                ))
 
-        active_set: set[int] = set()
+        jm0 = int(join_mi[ci])
+        new_end = min(n_months, jm0 + new_cust_months) if (nck >= 0 and new_cust_months > 0) else 0
+
+        active_set: set = set()
         start_month_for_seg: Dict[int, int] = {}
-        cur_base_set = set(base_set)
 
-        jm0 = join_month_idx[ck]
-        new_window = set(range(jm0, min(len(month_starts), jm0 + max(0, c.new_customer_months)))) if (new_customer_key and c.new_customer_months > 0) else set()
-
-        for mi, ms in enumerate(month_starts):
-            if mi > 0 and _is_quarter_start(ms):
-                if _stable_float01(ck, seed, salt=10_000 + mi) < c.churn_rate_qtr:
+        for mi in range(n_months):
+            qi = int(month_to_qi[mi])
+            if qi >= 0:
+                if churn_vals[ci, qi] < c.churn_rate_qtr:
                     secondaries = [s for s in cur_base_set if s != primary_sk]
                     if secondaries:
-                        victim = secondaries[int(_stable_u32(ck, seed, 20_000 + mi) % len(secondaries))]
-                        cand_start = int(_stable_u32(ck, seed, 30_000 + mi) % c.segment_count)
+                        victim = secondaries[int(victim_vals[ci, qi]) % len(secondaries)]
+                        cand_start = int(repl_vals[ci, qi]) % c.segment_count
                         repl = None
                         for j in range(c.segment_count):
                             sk = seg_keys_all[(cand_start + j) % c.segment_count]
@@ -660,18 +758,20 @@ def _build_bridge_scd2(
                                 repl = sk
                                 break
                         if repl is not None:
-                            cur_base_set.remove(victim)
+                            cur_base_set.discard(victim)
                             cur_base_set.add(repl)
                             if c.include_score and repl not in score_by_seg:
-                                score_by_seg[repl] = float(np.float32(0.50 + (_stable_u32((ck, repl), seed, 888) % 50) / 100.0))
+                                score_by_seg[repl] = float(np.float32(
+                                    0.50 + (_stable_u32((ck, repl), seed, 888) % 50) / 100.0
+                                ))
 
             desired = set(cur_base_set)
 
-            if new_customer_key is not None:
-                if mi in new_window:
-                    desired.add(int(new_customer_key))
+            if nck >= 0:
+                if jm0 <= mi < new_end:
+                    desired.add(nck)
                 else:
-                    desired.discard(int(new_customer_key))
+                    desired.discard(nck)
 
             for sk in desired - active_set:
                 start_month_for_seg[sk] = mi
@@ -680,40 +780,50 @@ def _build_bridge_scd2(
                 smi = start_month_for_seg.pop(sk, None)
                 if smi is None:
                     continue
-                scd2_rows.append(
-                    _membership_row(
-                        ck=ck,
-                        sk=sk,
-                        from_date=ms_ts[smi],
-                        to_date=me_ts[mi - 1] if mi - 1 >= 0 else me_ts[smi],
-                        primary_sk=primary_sk,
-                        score=score_by_seg.get(sk) if c.include_score else None,
-                        include_primary=c.include_primary_flag,
-                        include_score=c.include_score,
-                    )
-                )
+                out_ck_list.append(ck)
+                out_sk_list.append(sk)
+                out_from_list.append(ms_ts[smi])
+                out_to_list.append(me_ts[mi - 1] if mi > 0 else me_ts[smi])
+                if out_primary_list is not None:
+                    out_primary_list.append(1 if sk == primary_sk else 0)
+                if out_score_list is not None:
+                    out_score_list.append(score_by_seg.get(sk, 0.60))
 
             active_set = desired
 
-        last_mi = len(month_starts) - 1
-        for sk in list(active_set):
+        # Flush remaining active segments
+        last_mi = n_months - 1
+        for sk in active_set:
             smi = start_month_for_seg.get(sk)
             if smi is None:
                 continue
-            scd2_rows.append(
-                _membership_row(
-                    ck=ck,
-                    sk=sk,
-                    from_date=ms_ts[smi],
-                    to_date=me_ts[last_mi],
-                    primary_sk=primary_sk,
-                    score=score_by_seg.get(sk) if c.include_score else None,
-                    include_primary=c.include_primary_flag,
-                    include_score=c.include_score,
-                )
-            )
+            out_ck_list.append(ck)
+            out_sk_list.append(sk)
+            out_from_list.append(ms_ts[smi])
+            out_to_list.append(me_ts[last_mi])
+            if out_primary_list is not None:
+                out_primary_list.append(1 if sk == primary_sk else 0)
+            if out_score_list is not None:
+                out_score_list.append(score_by_seg.get(sk, 0.60))
 
-    return _finalize_bridge_df(pd.DataFrame(scd2_rows), include_score=c.include_score, include_primary=c.include_primary_flag)
+    if not out_ck_list:
+        return _finalize_bridge_df(
+            pd.DataFrame(columns=["CustomerKey", "SegmentKey", "ValidFromDate", "ValidToDate"]),
+            include_score=c.include_score, include_primary=c.include_primary_flag,
+        )
+
+    result = pd.DataFrame({
+        "CustomerKey": np.array(out_ck_list, dtype=np.int64),
+        "SegmentKey": np.array(out_sk_list, dtype=np.int32),
+        "ValidFromDate": np.array(out_from_list, dtype="datetime64[ns]"),
+        "ValidToDate": np.array(out_to_list, dtype="datetime64[ns]"),
+    })
+    if out_primary_list is not None:
+        result["IsPrimaryFlag"] = np.array(out_primary_list, dtype=np.int8)
+    if out_score_list is not None:
+        result["Score"] = np.array(out_score_list, dtype=np.float32)
+
+    return _finalize_bridge_df(result, include_score=c.include_score, include_primary=c.include_primary_flag)
 
 
 # -----------------------------------------------------------------------------

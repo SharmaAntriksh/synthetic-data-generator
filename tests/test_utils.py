@@ -218,6 +218,7 @@ class TestRange2:
         assert hi == 10.0
 
 
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestPickSeedNested:
     def test_override_seed_wins(self):
         cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
@@ -249,19 +250,31 @@ class TestPickSeedNested:
         # defaults.seed=42 wins over custom fallback since AppConfig always has defaults
         assert pick_seed_nested(AppConfig.model_validate({}), AppConfig.model_validate({}), fallback=99) == 42
 
+    def test_emits_deprecation_warning(self):
+        cfg = AppConfig.model_validate({})
+        with pytest.warns(DeprecationWarning, match="pick_seed_nested.*deprecated"):
+            pick_seed_nested(cfg, cfg)
 
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 class TestPickSeedFlat:
     def test_local_wins(self):
-        assert pick_seed_flat(AppConfig.model_validate({"seed": 1}), AppConfig.model_validate({"seed": 2})) == 2
+        assert pick_seed_flat(AppConfig.model_validate({"defaults": {"seed": 1}}), AppConfig.model_validate({"seed": 2})) == 2
 
-    def test_cfg_second(self):
-        assert pick_seed_flat(AppConfig.model_validate({"seed": 1}), AppConfig.model_validate({})) == 1
+    def test_defaults_seed_used(self):
+        # pick_seed_flat now delegates to resolve_seed which checks defaults.seed
+        assert pick_seed_flat(AppConfig.model_validate({"defaults": {"seed": 10}}), AppConfig.model_validate({})) == 10
 
     def test_fallback(self):
         assert pick_seed_flat(AppConfig.model_validate({}), AppConfig.model_validate({})) == 42
 
     def test_none_seed_skipped(self):
         assert pick_seed_flat(AppConfig.model_validate({}), AppConfig.model_validate({"seed": None})) == 42
+
+    def test_emits_deprecation_warning(self):
+        cfg = AppConfig.model_validate({})
+        with pytest.warns(DeprecationWarning, match="pick_seed_flat.*deprecated"):
+            pick_seed_flat(cfg, cfg)
 
 
 class TestParseGlobalDates:
@@ -385,6 +398,37 @@ class TestResolveSeed:
         # _defaults stripped by Pydantic (private field prefix); falls back to defaults.seed=42
         cfg = AppConfig.model_validate({"_defaults": {"seed": 55}})
         assert resolve_seed(cfg, AppConfig.model_validate({})) == 42
+
+    def test_random_mode_returns_int(self):
+        cfg = AppConfig.model_validate({"defaults": {"seed": 42, "random": True}})
+        seed = resolve_seed(cfg, AppConfig.model_validate({}))
+        assert isinstance(seed, int)
+
+    def test_random_mode_varies(self):
+        cfg = AppConfig.model_validate({"defaults": {"seed": 42, "random": True}})
+        seeds = {resolve_seed(cfg, AppConfig.model_validate({})) for _ in range(20)}
+        # With OS entropy, 20 draws should produce at least 2 distinct values
+        assert len(seeds) > 1
+
+    def test_random_false_is_deterministic(self):
+        cfg = AppConfig.model_validate({"defaults": {"seed": 42, "random": False}})
+        section = AppConfig.model_validate({})
+        assert resolve_seed(cfg, section) == 42
+        assert resolve_seed(cfg, section) == 42
+
+    def test_random_mode_with_dict_cfg(self):
+        cfg = {"defaults": {"seed": 42, "random": True}}
+        seed = resolve_seed(cfg)
+        assert isinstance(seed, int)
+
+    def test_section_cfg_none_falls_to_defaults(self):
+        cfg = AppConfig.model_validate({"defaults": {"seed": 99}})
+        assert resolve_seed(cfg) == 99
+
+    def test_dict_cfg_works(self):
+        cfg = {"defaults": {"seed": 77}}
+        section = {"seed": 55}
+        assert resolve_seed(cfg, section) == 55
 
 
 class TestResolveDates:
@@ -838,11 +882,11 @@ class TestExcludedDimFiles:
         # With no returns config, return_reason should be excluded
         assert "return_reason.parquet" in excluded
 
-    def test_superpowers_disabled(self):
-        cfg = AppConfig.model_validate({"superpowers": {"enabled": False}})
+    def test_subscriptions_disabled(self):
+        cfg = AppConfig.model_validate({"subscriptions": {"enabled": False}})
         excluded = _excluded_dim_files(cfg)
-        assert "superpowers.parquet" in excluded
-        assert "customer_superpowers.parquet" in excluded
+        assert "plans.parquet" in excluded
+        assert "customer_subscriptions.parquet" in excluded
 
     def test_returns_enabled(self):
         cfg = AppConfig.model_validate({"returns": {"enabled": True}, "sales": {"skip_order_cols": False}})
