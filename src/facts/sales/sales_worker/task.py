@@ -18,6 +18,8 @@ from ..sales_logic.columns import (
     RETAIL_HOUR_W, DIGITAL_HOUR_W, BUSINESS_HOUR_W, ASSISTED_HOUR_W,
     _normalize_prob as _normalize_hour_prob,
     _PROFILE_FROM_GROUP,
+    _parse_time_str,
+    _build_channel_hour_weights,
 )
 from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER
 
@@ -349,15 +351,6 @@ def _ensure_sales_channel_key_on_lines(
     return table.append_column("SalesChannelKey", col)
 
 
-# Pre-normalized hour weight arrays (sourced from columns.py — single source of truth).
-_HOUR_WEIGHTS_NORM: list[np.ndarray] = [
-    _normalize_hour_prob(RETAIL_HOUR_W),
-    _normalize_hour_prob(DIGITAL_HOUR_W),
-    _normalize_hour_prob(BUSINESS_HOUR_W),
-    _normalize_hour_prob(ASSISTED_HOUR_W),
-]
-
-
 def _sample_hour_weighted_minute(rng: np.random.Generator, size: int, hour_p: np.ndarray) -> np.ndarray:
     """Sample minute-of-day values given pre-normalized hour probabilities."""
     if size <= 0:
@@ -367,28 +360,35 @@ def _sample_hour_weighted_minute(rng: np.random.Generator, size: int, hour_p: np
     return (hours * 60 + mins).astype(np.int16, copy=False)
 
 
-def _sample_time_keys_by_profile(
+def _sample_time_keys_by_channel(
     rng: np.random.Generator,
-    prof: np.ndarray,
-    size: int,
+    channel_keys: np.ndarray,
+    channel_hour_lut: np.ndarray,
 ) -> np.ndarray:
-    """Sample minute-of-day TimeKey values based on channel profile codes (0-3)."""
-    out = np.empty(size, dtype=np.int16)
-    for code, weights_p in enumerate(_HOUR_WEIGHTS_NORM):
-        mask = prof == code
-        n = mask.sum()
-        if n:
-            out[mask] = _sample_hour_weighted_minute(rng, int(n), weights_p)
+    """Sample minute-of-day TimeKey values using per-channel hour weights."""
+    keys = np.asarray(channel_keys, dtype=np.int16)
+    out = np.empty(keys.shape[0], dtype=np.int16)
+    digital_w = _normalize_hour_prob(DIGITAL_HOUR_W)
+    for ck in np.unique(keys):
+        ck_int = int(ck)
+        mask = keys == ck
+        n = int(mask.sum())
+        if ck_int < channel_hour_lut.shape[0]:
+            hour_w = channel_hour_lut[ck_int]
+        else:
+            hour_w = digital_w
+        out[mask] = _sample_hour_weighted_minute(rng, n, hour_w)
     return out
 
 
-def _profile_lut_from_dim() -> Optional[np.ndarray]:
+def _channel_hour_lut_from_dim() -> Optional[np.ndarray]:
     """
-    profile_lut[key] -> profile_code:
-      0 Retail, 1 Digital, 2 Business, 3 Assisted
+    channel_hour_lut[key] -> 24-element normalized hour-weight array.
+
+    Each channel's profile weights are masked to its OpenTime/CloseTime window.
     Cached on State.
     """
-    cached = getattr(State, "_sales_channel_profile_lut", None)
+    cached = getattr(State, "_sales_channel_hour_lut", None)
     if cached is not None:
         return cached
 
@@ -400,22 +400,35 @@ def _profile_lut_from_dim() -> Optional[np.ndarray]:
     if not pth.exists():
         return None
 
-    tab = pq.read_table(pth, columns=["SalesChannelKey", "ChannelGroup"])
+    read_cols = ["SalesChannelKey", "ChannelGroup"]
+    schema = pq.read_schema(pth)
+    col_names = set(schema.names)
+    has_times = "OpenTime" in col_names and "CloseTime" in col_names
+    if has_times:
+        read_cols += ["OpenTime", "CloseTime"]
+
+    tab = pq.read_table(pth, columns=read_cols)
     keys = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int64)
     groups = np.asarray(tab["ChannelGroup"].to_numpy(), dtype=object)
+    open_times = np.asarray(tab["OpenTime"].to_numpy(), dtype=object) if has_times else None
+    close_times = np.asarray(tab["CloseTime"].to_numpy(), dtype=object) if has_times else None
 
     if keys.size == 0:
         return None
 
     maxk = int(keys.max())
-    lut = np.full(maxk + 1, 1, dtype=np.int8)  # default Digital
+    digital_w = _normalize_hour_prob(DIGITAL_HOUR_W)
+    lut = np.tile(digital_w, (maxk + 1, 1))  # default: digital
 
-    for k, g in zip(keys, groups):
+    for i, (k, g) in enumerate(zip(keys, groups)):
         if k < 0:
             continue
-        lut[int(k)] = np.int8(_PROFILE_FROM_GROUP.get((g or "").strip().lower(), 1))
+        profile_code = int(_PROFILE_FROM_GROUP.get((g or "").strip().lower(), 1))
+        oh = _parse_time_str(open_times[i]) if open_times is not None else -1
+        ch = _parse_time_str(close_times[i]) if close_times is not None else -1
+        lut[int(k)] = _build_channel_hour_weights(profile_code, oh, ch)
 
-    State._sales_channel_profile_lut = lut
+    State._sales_channel_hour_lut = lut
     return lut
 
 
@@ -433,8 +446,8 @@ def _ensure_time_key_on_lines(
     """Ensure TimeKey exists and is constant within SalesOrderNumber (if present)."""
     rng = np.random.default_rng(seed)
 
-    profile_lut = _profile_lut_from_dim()
-    has_channel = "SalesChannelKey" in table.column_names and profile_lut is not None
+    channel_hour_lut = _channel_hour_lut_from_dim()
+    has_channel = "SalesChannelKey" in table.column_names and channel_hour_lut is not None
 
     if order_enc is not None:
         enc = order_enc.enc
@@ -457,8 +470,7 @@ def _ensure_time_key_on_lines(
                 dtype=np.int16,
             )
             per_order_sc = sc_np[first]
-            prof = profile_lut[np.clip(per_order_sc.astype(np.int64), 0, profile_lut.shape[0] - 1)]
-            per_order_time = _sample_time_keys_by_profile(rng, prof, n_orders)
+            per_order_time = _sample_time_keys_by_channel(rng, per_order_sc, channel_hour_lut)
             per_order_arr = pa.array(per_order_time, type=pa.int16())
             time_col = pc.take(per_order_arr, enc.indices)
         else:
@@ -497,8 +509,7 @@ def _ensure_time_key_on_lines(
                 dtype=np.int16,
             )
             per_order_sc = sc_np[first]
-            prof = profile_lut[np.clip(per_order_sc.astype(np.int64), 0, profile_lut.shape[0] - 1)]
-            per_order_time = _sample_time_keys_by_profile(rng, prof, n_orders)
+            per_order_time = _sample_time_keys_by_channel(rng, per_order_sc, channel_hour_lut)
             per_order_arr = pa.array(per_order_time, type=pa.int16())
             time_col = pc.take(per_order_arr, enc.indices)
         else:
@@ -517,8 +528,7 @@ def _ensure_time_key_on_lines(
             _combine_if_chunked(table["SalesChannelKey"]).to_numpy(zero_copy_only=False),
             dtype=np.int16,
         )
-        prof = profile_lut[np.clip(sc_np.astype(np.int64), 0, profile_lut.shape[0] - 1)]
-        out = _sample_time_keys_by_profile(rng, prof, table.num_rows)
+        out = _sample_time_keys_by_channel(rng, sc_np, channel_hour_lut)
         time_col = pa.array(out, type=pa.int16())
     else:
         per_row = rng.integers(0, 1440, size=table.num_rows, dtype=np.int16)

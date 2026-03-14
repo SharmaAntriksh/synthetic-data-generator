@@ -1012,6 +1012,8 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "salesperson_by_store_month": salesperson_by_store_month,
             "salesperson_global_pool": salesperson_global_pool,
 
+            "parquet_folder": worker_cfg.get("parquet_folder"),
+
             "budget_enabled": budget_enabled,
             "budget_store_to_country": budget_store_to_country,
             "budget_product_to_cat": budget_product_to_cat,

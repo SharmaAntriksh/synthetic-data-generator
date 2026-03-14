@@ -95,7 +95,7 @@ def _guess_date_cols(df: pd.DataFrame) -> list[str]:
     """
     Heuristic: return column names that should be written as Arrow date32.
 
-    Rules (conservative — won't touch OpenMinute/CloseMinute etc.):
+    Rules (conservative — won't touch time strings like OpenTime/CloseTime etc.):
       1. datetime64 columns whose names contain a date-like token.
       2. object-dtype columns whose names contain "date" AND whose values look
          date-like (or are all-null), to prevent Arrow NullType on rewrite.

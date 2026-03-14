@@ -109,8 +109,13 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
 
     base_required = ["SalesChannelKey", "SalesChannel", "ChannelGroup"]
 
-    # Expanded schema (stable output columns order)
-    cols = base_required + [
+    # Output column order — must match STATIC_SCHEMAS["SalesChannels"] for BULK INSERT
+    cols = [
+        "SalesChannelKey",
+        "SalesChannel",
+        "SalesChannelDescription",
+        "ChannelGroup",
+        "ChannelGroupDescription",
         "SalesChannelCode",
         "SortOrder",
         "IsDigital",
@@ -119,11 +124,68 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         "IsB2B",
         "IsAssisted",
         "IsOwnedChannel",
-        "TimeProfile",
         "Is24x7",
-        "OpenMinute",
-        "CloseMinute",
+        "OpenTime",
+        "CloseTime",
+        "CommissionRate",
+        "TypicalFulfillmentDays",
     ]
+
+    _CHANNEL_DESCRIPTIONS: Dict[str, str] = {
+        "Unknown":          "Channel could not be determined",
+        "Store":            "Customer purchases in-person at a physical retail location",
+        "Online":           "Customer orders through the company website",
+        "Marketplace":      "Orders placed on third-party platforms (e.g. Amazon, eBay)",
+        "B2B":              "Business-to-business orders via account managers or portals",
+        "CallCenter":       "Customer places an order by phone with a human agent",
+        "Web":              "Direct web storefront (distinct branding from main online store)",
+        "MobileApp":        "Orders placed through the company mobile application",
+        "SocialCommerce":   "Purchases originating from social media platforms",
+        "PartnerReseller":  "Orders through authorized third-party resellers or distributors",
+        "Kiosk":            "Self-service terminal in a physical location",
+    }
+
+    _GROUP_DESCRIPTIONS: Dict[str, str] = {
+        "NA":       "Not applicable or unknown",
+        "Physical": "In-person transactions at a physical location",
+        "Digital":  "Self-service online or app-based transactions",
+        "Business": "Business-to-business or partner transactions",
+        "Assisted": "Agent-assisted transactions via phone or chat",
+    }
+
+    _COMMISSION_RATES: Dict[str, float] = {
+        "Unknown":          0.00,
+        "Store":            0.00,
+        "Online":           0.00,
+        "Marketplace":      0.15,
+        "B2B":              0.00,
+        "CallCenter":       0.00,
+        "Web":              0.00,
+        "MobileApp":        0.00,
+        "SocialCommerce":   0.12,
+        "PartnerReseller":  0.10,
+        "Kiosk":            0.00,
+    }
+
+    _FULFILLMENT_DAYS: Dict[str, int] = {
+        "Unknown":          0,
+        "Store":            0,
+        "Online":           3,
+        "Marketplace":      5,
+        "B2B":              7,
+        "CallCenter":       3,
+        "Web":              3,
+        "MobileApp":        3,
+        "SocialCommerce":   5,
+        "PartnerReseller":  7,
+        "Kiosk":            0,
+    }
+
+    def _minutes_to_time(m: int) -> object:
+        """Convert minutes-since-midnight to 'HH:MM' string, or None for 24x7/unknown."""
+        if m < 0:
+            return None
+        return f"{m // 60:02d}:{m % 60:02d}"
 
     def _normalize_code(name: str) -> str:
         s = str(name).strip().upper()
@@ -137,6 +199,16 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         df["SalesChannelKey"] = df["SalesChannelKey"].astype(np.int16)
 
         # Defaults
+        if "SalesChannelDescription" not in df.columns:
+            df["SalesChannelDescription"] = df["SalesChannel"].map(
+                lambda n: _CHANNEL_DESCRIPTIONS.get(str(n).strip(), "")
+            )
+
+        if "ChannelGroupDescription" not in df.columns:
+            df["ChannelGroupDescription"] = df["ChannelGroup"].map(
+                lambda g: _GROUP_DESCRIPTIONS.get(str(g).strip(), "")
+            )
+
         if "SalesChannelCode" not in df.columns:
             df["SalesChannelCode"] = df["SalesChannel"].map(_normalize_code)
 
@@ -162,33 +234,30 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         if "IsOwnedChannel" not in df.columns:
             df["IsOwnedChannel"] = ~df["IsThirdParty"].astype(bool)
 
-        if "TimeProfile" not in df.columns:
-            # canonical mapping by group
-            mp = {
-                "physical": "Retail",
-                "digital": "Digital",
-                "business": "Business",
-                "assisted": "Assisted",
-                "na": "NA",
-            }
-            df["TimeProfile"] = grp.map(mp).fillna("Digital")
-
         if "Is24x7" not in df.columns:
-            # Digital defaults to 24x7; others not
             df["Is24x7"] = df["IsDigital"].astype(bool)
 
-        # Open/Close minutes: -1 means N/A / 24x7 / unknown
-        if "OpenMinute" not in df.columns:
-            df["OpenMinute"] = np.int16(-1)
-        if "CloseMinute" not in df.columns:
-            df["CloseMinute"] = np.int16(-1)
+        # OpenTime / CloseTime as "HH:MM" strings (None for 24x7/unknown)
+        if "OpenTime" not in df.columns:
+            df["OpenTime"] = None
+        if "CloseTime" not in df.columns:
+            df["CloseTime"] = None
+
+        if "CommissionRate" not in df.columns:
+            df["CommissionRate"] = df["SalesChannel"].map(
+                lambda n: _COMMISSION_RATES.get(str(n).strip(), 0.00)
+            )
+
+        if "TypicalFulfillmentDays" not in df.columns:
+            df["TypicalFulfillmentDays"] = df["SalesChannel"].map(
+                lambda n: _FULFILLMENT_DAYS.get(str(n).strip(), 0)
+            )
 
         # Hard-cast
         df["SortOrder"] = df["SortOrder"].astype(np.int16)
         for c in ["IsDigital", "IsPhysical", "IsThirdParty", "IsB2B", "IsAssisted", "IsOwnedChannel", "Is24x7"]:
             df[c] = df[c].astype(bool)
-        df["OpenMinute"] = df["OpenMinute"].astype(np.int16)
-        df["CloseMinute"] = df["CloseMinute"].astype(np.int16)
+        df["TypicalFulfillmentDays"] = df["TypicalFulfillmentDays"].astype(np.int16)
 
         return df
 
@@ -213,12 +282,20 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     include_extended = bool(dim_cfg.get("include_extended", True))
 
     rows = []
+    _d = _CHANNEL_DESCRIPTIONS
+    _g = _GROUP_DESCRIPTIONS
+    _cr = _COMMISSION_RATES
+    _fd = _FULFILLMENT_DAYS
+    _mt = _minutes_to_time
+
     if include_unknown:
         rows.append(
             dict(
                 SalesChannelKey=0,
                 SalesChannel="Unknown",
+                SalesChannelDescription=_d["Unknown"],
                 ChannelGroup="NA",
+                ChannelGroupDescription=_g["NA"],
                 SalesChannelCode="UNKNOWN",
                 SortOrder=0,
                 IsDigital=False,
@@ -227,49 +304,70 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
                 IsB2B=False,
                 IsAssisted=False,
                 IsOwnedChannel=False,
-                TimeProfile="NA",
                 Is24x7=False,
-                OpenMinute=-1,
-                CloseMinute=-1,
+                OpenTime=None,
+                CloseTime=None,
+                CommissionRate=_cr["Unknown"],
+                TypicalFulfillmentDays=_fd["Unknown"],
             )
         )
 
-    # Core (keep your existing 1..5 stable) :contentReference[oaicite:2]{index=2}
+    # Core (keep your existing 1..5 stable)
     rows += [
-        dict(SalesChannelKey=1, SalesChannel="Store",       ChannelGroup="Physical", SalesChannelCode="STORE",
+        dict(SalesChannelKey=1, SalesChannel="Store",       SalesChannelDescription=_d["Store"],
+             ChannelGroup="Physical", ChannelGroupDescription=_g["Physical"], SalesChannelCode="STORE",
              SortOrder=1, IsDigital=False, IsPhysical=True,  IsThirdParty=False, IsB2B=False, IsAssisted=False,
-             IsOwnedChannel=True, TimeProfile="Retail",   Is24x7=False, OpenMinute=9*60,  CloseMinute=21*60),
-        dict(SalesChannelKey=2, SalesChannel="Online",      ChannelGroup="Digital",  SalesChannelCode="ONLINE",
+             IsOwnedChannel=True, Is24x7=False, OpenTime=_mt(9*60),  CloseTime=_mt(21*60),
+             CommissionRate=_cr["Store"], TypicalFulfillmentDays=_fd["Store"]),
+        dict(SalesChannelKey=2, SalesChannel="Online",      SalesChannelDescription=_d["Online"],
+             ChannelGroup="Digital",  ChannelGroupDescription=_g["Digital"],  SalesChannelCode="ONLINE",
              SortOrder=2, IsDigital=True,  IsPhysical=False, IsThirdParty=False, IsB2B=False, IsAssisted=False,
-             IsOwnedChannel=True, TimeProfile="Digital",  Is24x7=True,  OpenMinute=-1,   CloseMinute=-1),
-        dict(SalesChannelKey=3, SalesChannel="Marketplace", ChannelGroup="Digital",  SalesChannelCode="MARKETPLACE",
+             IsOwnedChannel=True, Is24x7=True,  OpenTime=None, CloseTime=None,
+             CommissionRate=_cr["Online"], TypicalFulfillmentDays=_fd["Online"]),
+        dict(SalesChannelKey=3, SalesChannel="Marketplace", SalesChannelDescription=_d["Marketplace"],
+             ChannelGroup="Digital",  ChannelGroupDescription=_g["Digital"],  SalesChannelCode="MARKETPLACE",
              SortOrder=3, IsDigital=True,  IsPhysical=False, IsThirdParty=True,  IsB2B=False, IsAssisted=False,
-             IsOwnedChannel=False, TimeProfile="Digital", Is24x7=True,  OpenMinute=-1,   CloseMinute=-1),
-        dict(SalesChannelKey=4, SalesChannel="B2B",         ChannelGroup="Business", SalesChannelCode="B2B",
+             IsOwnedChannel=False, Is24x7=True,  OpenTime=None, CloseTime=None,
+             CommissionRate=_cr["Marketplace"], TypicalFulfillmentDays=_fd["Marketplace"]),
+        dict(SalesChannelKey=4, SalesChannel="B2B",         SalesChannelDescription=_d["B2B"],
+             ChannelGroup="Business", ChannelGroupDescription=_g["Business"], SalesChannelCode="B2B",
              SortOrder=4, IsDigital=False, IsPhysical=False, IsThirdParty=False, IsB2B=True,  IsAssisted=False,
-             IsOwnedChannel=True, TimeProfile="Business", Is24x7=False, OpenMinute=8*60,  CloseMinute=18*60),
-        dict(SalesChannelKey=5, SalesChannel="CallCenter",  ChannelGroup="Assisted", SalesChannelCode="CALLCENTER",
+             IsOwnedChannel=True, Is24x7=False, OpenTime=_mt(8*60),  CloseTime=_mt(18*60),
+             CommissionRate=_cr["B2B"], TypicalFulfillmentDays=_fd["B2B"]),
+        dict(SalesChannelKey=5, SalesChannel="CallCenter",  SalesChannelDescription=_d["CallCenter"],
+             ChannelGroup="Assisted", ChannelGroupDescription=_g["Assisted"], SalesChannelCode="CALLCENTER",
              SortOrder=5, IsDigital=False, IsPhysical=False, IsThirdParty=False, IsB2B=False, IsAssisted=True,
-             IsOwnedChannel=True, TimeProfile="Assisted", Is24x7=False, OpenMinute=8*60,  CloseMinute=20*60),
+             IsOwnedChannel=True, Is24x7=False, OpenTime=_mt(8*60),  CloseTime=_mt(20*60),
+             CommissionRate=_cr["CallCenter"], TypicalFulfillmentDays=_fd["CallCenter"]),
     ]
 
     if include_extended:
         rows += [
-            dict(SalesChannelKey=6, SalesChannel="Web",          ChannelGroup="Digital",  SalesChannelCode="WEB",
+            dict(SalesChannelKey=6, SalesChannel="Web",          SalesChannelDescription=_d["Web"],
+                 ChannelGroup="Digital",  ChannelGroupDescription=_g["Digital"],  SalesChannelCode="WEB",
                  SortOrder=6, IsDigital=True,  IsPhysical=False, IsThirdParty=False, IsB2B=False, IsAssisted=False,
-                 IsOwnedChannel=True, TimeProfile="Digital",  Is24x7=True,  OpenMinute=-1, CloseMinute=-1),
-            dict(SalesChannelKey=7, SalesChannel="MobileApp",    ChannelGroup="Digital",  SalesChannelCode="APP",
+                 IsOwnedChannel=True, Is24x7=True,  OpenTime=None, CloseTime=None,
+                 CommissionRate=_cr["Web"], TypicalFulfillmentDays=_fd["Web"]),
+            dict(SalesChannelKey=7, SalesChannel="MobileApp",    SalesChannelDescription=_d["MobileApp"],
+                 ChannelGroup="Digital",  ChannelGroupDescription=_g["Digital"],  SalesChannelCode="APP",
                  SortOrder=7, IsDigital=True,  IsPhysical=False, IsThirdParty=False, IsB2B=False, IsAssisted=False,
-                 IsOwnedChannel=True, TimeProfile="Digital",  Is24x7=True,  OpenMinute=-1, CloseMinute=-1),
-            dict(SalesChannelKey=8, SalesChannel="SocialCommerce", ChannelGroup="Digital", SalesChannelCode="SOCIAL",
+                 IsOwnedChannel=True, Is24x7=True,  OpenTime=None, CloseTime=None,
+                 CommissionRate=_cr["MobileApp"], TypicalFulfillmentDays=_fd["MobileApp"]),
+            dict(SalesChannelKey=8, SalesChannel="SocialCommerce", SalesChannelDescription=_d["SocialCommerce"],
+                 ChannelGroup="Digital", ChannelGroupDescription=_g["Digital"],  SalesChannelCode="SOCIAL",
                  SortOrder=8, IsDigital=True,  IsPhysical=False, IsThirdParty=True,  IsB2B=False, IsAssisted=False,
-                 IsOwnedChannel=False, TimeProfile="Digital", Is24x7=True,  OpenMinute=-1, CloseMinute=-1),
-            dict(SalesChannelKey=9, SalesChannel="PartnerReseller", ChannelGroup="Business", SalesChannelCode="PARTNER",
+                 IsOwnedChannel=False, Is24x7=True,  OpenTime=None, CloseTime=None,
+                 CommissionRate=_cr["SocialCommerce"], TypicalFulfillmentDays=_fd["SocialCommerce"]),
+            dict(SalesChannelKey=9, SalesChannel="PartnerReseller", SalesChannelDescription=_d["PartnerReseller"],
+                 ChannelGroup="Business", ChannelGroupDescription=_g["Business"], SalesChannelCode="PARTNER",
                  SortOrder=9, IsDigital=False, IsPhysical=False, IsThirdParty=True,  IsB2B=True,  IsAssisted=False,
-                 IsOwnedChannel=False, TimeProfile="Business", Is24x7=False, OpenMinute=8*60, CloseMinute=18*60),
-            dict(SalesChannelKey=10, SalesChannel="Kiosk",       ChannelGroup="Physical", SalesChannelCode="KIOSK",
+                 IsOwnedChannel=False, Is24x7=False, OpenTime=_mt(8*60), CloseTime=_mt(18*60),
+                 CommissionRate=_cr["PartnerReseller"], TypicalFulfillmentDays=_fd["PartnerReseller"]),
+            dict(SalesChannelKey=10, SalesChannel="Kiosk",       SalesChannelDescription=_d["Kiosk"],
+                 ChannelGroup="Physical", ChannelGroupDescription=_g["Physical"], SalesChannelCode="KIOSK",
                  SortOrder=10, IsDigital=False, IsPhysical=True, IsThirdParty=False, IsB2B=False, IsAssisted=False,
-                 IsOwnedChannel=True, TimeProfile="Retail",   Is24x7=False, OpenMinute=10*60, CloseMinute=20*60),
+                 IsOwnedChannel=True, Is24x7=False, OpenTime=_mt(10*60), CloseTime=_mt(20*60),
+                 CommissionRate=_cr["Kiosk"], TypicalFulfillmentDays=_fd["Kiosk"]),
         ]
 
     df = pd.DataFrame(rows, columns=cols)

@@ -228,7 +228,7 @@ SELECT
     Quantity,
     CAST(NetPrice       AS decimal(19,4)) AS NetPrice,
     CAST(UnitCost       AS decimal(19,4)) AS UnitCost,
-    CAST(UnitPrice      AS decimal(19,4)) AS UnitPrice,
+    CAST(ListPrice      AS decimal(19,4)) AS ListPrice,
     CAST(DiscountAmount AS decimal(19,4)) AS DiscountAmount,
     DeliveryStatus
 FROM ' + @DtlFrom + N';';
@@ -316,7 +316,7 @@ SELECT'
         Quantity,
         CAST(NetPrice         AS decimal(19,4)) AS NetPrice,
         CAST(UnitCost         AS decimal(19,4)) AS UnitCost,
-        CAST(UnitPrice        AS decimal(19,4)) AS UnitPrice,
+        CAST(ListPrice        AS decimal(19,4)) AS ListPrice,
         CAST(DiscountAmount   AS decimal(19,4)) AS DiscountAmount,
         DeliveryStatus,
         IsOrderDelayed
@@ -352,7 +352,7 @@ SELECT
     d.Quantity,
     CAST(d.NetPrice         AS decimal(19,4)) AS NetPrice,
     CAST(d.UnitCost         AS decimal(19,4)) AS UnitCost,
-    CAST(d.UnitPrice        AS decimal(19,4)) AS UnitPrice,
+    CAST(d.ListPrice        AS decimal(19,4)) AS ListPrice,
     CAST(d.DiscountAmount   AS decimal(19,4)) AS DiscountAmount,
     d.DeliveryStatus,
     h.IsOrderDelayed
