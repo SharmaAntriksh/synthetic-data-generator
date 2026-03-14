@@ -787,20 +787,36 @@ def _generate_org_profile(
         "China": ("Shanghai,Beijing,Shenzhen,Guangzhou,Chengdu", "SH,BJ,GD,GD,SC"),
         "Australia": ("Sydney,Melbourne,Brisbane,Perth,Adelaide", "NSW,VIC,QLD,WA,SA"),
     }
+    # Vectorised hq_city / hq_state: iterate 8 countries not M orgs
+    _hq_countries_list = list(geo_lookup_hq.keys())
+    _hq_cities_split = [geo_lookup_hq[c][0].split(",") for c in _hq_countries_list]
+    _hq_states_split = [geo_lookup_hq[c][1].split(",") for c in _hq_countries_list]
+    _hq_country_to_idx = {c: i for i, c in enumerate(_hq_countries_list)}
+    _hq_mapped = np.array([_hq_country_to_idx.get(str(c), -1) for c in HeadquarterCountry])
+    _hq_known_mask = _hq_mapped >= 0
+    _hq_n_known = int(_hq_known_mask.sum())
+
+    # Batch RNG draw for known-country orgs (all have 5 options)
+    _hq_rand_all = rng.integers(0, 5, size=_hq_n_known)
+
     hq_city = np.empty(M, dtype=object)
     hq_state = np.empty(M, dtype=object)
-    for i in range(M):
-        country = str(HeadquarterCountry[i])
-        if country in geo_lookup_hq:
-            cities_str, states_str = geo_lookup_hq[country]
-            cities = cities_str.split(",")
-            states = states_str.split(",")
-            idx = rng.integers(0, len(cities))
-            hq_city[i] = cities[idx]
-            hq_state[i] = states[idx]
-        else:
-            hq_city[i] = "New York"
-            hq_state[i] = "NY"
+    hq_city[:] = "New York"
+    hq_state[:] = "NY"
+
+    # Map batch RNG draws back to positions via cumulative indexing
+    _hq_known_positions = np.flatnonzero(_hq_known_mask)
+    _hq_rand_by_pos = np.empty(M, dtype=np.intp)
+    _hq_rand_by_pos[_hq_known_positions] = _hq_rand_all
+
+    for ci in range(len(_hq_countries_list)):
+        mask = _hq_mapped == ci
+        if not mask.any():
+            continue
+        n_opts = len(_hq_cities_split[ci])
+        idxs = _hq_rand_by_pos[mask] % n_opts
+        hq_city[mask] = np.array(_hq_cities_split[ci], dtype=object)[idxs]
+        hq_state[mask] = np.array(_hq_states_split[ci], dtype=object)[idxs]
 
     OrgAddress = (
         org_street_num.astype(object) + " " + org_street_name + " " + org_street_type
@@ -1873,7 +1889,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     CustomerStartDate = CustomerStartDate + day_offsets
 
     if enable_churn:
-        end_idx = np.array([int(x) if not pd.isna(x) else -1 for x in CustomerEndMonth], dtype="int64")
+        _cem = pd.to_numeric(CustomerEndMonth, errors="coerce")
+        end_idx = np.where(np.isnan(_cem), -1, _cem).astype(np.int64)
         has_end = end_idx >= 0
         CustomerEndDate = np.empty(N, dtype="datetime64[ns]")
         CustomerEndDate[:] = np.datetime64("NaT")

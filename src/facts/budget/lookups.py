@@ -51,9 +51,9 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
 
     max_store = int(store_geo["StoreKey"].max())
     store_to_country = np.full(max_store + 1, -1, dtype=np.int32)
-    for _, row in store_geo.iterrows():
-        sk = int(row["StoreKey"])
-        store_to_country[sk] = country_to_id.get(row["Country"], -1)
+    _sg_sk = store_geo["StoreKey"].to_numpy(dtype=np.intp)
+    _sg_cid = store_geo["Country"].fillna("Unknown").map(country_to_id).to_numpy(dtype=np.int32)
+    store_to_country[_sg_sk] = _sg_cid
 
     # ---- Product -> Subcategory -> Category ----
     _prod_cols = ["ProductKey", "SubcategoryKey"]
@@ -81,16 +81,19 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
 
     max_prod = int(prod_cat["ProductKey"].max())
     product_to_cat = np.full(max_prod + 1, -1, dtype=np.int32)
-    for _, row in prod_cat.iterrows():
-        pk = int(row["ProductKey"])
-        product_to_cat[pk] = category_to_id.get(row["Category"], -1)
+    _pc_pk = prod_cat["ProductKey"].to_numpy(dtype=np.intp)
+    _pc_cid = prod_cat["Category"].fillna("Unknown").map(category_to_id).to_numpy(dtype=np.int32)
+    product_to_cat[_pc_pk] = _pc_cid
 
     # ---- Country -> Currency (for FX layer) ----
+    _geo_dedup = geo.drop_duplicates("Country")
+    _geo_countries = _geo_dedup["Country"].to_numpy()
+    _geo_iso = _geo_dedup["ISOCode"].fillna("USD").to_numpy() if "ISOCode" in _geo_dedup.columns else np.full(len(_geo_dedup), "USD", dtype=object)
     country_to_currency = {}
-    for _, row in geo.drop_duplicates("Country").iterrows():
-        cid = country_to_id.get(row["Country"])
+    for _gc, _gi in zip(_geo_countries, _geo_iso):
+        cid = country_to_id.get(_gc)
         if cid is not None:
-            country_to_currency[cid] = row.get("ISOCode", "USD")
+            country_to_currency[cid] = _gi
 
     # ---- Sales channels ----
     sc_path = parquet_dims / "sales_channels.parquet"

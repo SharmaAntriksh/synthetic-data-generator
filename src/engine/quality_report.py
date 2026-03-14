@@ -208,17 +208,17 @@ def _row_count_fast(path: Path) -> Optional[int]:
             try:
                 total = 0
                 for f in csvs:
-                    # Subtract 1 for header per file
-                    with open(f, "r", encoding="utf-8", errors="replace") as fh:
-                        total += sum(1 for _ in fh) - 1
+                    # Count newlines via raw binary read (faster than line iteration)
+                    with open(f, "rb") as fh:
+                        total += sum(chunk.count(b"\n") for chunk in iter(lambda: fh.read(1 << 20), b"")) - 1
                 return max(total, 0)
             except Exception:
                 pass
 
     if path.is_file() and path.suffix == ".csv":
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                return max(sum(1 for _ in fh) - 1, 0)
+            with open(path, "rb") as fh:
+                return max(sum(chunk.count(b"\n") for chunk in iter(lambda: fh.read(1 << 20), b"")) - 1, 0)
         except Exception:
             pass
 

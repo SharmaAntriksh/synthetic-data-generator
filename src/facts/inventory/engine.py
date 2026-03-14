@@ -442,7 +442,7 @@ def compute_inventory_snapshots(
                 valid_idx = triggered_idx[valid]
                 valid_arr_t = arr_t[valid]
                 valid_rq = rq[valid]
-                np.add.at(pending, (valid_idx, valid_arr_t), valid_rq)
+                pending[valid_idx, valid_arr_t] += valid_rq
             out_on_order[triggered_idx, t] = rq
 
         out_qoh[:, t] = qoh

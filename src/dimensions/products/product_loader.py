@@ -64,20 +64,20 @@ def _generate_scd2_versions(
     # Products with 0 extra versions stay at version 1 only
 
     version_rows = []
+    base_records = base_df.to_dict("records")
     for i in range(N):
-        row = base_df.iloc[i]
-        product_id = int(row["ProductID"])
+        base_rec = base_records[i]
         n_versions = int(n_extra[i]) + 1  # at least 1
 
-        list_price = float(row["ListPrice"])
-        unit_cost = float(row["UnitCost"])
+        list_price = float(base_rec["ListPrice"])
+        unit_cost = float(base_rec["UnitCost"])
 
         # First revision starts at a random offset within the first revision period
         first_revision_offset = rng.integers(1, max(2, revision_freq))
         revision_start = start_date + pd.DateOffset(months=int(first_revision_offset))
 
         for v in range(n_versions):
-            version_data = row.to_dict()
+            version_data = base_rec.copy()
             version_data["VersionNumber"] = v + 1
 
             if v == 0:
@@ -102,20 +102,23 @@ def _generate_scd2_versions(
     # Set EffectiveEndDate: next version's start - 1 day, or 9999-12-31 for current
     result = result.sort_values(["ProductID", "VersionNumber"]).reset_index(drop=True)
 
-    eff_end = pd.Series(pd.Timestamp("9999-12-31"), index=result.index)
-    is_current = pd.Series(np.int64(1), index=result.index)
+    # Vectorised EffectiveEndDate: shift within ProductID groups
+    eff_start_arr = result["EffectiveStartDate"].to_numpy()
+    pid_arr = result["ProductID"].to_numpy()
+    # Data is already sorted by [ProductID, VersionNumber]
+    # Next row's start date within same ProductID → current row's end date - 1 day
+    same_pid_as_next = np.empty(len(result), dtype=bool)
+    same_pid_as_next[:-1] = pid_arr[:-1] == pid_arr[1:]
+    same_pid_as_next[-1] = False
 
-    for pid in result["ProductID"].unique():
-        mask = result["ProductID"] == pid
-        idx = result.index[mask]
-        if len(idx) > 1:
-            for j in range(len(idx) - 1):
-                next_start = result.loc[idx[j + 1], "EffectiveStartDate"]
-                eff_end.iloc[idx[j]] = next_start - pd.Timedelta(days=1)
-                is_current.iloc[idx[j]] = 0
+    eff_end_arr = np.full(len(result), pd.Timestamp("9999-12-31"), dtype="datetime64[ns]")
+    is_current_arr = np.ones(len(result), dtype=np.int64)
+    _shift_mask = np.flatnonzero(same_pid_as_next)
+    eff_end_arr[_shift_mask] = eff_start_arr[_shift_mask + 1] - np.timedelta64(1, "D")
+    is_current_arr[_shift_mask] = 0
 
-    result["EffectiveEndDate"] = eff_end
-    result["IsCurrent"] = is_current
+    result["EffectiveEndDate"] = eff_end_arr
+    result["IsCurrent"] = is_current_arr
 
     # Reassign ProductKey sequentially (PK, unique per version row)
     result["ProductKey"] = np.arange(1, len(result) + 1, dtype="int64")
