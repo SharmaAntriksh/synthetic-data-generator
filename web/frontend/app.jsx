@@ -326,12 +326,13 @@ function App() {
 
         {/* 4 DIMENSIONS & FEATURES — tabbed panel */}
         <Section num="4" title="Dimensions & Features">
-          <div style={{display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 6, marginTop: 6, marginBottom: 4}}>
+          <div style={{display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6, marginTop: 6, marginBottom: 4}}>
             {[
               ["customers", "Customers"], ["products", "Products"], ["stores", "Stores"], ["employees", "Employees"],
               ["returns", "Returns", cfg.returnsEnabled], ["promotions", "Promos"],
               ["segments", "Segments", cfg.csEnabled], ["subscriptions", "Subscriptions", cfg.subEnabled],
               ["exchange", "FX Rates"], ["budget", "Budget", cfg.budgetEnabled], ["inventory", "Inventory", cfg.inventoryEnabled],
+              ["wishlists", "Wishlists", cfg.wlEnabled], ["complaints", "Complaints", cfg.ccEnabled],
             ].map(([tabKey, label, flag]) => {
               const active = dimTab === tabKey;
               return (
@@ -366,6 +367,13 @@ function App() {
                 <F label="First year %" help="% of customers that exist in year 1. Rest are acquired over time."><N value={cfg.firstYearPct} onChange={v => s("firstYearPct", v)} min={0.05} max={1} step={0.01} /></F>
               </R2>
             </Box>
+            <Box title="SCD Type 2 (Slowly Changing Dimension)">
+              <Check checked={cfg.custScd2Enabled} onChange={v => s("custScd2Enabled", v)} label="Enable customer version history" />
+              {cfg.custScd2Enabled && <R2>
+                <F label="Change rate" help="Fraction of customers who get attribute changes per year."><N value={cfg.custScd2ChangeRate} onChange={v => s("custScd2ChangeRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Max versions" help="Maximum version rows per customer."><N value={cfg.custScd2MaxVersions} onChange={v => s("custScd2MaxVersions", v)} min={1} max={10} step={1} /></F>
+              </R2>}
+            </Box>
           </div>}
 
           {/* ── Products ── */}
@@ -390,6 +398,14 @@ function App() {
               {cfg.brandNormalize && <div style={{marginTop: 8}}><Sld label="Alpha (brand identity retention)" value={cfg.brandNormalizeAlpha} min={0} max={1} step={.05} onChange={v => s("brandNormalizeAlpha", v)} /></div>}
             </Box>
             <Sld label="Active ratio" value={cfg.productActiveRatio} min={.1} max={1} step={.01} onChange={v => s("productActiveRatio", v)} />
+            <Box title="SCD Type 2 (Price History)">
+              <Check checked={cfg.prodScd2Enabled} onChange={v => s("prodScd2Enabled", v)} label="Enable product price version history" />
+              {cfg.prodScd2Enabled && <R3>
+                <F label="Revision frequency" help="Months between price revisions."><N value={cfg.prodScd2RevisionFreq} onChange={v => s("prodScd2RevisionFreq", v)} min={1} max={60} step={1} /></F>
+                <F label="Price drift" help="Price change per revision (e.g. 0.05 = ~5%)."><N value={cfg.prodScd2PriceDrift} onChange={v => s("prodScd2PriceDrift", v)} min={0} max={0.5} step={0.01} /></F>
+                <F label="Max versions" help="Maximum version rows per product."><N value={cfg.prodScd2MaxVersions} onChange={v => s("prodScd2MaxVersions", v)} min={1} max={10} step={1} /></F>
+              </R3>}
+            </Box>
           </div>}
 
           {/* ── Stores ── */}
@@ -530,6 +546,46 @@ function App() {
                 <F label=" "><div style={{paddingTop: 16}}><Check checked={cfg.inventoryShrinkageEnabled} onChange={v => s("inventoryShrinkageEnabled", v)} label="Enable shrinkage" /></div></F>
               </R2>
               {cfg.inventoryShrinkageEnabled && <Sld label="Shrinkage rate" value={cfg.inventoryShrinkageRate} min={0} max={.1} step={.005} onChange={v => s("inventoryShrinkageRate", v)} fmt={v => `${(v * 100).toFixed(1)}%`} />}
+            </>}
+          </div>}
+
+          {/* ── Wishlists ── */}
+          {dimTab === "wishlists" && <div style={{marginTop: 8}}>
+            <div style={{marginTop: 4}}><Check checked={cfg.wlEnabled} onChange={v => s("wlEnabled", v)} label="Generate Customer Wishlists" /></div>
+            {cfg.wlEnabled && <>
+              <R3>
+                <F label="Participation rate" help="Fraction of customers who have wishlists."><N value={cfg.wlParticipationRate} onChange={v => s("wlParticipationRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Avg items" help="Average wishlist items per customer."><N value={cfg.wlAvgItems} onChange={v => s("wlAvgItems", v)} min={1} step={0.5} /></F>
+                <F label="Max items"><N value={cfg.wlMaxItems} onChange={v => s("wlMaxItems", v)} min={1} step={1} /></F>
+              </R3>
+              <R3>
+                <F label="Pre-browse days" help="Days before purchase a product can be wishlisted."><N value={cfg.wlPreBrowseDays} onChange={v => s("wlPreBrowseDays", v)} min={1} step={10} /></F>
+                <F label="Affinity strength" help="How strongly wishlists follow purchase history."><N value={cfg.wlAffinityStrength} onChange={v => s("wlAffinityStrength", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Conversion rate" help="Fraction of wishlist items eventually purchased."><N value={cfg.wlConversionRate} onChange={v => s("wlConversionRate", v)} min={0} max={1} step={0.05} /></F>
+              </R3>
+              <F label="Seed"><N value={cfg.wlSeed} onChange={v => s("wlSeed", v)} min={0} step={1} /></F>
+            </>}
+          </div>}
+
+          {/* ── Complaints ── */}
+          {dimTab === "complaints" && <div style={{marginTop: 8}}>
+            <div style={{marginTop: 4}}><Check checked={cfg.ccEnabled} onChange={v => s("ccEnabled", v)} label="Generate Customer Complaints" /></div>
+            {cfg.ccEnabled && <>
+              <R3>
+                <F label="Complaint rate" help="Fraction of orders that generate a complaint."><N value={cfg.ccComplaintRate} onChange={v => s("ccComplaintRate", v)} min={0} max={1} step={0.005} /></F>
+                <F label="Repeat rate" help="Fraction of complainers who complain again."><N value={cfg.ccRepeatComplaintRate} onChange={v => s("ccRepeatComplaintRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Max complaints"><N value={cfg.ccMaxComplaints} onChange={v => s("ccMaxComplaints", v)} min={1} step={1} /></F>
+              </R3>
+              <R3>
+                <F label="Resolution rate" help="Fraction of complaints that get resolved."><N value={cfg.ccResolutionRate} onChange={v => s("ccResolutionRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Escalation rate" help="Fraction of complaints that get escalated."><N value={cfg.ccEscalationRate} onChange={v => s("ccEscalationRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Seed"><N value={cfg.ccSeed} onChange={v => s("ccSeed", v)} min={0} step={1} /></F>
+              </R3>
+              <R3>
+                <F label="Avg response days"><N value={cfg.ccAvgResponseDays} onChange={v => s("ccAvgResponseDays", v)} min={1} step={1} /></F>
+                <F label="Max response days"><N value={cfg.ccMaxResponseDays} onChange={v => s("ccMaxResponseDays", v)} min={1} step={1} /></F>
+                <F label=" " />
+              </R3>
             </>}
           </div>}
         </Section>
@@ -874,6 +930,8 @@ function App() {
             {cfg.inventoryEnabled && <>{" · "}<Badge>Inventory</Badge></>}
             {cfg.csEnabled && <>{" · "}<Badge>Segments</Badge></>}
             {cfg.subEnabled && <>{" · "}<Badge>Subscriptions</Badge></>}
+            {cfg.wlEnabled && <>{" · "}<Badge>Wishlists</Badge></>}
+            {cfg.ccEnabled && <>{" · "}<Badge>Complaints</Badge></>}
           </div>
           <div style={{marginTop: 14}}>
             <button onClick={runGenerate} disabled={errors.length > 0 || isRunning} style={{width: "100%", padding: "12px 24px", borderRadius: 10, border: "none", fontSize: 14, fontWeight: 700, cursor: errors.length > 0 ? "not-allowed" : "pointer", fontFamily: "var(--sans)", transition: "all .15s", background: errors.length > 0 ? "var(--alt)" : "var(--accent)", color: errors.length > 0 ? "var(--muted)" : "#fff", opacity: isRunning ? .7 : 1, boxShadow: errors.length === 0 && !isRunning ? "0 4px 16px rgba(79,91,213,.2)" : "none"}}>{isRunning ? "Generating..." : "Generate Data"}</button>

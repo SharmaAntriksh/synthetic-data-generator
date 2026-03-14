@@ -1,6 +1,6 @@
 # Contoso Sales Data Generator
 
-Generate a complete, **analytics-ready retail dataset** inspired by the **ContosoRetailDW** schema — with configurable dimensions, realistic sales behavior, budget forecasts, and inventory snapshots. Designed for BI, analytics, data engineering, and data modeling scenarios.
+Generate a complete, **analytics-ready retail dataset** inspired by the **ContosoRetailDW** schema — with configurable dimensions, realistic sales behavior, budget forecasts, inventory snapshots, wishlists, and complaints. Designed for BI, analytics, data engineering, and data modeling scenarios.
 
 Every run is **deterministic**, **schema-stable**, and **idempotent**, making the generator ideal for repeatable demos, training environments, and benchmarking.
 
@@ -10,11 +10,9 @@ Every run is **deterministic**, **schema-stable**, and **idempotent**, making th
 
 The generator produces a full star-schema data model across dimension and fact tables.
 
-**Dimension tables:** Customers, CustomerProfile, OrganizationProfile, Products, ProductProfile, ProductCategory, ProductSubcategory, Stores, Employees, EmployeeStoreAssignments, Dates (calendar + fiscal + weekly fiscal), Time, Geography, Currency, Promotions, Suppliers, LoyaltyTiers, SalesChannels, CustomerAcquisitionChannels, ReturnReason
+**Dimension tables:** Customers, CustomerProfile, OrganizationProfile, Products, ProductProfile, ProductCategory, ProductSubcategory, Stores, Employees, EmployeeStoreAssignments, Dates (calendar + fiscal + weekly fiscal), Time, Geography, Currency, ExchangeRates, Promotions, Suppliers, Plans, CustomerSubscriptions, LoyaltyTiers, SalesChannels, CustomerAcquisitionChannels, ReturnReason
 
-**Fact tables:** Sales (flat or split into SalesOrderHeader + SalesOrderDetail), SalesReturn, ExchangeRates, BudgetYearly, BudgetMonthly, InventorySnapshot
-
-**Optional dimension tables:** Plans + CustomerSubscriptions (many-to-many bridge for DAX patterns)
+**Fact tables:** Sales (flat or split into SalesOrderHeader + SalesOrderDetail), SalesReturn, BudgetYearly, BudgetMonthly, InventorySnapshot, CustomerWishlists, Complaints
 
 ### Output formats
 
@@ -121,25 +119,41 @@ generated_datasets/
       │   └── models.yaml
       ├── dimensions/
       │   ├── currency.csv
+      │   ├── customer_acquisition_channels.csv
+      │   ├── customer_profile.csv
+      │   ├── customer_subscriptions.csv       ← if subscriptions enabled
       │   ├── customers.csv
       │   ├── dates.csv
+      │   ├── employee_store_assignments.csv
       │   ├── employees.csv
       │   ├── exchange_rates.csv
       │   ├── geography.csv
+      │   ├── loyalty_tiers.csv
+      │   ├── organization_profile.csv
+      │   ├── plans.csv                        ← if subscriptions enabled
+      │   ├── product_category.csv
+      │   ├── product_profile.csv
+      │   ├── product_subcategory.csv
       │   ├── products.csv
       │   ├── promotions.csv
       │   ├── return_reason.csv
+      │   ├── sales_channels.csv
       │   ├── stores.csv
+      │   ├── suppliers.csv
       │   └── time.csv
       ├── facts/
-      │   ├── budget/
+      │   ├── budget/                          ← if budget enabled
       │   │   ├── budget_monthly.csv
       │   │   └── budget_yearly.csv
-      │   ├── inventory/
+      │   ├── complaints/                      ← if complaints enabled
+      │   │   └── complaints.csv
+      │   ├── customer_wishlists/              ← if wishlists enabled
+      │   │   └── customer_wishlists.csv
+      │   ├── inventory/                       ← if inventory enabled
       │   │   └── inventory_snapshot.csv
       │   ├── sales/
       │   │   └── sales_chunk0000.csv
-      │   └── sales_return/
+      │   └── sales_return/                    ← if returns enabled
       │       └── sales_return_chunk0000.csv
       └── sql/
           ├── indexes/
@@ -170,15 +184,17 @@ Controls the shape and scale of the dataset: row counts, date ranges, customer p
 | `defaults` | Global seed and date range (`start` / `end`) |
 | `sales` | Output format, merge settings, chunk/worker parallelism, compression |
 | `returns` | Return rate, timing window, enable/disable |
-| `products` | Active ratio, price range, margin range, brand normalization |
-| `customers` | Region mix (US/EU/India), org percentage, acquisition profile |
-| `customer_segments` | Segment count, membership rules, churn modeling (disabled by default) |
+| `customers` | Region mix (US/EU/India/Asia), org percentage, acquisition profile, SCD2 versioning |
+| `products` | Active ratio, price range, margin range, brand normalization, SCD2 price history |
+| `stores` | Districts, regions, opening/closing dates, product assortment filtering |
 | `subscriptions` | Plans + CustomerSubscriptions bridge for DAX many-to-many patterns |
 | `employees` | Staff-per-store range, HR fields, store assignment rules with role profiles |
 | `dates` | Fiscal start month, calendar/ISO/fiscal/weekly-fiscal toggles |
 | `exchange_rates` | Currency list, base currency, volatility |
 | `budget` | Scenarios (Low/Medium/High), growth caps, weighting |
 | `inventory` | Snapshot grain, reorder compliance, shrinkage, ABC classification |
+| `wishlists` | Wishlist generation rate, priority distribution, seasonal patterns |
+| `complaints` | Complaint rate, severity distribution, resolution types |
 
 ### `models.yaml` — how sales behave
 
@@ -273,7 +289,7 @@ The import creates all dimension and fact tables, applies PK/FK constraints, and
 
 ## Web Interface
 
-A Streamlit-based UI is also available for interactive generation:
+A web UI (FastAPI + React) is also available for interactive generation:
 
 ```powershell
 .\scripts\run_web.ps1

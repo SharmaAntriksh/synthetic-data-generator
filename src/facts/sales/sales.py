@@ -746,9 +746,6 @@ def generate_sales_fact(
         except Exception:
             pass
 
-    if customer_base_weight is None:
-        info("CustomerBaseWeight not found; customer sampling will be uniform.")
-
     # Products: respect runner-bound active_product_np
     product_brand_key = None
     brand_names = None

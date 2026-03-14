@@ -118,6 +118,10 @@ def get_config():
         "customerActiveRatio": float(getattr(cust, "active_ratio", 0.90)),
         "profile": str(getattr(cust, "profile", "steady")),
         "firstYearPct": float(getattr(cust, "first_year_pct", 0.27)),
+        # Customers SCD2
+        "custScd2Enabled": bool(getattr(getattr(cust, "scd2", None), "enabled", False)),
+        "custScd2ChangeRate": float(getattr(getattr(cust, "scd2", None), "change_rate", 0.15)),
+        "custScd2MaxVersions": int(getattr(getattr(cust, "scd2", None), "max_versions", 4)),
         # Products detail (pricing/cost/brand_norm are plain dicts from products.pricing)
         "valueScale": float(pricing.get("value_scale", 1.0) if isinstance(pricing, dict) else getattr(pricing, "value_scale", 1.0)),
         "minPrice": float(pricing.get("min_unit_price", 10) if isinstance(pricing, dict) else getattr(pricing, "min_unit_price", 10)),
@@ -127,6 +131,11 @@ def get_config():
         "marginMax": float(cost.get("max_margin_pct", 0.35) if isinstance(cost, dict) else getattr(cost, "max_margin_pct", 0.35)),
         "brandNormalize": bool(brand_norm.get("enabled", False) if isinstance(brand_norm, dict) else getattr(brand_norm, "enabled", False)),
         "brandNormalizeAlpha": float(brand_norm.get("alpha", 0.35) if isinstance(brand_norm, dict) else getattr(brand_norm, "alpha", 0.35)),
+        # Products SCD2
+        "prodScd2Enabled": bool(getattr(getattr(prods, "scd2", None), "enabled", False)),
+        "prodScd2RevisionFreq": int(getattr(getattr(prods, "scd2", None), "revision_frequency", 12)),
+        "prodScd2PriceDrift": float(getattr(getattr(prods, "scd2", None), "price_drift", 0.05)),
+        "prodScd2MaxVersions": int(getattr(getattr(prods, "scd2", None), "max_versions", 4)),
         # Geography
         "geoWeights": dict((geo.get("country_weights", {}) if isinstance(geo, dict) else getattr(geo, "country_weights", {})) or {}),
         # Returns
@@ -280,6 +289,15 @@ def update_config(body: ConfigUpdate):
         if "profile" in v: cfg.customers.profile = v["profile"]
         if "firstYearPct" in v: cfg.customers.first_year_pct = float(v["firstYearPct"])
 
+        # Customers SCD2
+        if any(k.startswith("custScd2") for k in v):
+            if cfg.customers.scd2 is None:
+                from src.engine.config.config_schema import CustomersSCD2Config
+                cfg.customers.scd2 = CustomersSCD2Config()
+            if "custScd2Enabled" in v: cfg.customers.scd2.enabled = bool(v["custScd2Enabled"])
+            if "custScd2ChangeRate" in v: cfg.customers.scd2.change_rate = float(v["custScd2ChangeRate"])
+            if "custScd2MaxVersions" in v: cfg.customers.scd2.max_versions = int(v["custScd2MaxVersions"])
+
         # Products detail (pricing is Dict[str, Any], so dict access is correct)
         if "valueScale" in v: cfg.products.pricing["base"]["value_scale"] = float(v["valueScale"])
         if "minPrice" in v: cfg.products.pricing["base"]["min_unit_price"] = float(v["minPrice"])
@@ -289,6 +307,16 @@ def update_config(body: ConfigUpdate):
         if "marginMax" in v: cfg.products.pricing["cost"]["max_margin_pct"] = float(v["marginMax"])
         if "brandNormalize" in v: cfg.products.pricing["brand_normalization"]["enabled"] = bool(v["brandNormalize"])
         if "brandNormalizeAlpha" in v: cfg.products.pricing["brand_normalization"]["alpha"] = float(v["brandNormalizeAlpha"])
+
+        # Products SCD2
+        if any(k.startswith("prodScd2") for k in v):
+            if cfg.products.scd2 is None:
+                from src.engine.config.config_schema import ProductsSCD2Config
+                cfg.products.scd2 = ProductsSCD2Config()
+            if "prodScd2Enabled" in v: cfg.products.scd2.enabled = bool(v["prodScd2Enabled"])
+            if "prodScd2RevisionFreq" in v: cfg.products.scd2.revision_frequency = int(v["prodScd2RevisionFreq"])
+            if "prodScd2PriceDrift" in v: cfg.products.scd2.price_drift = float(v["prodScd2PriceDrift"])
+            if "prodScd2MaxVersions" in v: cfg.products.scd2.max_versions = int(v["prodScd2MaxVersions"])
 
         # Geography
         if "geoWeights" in v and isinstance(v["geoWeights"], dict):

@@ -37,12 +37,14 @@ Two-stage pipeline: **Dimensions** (sequential, dependency-aware) then **Facts**
 ```
 config.yaml + models.yaml --> Pipeline Runner
   |-- Dimensions Stage (sequential)
-  |   generates ~20 dimension tables (customers, products, stores, dates, etc.)
+  |   generates ~22 dimension tables (customers, products, stores, dates, plans, etc.)
   |-- Sales Stage (parallel via multiprocessing pool)
   |   |-- sales transactions (chunked, imap_unordered)
   |   |-- sales returns (optional)
   |   |-- budget forecasts (streamed accumulator)
   |   |-- inventory snapshots (streamed accumulator)
+  |   |-- customer wishlists (streamed accumulator)
+  |   |-- customer complaints (streamed accumulator)
   |-- Package Output (final timestamped folder with dims, facts, SQL, Power BI project)
 ```
 
@@ -56,7 +58,8 @@ src/
   exceptions.py                  # Custom exception hierarchy (PipelineError, ConfigError, etc.)
   dimensions/                    # One generator per dimension table
     customers.py, products/, stores.py, employees.py, dates.py,
-    currency.py, exchange_rates.py, promotions.py, geography.py, etc.
+    currency.py, exchange_rates.py, promotions.py, geography.py,
+    subscriptions.py, lookups.py (sales channels, loyalty tiers, etc.)
   facts/
     sales/                       # Core sales fact generation
       sales.py                   # Entry point, orchestrates worker pool
@@ -68,6 +71,8 @@ src/
       sales_writer/              # Output writers (parquet merge, delta, CSV), encoding
     budget/                      # Budget fact (accumulator + engine, Low/Medium/High scenarios)
     inventory/                   # Inventory snapshots (monthly grain, ABC classification, shrinkage)
+    wishlists/                   # Customer wishlists (streamed from sales worker accumulators)
+    complaints/                  # Customer complaints (streamed from sales worker accumulators)
   engine/
     config/                      # config_loader.py, config.py (normalizer registry), config_schema.py (Pydantic models)
     packaging/                   # csv_packager, parquet_packager, delta_packager, SQL script gen
@@ -103,7 +108,7 @@ web/
 
 ### config.yaml -- Shape & Scale
 Controls row counts, entity counts, date ranges, output format, parallelism, feature toggles.
-- Key sections: `scale`, `defaults`, `sales`, `returns`, `products`, `customers`, `stores`, `employees`, `dates`, `exchange_rates`, `budget`, `inventory`
+- Key sections: `scale`, `defaults`, `sales`, `returns`, `products`, `customers`, `stores`, `employees`, `dates`, `exchange_rates`, `budget`, `inventory`, `subscriptions`, `wishlists`, `complaints`
 - Validated by strict normalizer registry in `src/engine/config/config.py`
 
 ### models.yaml -- Sales Behavior
