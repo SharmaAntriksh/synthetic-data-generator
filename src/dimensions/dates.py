@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from src.exceptions import ConfigError
 from src.utils import info, warn, skip, stage
 from src.utils.config_helpers import int_or as _int_or, bool_or as _bool_or, as_dict
 from src.utils.output_utils import write_parquet_with_date32
@@ -97,7 +98,7 @@ def _safe_parse_as_of(as_of_date: Any, fallback: pd.Timestamp) -> pd.Timestamp:
 
 @dataclass(frozen=True)
 class WeeklyFiscalConfig:
-    enabled: bool = True
+    enabled: bool = False
     first_day_of_week: int = 0            # 0 = Sunday, 1 = Monday, ... 6 = Saturday
     weekly_type: str = "Last"             # "Last" or "Nearest"
     quarter_week_type: str = "445"        # "445", "454", "544"
@@ -225,7 +226,7 @@ def _compute_weekly_fiscal_columns(
         fy_end_year = (fy_start_year + fy_end_add).astype(int)
         fw_year = np.where(fw_year < 0, fy_end_year, fw_year).astype(np.int32)
 
-    fw_year_s = pd.Series(fw_year.astype(np.int16), index=df.index, name="FWYearNumber")
+    fw_year_s = pd.Series(fw_year.astype(np.int32), index=df.index, name="FWYearNumber")
     fw_year_label = "FY " + fw_year_s.astype(str)
 
     start_map = {y: se[0] for y, se in bounds.items()}
@@ -696,11 +697,14 @@ def generate_date_table(
     df["ISOWeekOffset"] = (df["ISOYearWeekIndex"].astype(int) - as_of_iso_year_week_index).astype(np.int32)
 
     # ------------------------------------------------------------------
-    # Monthly fiscal offsets (single as_of row lookup, reused below)
+    # as_of row lookup (reused for both monthly and weekly fiscal offsets)
     # ------------------------------------------------------------------
-    asof_row = df.loc[df["Date"] == as_of]
-    if not asof_row.empty:
-        _asof = asof_row.iloc[0]
+    asof_mask = df["Date"] == as_of
+    asof_idx = df.index[asof_mask]
+    has_asof = len(asof_idx) > 0
+
+    if has_asof:
+        _asof = df.loc[asof_idx[0]]
         as_of_fiscal_month_index = int(_asof["FiscalMonthIndex"])
         as_of_fiscal_quarter_index = int(_asof["FiscalQuarterIndex"])
         df["FiscalMonthOffset"] = (df["FiscalMonthIndex"].astype(int) - as_of_fiscal_month_index).astype(np.int32)
@@ -717,9 +721,8 @@ def generate_date_table(
 
     # Weekly fiscal offsets (only if weekly fiscal columns exist)
     if "FWYearWeekNumber" in df.columns:
-        asof_row2 = df.loc[df["Date"] == as_of]
-        if not asof_row2.empty:
-            _asof2 = asof_row2.iloc[0]
+        if has_asof:
+            _asof2 = df.loc[asof_idx[0]]
             as_of_fw_year_week_index = int(_asof2["FWYearWeekNumber"])
             as_of_fw_year_month_index = int(_asof2["FWYearMonthNumber"])
             as_of_fw_year_quarter_index = int(_asof2["FWYearQuarterNumber"])
@@ -750,7 +753,7 @@ def generate_date_table(
 def run_dates(cfg: Dict, parquet_folder: Path) -> None:
     out_path = parquet_folder / "dates.parquet"
     if not hasattr(cfg, "dates"):
-        raise KeyError("Missing required config section: 'dates'")
+        raise ConfigError("Missing required config section: 'dates'")
 
     dates_cfg = cfg.dates or {}
 

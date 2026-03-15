@@ -1151,7 +1151,7 @@ class TestResolveFxDates:
 class TestWeeklyFiscalConfig:
     def test_default_values(self):
         cfg = WeeklyFiscalConfig()
-        assert cfg.enabled is True
+        assert cfg.enabled is False
         assert cfg.first_day_of_week == 0
         assert cfg.weekly_type == "Last"
         assert cfg.quarter_week_type == "445"
