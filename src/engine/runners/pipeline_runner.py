@@ -236,7 +236,9 @@ def run_pipeline(
             dim_summary = generate_dimensions(cfg, parquet_dims, force_regenerate=force_regenerate)
 
         if only != "dimensions":
-            run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, report=report)
+            # Config-level quality_report toggle (CLI --no-report overrides)
+            _report = report and bool(getattr(sales_cfg, "quality_report", True))
+            run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, report=_report)
 
         # ----------------------------
         # Final cleanup (scratch)

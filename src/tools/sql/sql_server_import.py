@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+import time as _time
+import threading as _threading
 from datetime import datetime
 import re
 from pathlib import Path
@@ -29,12 +32,32 @@ class SqlServerImportError(RuntimeError):
 # Formatting helpers
 # -------------------------
 def _ts() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+
+
+# ANSI color codes matching the pipeline's logging_utils.py
+_COLORS = {
+    "INFO": "\033[94m",   # Blue
+    "WORK": "\033[93m",   # Yellow
+    "DONE": "\033[92m",   # Green
+    "SKIP": "\033[90m",   # Grey
+    "WARN": "\033[95m",   # Magenta
+    "FAIL": "\033[91m",   # Red
+    "LOAD": "\033[93m",   # Yellow (same as WORK)
+    "RESET": "\033[0m",
+}
+
+# Detect color support once
+_USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 
 def _log(level: str, msg: str) -> None:
-    # level: INFO/WARN/ERROR
-    print(f"{_ts()} | {level:<4} | {msg}")
+    if _USE_COLOR:
+        c = _COLORS.get(level, "")
+        r = _COLORS["RESET"]
+        print(f"{_ts()} | {c}{level:<4}{r} | {msg}")
+    else:
+        print(f"{_ts()} | {level:<4} | {msg}")
 
 
 def _extract_tables_from_create_sql(sql_file: "Path") -> list[str]:
@@ -227,6 +250,241 @@ def execute_sql_files(cursor, files: Iterable[Path]) -> None:
         execute_sql_batches(cursor, f)
 
 
+def _extract_table_from_batch(batch_text: str) -> str:
+    """Try to extract the target table name from a BULK INSERT or INSERT batch."""
+    # BULK INSERT [dbo].[TableName] or BULK INSERT dbo.TableName
+    m = re.search(
+        r"BULK\s+INSERT\s+(?:\[?\w+\]?\.)?\[?(\w+)\]?",
+        batch_text, flags=re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
+    # INSERT INTO [dbo].[TableName]
+    m = re.search(
+        r"INSERT\s+(?:INTO\s+)?(?:\[?\w+\]?\.)?\[?(\w+)\]?",
+        batch_text, flags=re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _execute_cci_with_progress(cursor, sql_file: Path, fact_tables: list[str]) -> None:
+    """Execute a CCI script with a spinner showing elapsed time.
+
+    Splits on GO and executes each batch with a spinner. After all
+    batches complete, verifies which tables got CCI indexes.
+    No second cursor needed — avoids MARS conflict.
+    """
+    time = _time
+    threading = _threading
+
+    _FRAMES = ["-", "\\", "|", "/"]
+
+    sql_text = _read_sql_text(sql_file)
+    batches = _GO_SPLIT_RE.split(sql_text)
+    non_empty = [b.strip() for b in batches if b.strip()]
+
+    if not non_empty:
+        execute_sql_batches(cursor, sql_file)
+        return
+
+    n_tables = len(fact_tables)
+
+    for batch in non_empty:
+        stop_event = threading.Event()
+        t0 = time.time()
+
+        def _spin(_t0=t0, _stop=stop_event, _n=n_tables):
+            i = 0
+            while not _stop.is_set():
+                elapsed = time.time() - _t0
+                frame = _FRAMES[i % len(_FRAMES)]
+                sys.stdout.write(f"\r    [{frame}] Building indexes ({_n} tables)  {elapsed:.0f}s  ")
+                sys.stdout.flush()
+                i += 1
+                _stop.wait(0.15)
+
+        spinner_thread = threading.Thread(target=_spin, daemon=True)
+        spinner_thread.start()
+
+        error = None
+        try:
+            cursor.execute(batch)
+            _drain_results(cursor)
+        except pyodbc.Error as exc:
+            error = exc
+        finally:
+            stop_event.set()
+            spinner_thread.join(timeout=1)
+
+        # Clear spinner line
+        sys.stdout.write("\r" + " " * 70 + "\r")
+        sys.stdout.flush()
+
+        if error is not None:
+            _log("FAIL", f"    CCI batch failed")
+            raise SqlServerImportError(
+                f"Error in CCI script '{sql_file.name}'. Details: {error.args}"
+            ) from error
+
+    # After all batches: verify which tables got CCI
+    for t in fact_tables:
+        try:
+            schema = _find_table_schema(cursor, t)
+            c = _cci_count(cursor, schema, t)
+            if c > 0:
+                _log("WORK", f"    {t}")
+        except Exception:
+            pass
+
+
+_BULK_INSERT_SPLIT_RE = re.compile(
+    r"(?=^[ \t]*BULK\s+INSERT\s)",
+    flags=re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _split_load_statements(sql_text: str) -> list[tuple[str, str]]:
+    """Split a load script into individual BULK INSERT statements.
+
+    Returns list of (table_name, sql_statement) tuples.
+    If the script uses GO separators, splits on those instead.
+    Preamble (SET NOCOUNT ON, etc.) is attached to the first statement.
+    """
+    # Try GO-split first
+    go_parts = _GO_SPLIT_RE.split(sql_text)
+    if len(go_parts) > 1:
+        result = []
+        for part in go_parts:
+            part = part.strip()
+            if not part:
+                continue
+            table = _extract_table_from_batch(part)
+            result.append((table or "batch", part))
+        return result
+
+    # No GO separators — split on BULK INSERT boundaries
+    parts = _BULK_INSERT_SPLIT_RE.split(sql_text)
+    result = []
+    preamble = ""
+
+    for part in parts:
+        stripped = part.strip()
+        if not stripped:
+            continue
+        table = _extract_table_from_batch(stripped)
+        if not table:
+            # Preamble (SET NOCOUNT ON, comments, etc.)
+            preamble = stripped + "\n"
+            continue
+        sql = preamble + stripped
+        preamble = ""  # preamble only prepended to the first statement
+        result.append((table, sql))
+
+    return result
+
+
+def _execute_load_with_progress(
+    cursor, sql_file: Path, *, base: Path = None, label: str = "Loading",
+) -> None:
+    """Execute a load script with a live spinner, aggregating per table.
+
+    Splits the script into individual BULK INSERT statements, groups
+    chunks of the same table together, and shows one spinner per
+    logical table (not per chunk).  Tables under 0.2s are grouped
+    into a single "N others" summary line.
+    """
+    time = _time
+    threading = _threading
+
+    sql_text = _read_sql_text(sql_file)
+    statements = _split_load_statements(sql_text)
+
+    if not statements:
+        execute_sql_batches(cursor, sql_file)
+        return
+
+    # Group consecutive statements by table name so chunked tables
+    # (e.g. 24 InventorySnapshot chunks) show as one line.
+    grouped: list[tuple[str, list[str]]] = []
+    for table_name, sql_stmt in statements:
+        if not table_name or table_name == "batch":
+            # Preamble / non-BULK-INSERT batch — execute silently
+            try:
+                cursor.execute(sql_stmt)
+                _drain_results(cursor)
+            except pyodbc.Error:
+                pass
+            continue
+        if grouped and grouped[-1][0] == table_name:
+            grouped[-1][1].append(sql_stmt)
+        else:
+            grouped.append((table_name, [sql_stmt]))
+
+    _FRAMES = ["-", "\\", "|", "/"]
+    _SMALL_THRESHOLD = 0.2  # seconds — tables faster than this are grouped
+
+    # Two-pass: execute all, collect results, then print (so we can group small ones)
+    results: list[tuple[str, float, int]] = []  # (table_name, elapsed, n_chunks)
+
+    for table_name, sql_stmts in grouped:
+        n_chunks = len(sql_stmts)
+        chunk_suffix = f" ({n_chunks} chunks)" if n_chunks > 1 else ""
+
+        stop_event = threading.Event()
+        t0 = time.time()
+
+        def _spin(_tbl=table_name, _cs=chunk_suffix, _t0=t0, _stop=stop_event):
+            i = 0
+            while not _stop.is_set():
+                elapsed = time.time() - _t0
+                frame = _FRAMES[i % len(_FRAMES)]
+                sys.stdout.write(f"\r    [{frame}] {_tbl}{_cs}  {elapsed:.0f}s  ")
+                sys.stdout.flush()
+                i += 1
+                _stop.wait(0.15)
+
+        spinner_thread = threading.Thread(target=_spin, daemon=True)
+        spinner_thread.start()
+
+        error = None
+        try:
+            for stmt in sql_stmts:
+                cursor.execute(stmt)
+                _drain_results(cursor)
+        except pyodbc.Error as exc:
+            error = exc
+        finally:
+            stop_event.set()
+            spinner_thread.join(timeout=1)
+
+        elapsed = time.time() - t0
+
+        # Clear spinner line
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        sys.stdout.flush()
+
+        if error is not None:
+            _log("WORK", f"    FAIL {table_name} ({elapsed:.1f}s)")
+            raise SqlServerImportError(
+                f"Error loading {table_name} in '{sql_file.name}'. Details: {error.args}"
+            ) from error
+
+        results.append((table_name, elapsed, n_chunks))
+
+        # Print immediately for tables that take significant time
+        if elapsed >= _SMALL_THRESHOLD:
+            chunk_note = f", {n_chunks} chunks" if n_chunks > 1 else ""
+            _log("WORK", f"    {table_name} ({elapsed:.1f}s{chunk_note})")
+
+    # Print grouped summary for small tables
+    small = [(t, e) for t, e, _ in results if e < _SMALL_THRESHOLD]
+    if small:
+        small_total = sum(e for _, e in small)
+        _log("WORK", f"    {len(small)} others ({small_total:.1f}s)")
+
+
 def list_sql_files(folder: Path) -> List[Path]:
     if not folder.is_dir():
         return []
@@ -383,6 +641,8 @@ def import_sql_server(
     connection_string: str,
     apply_cci: bool = False,
 ) -> None:
+    import time as _time
+
     run_dir = Path(run_dir)
     sql_dir = run_dir / "sql"
     schema_dir = sql_dir / "schema"
@@ -405,13 +665,20 @@ def import_sql_server(
             "or under 'sql/schema/tables/'."
         )
 
+    _t_total = _time.time()
+
+    # --- Header ---
+    _log("INFO", "SQL Server Import")
+    _log("INFO", f"  Server: {server}")
+
     # Step 1: ensure DB exists
     try:
         with pyodbc.connect(connection_string, autocommit=True) as conn:
             _try_disable_query_timeout(conn)
             cursor = conn.cursor()
 
-            if database_exists(cursor, database):
+            db_existed = database_exists(cursor, database)
+            if db_existed:
                 raise SqlServerImportError(
                     f"Database '{database}' already exists. "
                     "Import aborted to avoid partial drops / FK failures. "
@@ -419,43 +686,39 @@ def import_sql_server(
                 )
 
             create_database_if_not_exists(cursor, database)
+            _log("INFO", f"  Database: {database} (created)")
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(
             f"Failed connecting to SQL Server '{server}'. Details: {exc.args}"
         ) from exc
 
+    # Detect auth mode from connection string
+    if "trusted_connection=yes" in connection_string.lower():
+        _log("INFO", "  Auth: Windows Integrated")
+    else:
+        _log("INFO", "  Auth: SQL Authentication")
+
     db_conn_str = f"{connection_string};DATABASE={database}"
 
-    # Step 2: core import (tables/constraints/views/load)
+    # Step 2: core import (schema + load)
     try:
         with pyodbc.connect(db_conn_str, autocommit=False) as conn:
             _try_disable_query_timeout(conn)
             cursor = conn.cursor()
 
-            _log("INFO", "Executing schema + load scripts:")
+            # --- 2.1 Schema creation ---
+            _t_schema = _time.time()
+            _log("INFO", "  Creating Schema")
 
-            # 2.1 Tables
-            print("  Tables:")
-            for f in tables_files:
-                print(f"    - {_short_path(f, base=run_dir)}")
-            execute_sql_files(cursor, tables_files)
+            all_schema_files = list(tables_files) + list(constraint_files) + list(view_files)
+            for f in all_schema_files:
+                _log("WORK", f"    {f.name}")
+            execute_sql_files(cursor, all_schema_files)
 
-            # 2.2 Constraints
-            if constraint_files:
-                print("  Constraints:")
-                for f in constraint_files:
-                    print(f"    - {_short_path(f, base=run_dir)}")
-                execute_sql_files(cursor, constraint_files)
+            _log("DONE", f"  Creating Schema completed in {_time.time() - _t_schema:.1f}s")
 
-            # 2.3 Views
-            if view_files:
-                print("  Views:")
-                for f in view_files:
-                    print(f"    - {_short_path(f, base=run_dir)}")
-                execute_sql_files(cursor, view_files)
-
-            # 2.4 Load (dims then facts)
+            # --- 2.2 Data loading ---
             load_files = list_sql_files(load_dir)
 
             dims_sql = next((p for p in load_files if p.name.lower() == "01_bulk_insert_dims.sql"), None)
@@ -470,19 +733,30 @@ def import_sql_server(
             if not ordered_load:
                 ordered_load = load_files
             else:
-                seen = set(ordered_load)
-                extras = [p for p in load_files if p not in seen]
+                seen_load = set(ordered_load)
+                extras = [p for p in load_files if p not in seen_load]
                 if extras:
                     _log("WARN", "Extra load scripts present; skipping by default:")
                     for f in extras:
-                        print(f"    - {_short_path(f, base=run_dir)}")
+                        _log("WARN", f"    {f.name}")
 
-            print("  Load:")
-            for f in ordered_load:
-                print(f"    - {_short_path(f, base=run_dir)}")
-            execute_sql_files(cursor, ordered_load)
+            for load_file in ordered_load:
+                is_dims = "dim" in load_file.name.lower()
+                section = "Dimensions" if is_dims else "Facts"
 
-            # 2.5 Row count verification
+                # Count tables in this load file
+                sql_text = _read_sql_text(load_file)
+                stmts = _split_load_statements(sql_text)
+                table_names = [t for t, _ in stmts if t and t != "batch"]
+                n_tables = len(set(table_names))
+
+                _t_load = _time.time()
+                _log("INFO", f"  Loading {section} ({n_tables} tables)")
+                _log("WORK", f"    {load_file.name}")
+                _execute_load_with_progress(cursor, load_file, base=run_dir, label=section)
+                _log("DONE", f"  Loading {section} completed in {_time.time() - _t_load:.1f}s")
+
+            # --- 2.3 Row count verification ---
             try:
                 dim_create = next((p for p in tables_files if p.name.lower().endswith("create_dimensions.sql")), None)
                 fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
@@ -490,14 +764,31 @@ def import_sql_server(
                 dim_tables = _extract_tables_from_create_sql(dim_create) if dim_create else []
                 fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
 
-                _print_table_counts(cursor, tables=dim_tables, title="Loaded dimension row counts:")
-                _print_table_counts(cursor, tables=fact_tables, title="Loaded fact row counts:")
+                _log("INFO", "  Row Counts")
+                dim_total = 0
+                for t in dim_tables:
+                    try:
+                        schema = _find_table_schema(cursor, t)
+                        n = _fast_rowcount(cursor, schema, t)
+                        dim_total += n
+                    except Exception:
+                        pass
+                fact_total = 0
+                for t in fact_tables:
+                    try:
+                        schema = _find_table_schema(cursor, t)
+                        n = _fast_rowcount(cursor, schema, t)
+                        fact_total += n
+                    except Exception:
+                        pass
+                _log("INFO", f"    Dimensions: {len(dim_tables)} tables, {dim_total:,} rows")
+                _log("INFO", f"    Facts: {len(fact_tables)} tables, {fact_total:,} rows")
             except Exception as _exc:
-                _log("WARN", f"Row count verification skipped: {_exc}")
+                _log("WARN", f"  Row count verification skipped: {_exc}")
 
             conn.commit()
 
-        _log("INFO", f"Core import completed (tables/constraints/views/load) for '{database}'.")
+        _log("DONE", f"SQL Server Import completed in {_time.time() - _t_total:.1f}s")
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(
@@ -506,55 +797,40 @@ def import_sql_server(
 
     # Step 3: optional CCI (types/procs + apply)
     if not apply_cci:
-        _log("INFO", "Skipping CCI bootstrap/apply (apply_cci=False).")
         return
 
-    # 3.1 Install CCI management proc
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             _try_disable_query_timeout(conn)
             cursor = conn.cursor()
 
+            # 3.1 Install CCI management proc
             if cci_proc_file.is_file():
                 execute_sql_batches(cursor, cci_proc_file)
-                _log("INFO", "Installed dbo.usp_ManageColumnstoreIndexes.")
-            else:
-                _log("WARN", f"Missing CCI proc file: {_short_path(cci_proc_file, base=PROJECT_ROOT)}")
 
-    except pyodbc.Error as exc:
-        raise SqlServerImportError(
-            f"Failed installing CCI proc in database '{database}'. Details: {exc.args}"
-        ) from exc
+            if not cci_apply_files:
+                _log("INFO", "  No CCI apply scripts found; skipping.")
+                return
 
-    # 3.2 Apply scripts (from run output)
-    _log("INFO", "CCI apply scripts discovered:")
-    for f in cci_apply_files:
-        print(f"    - {_short_path(f, base=run_dir)}")
-
-    if not cci_apply_files:
-        _log("INFO", "No CCI apply scripts found; nothing to do.")
-        return
-
-    try:
-        with pyodbc.connect(db_conn_str, autocommit=True) as conn:
-            _try_disable_query_timeout(conn)
-            cursor = conn.cursor()
-
-            execute_sql_files(cursor, cci_apply_files)
-
-            # Verification: total CCIs + per-fact CCIs (derived from create_facts.sql)
+            # 3.2 Apply CCI scripts with spinner (can take 30-60s)
             fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
             fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
-            _print_cci_summary(cursor, tables=fact_tables)
 
+            _t_cci = _time.time()
+            _log("INFO", f"  Applying Columnstore Indexes ({len(fact_tables)} tables)")
+            for f in cci_apply_files:
+                _log("WORK", f"    {f.name}")
+                _execute_cci_with_progress(cursor, f, fact_tables)
+            _log("DONE", f"  Applying Columnstore Indexes completed in {_time.time() - _t_cci:.1f}s")
+
+            # Verification
             cursor.execute("SELECT COUNT(*) FROM sys.indexes WHERE type_desc = 'CLUSTERED COLUMNSTORE';")
             total_ccis = int(cursor.fetchone()[0])
 
-        if total_ccis == 0:
-            raise SqlServerImportError(
-                "CCI apply completed without errors, but no CLUSTERED COLUMNSTORE index exists in the database. "
-                "Likely the script is a no-op (wrong @Action, empty table list, or wrong table names)."
-            )
+            if total_ccis == 0:
+                raise SqlServerImportError(
+                    "CCI apply completed without errors, but no CLUSTERED COLUMNSTORE index exists."
+                )
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(

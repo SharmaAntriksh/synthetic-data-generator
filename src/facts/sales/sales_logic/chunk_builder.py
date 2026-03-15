@@ -318,6 +318,7 @@ _SEASON_CODE = {"Holiday": 1, "Winter": 2, "Summer": 3, "BackToSchool": 4, "Spri
 def _build_product_weight_for_month(
     month_date_pool: np.ndarray,
     m_offset: int,
+    cal_month: int = 0,
 ) -> np.ndarray | None:
     """
     Build a per-product-row weight array combining PopularityScore and
@@ -332,11 +333,11 @@ def _build_product_weight_for_month(
         return None
 
     # Base weight: popularity (clamp to avoid zeros)
-    w = np.maximum(pop, 1.0).copy()
+    # np.maximum already returns a new array — no .copy() needed
+    w = np.maximum(pop, 1.0)
 
     # Seasonal boost for this calendar month
-    if sea is not None and month_date_pool.size > 0:
-        cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1
+    if sea is not None and cal_month > 0:
         for season, boosts in _SEASON_SALES_BOOST.items():
             if cal_month in boosts:
                 code = _SEASON_CODE[season]
@@ -891,11 +892,11 @@ def build_chunk_table(
             continue
 
         if date_prob is not None:
-            # copy before normalization (slice can be a view)
-            month_date_prob = np.asarray(date_prob[date_idx], dtype="float64").copy()
+            # dtype conversion creates a new array (no explicit .copy() needed)
+            month_date_prob = np.asarray(date_prob[date_idx], dtype="float64")
             s = float(month_date_prob.sum())
             if s > 1e-12:
-                month_date_prob /= s
+                month_date_prob = month_date_prob / s  # new array, avoids mutating shared view
             else:
                 month_date_prob = None
         else:
@@ -1206,14 +1207,16 @@ def build_chunk_table(
         # CORRELATION #4: SalesChannelKey → ProductKey
         # Filter product pool by channel eligibility flags.
         # --------------------------------------------------------
-        _product_weight = _build_product_weight_for_month(month_date_pool, m_offset)
+        # Compute calendar month once (reused by product weight + store assortment CDF)
+        _cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1 if month_date_pool.size > 0 else 0
+
+        _product_weight = _build_product_weight_for_month(month_date_pool, m_offset, cal_month=_cal_month)
 
         _pce = getattr(State, "product_channel_eligible", None)
         _ch2eg = getattr(State, "_channel_to_elig_group", None)
 
         _store_product_rows = getattr(State, "store_to_product_rows", None)
         if _store_product_rows is not None:
-            _cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1 if month_date_pool.size > 0 else 0
             prod_idx = _sample_products_per_store(
                 rng=rng,
                 store_key_arr=store_key_arr,

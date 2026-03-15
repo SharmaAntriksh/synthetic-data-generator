@@ -211,14 +211,20 @@ def compute_inventory_snapshots(
     # ------------------------------------------------------------------
     if icfg.abc_filter is not None and len(icfg.abc_filter) > 0:
         if product_attrs_arrays is not None:
-            _pa_df = pd.DataFrame(product_attrs_arrays)
+            # Use numpy arrays directly — avoid DataFrame round-trip
+            _pa_df = product_attrs_arrays  # dict of numpy arrays
         else:
             _pa_df = _load_product_attrs(parquet_dims)
 
-        if not _pa_df.empty and "ABCClassification" in _pa_df.columns:
+        # Support both dict-of-arrays and DataFrame
+        _has_abc = (
+            ("ABCClassification" in _pa_df) if isinstance(_pa_df, dict)
+            else (not _pa_df.empty and "ABCClassification" in _pa_df.columns)
+        )
+        if _has_abc:
             allowed_set = set(icfg.abc_filter)
-            _pa_pk = _pa_df["ProductKey"].to_numpy(dtype=np.int32)
-            _pa_abc = _pa_df["ABCClassification"].to_numpy().astype(str)
+            _pa_pk = np.asarray(_pa_df["ProductKey"], dtype=np.int32)
+            _pa_abc = np.asarray(_pa_df["ABCClassification"]).astype(str)
             _pa_max = int(_pa_pk.max()) + 1
             # Dense lookup: 1 = allowed, 0 = excluded
             dense_allowed = np.zeros(_pa_max, dtype=np.int8)
@@ -241,8 +247,9 @@ def compute_inventory_snapshots(
     # ------------------------------------------------------------------
     # 3. Load product attributes into dense arrays aligned to pairs
     # ------------------------------------------------------------------
+    # Use numpy arrays directly when available — avoid DataFrame round-trip
     if product_attrs_arrays is not None:
-        product_attrs = pd.DataFrame(product_attrs_arrays)
+        product_attrs = product_attrs_arrays  # dict of numpy arrays
     else:
         product_attrs = _load_product_attrs(parquet_dims)
 
@@ -251,12 +258,16 @@ def compute_inventory_snapshots(
     attr_lead_days = np.full(n_pairs, 14, dtype=np.int32)
     attr_abc_mult = np.ones(n_pairs, dtype=np.float64)
 
-    if not product_attrs.empty:
-        pa_pk = product_attrs["ProductKey"].to_numpy(dtype=np.int32)
-        pa_ss = product_attrs["SafetyStockUnits"].to_numpy(dtype=np.int32)
-        pa_rp = product_attrs["ReorderPointUnits"].to_numpy(dtype=np.int32)
-        pa_ld = product_attrs["LeadTimeDays"].to_numpy(dtype=np.int32)
-        pa_abc = product_attrs["ABCClassification"].to_numpy().astype(str)
+    _pa_has_data = (
+        len(product_attrs) > 0 if isinstance(product_attrs, dict)
+        else not product_attrs.empty
+    )
+    if _pa_has_data:
+        pa_pk = np.asarray(product_attrs["ProductKey"], dtype=np.int32)
+        pa_ss = np.asarray(product_attrs["SafetyStockUnits"], dtype=np.int32)
+        pa_rp = np.asarray(product_attrs["ReorderPointUnits"], dtype=np.int32)
+        pa_ld = np.asarray(product_attrs["LeadTimeDays"], dtype=np.int32)
+        pa_abc = np.asarray(product_attrs["ABCClassification"]).astype(str)
 
         pa_max = int(pa_pk.max()) + 1
         dense_safety = np.full(pa_max, 20, dtype=np.int32)
@@ -282,10 +293,10 @@ def compute_inventory_snapshots(
     attr_fragile = np.zeros(n_pairs, dtype=np.int32)
     attr_case_pack = np.ones(n_pairs, dtype=np.int32)
 
-    if not product_attrs.empty:
-        pa_season_str = product_attrs["SeasonalityProfile"].to_numpy().astype(str)
-        pa_fragile = product_attrs["IsFragile"].to_numpy(dtype=np.int32)
-        pa_case = product_attrs["CasePackQty"].to_numpy(dtype=np.int32)
+    if _pa_has_data:
+        pa_season_str = np.asarray(product_attrs["SeasonalityProfile"]).astype(str)
+        pa_fragile = np.asarray(product_attrs["IsFragile"], dtype=np.int32)
+        pa_case = np.asarray(product_attrs["CasePackQty"], dtype=np.int32)
 
         # Encode seasonality as int8
         pa_season = np.zeros(len(pa_season_str), dtype=np.int8)
@@ -305,6 +316,8 @@ def compute_inventory_snapshots(
         attr_case_pack[in_range] = dense_case[pair_pk[in_range]]
 
     attr_lead_months = np.maximum(1, np.round(attr_lead_days / 30.0).astype(np.int32))
+    # Pre-convert to float64 for use in main loop (avoids per-iteration .astype())
+    attr_lead_months_f64 = attr_lead_months.astype(np.float64)
 
     # ------------------------------------------------------------------
     # 4. Compute per-pair initial conditions
@@ -376,7 +389,7 @@ def compute_inventory_snapshots(
     # ------------------------------------------------------------------
     out_qoh = np.zeros((n_pairs, n_months), dtype=np.int32)
     out_on_order = np.zeros((n_pairs, n_months), dtype=np.int32)
-    out_sold = demand_matrix.copy()
+    # out_sold is demand_matrix itself (never modified) — no copy needed
     out_received = np.zeros((n_pairs, n_months), dtype=np.int32)
     out_reorder = np.zeros((n_pairs, n_months), dtype=np.int8)
     out_stockout = np.zeros((n_pairs, n_months), dtype=np.int8)
@@ -404,14 +417,17 @@ def compute_inventory_snapshots(
         out_received[:, t] = received * is_active
 
         sold = demand_matrix[:, t]
-        shrink = (qoh.astype(np.float64) * monthly_shrinkage_arr).astype(np.int32) if monthly_shrinkage_base > 0 else 0
+        if monthly_shrinkage_base > 0:
+            shrink = np.multiply(qoh, monthly_shrinkage_arr, dtype=np.float64).astype(np.int32)
+        else:
+            shrink = 0
         qoh -= (sold + shrink) * is_active
 
         stockout_mask = (qoh < 0) & is_active
-        daily_demand = np.maximum(1.0, sold.astype(np.float64) / 30.0)
+        daily_demand = np.maximum(1.0, sold * (1.0 / 30.0))
         days_oos = np.where(
             stockout_mask,
-            np.minimum(30, (np.abs(qoh).astype(np.float64) / daily_demand).astype(np.int32)),
+            np.minimum(30, (np.abs(qoh) / daily_demand).astype(np.int32)),
             0,
         )
         qoh = np.maximum(qoh, 0)
@@ -427,8 +443,7 @@ def compute_inventory_snapshots(
         trigger_mask = reorder_mask & comply_mask
 
         lt_jittered = (
-            attr_lead_months.astype(np.float64)
-            * (1.0 + rand_lt_jitter[:, t])
+            attr_lead_months_f64 * (1.0 + rand_lt_jitter[:, t])
         ).astype(np.int32)
         arrival_offset = np.maximum(1, lt_jittered)
         arrival_t = t + arrival_offset
@@ -467,7 +482,7 @@ def compute_inventory_snapshots(
         "SnapshotDate": snapshot_dates[col_idx],
         "QuantityOnHand": out_qoh[row_idx, col_idx],
         "QuantityOnOrder": out_on_order[row_idx, col_idx],
-        "QuantitySold": out_sold[row_idx, col_idx],
+        "QuantitySold": demand_matrix[row_idx, col_idx],
         "QuantityReceived": out_received[row_idx, col_idx],
         "ReorderFlag": out_reorder[row_idx, col_idx],
         "StockoutFlag": out_stockout[row_idx, col_idx],

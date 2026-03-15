@@ -296,19 +296,86 @@ def _check_referential_integrity(
         if fk_col not in source_cols_needed[key]:
             source_cols_needed[key].append(fk_col)
 
-    # Pre-load source tables with all needed FK columns at once
-    source_frames: Dict[tuple, Optional[pd.DataFrame]] = {}
-    for (src_name, src_type), cols in source_cols_needed.items():
+    # --- Fast path: use PyArrow to extract unique FK values directly ---
+    # For large tables (10M+ sales, 21M+ inventory), reading via PyArrow
+    # and computing unique values in Arrow/numpy is 5-10x faster than
+    # loading into pandas, calling .dropna().unique(), and converting to set.
+    _use_pyarrow = True
+    try:
+        import pyarrow.parquet as _pq_ri
+        import pyarrow.compute as _pc_ri
+    except ImportError:
+        _use_pyarrow = False
+
+    def _get_unique_keys_fast(path: Path, column: str) -> Optional[np.ndarray]:
+        """Extract unique non-null values from a single column.
+
+        Fast path: for parquet files/dirs, uses PyArrow to read only the
+        needed column without full pandas conversion.
+        Fallback: for CSV and other formats, uses the shared cache (which
+        reads all chunks once and concatenates efficiently).
+        """
+        if _use_pyarrow and path.is_file() and path.suffix == ".parquet":
+            try:
+                table = _pq_ri.read_table(str(path), columns=[column])
+                arr = table.column(column)
+                arr = _pc_ri.drop_null(arr)
+                return _pc_ri.unique(arr).to_numpy(zero_copy_only=False)
+            except Exception:
+                pass
+
+        if _use_pyarrow and path.is_dir():
+            pqs = sorted(path.glob("*.parquet"))
+            if pqs:
+                try:
+                    import pyarrow as _pa_ri
+                    arrays = []
+                    for p in pqs:
+                        t = _pq_ri.read_table(str(p), columns=[column])
+                        arrays.append(t.column(column))
+                    combined = _pa_ri.concat_arrays([a.combine_chunks() for a in arrays])
+                    combined = _pc_ri.drop_null(combined)
+                    return _pc_ri.unique(combined).to_numpy(zero_copy_only=False)
+                except Exception:
+                    pass
+
+        # Fallback: pandas via cache (handles CSV dirs, delta, single files)
+        df = cache.get(path, columns=[column])
+        if df is not None and column in df.columns:
+            arr = df[column].to_numpy()
+            # Use numpy for fast unique (avoids pandas overhead)
+            valid = ~pd.isna(arr)
+            if valid.all():
+                return np.unique(arr)
+            return np.unique(arr[valid])
+        return None
+
+    # Pre-load source fact tables into cache with ALL needed FK columns at once.
+    # This ensures CSV directories are read only once (not per-FK-column).
+    # We also include date columns needed by subsequent date-range checks
+    # so the single read covers both RI and date checks.
+    _extra_cols_by_table = {
+        "sales": ["OrderDate", "DueDate", "DeliveryDate",
+                   "Quantity", "NetPrice", "DiscountAmount"],
+        "inventory_snapshot": ["SnapshotDate"],
+    }
+    for (src_name, src_type), fk_cols in source_cols_needed.items():
         src_path = _find_table(folder_map[src_type], src_name)
         if src_path is not None:
-            source_frames[(src_name, src_type)] = cache.get(src_path, columns=cols)
-        else:
-            source_frames[(src_name, src_type)] = None
+            # Combine FK cols + date cols for a single read
+            all_cols = list(fk_cols) + _extra_cols_by_table.get(src_name, [])
+            _preloaded = cache.get(src_path, columns=all_cols)
+            if _preloaded is not None:
+                # Store as full so subsequent column-specific requests slice from it
+                cache.put_full(src_path, _preloaded)
+
+    # Cache dimension PK unique values (small, reused across multiple FK checks)
+    _dim_key_cache: Dict[str, np.ndarray] = {}
 
     for src_name, src_type, fk_col, dim_name, pk_col in fk_checks:
-        src_df = source_frames.get((src_name, src_type))
-        if src_df is None:
-            continue  # Table not generated, skip
+        src_path = _find_table(folder_map[src_type], src_name)
+        if src_path is None:
+            continue
 
         dim_path = _find_table(dims_folder, dim_name)
         if dim_path is None:
@@ -320,24 +387,34 @@ def _check_referential_integrity(
             ))
             continue
 
-        dim_df = cache.get(dim_path, columns=[pk_col])
-
-        if dim_df is None:
+        # Get unique FK values from source (fast path)
+        src_keys = _get_unique_keys_fast(src_path, fk_col)
+        if src_keys is None or len(src_keys) == 0:
             continue
 
-        if fk_col not in src_df.columns or pk_col not in dim_df.columns:
+        # Get unique PK values from dimension (cached)
+        _dim_cache_key = f"{dim_name}.{pk_col}"
+        if _dim_cache_key in _dim_key_cache:
+            dim_keys = _dim_key_cache[_dim_cache_key]
+        else:
+            dim_keys = _get_unique_keys_fast(dim_path, pk_col)
+            if dim_keys is not None:
+                _dim_key_cache[_dim_cache_key] = dim_keys
+
+        if dim_keys is None or len(dim_keys) == 0:
             continue
 
-        src_keys = set(src_df[fk_col].dropna().unique())
-        dim_keys = set(dim_df[pk_col].dropna().unique())
-        orphans = src_keys - dim_keys
+        # numpy isin check (much faster than Python set subtraction for large arrays)
+        _in_dim = np.isin(src_keys, dim_keys)
+        n_orphans = int((~_in_dim).sum())
 
-        if orphans:
-            sample = sorted(orphans)[:10]
+        if n_orphans > 0:
+            orphan_vals = src_keys[~_in_dim]
+            sample = sorted(orphan_vals[:10].tolist())
             report.checks.append(CheckResult(
                 name=f"FK: {src_name}.{fk_col} → {dim_name}.{pk_col}",
                 passed=False,
-                message=f"{len(orphans)} orphan key(s) in {src_name}.{fk_col}",
+                message=f"{n_orphans} orphan key(s) in {src_name}.{fk_col}",
                 details=f"Sample orphans: {sample}",
                 category="Referential Integrity",
             ))
@@ -364,15 +441,62 @@ def _check_referential_integrity(
                 ("sales", "fact", "DeliveryDate"),
                 ("inventory_snapshot", "fact", "SnapshotDate"),
             ]
+
+            def _date_min_max_fast(path: Path, col: str):
+                """Get min/max of a date column using parquet statistics (zero rows read)."""
+                if _use_pyarrow and path.is_file() and path.suffix == ".parquet":
+                    try:
+                        meta = _pq_ri.read_metadata(str(path))
+                        col_idx = None
+                        schema = _pq_ri.read_schema(str(path))
+                        for i, name in enumerate(schema.names):
+                            if name == col:
+                                col_idx = i
+                                break
+                        if col_idx is not None:
+                            _dmin, _dmax = None, None
+                            for rg in range(meta.num_row_groups):
+                                stats = meta.row_group(rg).column(col_idx).statistics
+                                if stats is not None and stats.has_min_max:
+                                    rg_min, rg_max = stats.min, stats.max
+                                    if _dmin is None or rg_min < _dmin:
+                                        _dmin = rg_min
+                                    if _dmax is None or rg_max > _dmax:
+                                        _dmax = rg_max
+                            if _dmin is not None:
+                                return pd.Timestamp(_dmin), pd.Timestamp(_dmax)
+                    except Exception:
+                        pass
+
+                if _use_pyarrow and path.is_dir():
+                    pqs = sorted(path.glob("*.parquet"))
+                    if pqs:
+                        _dmin, _dmax = None, None
+                        for p in pqs:
+                            result = _date_min_max_fast(p, col)
+                            if result:
+                                if _dmin is None or result[0] < _dmin:
+                                    _dmin = result[0]
+                                if _dmax is None or result[1] > _dmax:
+                                    _dmax = result[1]
+                        if _dmin is not None:
+                            return _dmin, _dmax
+
+                # Fallback: read the column
+                df = cache.get(path, columns=[col])
+                if df is not None and col in df.columns:
+                    col_dates = pd.to_datetime(df[col])
+                    return col_dates.min(), col_dates.max()
+                return None
+
             for tbl, ftype, col in date_checks:
                 tbl_path = _find_table(folder_map[ftype], tbl)
                 if tbl_path is None:
                     continue
-                tbl_df = cache.get(tbl_path, columns=[col])
-                if tbl_df is None or col not in tbl_df.columns:
+                result = _date_min_max_fast(tbl_path, col)
+                if result is None:
                     continue
-                col_dates = pd.to_datetime(tbl_df[col])
-                col_min, col_max = col_dates.min(), col_dates.max()
+                col_min, col_max = result
                 in_range = col_min >= date_min and col_max <= date_max
                 msg = f"{col_min.date()} to {col_max.date()}"
                 if not in_range:
