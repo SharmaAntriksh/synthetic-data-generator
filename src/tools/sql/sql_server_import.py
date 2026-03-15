@@ -186,6 +186,22 @@ def _read_sql_text(sql_file: Path) -> str:
     return text
 
 
+def _drain_results(cursor) -> None:
+    """
+    Consume all pending result sets on *cursor* so that deferred errors
+    (e.g. a THROW after an earlier SELECT in the same batch) are surfaced
+    as pyodbc.Error instead of being silently swallowed.
+    """
+    while True:
+        try:
+            cursor.fetchall()
+        except pyodbc.ProgrammingError:
+            # No result set open — expected for DDL / DML-only batches.
+            pass
+        if not cursor.nextset():
+            break
+
+
 def execute_sql_batches(cursor, sql_file: Path) -> None:
     """
     Execute a .sql file split on line-only GO statements (case-insensitive).
@@ -199,6 +215,7 @@ def execute_sql_batches(cursor, sql_file: Path) -> None:
             continue
         try:
             cursor.execute(batch)
+            _drain_results(cursor)
         except pyodbc.Error as exc:
             raise SqlServerImportError(
                 f"Error executing batch {idx} in file '{sql_file.name}'. Details: {exc.args}"
@@ -378,8 +395,7 @@ def import_sql_server(
         )
 
     bootstrap_dir = PROJECT_ROOT / "scripts" / "sql" / "bootstrap"
-    types_file = bootstrap_dir / "create_types.sql"
-    procs_file = bootstrap_dir / "create_procs.sql"
+    cci_proc_file = bootstrap_dir / "create_cci_proc.sql"
 
     tables_files, view_files, constraint_files, cci_apply_files = _collect_phase_scripts(sql_dir)
 
@@ -493,27 +509,21 @@ def import_sql_server(
         _log("INFO", "Skipping CCI bootstrap/apply (apply_cci=False).")
         return
 
-    # 3.1 Bootstrap (TYPE + PROC)
+    # 3.1 Install CCI management proc
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             _try_disable_query_timeout(conn)
             cursor = conn.cursor()
 
-            if types_file.is_file():
-                execute_sql_batches(cursor, types_file)
+            if cci_proc_file.is_file():
+                execute_sql_batches(cursor, cci_proc_file)
+                _log("INFO", "Installed dbo.usp_ManageColumnstoreIndexes.")
             else:
-                _log("WARN", f"Missing bootstrap types file: {_short_path(types_file, base=PROJECT_ROOT)}")
-
-            if procs_file.is_file():
-                execute_sql_batches(cursor, procs_file)
-            else:
-                _log("WARN", f"Missing bootstrap procs file: {_short_path(procs_file, base=PROJECT_ROOT)}")
-
-        _log("INFO", "CCI bootstrap completed (TYPE + PROC).")
+                _log("WARN", f"Missing CCI proc file: {_short_path(cci_proc_file, base=PROJECT_ROOT)}")
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(
-            f"Failed running CCI bootstrap in database '{database}'. Details: {exc.args}"
+            f"Failed installing CCI proc in database '{database}'. Details: {exc.args}"
         ) from exc
 
     # 3.2 Apply scripts (from run output)
