@@ -1093,6 +1093,188 @@ def generate_sales_fact(
         employee_assign_is_primary = _as_np(emp_assign_df["IsPrimary"], bool)
 
     # ------------------------------------------------------------
+    # Column correlation lookups (customer-geo, store-channel,
+    # product-channel eligibility, promo-channel, delivery days)
+    # ------------------------------------------------------------
+    # 1) Geography: customer -> country, store -> country, country -> stores
+    #    Reuse geo_df (GeographyKey, ISOCode already loaded above) — load Country
+    _geo_country_path = parquet_folder_p / "geography.parquet"
+    _geo_country_df = load_parquet_df(_geo_country_path, ["GeographyKey", "Country"])
+    _unique_countries = _geo_country_df["Country"].fillna("Unknown").unique()
+    _country_to_id = {c: i for i, c in enumerate(_unique_countries)}
+    _n_countries = len(_unique_countries)
+
+    # geo_to_country_id: dense array GeographyKey -> country_id
+    _max_geo = int(_geo_country_df["GeographyKey"].max()) if len(_geo_country_df) else 0
+    geo_to_country_id = np.full(_max_geo + 1, 0, dtype=np.int32)
+    for _, row in _geo_country_df.iterrows():
+        geo_to_country_id[int(row["GeographyKey"])] = _country_to_id.get(
+            str(row["Country"]) if row["Country"] is not None else "Unknown", 0)
+
+    # store_to_country_id: dense StoreKey -> country_id (via store_to_geo)
+    _max_sk = int(store_keys.max()) if store_keys.size else 0
+    store_to_country_id = np.full(_max_sk + 1, 0, dtype=np.int32)
+    for sk, gk in store_to_geo.items():
+        if int(sk) <= _max_sk and int(gk) <= _max_geo:
+            store_to_country_id[int(sk)] = geo_to_country_id[int(gk)]
+
+    # country_to_store_keys: list of arrays
+    _country_store_buckets: list[list[int]] = [[] for _ in range(_n_countries)]
+    for sk in store_keys:
+        _country_store_buckets[store_to_country_id[int(sk)]].append(int(sk))
+    country_to_store_keys = [np.array(b, dtype=np.int32) for b in _country_store_buckets]
+
+    # customer_geo_key: customer pool index -> GeographyKey
+    customer_geo_key = None
+    try:
+        _cust_geo_df = pd.read_parquet(str(customers_path), columns=["CustomerKey", "GeographyKey"])
+        if _cust_scd2_detected:
+            # Align with the IsCurrent-filtered pool
+            _cust_geo_scd2 = pd.read_parquet(str(customers_path), columns=["IsCurrent", "GeographyKey"])
+            _cust_geo_df = _cust_geo_scd2[_cust_geo_scd2["IsCurrent"] == 1].reset_index(drop=True)
+        if "GeographyKey" in _cust_geo_df.columns:
+            customer_geo_key = _as_np(_cust_geo_df["GeographyKey"], np.int32)
+    except (KeyError, OSError):
+        pass
+
+    # 2) Store type -> valid SalesChannelKeys mapping
+    # Channel classification:
+    #   Physical channels: 1=Store, 10=Kiosk
+    #   Digital channels:  2=Online, 6=Web, 7=MobileApp, 8=SocialCommerce
+    #   Business channels: 4=B2B, 9=PartnerReseller
+    #   Assisted channels: 5=CallCenter
+    #   Marketplace:       3=Marketplace
+    _PHYSICAL_CHANNELS = np.array([1, 5, 10], dtype=np.int16)          # Store, CallCenter, Kiosk
+    _DIGITAL_CHANNELS = np.array([2, 3, 6, 7, 8], dtype=np.int16)     # Online, Marketplace, Web, MobileApp, Social
+    _ALL_CHANNELS = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], dtype=np.int16)
+
+    # StoreType -> channel affinity. Physical stores skew physical+assisted;
+    # Online/fulfillment stores skew digital. All store types can do B2B.
+    _STORE_TYPE_CHANNEL_MAP: dict[str, tuple[np.ndarray, np.ndarray]] = {
+        # (valid_keys, probability_weights)
+        "Online":      (_DIGITAL_CHANNELS, np.array([0.35, 0.10, 0.20, 0.25, 0.10], dtype=np.float64)),
+        "Fulfillment": (_DIGITAL_CHANNELS, np.array([0.35, 0.10, 0.20, 0.25, 0.10], dtype=np.float64)),
+        # Physical store types: mostly physical channels + some digital
+        "Retail":       (np.array([1, 2, 3, 5, 7, 10], dtype=np.int16),
+                         np.array([0.50, 0.15, 0.05, 0.10, 0.10, 0.10], dtype=np.float64)),
+        "Flagship":     (np.array([1, 2, 5, 7, 10], dtype=np.int16),
+                         np.array([0.55, 0.15, 0.10, 0.10, 0.10], dtype=np.float64)),
+        "Hypermarket":  (np.array([1, 2, 3, 5, 10], dtype=np.int16),
+                         np.array([0.55, 0.15, 0.05, 0.10, 0.15], dtype=np.float64)),
+        "Supermarket":  (np.array([1, 2, 5, 10], dtype=np.int16),
+                         np.array([0.60, 0.15, 0.10, 0.15], dtype=np.float64)),
+        "Convenience":  (np.array([1, 5, 10], dtype=np.int16),
+                         np.array([0.70, 0.10, 0.20], dtype=np.float64)),
+        "Outlet":       (np.array([1, 2, 5], dtype=np.int16),
+                         np.array([0.65, 0.20, 0.15], dtype=np.float64)),
+        "Warehouse":    (np.array([1, 2, 4, 9], dtype=np.int16),
+                         np.array([0.30, 0.25, 0.25, 0.20], dtype=np.float64)),
+    }
+    # Default for unknown store types
+    _DEFAULT_CHANNEL_MAP = (np.array([1, 2, 3, 5], dtype=np.int16),
+                            np.array([0.40, 0.30, 0.15, 0.15], dtype=np.float64))
+
+    # Build per-StoreKey channel arrays (dense, indexed by StoreKey)
+    store_channel_keys_list: list = [None] * (_max_sk + 1)
+    channel_prob_by_store_list: list = [None] * (_max_sk + 1)
+    if store_type_map is not None:
+        for sk in store_keys:
+            sk_int = int(sk)
+            st = store_type_map.get(sk_int, "")
+            keys, probs = _STORE_TYPE_CHANNEL_MAP.get(st, _DEFAULT_CHANNEL_MAP)
+            store_channel_keys_list[sk_int] = keys
+            channel_prob_by_store_list[sk_int] = probs / probs.sum()
+    else:
+        # No store types available — uniform across all channels
+        _uniform_p = np.ones(len(_ALL_CHANNELS), dtype=np.float64) / len(_ALL_CHANNELS)
+        for sk in store_keys:
+            store_channel_keys_list[int(sk)] = _ALL_CHANNELS
+            channel_prob_by_store_list[int(sk)] = _uniform_p
+
+    # 3) Product channel eligibility (from ProductProfile)
+    product_channel_eligible = None
+    _profile_path = parquet_folder_p / "product_profile.parquet"
+    if _profile_path.exists():
+        try:
+            _elig_cols = ["ProductKey", "EligibleStore", "EligibleOnline", "EligibleMarketplace", "EligibleB2B"]
+            _elig_df = pd.read_parquet(str(_profile_path), columns=_elig_cols)
+            # Build dense array aligned with product_np rows (ProductKey -> row index)
+            # product_np[:, 0] contains ProductKey
+            _prod_keys_arr = product_np[:, 0].astype(np.int32)
+            _max_pk = int(_prod_keys_arr.max()) if _prod_keys_arr.size else 0
+            # Map ProductKey -> product_np row index
+            _pk_to_row = np.full(_max_pk + 1, -1, dtype=np.int32)
+            _pk_to_row[_prod_keys_arr] = np.arange(len(_prod_keys_arr), dtype=np.int32)
+            # 4 groups: store=0, online=1, marketplace=2, b2b=3
+            product_channel_eligible = np.ones((len(product_np), 4), dtype=np.int8)
+            for _, row in _elig_df.iterrows():
+                pk = int(row["ProductKey"])
+                if pk <= _max_pk and _pk_to_row[pk] >= 0:
+                    ri = _pk_to_row[pk]
+                    product_channel_eligible[ri, 0] = int(row.get("EligibleStore", 1))
+                    product_channel_eligible[ri, 1] = int(row.get("EligibleOnline", 1))
+                    product_channel_eligible[ri, 2] = int(row.get("EligibleMarketplace", 1))
+                    product_channel_eligible[ri, 3] = int(row.get("EligibleB2B", 1))
+        except (KeyError, OSError):
+            pass
+
+    # 4) Promotion channel group (from PromotionCategory)
+    promo_channel_group = np.zeros(len(promo_keys_all), dtype=np.int8)  # 0=any
+    if not promo_df.empty and "PromotionCategory" in promo_df.columns:
+        _PHYSICAL_CATS = {"Store", "Physical"}
+        _DIGITAL_CATS = {"Online", "Digital"}
+        for i, cat in enumerate(promo_df["PromotionCategory"].astype(str)):
+            if cat in _PHYSICAL_CATS:
+                promo_channel_group[i] = 1  # physical channels only
+            elif cat in _DIGITAL_CATS:
+                promo_channel_group[i] = 2  # digital channels only
+
+    # 5) Channel fulfillment days (from SalesChannels dimension)
+    channel_fulfillment_days = np.full(11, 3, dtype=np.int16)  # default 3 days
+    channel_fulfillment_days[0] = 0   # Unknown
+    channel_fulfillment_days[1] = 0   # Store (immediate)
+    channel_fulfillment_days[2] = 3   # Online
+    channel_fulfillment_days[3] = 5   # Marketplace
+    channel_fulfillment_days[4] = 7   # B2B
+    channel_fulfillment_days[5] = 2   # CallCenter
+    channel_fulfillment_days[6] = 3   # Web
+    channel_fulfillment_days[7] = 3   # MobileApp
+    channel_fulfillment_days[8] = 5   # SocialCommerce
+    channel_fulfillment_days[9] = 7   # PartnerReseller
+    channel_fulfillment_days[10] = 0  # Kiosk (immediate)
+    _sc_path = parquet_folder_p / "sales_channels.parquet"
+    if _sc_path.exists():
+        try:
+            _sc_df = pd.read_parquet(str(_sc_path))
+            if "TypicalFulfillmentDays" in _sc_df.columns and "SalesChannelKey" in _sc_df.columns:
+                for _, row in _sc_df.iterrows():
+                    _ck = int(row["SalesChannelKey"])
+                    if 0 <= _ck < len(channel_fulfillment_days):
+                        val = row["TypicalFulfillmentDays"]
+                        if val is not None and not (isinstance(val, float) and np.isnan(val)):
+                            channel_fulfillment_days[_ck] = int(val)
+        except (KeyError, OSError):
+            pass
+
+    # Channel key -> eligibility group index (for product_channel_eligible)
+    # 0=store, 1=online, 2=marketplace, 3=b2b
+    _CHANNEL_TO_ELIG_GROUP = np.zeros(11, dtype=np.int8)
+    _CHANNEL_TO_ELIG_GROUP[1] = 0   # Store -> EligibleStore
+    _CHANNEL_TO_ELIG_GROUP[2] = 1   # Online -> EligibleOnline
+    _CHANNEL_TO_ELIG_GROUP[3] = 2   # Marketplace -> EligibleMarketplace
+    _CHANNEL_TO_ELIG_GROUP[4] = 3   # B2B -> EligibleB2B
+    _CHANNEL_TO_ELIG_GROUP[5] = 1   # CallCenter -> EligibleOnline (same catalog)
+    _CHANNEL_TO_ELIG_GROUP[6] = 1   # Web -> EligibleOnline
+    _CHANNEL_TO_ELIG_GROUP[7] = 1   # MobileApp -> EligibleOnline
+    _CHANNEL_TO_ELIG_GROUP[8] = 2   # SocialCommerce -> EligibleMarketplace
+    _CHANNEL_TO_ELIG_GROUP[9] = 3   # PartnerReseller -> EligibleB2B
+    _CHANNEL_TO_ELIG_GROUP[10] = 0  # Kiosk -> EligibleStore
+
+    info(f"Column correlations: {_n_countries} countries, "
+         f"product eligibility {'loaded' if product_channel_eligible is not None else 'not available'}, "
+         f"promo channel groups {int((promo_channel_group > 0).sum())}/{len(promo_channel_group)}")
+
+    # ------------------------------------------------------------
     # Chunk scheduling
     # ------------------------------------------------------------
     total_chunks = int(ceil(total_rows / chunk_size))
@@ -1293,6 +1475,18 @@ def generate_sales_fact(
         product_popularity=product_popularity,
         product_seasonality=product_seasonality,
 
+        # Column correlation data
+        customer_geo_key=customer_geo_key,
+        geo_to_country_id=geo_to_country_id,
+        store_to_country_id=store_to_country_id,
+        country_to_store_keys=country_to_store_keys,
+        store_channel_keys=store_channel_keys_list,
+        channel_prob_by_store=channel_prob_by_store_list,
+        product_channel_eligible=product_channel_eligible,
+        promo_channel_group=promo_channel_group,
+        channel_fulfillment_days=channel_fulfillment_days,
+        _channel_to_elig_group=_CHANNEL_TO_ELIG_GROUP,
+
         # SCD2 version lookup tables
         product_scd2_active=_product_scd2_active,
         product_scd2_starts=_product_scd2_starts,
@@ -1413,6 +1607,13 @@ def generate_sales_fact(
         "employee_assign_fte",
         "employee_assign_is_primary",
         "product_seasonality",
+        "customer_geo_key",
+        "geo_to_country_id",
+        "store_to_country_id",
+        "product_channel_eligible",
+        "promo_channel_group",
+        "channel_fulfillment_days",
+        "_channel_to_elig_group",
         "product_scd2_starts",
         "product_scd2_data",
         "customer_scd2_starts",

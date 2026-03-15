@@ -1028,6 +1028,18 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "product_popularity": worker_cfg.get("product_popularity"),
             "product_seasonality": worker_cfg.get("product_seasonality"),
 
+            # Column correlation data
+            "customer_geo_key": worker_cfg.get("customer_geo_key"),
+            "geo_to_country_id": worker_cfg.get("geo_to_country_id"),
+            "store_to_country_id": worker_cfg.get("store_to_country_id"),
+            "country_to_store_keys": worker_cfg.get("country_to_store_keys"),
+            "store_channel_keys": worker_cfg.get("store_channel_keys"),
+            "channel_prob_by_store": worker_cfg.get("channel_prob_by_store"),
+            "product_channel_eligible": worker_cfg.get("product_channel_eligible"),
+            "promo_channel_group": worker_cfg.get("promo_channel_group"),
+            "channel_fulfillment_days": worker_cfg.get("channel_fulfillment_days"),
+            "_channel_to_elig_group": worker_cfg.get("_channel_to_elig_group"),
+
             # SCD2 version grids
             "product_scd2_active": bool(worker_cfg.get("product_scd2_active", False)),
             "product_scd2_starts": worker_cfg.get("product_scd2_starts"),

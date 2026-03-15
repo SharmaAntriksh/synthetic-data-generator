@@ -125,6 +125,17 @@ class SalesContext:
     geo_to_currency_arr: Any = None
     models_cfg: Optional[Dict[str, Any]] = None
 
+    # -- Column correlations --
+    customer_geo_key: Any = None
+    geo_to_country_id: Any = None
+    store_to_country_id: Any = None
+    country_to_store_keys: Any = None
+    store_channel_keys: Any = None
+    channel_prob_by_store: Any = None
+    product_channel_eligible: Any = None
+    promo_channel_group: Any = None
+    channel_fulfillment_days: Any = None
+
     # -- SCD2 version lookup tables (per-entity, per-row resolution) --
     product_scd2_active: bool = False
     product_scd2_starts: Any = None     # (N_pool, max_ver) int64: version start epoch days
@@ -251,12 +262,34 @@ class State(metaclass=_SealableMeta):
     store_to_product_rows = None  # assortment: list[StoreKey] -> np.ndarray of product row indices
 
     # --------------------------------------------------------------
+    # Column correlation data (worker-side lookups)
+    # --------------------------------------------------------------
+    # Customer geography (for store geo-bias)
+    customer_geo_key = None          # dense int32: customer pool index -> GeographyKey
+    geo_to_country_id = None         # dense int32: GeographyKey -> country_id
+    store_to_country_id = None       # dense int32: StoreKey -> country_id
+    country_to_store_keys = None     # list[np.ndarray]: country_id -> store keys
+
+    # Store type -> channel constraint
+    store_channel_keys = None        # list[np.ndarray]: StoreKey -> valid SalesChannelKey[]
+    channel_prob_by_store = None     # list[np.ndarray]: StoreKey -> probability[] (aligned with store_channel_keys)
+
+    # Product channel eligibility (aligned with product_np rows)
+    product_channel_eligible = None  # int8 2-D: (n_products, n_channel_groups) — 4 groups: store/online/marketplace/b2b
+
+    # Promotion channel category
+    promo_channel_group = None       # int8: per promo — 0=any, 1=physical, 2=digital
+
+    # Channel-aware delivery
+    channel_fulfillment_days = None  # dense int16: SalesChannelKey -> typical fulfillment days
+
+    # --------------------------------------------------------------
     # Budget streaming aggregation (worker-side lookups)
     # --------------------------------------------------------------
     budget_enabled = None
     budget_store_to_country = None   # dense int32 array: StoreKey -> country_id
     budget_product_to_cat = None     # dense int32 array: ProductKey -> category_id
-    
+
     store_to_geo_arr = None
     geo_to_currency_arr = None
 
