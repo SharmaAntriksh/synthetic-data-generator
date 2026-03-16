@@ -12,6 +12,14 @@ from __future__ import annotations
 from typing import Dict, List, Tuple
 
 import numpy as np
+import pandas as pd
+
+# ---------------------------------------------------------------------------
+# SCD2 sentinel date for IsCurrent=1 rows.
+# NOTE: datetime64[ns] overflows at ~2262, so 9999-12-31 silently wraps to
+# 1816-03-29.  Use 2099-12-31 as a safe far-future sentinel.
+# ---------------------------------------------------------------------------
+SCD2_END_OF_TIME = pd.Timestamp("2099-12-31")
 
 
 # =================================================================

@@ -6,6 +6,7 @@ import pandas as pd
 
 from src.utils import info
 from src.defaults import (
+    SCD2_END_OF_TIME,
     CUSTOMER_INCOME_MIN as INCOME_MIN,
     CUSTOMER_INCOME_MAX as INCOME_MAX,
     CUSTOMER_MAX_CHILDREN as MAX_CHILDREN,
@@ -333,7 +334,7 @@ def generate_scd2_versions(
             new_state = dict(current_state)
             new_state["VersionNumber"] = i + 2
             new_state["EffectiveStartDate"] = event_date
-            new_state["EffectiveEndDate"] = pd.Timestamp("9999-12-31")
+            new_state["EffectiveEndDate"] = SCD2_END_OF_TIME
             new_state["IsCurrent"] = 1
 
             # Pick and apply a coherent life event

@@ -39,19 +39,6 @@ input[type=number]::-webkit-inner-spin-button{opacity:1}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes slideUp{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
 
-/* ═══ Sticky generate bar ═══ */
-.sticky-generate-bar{
-  position:fixed;bottom:0;right:0;
-  background:var(--surface);
-  border-top:1px solid var(--border);
-  padding:10px 24px;
-  z-index:90;
-  display:flex;align-items:center;gap:14;
-  box-shadow:0 -2px 12px var(--shadow);
-  animation:slideUp .2s ease;
-  transition:left .2s;
-}
-
 /* ═══ Diff viewer ═══ */
 .diff-line{font-family:var(--mono);font-size:12.5px;line-height:1.75;padding:1px 14px;white-space:pre-wrap;border-left:3px solid transparent}
 .diff-line-add{background:var(--diff-add);color:var(--ok);border-left-color:var(--ok)}

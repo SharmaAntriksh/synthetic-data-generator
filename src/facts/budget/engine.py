@@ -248,6 +248,9 @@ def _compute_yearly_budget(
                   "BudgetGrowthPct", "BudgetSalesAmount", "BudgetSalesQuantity",
                   "_method"]].rename(columns={"_method": "BudgetMethod"})
     out["BudgetYear"] = out["BudgetYear"].astype(int)
+    out["BudgetGrowthPct"] = out["BudgetGrowthPct"].round(6)
+    out["BudgetSalesAmount"] = out["BudgetSalesAmount"].round(2)
+    out["BudgetSalesQuantity"] = out["BudgetSalesQuantity"].round(2)
     return out
 
 
@@ -375,6 +378,8 @@ def _compute_monthly_budget(
     ]].copy()
 
     out["BudgetYear"] = out["BudgetYear"].astype(int)
+    out["BudgetAmount"] = out["BudgetAmount"].round(2)
+    out["BudgetQuantity"] = out["BudgetQuantity"].round(2)
     return out
 
 
