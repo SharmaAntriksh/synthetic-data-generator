@@ -695,6 +695,13 @@ function App() {
           }).catch(() => {});
         }} style={{width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--dim)", fontSize: 12, cursor: "pointer", fontFamily: "var(--sans)"}}>Download configs</button>
 
+        <div style={{borderTop: "1px solid var(--border)", margin: "20px 0"}} />
+        <div style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase", marginBottom: 10}}>Data</div>
+        <button onClick={() => setPage(page === "data" ? "main" : "data")} style={{width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${page === "data" ? "var(--accent)" : "var(--border)"}`, background: page === "data" ? "var(--glow)" : "var(--surface)", color: page === "data" ? "var(--accent)" : "var(--dim)", fontSize: 12.5, fontWeight: page === "data" ? 600 : 500, cursor: "pointer", fontFamily: "var(--sans)", transition: "all .15s", display: "flex", alignItems: "center", justifyContent: "space-between"}}>
+          <span>Data Preview</span>
+        </button>
+        {page === "data" && <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6}}>Browse generated datasets</div>}
+
         {/* Validation */}
         {cfg && <>
           <div style={{borderTop: "1px solid var(--border)", margin: "20px 0"}} />
@@ -738,7 +745,7 @@ function App() {
       </div>}
 
       {/* ═══ MAIN ═══ */}
-      <div className="main-content" style={{flex: 1, padding: "28px 40px", maxWidth: 1120, overflowY: "auto", paddingBottom: page === "main" ? 80 : 28}}>
+      <div className="main-content" style={{flex: 1, padding: "28px 40px", maxWidth: page === "data" ? "none" : 1120, overflowY: "auto", paddingBottom: page === "main" ? 80 : 28}}>
 
         {page === "models" ? (
         /* ═══ MODELS EDITOR PAGE ═══ */
@@ -894,6 +901,10 @@ function App() {
             </div>
           ) : (<div style={{padding: 40, textAlign: "center", color: "var(--muted)"}}>Loading models...</div>)}
         </div>
+
+        ) : page === "data" ? (
+        /* ═══ DATA PREVIEW PAGE ═══ */
+        <DataPreview onBack={() => setPage("main")} />
 
         ) : page === "config" ? (
         /* ═══ CONFIG YAML EDITOR PAGE ═══ */
