@@ -237,9 +237,16 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
     # ----------------------------
     # SalesChannelKey
     # ----------------------------
+    # If chunk_builder already produced SalesChannelKey (via store-channel
+    # correlation), skip generation here — just read it from cols.
     sales_channel = None
     channel_hour_lut = None
-    if "SalesChannelKey" in schema_types:
+    _prebuilt_ch = ctx["cols"].get("SalesChannelKey")
+    if _prebuilt_ch is not None:
+        # Already produced by chunk_builder's store-channel correlation
+        sales_channel = np.asarray(_prebuilt_ch, dtype=np.int16)
+        channel_hour_lut = cache[2] if cache is not None else None
+    elif "SalesChannelKey" in schema_types:
         if cache is None:
             # last-resort fallback: match your default lookup keys
             keys = np.array([1, 2, 3, 4, 5], dtype=np.int16)

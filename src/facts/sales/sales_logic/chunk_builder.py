@@ -318,6 +318,7 @@ _SEASON_CODE = {"Holiday": 1, "Winter": 2, "Summer": 3, "BackToSchool": 4, "Spri
 def _build_product_weight_for_month(
     month_date_pool: np.ndarray,
     m_offset: int,
+    cal_month: int = 0,
 ) -> np.ndarray | None:
     """
     Build a per-product-row weight array combining PopularityScore and
@@ -332,11 +333,11 @@ def _build_product_weight_for_month(
         return None
 
     # Base weight: popularity (clamp to avoid zeros)
-    w = np.maximum(pop, 1.0).copy()
+    # np.maximum already returns a new array — no .copy() needed
+    w = np.maximum(pop, 1.0)
 
     # Seasonal boost for this calendar month
-    if sea is not None and month_date_pool.size > 0:
-        cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1
+    if sea is not None and cal_month > 0:
         for season, boosts in _SEASON_SALES_BOOST.items():
             if cal_month in boosts:
                 code = _SEASON_CODE[season]
@@ -891,11 +892,11 @@ def build_chunk_table(
             continue
 
         if date_prob is not None:
-            # copy before normalization (slice can be a view)
-            month_date_prob = np.asarray(date_prob[date_idx], dtype="float64").copy()
+            # dtype conversion creates a new array (no explicit .copy() needed)
+            month_date_prob = np.asarray(date_prob[date_idx], dtype="float64")
             s = float(month_date_prob.sum())
             if s > 1e-12:
-                month_date_prob /= s
+                month_date_prob = month_date_prob / s  # new array, avoids mutating shared view
             else:
                 month_date_prob = None
         else:
@@ -1052,11 +1053,54 @@ def build_chunk_table(
             if _eligible is not None and len(_eligible) > 0:
                 _month_stores = _eligible
 
+        # --- CORRELATION #2: Customer → Store geographic bias ---
+        # Customers prefer stores in their own country (70% local, 30% any).
+        _cust_geo = getattr(State, "customer_geo_key", None)
+        _geo2c = getattr(State, "geo_to_country_id", None)
+        _st2c = getattr(State, "store_to_country_id", None)
+        _c2sk = getattr(State, "country_to_store_keys", None)
+        _geo_bias = (_cust_geo is not None and _geo2c is not None
+                     and _st2c is not None and _c2sk is not None)
+
         if not skip_cols:
-            order_store = _month_stores[rng.integers(0, len(_month_stores), size=n_unique_orders)]
+            _n_to_sample = n_unique_orders
+            _cust_for_store = customer_keys_for_orders  # one per order
+        else:
+            _n_to_sample = n_lines
+            _cust_for_store = customer_keys_out
+
+        if _geo_bias:
+            # Get customer countries (pool-index lookup via CustomerKey-1)
+            _ck_idx = np.clip(np.asarray(_cust_for_store, dtype=np.int32) - 1, 0, len(_cust_geo) - 1)
+            _cust_countries = _geo2c[np.clip(_cust_geo[_ck_idx], 0, len(_geo2c) - 1)]
+            _use_local = rng.random(_n_to_sample) < 0.70
+            _ms_set = frozenset(_month_stores.tolist())
+            order_store = np.empty(_n_to_sample, dtype=np.int32)
+
+            for _cid in np.unique(_cust_countries):
+                _cmask = _cust_countries == _cid
+                _local_mask = _use_local & _cmask
+                _global_mask = ~_use_local & _cmask
+
+                # Local stores: intersection of country stores and month-eligible stores
+                _country_sk = _c2sk[int(_cid)] if int(_cid) < len(_c2sk) else np.array([], dtype=np.int32)
+                _local_pool = _country_sk[np.isin(_country_sk, _month_stores)] if _country_sk.size else np.array([], dtype=np.int32)
+                if _local_pool.size == 0:
+                    _local_pool = _month_stores  # fallback
+
+                _n_local = int(_local_mask.sum())
+                if _n_local > 0:
+                    order_store[_local_mask] = _local_pool[rng.integers(0, len(_local_pool), size=_n_local)]
+                _n_global = int(_global_mask.sum())
+                if _n_global > 0:
+                    order_store[_global_mask] = _month_stores[rng.integers(0, len(_month_stores), size=_n_global)]
+        else:
+            order_store = _month_stores[rng.integers(0, len(_month_stores), size=_n_to_sample)]
+
+        if not skip_cols:
             store_key_arr = order_store[order_idx]
         else:
-            store_key_arr = _month_stores[rng.integers(0, len(_month_stores), size=n_lines)]
+            store_key_arr = order_store
 
         # --------------------------------------------------------
         # DAY-LEVEL STORE ELIGIBILITY: resample stores that have
@@ -1110,6 +1154,48 @@ def build_chunk_table(
                         ]
 
         # --------------------------------------------------------
+        # CORRELATION #1: Store → SalesChannelKey
+        # Channel is constrained by store type (physical stores
+        # get physical channels, online stores get digital, etc.)
+        # --------------------------------------------------------
+        _store_ch_keys = getattr(State, "store_channel_keys", None)
+        _ch_prob_by_store = getattr(State, "channel_prob_by_store", None)
+        _has_channel_corr = (_store_ch_keys is not None and _ch_prob_by_store is not None)
+
+        if _has_channel_corr:
+            # Sample one channel per order (or per line if skip_cols)
+            if not skip_cols and order_idx is not None:
+                # Per-order: use order-level store keys
+                _order_stores_for_ch = store_key_arr[order_starts] if order_starts is not None else store_key_arr[:n_unique_orders]
+                _ch_per_order = np.empty(n_unique_orders, dtype=np.int16)
+                for _sk_val in np.unique(_order_stores_for_ch):
+                    _sk_int = int(_sk_val)
+                    _sk_mask = _order_stores_for_ch == _sk_val
+                    _n_sk = int(_sk_mask.sum())
+                    _ch_k = _store_ch_keys[_sk_int] if _sk_int < len(_store_ch_keys) and _store_ch_keys[_sk_int] is not None else np.array([1, 2, 3, 4, 5], dtype=np.int16)
+                    _ch_p = _ch_prob_by_store[_sk_int] if _sk_int < len(_ch_prob_by_store) and _ch_prob_by_store[_sk_int] is not None else None
+                    if _ch_p is not None and len(_ch_p) == len(_ch_k):
+                        _ch_per_order[_sk_mask] = _ch_k[rng.choice(len(_ch_k), size=_n_sk, p=_ch_p)]
+                    else:
+                        _ch_per_order[_sk_mask] = _ch_k[rng.integers(0, len(_ch_k), size=_n_sk)]
+                sales_channel_key_arr = _ch_per_order[order_idx]
+            else:
+                sales_channel_key_arr = np.empty(n_lines, dtype=np.int16)
+                for _sk_val in np.unique(store_key_arr):
+                    _sk_int = int(_sk_val)
+                    _sk_mask = store_key_arr == _sk_val
+                    _n_sk = int(_sk_mask.sum())
+                    _ch_k = _store_ch_keys[_sk_int] if _sk_int < len(_store_ch_keys) and _store_ch_keys[_sk_int] is not None else np.array([1, 2, 3, 4, 5], dtype=np.int16)
+                    _ch_p = _ch_prob_by_store[_sk_int] if _sk_int < len(_ch_prob_by_store) and _ch_prob_by_store[_sk_int] is not None else None
+                    if _ch_p is not None and len(_ch_p) == len(_ch_k):
+                        sales_channel_key_arr[_sk_mask] = _ch_k[rng.choice(len(_ch_k), size=_n_sk, p=_ch_p)]
+                    else:
+                        sales_channel_key_arr[_sk_mask] = _ch_k[rng.integers(0, len(_ch_k), size=_n_sk)]
+        else:
+            # Fallback: uniform channel sampling (old behavior)
+            sales_channel_key_arr = None
+
+        # --------------------------------------------------------
         # PRODUCTS (PER LINE) — each line gets its own product
         # so multi-line orders contain distinct items, not repeats.
         # When assortment is active, products are sampled from
@@ -1117,12 +1203,20 @@ def build_chunk_table(
         #
         # Product sampling is weighted by PopularityScore and
         # boosted by SeasonalityProfile for the current calendar month.
+        #
+        # CORRELATION #4: SalesChannelKey → ProductKey
+        # Filter product pool by channel eligibility flags.
         # --------------------------------------------------------
-        _product_weight = _build_product_weight_for_month(month_date_pool, m_offset)
+        # Compute calendar month once (reused by product weight + store assortment CDF)
+        _cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1 if month_date_pool.size > 0 else 0
+
+        _product_weight = _build_product_weight_for_month(month_date_pool, m_offset, cal_month=_cal_month)
+
+        _pce = getattr(State, "product_channel_eligible", None)
+        _ch2eg = getattr(State, "_channel_to_elig_group", None)
 
         _store_product_rows = getattr(State, "store_to_product_rows", None)
         if _store_product_rows is not None:
-            _cal_month = int(month_date_pool[0].astype("datetime64[M]").astype(int) % 12) + 1 if month_date_pool.size > 0 else 0
             prod_idx = _sample_products_per_store(
                 rng=rng,
                 store_key_arr=store_key_arr,
@@ -1141,6 +1235,44 @@ def build_chunk_table(
                 enabled=use_brand_popularity,
                 product_weight=_product_weight,
             )
+
+        # CORRELATION #4: Post-sampling channel eligibility enforcement.
+        # Resample ineligible products per-line using channel-specific
+        # eligible pools.  This handles ALL channels correctly (including
+        # minority channels like Marketplace/SocialCommerce) instead of
+        # only filtering for the dominant channel.
+        _MAX_RESAMPLE_PASSES = 3
+        if (_pce is not None and _ch2eg is not None
+                and sales_channel_key_arr is not None
+                and _product_weight is not None):
+            for _pass in range(_MAX_RESAMPLE_PASSES):
+                # Check eligibility per line
+                _line_ch = sales_channel_key_arr.astype(np.int32)
+                _line_eg = _ch2eg[np.clip(_line_ch, 0, len(_ch2eg) - 1)]
+                _line_elig = _pce[prod_idx, _line_eg]
+                _bad = _line_elig == 0
+                _n_bad = int(_bad.sum())
+                if _n_bad == 0:
+                    break
+                # Resample bad rows: group by eligibility group for efficiency
+                _bad_idx = np.flatnonzero(_bad)
+                for _eg in np.unique(_line_eg[_bad_idx]):
+                    _eg_mask = _bad & (_line_eg == _eg)
+                    _n_eg = int(_eg_mask.sum())
+                    if _n_eg == 0:
+                        continue
+                    # Build eligible product pool for this group
+                    _eligible_rows = np.flatnonzero(_pce[:, _eg] == 1)
+                    if _eligible_rows.size == 0:
+                        continue  # no eligible products at all — keep original
+                    # Weighted resample from eligible pool
+                    _ew = _product_weight[_eligible_rows]
+                    _ews = float(_ew.sum())
+                    if _ews > 1e-12:
+                        _picks = rng.choice(len(_eligible_rows), size=_n_eg, p=_ew / _ews)
+                    else:
+                        _picks = rng.integers(0, len(_eligible_rows), size=_n_eg)
+                    prod_idx[_eg_mask] = _eligible_rows[_picks]
 
         customer_keys_out = np.asarray(customer_keys_out, dtype=np.int32)
         order_dates = np.asarray(order_dates, dtype="datetime64[D]")
@@ -1174,22 +1306,27 @@ def build_chunk_table(
             raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
 
         # --------------------------------------------------------
-        # DATE LOGIC
+        # DATE LOGIC (CORRELATION #3: channel-aware delivery)
         # --------------------------------------------------------
+        _ch_fulfill = getattr(State, "channel_fulfillment_days", None)
         dates = compute_dates(
             rng=rng,
             n=n_lines,
             product_keys=product_keys,
             order_ids_int=order_ids_int,
             order_dates=order_dates,
+            channel_keys=sales_channel_key_arr,
+            channel_fulfillment_days=_ch_fulfill,
         )
         
         # --------------------------------------------------------
-        # PROMOTIONS  (make per-order when order ids exist)
+        # PROMOTIONS (CORRELATION #5: channel-filtered)
         # --------------------------------------------------------
+        _pcg = getattr(State, "promo_channel_group", None)
         if (not skip_cols) and (order_starts is not None):
             # use order-level dates (first line per order)
             order_dates_order = np.asarray(order_dates, dtype="datetime64[D]")[order_starts]
+            _order_ch = sales_channel_key_arr[order_starts] if sales_channel_key_arr is not None else None
 
             promo_order_keys = apply_promotions(
                 rng=rng,
@@ -1199,6 +1336,8 @@ def build_chunk_table(
                 promo_start_all=promo_start_all,
                 promo_end_all=promo_end_all,
                 no_discount_key=no_discount_key,
+                channel_keys=_order_ch,
+                promo_channel_group=_pcg,
             )
 
             promo_keys = np.asarray(promo_order_keys, dtype=np.int32)[order_idx]
@@ -1211,6 +1350,8 @@ def build_chunk_table(
                 promo_start_all=promo_start_all,
                 promo_end_all=promo_end_all,
                 no_discount_key=no_discount_key,
+                channel_keys=sales_channel_key_arr,
+                promo_channel_group=_pcg,
             )
         promo_keys = np.asarray(promo_keys, dtype=np.int32)
 
@@ -1228,14 +1369,37 @@ def build_chunk_table(
             if invalid_nc.any():
                 promo_keys[invalid_nc] = int(no_discount_key)
 
-            # Step 2: force-assign NC promo to new customers that have no other promo
+            # Step 2: force-assign NC promo to new customers that have no other promo.
+            # Respect channel-promo correlation: only assign NC promos whose
+            # PromotionCategory matches the row's channel type.
             eligible = is_new & (promo_keys == int(no_discount_key))
             if eligible.any():
                 new_indices = np.flatnonzero(eligible)
                 new_dates = order_dates_D[new_indices]
 
+                # Channel-aware NC promo assignment
+                _nc_ch_group = _pcg[np.isin(promo_keys_all, list(nc_promo_set))] if _pcg is not None else None
+                _new_ch = sales_channel_key_arr[new_indices] if sales_channel_key_arr is not None else None
+                _PHYS = frozenset({1, 5, 10})
+                _DIGI = frozenset({2, 3, 6, 7, 8})
+
                 for pi in range(len(_nc_keys)):
                     active = (new_dates >= _nc_starts[pi]) & (new_dates <= _nc_ends[pi])
+                    if not active.any():
+                        continue
+                    # Check channel compatibility if data available
+                    if _nc_ch_group is not None and _new_ch is not None and pi < len(_nc_ch_group):
+                        _pg = int(_nc_ch_group[pi])  # 0=any, 1=physical, 2=digital
+                        if _pg == 1:
+                            # Physical-only promo: only assign to physical channel rows
+                            _ch_ok = np.array([int(c) in _PHYS for c in _new_ch[active]], dtype=bool)
+                            active_idx = np.flatnonzero(active)
+                            active[active_idx[~_ch_ok]] = False
+                        elif _pg == 2:
+                            # Digital-only promo: only assign to digital channel rows
+                            _ch_ok = np.array([int(c) in _DIGI for c in _new_ch[active]], dtype=bool)
+                            active_idx = np.flatnonzero(active)
+                            active[active_idx[~_ch_ok]] = False
                     if active.any():
                         promo_keys[new_indices[active]] = int(_nc_keys[pi])
 
@@ -1361,6 +1525,10 @@ def build_chunk_table(
         cols["SalesPersonEmployeeKey"] = salesperson_key_arr
         cols["PromotionKey"] = promo_keys
         cols["CurrencyKey"] = currency_arr
+
+        # SalesChannelKey produced by store-channel correlation (above)
+        if sales_channel_key_arr is not None:
+            cols["SalesChannelKey"] = sales_channel_key_arr
 
         cols["OrderDate"] = _as_datetime64_D(order_dates)
         cols["DueDate"] = _as_datetime64_D(dates["due_date"])

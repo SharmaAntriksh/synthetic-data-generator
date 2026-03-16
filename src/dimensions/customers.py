@@ -1133,23 +1133,23 @@ def _assign_households(
             if max_dep_age > 0:
                 # dep_sorted_ages is ascending; valid range is [0, max_dep_age]
                 hi_dep = int(np.searchsorted(dep_sorted_ages, max_dep_age, side="right"))
-                dependents_added = 0
-                # Scan backwards from hi_dep-1 (oldest eligible first)
-                for dp in range(hi_dep - 1, -1, -1):
-                    if dependents_added >= n_children_wanted:
-                        break
-                    if not dep_alive[dp]:
-                        continue
-                    cand = int(dep_sorted_idx[dp])
-                    if not avail_mask[cand]:
-                        continue
-                    household_key[cand] = hh_id
-                    household_role[cand] = "Dependent"
-                    dep_alive[dp] = False
-                    avail_mask[cand] = False
-                    last_name[cand] = head_ln
-                    geography_key[cand] = head_geo
-                    dependents_added += 1
+                # Vectorized: find alive candidates in the eligible window, take oldest first
+                _dep_window_alive = np.flatnonzero(dep_alive[:hi_dep])
+                if _dep_window_alive.size > 0:
+                    # Also check global avail_mask for candidates
+                    _dep_cands = dep_sorted_idx[_dep_window_alive]
+                    _dep_avail = avail_mask[_dep_cands]
+                    _dep_valid = _dep_window_alive[_dep_avail]
+                    # Take up to n_children_wanted from the oldest end (reversed)
+                    _take = _dep_valid[-n_children_wanted:][::-1] if len(_dep_valid) > n_children_wanted else _dep_valid[::-1]
+                    for dp in _take:
+                        cand = int(dep_sorted_idx[dp])
+                        household_key[cand] = hh_id
+                        household_role[cand] = "Dependent"
+                        dep_alive[dp] = False
+                        avail_mask[cand] = False
+                        last_name[cand] = head_ln
+                        geography_key[cand] = head_geo
 
     # --- Assign solo households to everyone not yet assigned ---
     unassigned = np.where(household_key == 0)[0]
@@ -1209,36 +1209,44 @@ def _available_events(state: dict, tier_keys: np.ndarray) -> list:
 
 
 def _relocate(rng: np.random.Generator, state: dict,
-              geo_keys: np.ndarray, geo_lookup: pd.DataFrame) -> None:
+              geo_keys: np.ndarray, geo_lookup, _geo_cache: dict = None) -> None:
     """Change GeographyKey and regenerate address columns to match.
 
     HomeAddress always changes on relocation.  WorkAddress only changes
     when the customer moves to a different country (cross-country
     relocation implies a job change; within the same country, the old
     workplace is still reachable).
+
+    geo_lookup can be a pd.DataFrame (legacy) or a dict (fast path).
+    _geo_cache is an optional pre-built dict {GeographyKey: (Country, City, State)}.
     """
     old_gk = state.get("GeographyKey")
     new_gk = int(rng.choice(geo_keys))
     state["GeographyKey"] = new_gk
 
-    # Resolve old and new country
-    old_country = (
-        str(geo_lookup.loc[old_gk, "Country"])
-        if old_gk in geo_lookup.index else ""
-    )
-    new_country = (
-        str(geo_lookup.loc[new_gk, "Country"])
-        if new_gk in geo_lookup.index else ""
-    )
-    cross_country = old_country != new_country
-
-    # Look up city/state for the new geography
-    if new_gk in geo_lookup.index:
-        row = geo_lookup.loc[new_gk]
-        city = str(row["City"])
-        st = str(row["State"])
+    # Fast path: dict lookup instead of DataFrame.loc
+    if _geo_cache is not None:
+        old_country = _geo_cache.get(old_gk, ("", "", ""))[0]
+        new_entry = _geo_cache.get(new_gk, ("", "Unknown", "Unknown"))
+        new_country, city, st = new_entry
+    elif isinstance(geo_lookup, dict):
+        old_country = geo_lookup.get(old_gk, ("", "", ""))[0]
+        new_entry = geo_lookup.get(new_gk, ("", "Unknown", "Unknown"))
+        new_country, city, st = new_entry
     else:
-        city, st = "Unknown", "Unknown"
+        # Legacy DataFrame path
+        old_country = (
+            str(geo_lookup.loc[old_gk, "Country"])
+            if old_gk in geo_lookup.index else ""
+        )
+        if new_gk in geo_lookup.index:
+            row = geo_lookup.loc[new_gk]
+            new_country = str(row["Country"])
+            city = str(row["City"])
+            st = str(row["State"])
+        else:
+            new_country, city, st = "", "Unknown", "Unknown"
+    cross_country = old_country != new_country
 
     # --- Helper: generate a single address string ---
     def _make_address(c, s):
@@ -1290,7 +1298,9 @@ def _apply_life_event(
     event: str,
     geo_keys: np.ndarray,
     tier_keys: np.ndarray,
-    geo_lookup: pd.DataFrame,
+    geo_lookup,
+    *,
+    _geo_cache: dict = None,
 ) -> None:
     """Apply a life event to the customer state dict (mutates in place)."""
 
@@ -1310,7 +1320,7 @@ def _apply_life_event(
         state["MaritalStatus"] = "Married"
         # 30% chance of relocation with marriage
         if rng.random() < 0.30:
-            _relocate(rng, state, geo_keys, geo_lookup)
+            _relocate(rng, state, geo_keys, geo_lookup, _geo_cache=_geo_cache)
 
     elif event == "family_growth":
         nc = int(state.get("NumberOfChildren") or 0)
@@ -1320,13 +1330,13 @@ def _apply_life_event(
             state["HomeOwnership"] = "Own"
         # 20% chance of relocation
         if rng.random() < 0.20:
-            _relocate(rng, state, geo_keys, geo_lookup)
+            _relocate(rng, state, geo_keys, geo_lookup, _geo_cache=_geo_cache)
 
     elif event == "home_purchase":
         state["HomeOwnership"] = "Own"
 
     elif event == "relocation":
-        _relocate(rng, state, geo_keys, geo_lookup)
+        _relocate(rng, state, geo_keys, geo_lookup, _geo_cache=_geo_cache)
 
     elif event == "divorce":
         state["MaritalStatus"] = "Divorced"
@@ -1338,7 +1348,7 @@ def _apply_life_event(
             state["IncomeGroup"] = _income_to_group(new_income)
         # 60% chance of relocation
         if rng.random() < 0.60:
-            _relocate(rng, state, geo_keys, geo_lookup)
+            _relocate(rng, state, geo_keys, geo_lookup, _geo_cache=_geo_cache)
         # 35% chance of losing home
         if state.get("HomeOwnership") == "Own" and rng.random() < 0.35:
             state["HomeOwnership"] = "Rent"
@@ -1385,12 +1395,35 @@ def _generate_scd2_versions(
     )
 
     # Separate unchanged customers (pass through) from changed ones
-    unchanged_df = base_df[~base_df["CustomerID"].isin(change_id_set)]
-    changed_df = base_df[base_df["CustomerID"].isin(change_id_set)]
+    _change_mask = base_df["CustomerID"].isin(change_id_set)
+    unchanged_df = base_df[~_change_mask]
+    changed_df = base_df[_change_mask]
 
+    # Pre-build geo cache dict for fast _relocate lookups (avoid DataFrame.loc in tight loop)
+    _geo_cache: dict = {}
+    if isinstance(geo_lookup, pd.DataFrame) and not geo_lookup.empty:
+        for gk in geo_lookup.index:
+            row = geo_lookup.loc[gk]
+            _geo_cache[gk] = (str(row["Country"]), str(row["City"]), str(row["State"]))
+
+    # Pre-allocate with estimated capacity (avg ~2 versions per changed customer)
     new_rows = []
+    _est_rows = int(len(changed_df) * 2.5)
+    if _est_rows > 0:
+        new_rows = [None] * _est_rows
+    _row_count = 0
 
-    for row_dict in changed_df.to_dict("records"):
+    # Pre-convert end_date to int for fast arithmetic
+    _end_epoch = end_date.value // 10**9 // 86400  # days since epoch
+
+    # Use column arrays directly instead of to_dict("records")
+    _col_names = changed_df.columns.tolist()
+    _col_arrays = {col: changed_df[col].to_numpy() for col in _col_names}
+    _n_changed = len(changed_df)
+
+    for _ri in range(_n_changed):
+        # Build row dict from column arrays (faster than to_dict("records"))
+        row_dict = {col: _col_arrays[col][_ri] for col in _col_names}
 
         # Determine number of life events (1 to max_versions-1)
         n_events = int(rng.integers(1, max_versions))
@@ -1401,34 +1434,46 @@ def _generate_scd2_versions(
 
         # Need at least 90 days per event segment
         if total_days <= 90:
-            new_rows.append(row_dict)
+            if _row_count < len(new_rows):
+                new_rows[_row_count] = row_dict
+            else:
+                new_rows.append(row_dict)
+            _row_count += 1
             continue
 
         n_events = min(n_events, (total_days - 90) // 90)
         if n_events <= 0:
-            new_rows.append(row_dict)
+            if _row_count < len(new_rows):
+                new_rows[_row_count] = row_dict
+            else:
+                new_rows.append(row_dict)
+            _row_count += 1
             continue
 
         # Generate sorted random event offsets.
-        # Reserve at least 90 days at the end so the IsCurrent=1 version
-        # has meaningful coverage (otherwise it may never appear in sales).
         max_offset = max(91, total_days - 90)
         offsets = np.sort(rng.integers(90, max_offset, size=n_events))
         # Enforce minimum 60-day gap between events
         for i in range(1, len(offsets)):
             if offsets[i] - offsets[i - 1] < 60:
                 offsets[i] = min(offsets[i - 1] + 60, max_offset - 1)
-        event_dates = [cust_start + pd.Timedelta(days=int(d)) for d in offsets]
+        # Vectorized date creation: avoid per-event pd.Timedelta
+        _offset_td = offsets.astype("timedelta64[D]")
+        event_dates = np.datetime64(cust_start, "D") + _offset_td
 
         # Build version chain
-        versions = []
         current_state = dict(row_dict)
 
-        for i, event_date in enumerate(event_dates):
+        for i in range(len(event_dates)):
+            event_date = pd.Timestamp(event_dates[i])
             # Close the current version
             current_state["EffectiveEndDate"] = event_date - pd.Timedelta(days=1)
             current_state["IsCurrent"] = 0
-            versions.append(dict(current_state))
+            if _row_count < len(new_rows):
+                new_rows[_row_count] = dict(current_state)
+            else:
+                new_rows.append(dict(current_state))
+            _row_count += 1
 
             # Create new version
             new_state = dict(current_state)
@@ -1445,13 +1490,20 @@ def _generate_scd2_versions(
             weights_arr = np.array(weights, dtype="float64")
             weights_arr /= weights_arr.sum()
             chosen = str(rng.choice(list(event_names), p=weights_arr))
-            _apply_life_event(rng, new_state, chosen, geo_keys, tier_keys, geo_lookup)
+            _apply_life_event(rng, new_state, chosen, geo_keys, tier_keys,
+                              geo_lookup, _geo_cache=_geo_cache)
 
             current_state = new_state
 
         # Add the final (current) version
-        versions.append(dict(current_state))
-        new_rows.extend(versions)
+        if _row_count < len(new_rows):
+            new_rows[_row_count] = dict(current_state)
+        else:
+            new_rows.append(dict(current_state))
+        _row_count += 1
+
+    # Trim pre-allocated list
+    new_rows = new_rows[:_row_count]
 
     # Combine unchanged + expanded rows
     expanded_df = pd.concat(
@@ -1630,38 +1682,50 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     MaritalStatus = np.empty(N, dtype=object)
     MaritalStatus[IsOrg] = None
     if n_person:
-        for bracket in range(len(AGE_GROUP_LABELS)):
-            bmask = person_age_bracket == bracket
-            n_b = int(bmask.sum())
-            if n_b:
-                MaritalStatus[person_idx[bmask]] = rng.choice(
-                    MARITAL_STATUS_LABELS, size=n_b,
-                    p=MARITAL_PROBS_BY_AGE[bracket],
-                )
+        # Vectorized bracket-aware sampling: build CDF per bracket, sample via uniform + searchsorted
+        _ms_labels = MARITAL_STATUS_LABELS
+        _n_brackets = len(AGE_GROUP_LABELS)
+        # Stack CDFs: shape (n_brackets, n_labels)
+        _ms_cdfs = np.array([np.cumsum(MARITAL_PROBS_BY_AGE[b]) for b in range(_n_brackets)])
+        _ms_cdfs[:, -1] = 1.0  # clamp
+        _u = rng.random(n_person)
+        _bracket_per_person = person_age_bracket  # int array [0..n_brackets-1]
+        # For each person, pick from their bracket's CDF
+        _ms_idx = np.array([
+            np.searchsorted(_ms_cdfs[b], u) for b, u in zip(_bracket_per_person, _u)
+        ], dtype=np.intp)
+        _ms_idx = np.clip(_ms_idx, 0, len(_ms_labels) - 1)
+        MaritalStatus[person_idx] = _ms_labels[_ms_idx]
 
     Education = np.empty(N, dtype=object)
     Education[:] = None
     if n_person:
-        for bracket in range(len(AGE_GROUP_LABELS)):
-            bmask = person_age_bracket == bracket
-            n_b = int(bmask.sum())
-            if n_b:
-                Education[person_idx[bmask]] = rng.choice(
-                    EDUCATION_LABELS, size=n_b,
-                    p=EDUCATION_PROBS_BY_AGE[bracket],
-                )
+        _ed_labels = EDUCATION_LABELS
+        _ed_cdfs = np.array([np.cumsum(EDUCATION_PROBS_BY_AGE[b]) for b in range(len(AGE_GROUP_LABELS))])
+        _ed_cdfs[:, -1] = 1.0
+        _u = rng.random(n_person)
+        _ed_idx = np.array([
+            np.searchsorted(_ed_cdfs[b], u) for b, u in zip(person_age_bracket, _u)
+        ], dtype=np.intp)
+        _ed_idx = np.clip(_ed_idx, 0, len(_ed_labels) - 1)
+        Education[person_idx] = _ed_labels[_ed_idx]
 
     Occupation = np.empty(N, dtype=object)
     Occupation[:] = None
     if n_person:
-        for edu_label in EDUCATION_LABELS:
-            emask = Education[person_mask] == edu_label
-            n_e = int(emask.sum())
-            if n_e:
-                Occupation[person_idx[emask]] = rng.choice(
-                    OCCUPATION_LABELS, size=n_e,
-                    p=OCCUPATION_PROBS_BY_EDUCATION[edu_label],
-                )
+        # Build CDF per education level, then vectorized lookup
+        _occ_labels = OCCUPATION_LABELS
+        _edu_to_code = {lbl: i for i, lbl in enumerate(EDUCATION_LABELS)}
+        _occ_cdfs = np.array([np.cumsum(OCCUPATION_PROBS_BY_EDUCATION[lbl]) for lbl in EDUCATION_LABELS])
+        _occ_cdfs[:, -1] = 1.0
+        _person_edu = Education[person_mask]
+        _edu_codes = np.array([_edu_to_code.get(str(e), 0) for e in _person_edu], dtype=np.intp)
+        _u = rng.random(n_person)
+        _occ_idx = np.array([
+            np.searchsorted(_occ_cdfs[ec], u) for ec, u in zip(_edu_codes, _u)
+        ], dtype=np.intp)
+        _occ_idx = np.clip(_occ_idx, 0, len(_occ_labels) - 1)
+        Occupation[person_idx] = _occ_labels[_occ_idx]
 
     income_raw = _generate_correlated_income(rng, Education, Occupation, person_mask, N)
     YearlyIncome = pd.array(
@@ -1670,16 +1734,22 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
 
     children_raw = np.zeros(N, dtype="int64")
     if n_person:
+        # Vectorized: build per-person lambda from (marital, bracket) lookup,
+        # then single Poisson draw for all persons.
         person_marital = MaritalStatus[person_mask]
-        for ms in MARITAL_STATUS_LABELS:
-            for bracket in range(len(AGE_GROUP_LABELS)):
-                combo = (person_marital == ms) & (person_age_bracket == bracket)
-                n_c = int(combo.sum())
-                if n_c:
-                    lam = CHILDREN_LAMBDA_BY_MARITAL_AGE.get((ms, bracket), 1.0)
-                    children_raw[person_idx[combo]] = np.clip(
-                        rng.poisson(lam=lam, size=n_c), 0, MAX_CHILDREN - 1,
-                    )
+        _ms_to_code = {lbl: i for i, lbl in enumerate(MARITAL_STATUS_LABELS)}
+        _ms_codes = np.array([_ms_to_code.get(str(m), 0) for m in person_marital], dtype=np.intp)
+        _n_ms = len(MARITAL_STATUS_LABELS)
+        _n_br = len(AGE_GROUP_LABELS)
+        # Build lambda lookup table: (n_marital, n_brackets)
+        _lam_table = np.ones((_n_ms, _n_br), dtype=np.float64)
+        for _mi, _ml in enumerate(MARITAL_STATUS_LABELS):
+            for _bi in range(_n_br):
+                _lam_table[_mi, _bi] = CHILDREN_LAMBDA_BY_MARITAL_AGE.get((_ml, _bi), 1.0)
+        _per_person_lam = _lam_table[_ms_codes, person_age_bracket]
+        children_raw[person_idx] = np.clip(
+            rng.poisson(lam=_per_person_lam), 0, MAX_CHILDREN - 1,
+        )
     TotalChildren = pd.array(
         np.where(IsOrg, pd.NA, children_raw), dtype="Int64",
     )
@@ -1715,20 +1785,32 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     HomeOwnership = np.empty(N, dtype=object)
     HomeOwnership[:] = None
     if n_person:
+        # Vectorized: pre-build CDF for all (income_group, age_bracket) combos,
+        # then single-pass sampling via uniform + searchsorted.
+        _ho_labels = HOME_OWNERSHIP_LABELS
+        _ig_list = list(HOME_OWNERSHIP_PROBS_BY_INCOME.keys())
+        _ig_to_code = {lbl: i for i, lbl in enumerate(_ig_list)}
+        _n_ig = len(_ig_list)
+        _n_br = len(AGE_GROUP_LABELS)
+        _n_ho = len(_ho_labels)
+        # Build CDF table: (n_income_groups, n_brackets, n_ho_labels)
+        _ho_cdfs = np.zeros((_n_ig, _n_br, _n_ho), dtype=np.float64)
+        for _ii, _ig_lbl in enumerate(_ig_list):
+            base_probs = HOME_OWNERSHIP_PROBS_BY_INCOME[_ig_lbl]
+            for _bi in range(_n_br):
+                adjusted = np.clip(base_probs + HOME_OWNERSHIP_AGE_SHIFT[_bi], 0.01, None)
+                _ho_cdfs[_ii, _bi] = np.cumsum(adjusted / adjusted.sum())
+                _ho_cdfs[_ii, _bi, -1] = 1.0
+
         ig = IncomeGroup[person_mask]
-        for grp, base_probs in HOME_OWNERSHIP_PROBS_BY_INCOME.items():
-            grp_mask_local = ig == grp
-            if not grp_mask_local.any():
-                continue
-            for bracket in range(len(AGE_GROUP_LABELS)):
-                combo = grp_mask_local & (person_age_bracket == bracket)
-                n_c = int(combo.sum())
-                if n_c:
-                    adjusted = np.clip(base_probs + HOME_OWNERSHIP_AGE_SHIFT[bracket], 0.01, None)
-                    adjusted = adjusted / adjusted.sum()
-                    HomeOwnership[person_idx[combo]] = rng.choice(
-                        HOME_OWNERSHIP_LABELS, size=n_c, p=adjusted,
-                    )
+        _ig_codes = np.array([_ig_to_code.get(str(g), 0) for g in ig], dtype=np.intp)
+        _u = rng.random(n_person)
+        _ho_idx = np.array([
+            np.searchsorted(_ho_cdfs[ic, br], u)
+            for ic, br, u in zip(_ig_codes, person_age_bracket, _u)
+        ], dtype=np.intp)
+        _ho_idx = np.clip(_ho_idx, 0, _n_ho - 1)
+        HomeOwnership[person_idx] = _ho_labels[_ho_idx]
 
     NumberOfCars = np.full(N, pd.NA, dtype=object)
     if n_person:

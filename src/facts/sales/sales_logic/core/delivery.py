@@ -81,13 +81,15 @@ def _stable_row_hash(order_dates: np.ndarray, product_keys: np.ndarray) -> np.nd
 # compute_dates
 # ----------------------------------------------------------------
 
-def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
+def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
+                   *, channel_keys=None, channel_fulfillment_days=None):
     """
     Compute due dates, delivery dates, delivery status, and order delay flag.
 
     Supports:
     - order_ids_int present  → order-level coherent behavior
     - order_ids_int is None → row-level fallback (skip_order_cols=True)
+    - channel_keys + channel_fulfillment_days → channel-aware due date offsets
 
     Returns dict of numpy arrays:
       due_date: datetime64[D]
@@ -124,10 +126,23 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates):
         hash_vals = _stable_row_hash(order_dates, product_keys)
 
     # ------------------------------------------------------------
-    # Due dates: 3..7 days after order date
+    # Due dates: channel-aware fulfillment + jitter
+    # CORRELATION #3: SalesChannelKey → DeliveryDate
+    # Physical channels (Store, Kiosk) → 0 days base (immediate)
+    # Digital channels → 2-5 days base
+    # B2B → 5-10 days base
+    # Fallback (no channel data): 3..7 days (original behavior)
     # ------------------------------------------------------------
-    # (hash % 5) in [0..4] -> +3 in [3..7]
-    due_offset = (hash_vals % 5) + 3
+    if channel_keys is not None and channel_fulfillment_days is not None:
+        _ch = np.asarray(channel_keys, dtype=np.int16)
+        _ch_clipped = np.clip(_ch, 0, len(channel_fulfillment_days) - 1)
+        _base_days = channel_fulfillment_days[_ch_clipped].astype(np.int64)
+        # Add hash-based jitter: -1 to +2 days around the base
+        _jitter = (hash_vals % 4) - 1  # -1, 0, 1, 2
+        due_offset = np.maximum(_base_days + _jitter, 0)
+    else:
+        # Original behavior: 3..7 days
+        due_offset = (hash_vals % 5) + 3
     due_date = order_dates + due_offset.astype("timedelta64[D]")
 
     # ------------------------------------------------------------

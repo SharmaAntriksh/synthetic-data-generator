@@ -7,9 +7,9 @@
 # ------------------------------------------------------------------
 scale:
   sales_rows: 1032850
-  products: 2517
-  customers: 48348
-  stores: 20
+  products: 22517
+  customers: 88348
+  stores: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -46,6 +46,7 @@ sales:
   partition_by: ["Year", "Month"]     # null or [] to disable
 
   optimize: false                      # sort merged files for better query perf
+  quality_report: false                  # generate HTML data quality report after packaging
 
   advanced:
     chunk_size: 1_000_000
@@ -227,10 +228,10 @@ dates:
   include:
     calendar: true
     iso: false
-    fiscal: true
+    fiscal: false
 
     weekly_fiscal:
-      enabled: true
+      enabled: false
       first_day_of_week: 0
       weekly_type: "Last"
       quarter_week_type: "445"

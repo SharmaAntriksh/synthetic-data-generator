@@ -54,13 +54,23 @@ def apply_promotions(
     promo_end_all,
     no_discount_key=1,
     promo_weight_all=None,
+    *,
+    channel_keys=None,
+    promo_channel_group=None,
 ):
     """
     Assign at most one PromotionKey per row.
 
     For each row, picks uniformly (or weighted) among promotions whose
-    [StartDate, EndDate] window covers that row's order date.  Rows with
-    no active promotion receive ``no_discount_key``.
+    [StartDate, EndDate] window covers that row's order date.
+
+    CORRELATION #5: When channel_keys and promo_channel_group are provided,
+    promotions are filtered by channel affinity:
+      - promo_channel_group=0 → any channel
+      - promo_channel_group=1 → physical channels only (1=Store, 5=CallCenter, 10=Kiosk)
+      - promo_channel_group=2 → digital channels only (2,3,6,7,8)
+
+    Rows with no active promotion receive ``no_discount_key``.
 
     Returns:
       promo_keys: int64 array (len n)
@@ -103,6 +113,16 @@ def apply_promotions(
     unique_dates, inv = np.unique(order_dates, return_inverse=True)
     U = unique_dates.size
 
+    # Build channel-group masks for promo filtering
+    # Physical: 1=Store, 5=CallCenter, 10=Kiosk
+    # Digital:  2=Online, 3=Marketplace, 6=Web, 7=MobileApp, 8=SocialCommerce
+    # Business: 4=B2B, 9=PartnerReseller (accept only universal promos)
+    _PHYSICAL_CH = frozenset({1, 5, 10})
+    _DIGITAL_CH = frozenset({2, 3, 6, 7, 8})
+    _BUSINESS_CH = frozenset({4, 9})
+    _has_ch_filter = (channel_keys is not None and promo_channel_group is not None
+                      and len(promo_channel_group) == P)
+
     # U is typically <= 31 when month-sliced; building lists is fast
     # and avoids a U×P boolean matrix
     active_indices_per_date = []
@@ -125,21 +145,80 @@ def apply_promotions(
         ge = int(group_starts[code + 1])
         rows = group_order[gs:ge]
 
-        if weights is None:
-            chosen = idx[rng.integers(0, idx.size, size=count)]
+        # CORRELATION #5: filter promos by channel affinity.
+        # Batch by channel type (physical/digital/business/other) — only
+        # 4 groups, so we filter promos once per group and vectorized-
+        # sample all rows in that group at once.  O(groups × promos)
+        # instead of O(rows × promos).
+        if _has_ch_filter:
+            row_channels = np.asarray(channel_keys, dtype=np.int16)[rows]
+            _pcg = np.asarray(promo_channel_group, dtype=np.int8)
+            _pcg_idx = _pcg[idx]  # promo channel groups for active promos
+
+            # Classify each row into a channel type code: 0=other, 1=physical, 2=digital, 3=business
+            _ch_type = np.zeros(count, dtype=np.int8)
+            for _phk in _PHYSICAL_CH:
+                _ch_type[row_channels == _phk] = 1
+            for _dgk in _DIGITAL_CH:
+                _ch_type[row_channels == _dgk] = 2
+            for _bk in _BUSINESS_CH:
+                _ch_type[row_channels == _bk] = 3
+
+            for _ct in np.unique(_ch_type):
+                _ct_mask = _ch_type == _ct
+                _ct_count = int(_ct_mask.sum())
+                if _ct_count == 0:
+                    continue
+                _ct_rows = rows[_ct_mask]
+
+                # Filter promos: group=0 (any) always accepted
+                _ok = _pcg_idx == 0
+                if _ct == 1:    # physical
+                    _ok |= _pcg_idx == 1
+                elif _ct == 2:  # digital
+                    _ok |= _pcg_idx == 2
+                elif _ct == 3:  # business — only universal promos
+                    pass
+                else:           # unknown — accept all
+                    _ok[:] = True
+
+                _filtered = idx[_ok]
+                if _filtered.size == 0:
+                    continue  # keep no_discount_key
+
+                # Vectorized batch sample for all rows in this channel type
+                if weights is None:
+                    _chosen = _filtered[rng.integers(0, _filtered.size, size=_ct_count)]
+                else:
+                    _w = weights[_filtered]
+                    _s = float(_w.sum())
+                    if _s <= 0.0:
+                        _chosen = _filtered[rng.integers(0, _filtered.size, size=_ct_count)]
+                    else:
+                        _cdf = np.cumsum(_w, dtype=np.float64)
+                        _cdf /= _cdf[-1]
+                        _cdf[-1] = 1.0
+                        _u = rng.random(_ct_count)
+                        _j = np.searchsorted(_cdf, _u, side="right")
+                        _chosen = _filtered[np.minimum(_j, _filtered.size - 1)]
+
+                promo_keys[_ct_rows] = promo_keys_all[_chosen]
         else:
-            w = weights[idx]
-            s = float(w.sum())
-            if s <= 0.0:
+            if weights is None:
                 chosen = idx[rng.integers(0, idx.size, size=count)]
             else:
-                cdf = np.cumsum(w, dtype=np.float64)
-                cdf /= cdf[-1]
-                cdf[-1] = 1.0  # prevent fp rounding from leaving cdf[-1] < 1.0
-                u = rng.random(count)
-                j = np.searchsorted(cdf, u, side="right")
-                chosen = idx[np.minimum(j, idx.size - 1)]
+                w = weights[idx]
+                s = float(w.sum())
+                if s <= 0.0:
+                    chosen = idx[rng.integers(0, idx.size, size=count)]
+                else:
+                    cdf = np.cumsum(w, dtype=np.float64)
+                    cdf /= cdf[-1]
+                    cdf[-1] = 1.0  # prevent fp rounding from leaving cdf[-1] < 1.0
+                    u = rng.random(count)
+                    j = np.searchsorted(cdf, u, side="right")
+                    chosen = idx[np.minimum(j, idx.size - 1)]
 
-        promo_keys[rows] = promo_keys_all[chosen]
+            promo_keys[rows] = promo_keys_all[chosen]
 
     return promo_keys
