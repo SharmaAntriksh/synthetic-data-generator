@@ -7,6 +7,7 @@ Supports CSV, Parquet, and Delta Lake formats with paginated row preview.
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -43,6 +44,42 @@ def _csv_row_count(path: Path) -> int:
     with _csv_row_cache_lock:
         _csv_row_cache[key] = (mtime, count)
     return count
+
+
+# ---------------------------------------------------------------------------
+# Folder name parser
+# ---------------------------------------------------------------------------
+
+# Pattern: "2026-03-16 01_23_55 PM Customers 88K Sales 1M CSV"
+_FOLDER_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2})\s+"         # date
+    r"(\d{2}_\d{2}_\d{2}\s+[AP]M)\s+"  # time
+    r"(.+?)\s+"                         # description (e.g. "Customers 88K Sales 1M")
+    r"(CSV|PARQUET|DELTAPARQUET)$",     # format tag
+    re.IGNORECASE,
+)
+
+
+def _parse_folder_name(name: str) -> Dict[str, str]:
+    """Parse a generated dataset folder name into date, time, description, format."""
+    m = _FOLDER_RE.match(name)
+    if m:
+        raw_time = m.group(2).replace("_", ":")
+        # Build a sortable ISO datetime string (24h format)
+        try:
+            from datetime import datetime
+            dt = datetime.strptime(f"{m.group(1)} {raw_time}", "%Y-%m-%d %I:%M:%S %p")
+            sort_key = dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            sort_key = name
+        return {
+            "date": m.group(1),
+            "time": raw_time,
+            "description": m.group(3),
+            "format_tag": m.group(4).upper(),
+            "sort_key": sort_key,
+        }
+    return {"date": "", "time": "", "description": name, "format_tag": "", "sort_key": name}
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +245,8 @@ def _read_preview(dataset_path: Path, table: Dict[str, Any],
         from deltalake import DeltaTable
         dt = DeltaTable(str(full_path))
         ds = dt.to_pyarrow_dataset()
-        total_rows = dt.to_pyarrow_table().num_rows
-        columns = dt.schema().to_pyarrow().names
+        columns = dt.schema().to_arrow().names
+        total_rows = ds.count_rows()
 
         # Read a slice via scanner
         scanner = ds.scanner(columns=columns)
@@ -265,29 +302,36 @@ def list_datasets():
         return {"datasets": []}
 
     datasets = []
-    for entry in sorted(_DATASETS_DIR.iterdir(), reverse=True):
+    for entry in _DATASETS_DIR.iterdir():
         if not entry.is_dir():
             continue
-        # Skip hidden/system folders
         if entry.name.startswith(".") or entry.name.startswith("_"):
             continue
 
         fmt = _detect_format(entry)
         tables = _discover_tables(entry, fmt)
 
-        # Calculate total size
         total_size = 0
         for root, _dirs, files in os.walk(entry):
             for f in files:
                 total_size += os.path.getsize(os.path.join(root, f))
 
+        parsed = _parse_folder_name(entry.name)
         datasets.append({
             "name": entry.name,
+            "date": parsed["date"],
+            "time": parsed["time"],
+            "description": parsed["description"],
             "format": fmt,
             "table_count": len(tables),
             "size_mb": round(total_size / (1024 * 1024), 1),
             "has_config": (entry / "config" / "config.yaml").exists(),
+            "_sort_key": parsed["sort_key"],
         })
+
+    datasets.sort(key=lambda d: d["_sort_key"], reverse=True)
+    for d in datasets:
+        del d["_sort_key"]
 
     return {"datasets": datasets}
 

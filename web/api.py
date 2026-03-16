@@ -24,6 +24,7 @@ from web.routes.models_routes import router as models_router
 from web.routes.generation_routes import router as generation_router
 from web.routes.presets_routes import router as presets_router
 from web.routes.data_routes import router as data_router
+from web.routes.import_routes import router as import_router
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -64,6 +65,7 @@ app.include_router(models_router)
 app.include_router(generation_router)
 app.include_router(presets_router)
 app.include_router(data_router)
+app.include_router(import_router)
 
 # ---------------------------------------------------------------------------
 # Include routers — versioned paths (/v1/api/...)
@@ -74,6 +76,7 @@ app.include_router(models_router, prefix="/v1")
 app.include_router(generation_router, prefix="/v1")
 app.include_router(presets_router, prefix="/v1")
 app.include_router(data_router, prefix="/v1")
+app.include_router(import_router, prefix="/v1")
 
 # ---------------------------------------------------------------------------
 # Favicon (suppress browser 404)

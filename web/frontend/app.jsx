@@ -701,6 +701,10 @@ function App() {
           <span>Data Preview</span>
         </button>
         {page === "data" && <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6}}>Browse generated datasets</div>}
+        <button onClick={() => setPage(page === "import" ? "main" : "import")} style={{width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${page === "import" ? "var(--accent)" : "var(--border)"}`, background: page === "import" ? "var(--glow)" : "var(--surface)", color: page === "import" ? "var(--accent)" : "var(--dim)", fontSize: 12.5, fontWeight: page === "import" ? 600 : 500, cursor: "pointer", fontFamily: "var(--sans)", transition: "all .15s", display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6}}>
+          <span>SQL Server Import</span>
+        </button>
+        {page === "import" && <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6}}>Import CSV data into SQL Server</div>}
 
         {/* Validation */}
         {cfg && <>
@@ -745,7 +749,7 @@ function App() {
       </div>}
 
       {/* ═══ MAIN ═══ */}
-      <div className="main-content" style={{flex: 1, padding: "28px 40px", maxWidth: page === "data" ? "none" : 1120, overflowY: "auto", paddingBottom: page === "main" ? 80 : 28}}>
+      <div className="main-content" style={{flex: 1, padding: "28px 40px", maxWidth: (page === "data" || page === "import") ? "none" : 1120, overflowY: "auto", paddingBottom: page === "main" ? 80 : 28}}>
 
         {page === "models" ? (
         /* ═══ MODELS EDITOR PAGE ═══ */
@@ -905,6 +909,10 @@ function App() {
         ) : page === "data" ? (
         /* ═══ DATA PREVIEW PAGE ═══ */
         <DataPreview onBack={() => setPage("main")} />
+
+        ) : page === "import" ? (
+        /* ═══ SQL IMPORT PAGE ═══ */
+        <SqlImport onBack={() => setPage("main")} />
 
         ) : page === "config" ? (
         /* ═══ CONFIG YAML EDITOR PAGE ═══ */
