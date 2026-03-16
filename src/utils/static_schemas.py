@@ -595,7 +595,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("Gender", VARCHAR(10, not_null=False)),
         ("FirstName", VARCHAR(100, not_null=True)),
         ("LastName", VARCHAR(100, not_null=True)),
-        ("MiddleName", VARCHAR(10, not_null=False)),
+        ("MiddleName", VARCHAR(50, not_null=False)),
         ("BirthDate", DATE_NN),
         ("MaritalStatus", CHAR(1, not_null=True)),
         ("EmailAddress", VARCHAR(200, not_null=True)),
