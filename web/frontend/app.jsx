@@ -63,10 +63,11 @@ function App() {
 
   /* Sidebar collapse */
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [validationOpen, setValidationOpen] = useState(false);
+  const [regenOpen, setRegenOpen] = useState(false);
 
   /* Preset preview */
   const [previewPreset, setPreviewPreset] = useState(null);
-  const [previewData, setPreviewData] = useState(null);
 
   /* Models YAML state */
   const [modelsYaml, setModelsYaml] = useState("");
@@ -90,16 +91,12 @@ function App() {
   const [page, setPage_] = useState("main");
   const setPage = useCallback((targetPage) => {
     document.activeElement?.blur();
-    const scrollY = window.scrollY;
     setPage_(targetPage);
     if (targetPage === "config") loadCfgYaml();
     if (targetPage === "models") {
       fetch(API + "/models").then(r => r.text()).then(text => { setModelsYaml(text); setModelsOrig(text); }).catch(() => {});
       fetch(API + "/models/form").then(r => r.json()).then(data => setModelsForm(data)).catch(() => {});
     }
-    const restore = () => window.scrollTo(0, scrollY);
-    restore();
-    requestAnimationFrame(() => { restore(); requestAnimationFrame(restore); });
   }, []);
 
   /* ─── Initial load ─── */
@@ -613,11 +610,11 @@ function App() {
   const sidebarWidth = sidebarOpen ? 360 : 0;
 
   return (
-    <div className="app-layout" style={{display: "flex", minHeight: "100vh"}}>
+    <div className="app-layout" style={{display: "flex", height: "100vh", overflow: "hidden"}}>
       {toast && <div style={{position: "fixed", top: 16, right: 16, zIndex: 999, background: toast.includes("failed") ? "var(--err)" : "var(--accent)", color: "#fff", padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, boxShadow: "0 6px 24px var(--shadow)", animation: "slideIn .28s ease"}}>{toast}</div>}
 
       {/* ═══ SIDEBAR ═══ */}
-      <div className="app-sidebar" style={{width: sidebarWidth, flexShrink: 0, background: "var(--surface)", borderRight: sidebarOpen ? "1px solid var(--border)" : "none", overflowY: "auto", overflowX: "hidden", transition: "width .2s", position: "relative"}}>
+      <div className="app-sidebar" style={{width: sidebarWidth, flexShrink: 0, height: "100vh", background: "var(--surface)", borderRight: sidebarOpen ? "1px solid var(--border)" : "none", overflowY: "auto", overflowX: "hidden", transition: "width .2s", position: "sticky", top: 0}}>
         {sidebarOpen && <div style={{padding: 20, width: 360}}>
         <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10}}>
           <div style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase"}}>Presets</div>
@@ -670,20 +667,19 @@ function App() {
         })()}
 
         <div style={{borderTop: "1px solid var(--border)", margin: "20px 0"}} />
-        <div style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase", marginBottom: 10}}>Models</div>
-        <button onClick={() => setPage(page === "models" ? "main" : "models")} style={{width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${page === "models" ? "var(--accent)" : "var(--border)"}`, background: page === "models" ? "var(--glow)" : "var(--surface)", color: page === "models" ? "var(--accent)" : "var(--dim)", fontSize: 12.5, fontWeight: page === "models" ? 600 : 500, cursor: "pointer", fontFamily: "var(--sans)", transition: "all .15s", display: "flex", alignItems: "center", justifyContent: "space-between"}}>
-          <span>Models Configuration</span>
-          {(modelsDirty || modelsApplied) && <span style={{width: 7, height: 7, borderRadius: "50%", background: modelsDirty ? "var(--warn)" : "var(--accent)", flexShrink: 0}} />}
-        </button>
-        {page === "models" && <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6}}>Editing models.yaml in memory</div>}
-
-        <div style={{borderTop: "1px solid var(--border)", margin: "20px 0"}} />
-        <div style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase", marginBottom: 10}}>Config</div>
-        <button onClick={() => setPage(page === "config" ? "main" : "config")} style={{width: "100%", padding: "9px 12px", borderRadius: 8, border: `1px solid ${page === "config" ? "var(--accent)" : "var(--border)"}`, background: page === "config" ? "var(--glow)" : "var(--surface)", color: page === "config" ? "var(--accent)" : "var(--dim)", fontSize: 12.5, fontWeight: page === "config" ? 600 : 500, cursor: "pointer", fontFamily: "var(--sans)", transition: "all .15s", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6}}>
-          <span>Config YAML</span>
-          {cfgYamlDirty && <span style={{width: 7, height: 7, borderRadius: "50%", background: "var(--warn)", flexShrink: 0}} />}
-        </button>
-        {page === "config" && <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6, marginBottom: 6}}>Editing config.yaml in memory</div>}
+        <div style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase", marginBottom: 10}}>Configuration</div>
+        <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6}}>
+          <button onClick={() => setPage(page === "models" ? "main" : "models")} style={{padding: "9px 10px", borderRadius: 8, border: `1px solid ${page === "models" ? "var(--accent)" : "var(--border)"}`, background: page === "models" ? "var(--glow)" : "var(--surface)", color: page === "models" ? "var(--accent)" : "var(--dim)", fontSize: 12, fontWeight: page === "models" ? 600 : 500, cursor: "pointer", fontFamily: "var(--sans)", transition: "all .15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 6}}>
+            <span>Models</span>
+            {(modelsDirty || modelsApplied) && <span style={{width: 7, height: 7, borderRadius: "50%", background: modelsDirty ? "var(--warn)" : "var(--accent)", flexShrink: 0}} />}
+          </button>
+          <button onClick={() => setPage(page === "config" ? "main" : "config")} style={{padding: "9px 10px", borderRadius: 8, border: `1px solid ${page === "config" ? "var(--accent)" : "var(--border)"}`, background: page === "config" ? "var(--glow)" : "var(--surface)", color: page === "config" ? "var(--accent)" : "var(--dim)", fontSize: 12, fontWeight: page === "config" ? 600 : 500, cursor: "pointer", fontFamily: "var(--sans)", transition: "all .15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 6}}>
+            <span>Config</span>
+            {cfgYamlDirty && <span style={{width: 7, height: 7, borderRadius: "50%", background: "var(--warn)", flexShrink: 0}} />}
+          </button>
+        </div>
+        {page === "models" && <div style={{fontSize: 11, color: "var(--muted)", marginBottom: 4}}>Editing models.yaml in memory</div>}
+        {page === "config" && <div style={{fontSize: 11, color: "var(--muted)", marginBottom: 4}}>Editing config.yaml in memory</div>}
         <button onClick={() => {
           Promise.all([
             fetch(API + "/config/yaml").then(r => r.text()),
@@ -693,7 +689,7 @@ function App() {
             downloadFile(cfgText, "config.yaml", "text/yaml");
             setTimeout(() => downloadFile(modelsText, "models.yaml", "text/yaml"), 100);
           }).catch(() => {});
-        }} style={{width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--dim)", fontSize: 12, cursor: "pointer", fontFamily: "var(--sans)"}}>Download configs</button>
+        }} style={{width: "100%", padding: "7px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--dim)", fontSize: 11.5, cursor: "pointer", fontFamily: "var(--sans)"}}>Download configs</button>
 
         <div style={{borderTop: "1px solid var(--border)", margin: "20px 0"}} />
         <div style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase", marginBottom: 10}}>Data</div>
@@ -706,25 +702,24 @@ function App() {
         </button>
         {page === "import" && <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6}}>Import CSV data into SQL Server</div>}
 
-        {/* Validation */}
-        {cfg && <>
-          <div style={{borderTop: "1px solid var(--border)", margin: "20px 0"}} />
-          <div style={{display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8}}>
-            <div style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase"}}>Validation</div>
-            <Badge variant={errors.length > 0 ? "error" : warnings.length > 0 ? "warning" : "success"}>{errors.length > 0 ? `${errors.length} error${errors.length > 1 ? "s" : ""}` : warnings.length > 0 ? `${warnings.length} warning${warnings.length > 1 ? "s" : ""}` : "Valid"}</Badge>
-          </div>
-          {errors.length === 0 && warnings.length === 0 && <div style={{fontSize: 11.5, color: "var(--dim)", display: "flex", alignItems: "center", gap: 6}}><span style={{color: "var(--ok)"}}>&#10003;</span> Configuration looks good.</div>}
-          {errors.map((errorMsg, idx) => <div key={`e${idx}`} style={{padding: "7px 10px", borderRadius: 6, marginTop: 4, fontSize: 11.5, display: "flex", alignItems: "flex-start", gap: 6, background: "var(--errBg)", color: "var(--err)"}}><span style={{fontWeight: 700, flexShrink: 0}}>&#10005;</span><span>{errorMsg}</span></div>)}
-          {warnings.map((warnMsg, idx) => <div key={`w${idx}`} style={{padding: "7px 10px", borderRadius: 6, marginTop: 4, fontSize: 11.5, display: "flex", alignItems: "flex-start", gap: 6, background: "var(--warnBg)", color: "var(--warn)"}}><span style={{fontWeight: 700, flexShrink: 0}}>&#9888;</span><span>{warnMsg}</span></div>)}
-        </>}
-
         {/* Regenerate Dimensions */}
-        {cfg && <>
+        {cfg && (() => {
+          const regenCount = cfg.regenAll ? DIMS.length : DIMS.filter(d => cfg.regenDims[d]).length;
+          return <>
           <div style={{borderTop: "1px solid var(--border)", margin: "20px 0"}} />
-          <div style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase", marginBottom: 8}}>Regenerate</div>
-          <div style={{marginBottom: 8}}><Check checked={cfg.regenAll} onChange={v => s("regenAll", v)} label="All dimensions" /></div>
-          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6}}>{DIMS.map(dim => <Check key={dim} checked={cfg.regenAll || !!cfg.regenDims[dim]} onChange={v => s("regenDims", {...cfg.regenDims, [dim]: v})} label={dim.replace("_", " ")} disabled={cfg.regenAll} />)}</div>
-        </>}
+          <button onClick={() => setRegenOpen(!regenOpen)} style={{width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--dim)", fontSize: 12.5, fontWeight: 500, cursor: "pointer", fontFamily: "var(--sans)", transition: "all .12s"}}>
+            <span style={{display: "flex", alignItems: "center", gap: 8}}>
+              <span style={{fontSize: 10.5, fontWeight: 700, color: "var(--muted)", letterSpacing: ".09em", textTransform: "uppercase"}}>Regenerate</span>
+              {regenCount > 0 && <span style={{padding: "1px 7px", borderRadius: 10, background: "var(--accent)", color: "#fff", fontSize: 10, fontWeight: 600}}>{cfg.regenAll ? "all" : regenCount}</span>}
+            </span>
+            <span style={{fontSize: 11, color: "var(--muted)", transition: "transform .15s", transform: regenOpen ? "rotate(180deg)" : "none"}}>{"\u25BE"}</span>
+          </button>
+          {regenOpen && <div style={{padding: "10px 12px", marginTop: 6, borderRadius: 8, border: "1px solid var(--border)", background: "var(--alt)"}}>
+            <div style={{marginBottom: 8}}><Check checked={cfg.regenAll} onChange={v => s("regenAll", v)} label="All dimensions" /></div>
+            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4}}>{DIMS.map(dim => <Check key={dim} checked={cfg.regenAll || !!cfg.regenDims[dim]} onChange={v => s("regenDims", {...cfg.regenDims, [dim]: v})} label={dim.replace("_", " ")} disabled={cfg.regenAll} />)}</div>
+          </div>}
+          </>;
+        })()}
 
         {/* Run history */}
         {runHistory.length > 0 && <>
@@ -749,7 +744,8 @@ function App() {
       </div>}
 
       {/* ═══ MAIN ═══ */}
-      <div className="main-content" style={{flex: 1, padding: "28px 40px", maxWidth: (page === "data" || page === "import") ? "none" : 1120, overflowY: "auto", paddingBottom: page === "main" ? 80 : 28}}>
+      <div className="main-content" style={{flex: 1, overflowY: "auto", display: "flex", flexDirection: "column"}}>
+      <div style={{flex: 1, padding: "28px 40px", paddingBottom: 28, maxWidth: (page === "data" || page === "import") ? "none" : 1120}}>
 
         {page === "models" ? (
         /* ═══ MODELS EDITOR PAGE ═══ */
@@ -952,33 +948,54 @@ function App() {
             {cfg.wlEnabled && <>{" · "}<Badge>Wishlists</Badge></>}
             {cfg.ccEnabled && <>{" · "}<Badge>Complaints</Badge></>}
           </div>
-          <div style={{marginTop: 14}}>
-            <button onClick={runGenerate} disabled={errors.length > 0 || isRunning} style={{width: "100%", padding: "12px 24px", borderRadius: 10, border: "none", fontSize: 14, fontWeight: 700, cursor: errors.length > 0 ? "not-allowed" : "pointer", fontFamily: "var(--sans)", transition: "all .15s", background: errors.length > 0 ? "var(--alt)" : "var(--accent)", color: errors.length > 0 ? "var(--muted)" : "#fff", opacity: isRunning ? .7 : 1, boxShadow: errors.length === 0 && !isRunning ? "0 4px 16px rgba(79,91,213,.2)" : "none"}}>{isRunning ? "Generating..." : "Generate Data"}</button>
-            {isRunning && <button onClick={cancelGenerate} style={{width: "100%", padding: 10, marginTop: 8, borderRadius: 10, border: "1px solid var(--err)", background: "var(--errBg)", color: "var(--err)", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "var(--sans)"}}>Cancel</button>}
-          </div>
           <LogViewer logs={logs} isRunning={isRunning} elapsed={elapsed} />
         </Section>
         </div>
         )}
-      </div>
+      </div>{/* end inner content padding div */}
 
-      {/* ═══ STICKY GENERATE BAR (main page only) ═══ */}
-      {page === "main" && (
-        <div className="sticky-generate-bar" style={{position: "fixed", bottom: 0, right: 0, left: sidebarWidth, background: "var(--surface)", borderTop: "1px solid var(--border)", padding: "10px 24px", zIndex: 90, display: "flex", alignItems: "center", gap: 14, boxShadow: "0 -2px 12px var(--shadow)", transition: "left .2s"}}>
-          <div style={{flex: 1, display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: "var(--dim)", overflow: "hidden"}}>
-            <strong style={{color: "var(--text)", flexShrink: 0}}>{cfg.salesRows.toLocaleString()} rows</strong>
-            <span style={{color: "var(--muted)"}}>{cfg.startDate} {"\u2192"} {cfg.endDate}</span>
-            {isRunning && <><span style={{width: 7, height: 7, borderRadius: "50%", background: "var(--ok)", animation: "pulse 1.5s infinite", flexShrink: 0}} /><span style={{color: "var(--ok)", fontFamily: "var(--mono)"}}>{elapsed < 60 ? elapsed.toFixed(1) + "s" : Math.floor(elapsed / 60) + "m " + Math.floor(elapsed % 60) + "s"}</span></>}
-            {errors.length > 0 && <Badge variant="error">{errors.length} error{errors.length > 1 ? "s" : ""}</Badge>}
-            <span style={{fontSize: 10.5, color: "var(--muted)", marginLeft: "auto", flexShrink: 0}}>Ctrl+Enter</span>
+      {/* ═══ GENERATE BAR (main page only, sticky inside scroll) ═══ */}
+      {page === "main" && cfg && (
+        <div style={{position: "sticky", bottom: 0, zIndex: 90, marginTop: "auto", padding: "0 40px 12px", maxWidth: 1120}}>
+          {/* Validation panel (slides up) */}
+          {validationOpen && (errors.length > 0 || warnings.length > 0) && (
+            <div style={{background: "var(--surface)", border: "1px solid var(--border)", borderBottom: "none", borderRadius: "10px 10px 0 0", padding: "12px 20px", maxHeight: 200, overflowY: "auto", animation: "fadeIn .15s ease"}}>
+              {errors.map((errorMsg, idx) => <div key={`e${idx}`} style={{padding: "6px 10px", borderRadius: 6, marginBottom: 4, fontSize: 11.5, display: "flex", alignItems: "flex-start", gap: 6, background: "var(--errBg)", color: "var(--err)"}}><span style={{fontWeight: 700, flexShrink: 0}}>&#10005;</span><span>{errorMsg}</span></div>)}
+              {warnings.map((warnMsg, idx) => <div key={`w${idx}`} style={{padding: "6px 10px", borderRadius: 6, marginBottom: 4, fontSize: 11.5, display: "flex", alignItems: "flex-start", gap: 6, background: "var(--warnBg)", color: "var(--warn)"}}><span style={{fontWeight: 700, flexShrink: 0}}>&#9888;</span><span>{warnMsg}</span></div>)}
+            </div>
+          )}
+          {/* Bar */}
+          <div style={{background: "var(--surface)", border: "1px solid var(--border)", borderRadius: validationOpen && (errors.length > 0 || warnings.length > 0) ? "0 0 10px 10px" : 10, padding: "10px 20px", display: "flex", alignItems: "center", gap: 14, boxShadow: "0 2px 12px var(--shadow)"}}>
+            <div style={{flex: 1, display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: "var(--dim)", overflow: "hidden"}}>
+              <strong style={{color: "var(--text)", flexShrink: 0}}>{cfg.salesRows.toLocaleString()} rows</strong>
+              <span style={{color: "var(--muted)"}}>{cfg.startDate} {"\u2192"} {cfg.endDate}</span>
+              {isRunning && <><span style={{width: 7, height: 7, borderRadius: "50%", background: "var(--ok)", animation: "pulse 1.5s infinite", flexShrink: 0}} /><span style={{color: "var(--ok)", fontFamily: "var(--mono)"}}>{elapsed < 60 ? elapsed.toFixed(1) + "s" : Math.floor(elapsed / 60) + "m " + Math.floor(elapsed % 60) + "s"}</span></>}
+              {/* Validation badge — clickable */}
+              {errors.length > 0 ? (
+                <button onClick={() => setValidationOpen(!validationOpen)} style={{background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 4}}>
+                  <Badge variant="error">{errors.length} error{errors.length > 1 ? "s" : ""}</Badge>
+                  {warnings.length > 0 && <Badge variant="warning">{warnings.length}</Badge>}
+                  <span style={{fontSize: 9, color: "var(--muted)", transform: validationOpen ? "rotate(180deg)" : "none", transition: "transform .15s"}}>{"\u25B2"}</span>
+                </button>
+              ) : warnings.length > 0 ? (
+                <button onClick={() => setValidationOpen(!validationOpen)} style={{background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 4}}>
+                  <Badge variant="warning">{warnings.length} warning{warnings.length > 1 ? "s" : ""}</Badge>
+                  <span style={{fontSize: 9, color: "var(--muted)", transform: validationOpen ? "rotate(180deg)" : "none", transition: "transform .15s"}}>{"\u25B2"}</span>
+                </button>
+              ) : (
+                <span style={{display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--ok)"}}>{"\u2713"} Valid</span>
+              )}
+              <span style={{fontSize: 10.5, color: "var(--muted)", marginLeft: "auto", flexShrink: 0}}>Ctrl+Enter</span>
+            </div>
+            {isRunning ?
+              <button onClick={cancelGenerate} style={{padding: "8px 20px", borderRadius: 8, border: "1px solid var(--err)", background: "var(--errBg)", color: "var(--err)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "var(--sans)", whiteSpace: "nowrap"}}>Cancel</button>
+            :
+              <button onClick={runGenerate} disabled={errors.length > 0} style={{padding: "8px 24px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 700, cursor: errors.length > 0 ? "not-allowed" : "pointer", fontFamily: "var(--sans)", background: errors.length > 0 ? "var(--alt)" : "var(--accent)", color: errors.length > 0 ? "var(--muted)" : "#fff", whiteSpace: "nowrap", boxShadow: errors.length === 0 ? "0 2px 8px rgba(79,91,213,.2)" : "none"}}>Generate</button>
+            }
           </div>
-          {isRunning ?
-            <button onClick={cancelGenerate} style={{padding: "8px 20px", borderRadius: 8, border: "1px solid var(--err)", background: "var(--errBg)", color: "var(--err)", fontWeight: 600, fontSize: 12.5, cursor: "pointer", fontFamily: "var(--sans)", whiteSpace: "nowrap"}}>Cancel</button>
-          :
-            <button onClick={runGenerate} disabled={errors.length > 0} style={{padding: "8px 24px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 700, cursor: errors.length > 0 ? "not-allowed" : "pointer", fontFamily: "var(--sans)", background: errors.length > 0 ? "var(--alt)" : "var(--accent)", color: errors.length > 0 ? "var(--muted)" : "#fff", whiteSpace: "nowrap", boxShadow: errors.length === 0 ? "0 2px 8px rgba(79,91,213,.2)" : "none"}}>Generate</button>
-          }
         </div>
       )}
+      </div>{/* end main-content */}
     </div>
   );
 }
