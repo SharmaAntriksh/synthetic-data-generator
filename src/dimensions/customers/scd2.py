@@ -1,0 +1,376 @@
+"""SCD Type 2 — Life Event Engine for customer dimension."""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+from src.utils import info
+from src.defaults import (
+    CUSTOMER_INCOME_MIN as INCOME_MIN,
+    CUSTOMER_INCOME_MAX as INCOME_MAX,
+    CUSTOMER_MAX_CHILDREN as MAX_CHILDREN,
+    CUSTOMER_INCOME_GROUP_EDGES as INCOME_GROUP_EDGES,
+    CUSTOMER_INCOME_GROUP_LABELS as INCOME_GROUP_LABELS,
+    CUSTOMER_REGION_LAT_LON_CENTER as _REGION_LAT_LON_CENTER,
+    CUSTOMER_LAT_LON_JITTER as _LAT_LON_JITTER,
+    CUSTOMER_POSTCODE_FMT as _POSTCODE_FMT,
+    CUSTOMER_STREET_NAMES as _STREET_NAMES,
+    CUSTOMER_STREET_TYPES as _STREET_TYPES,
+)
+
+
+def _income_to_group(income: float) -> str:
+    """Map a yearly income value to its income group label."""
+    idx = int(np.searchsorted(INCOME_GROUP_EDGES, income))
+    return str(INCOME_GROUP_LABELS[min(idx, len(INCOME_GROUP_LABELS) - 1)])
+
+
+def _available_events(state: dict, tier_keys: np.ndarray) -> list:
+    """Return list of (event_name, weight) tuples based on current state."""
+    events = []
+    ms = state.get("MaritalStatus")
+    ho = state.get("HomeOwnership")
+    nc = int(state.get("NumberOfChildren") or 0)
+    tier = int(state.get("LoyaltyTierKey") or 0)
+
+    # Career growth — always available
+    events.append(("career_growth", 0.30))
+
+    # Marriage — if single or divorced
+    if ms in ("Single", "Divorced"):
+        events.append(("marriage", 0.20))
+
+    # Family growth — if married and room for more children
+    if ms == "Married" and nc < MAX_CHILDREN:
+        events.append(("family_growth", 0.15))
+
+    # Home purchase — if not already owning
+    if ho in ("Rent", "Other"):
+        events.append(("home_purchase", 0.10))
+
+    # Relocation — always available
+    events.append(("relocation", 0.10))
+
+    # Divorce — if married
+    if ms == "Married":
+        events.append(("divorce", 0.05))
+
+    # Tier upgrade — if not at max tier
+    if len(tier_keys) > 0 and tier < int(tier_keys[-1]):
+        events.append(("tier_upgrade", 0.15))
+
+    return events
+
+
+def _relocate(rng: np.random.Generator, state: dict,
+              geo_keys: np.ndarray, geo_lookup, _geo_cache: dict = None) -> None:
+    """Change GeographyKey and regenerate address columns to match.
+
+    HomeAddress always changes on relocation.  WorkAddress only changes
+    when the customer moves to a different country (cross-country
+    relocation implies a job change; within the same country, the old
+    workplace is still reachable).
+
+    geo_lookup can be a pd.DataFrame (legacy) or a dict (fast path).
+    _geo_cache is an optional pre-built dict {GeographyKey: (Country, City, State)}.
+    """
+    old_gk = state.get("GeographyKey")
+    new_gk = int(rng.choice(geo_keys))
+    state["GeographyKey"] = new_gk
+
+    # Fast path: dict lookup instead of DataFrame.loc
+    if _geo_cache is not None:
+        old_country = _geo_cache.get(old_gk, ("", "", ""))[0]
+        new_entry = _geo_cache.get(new_gk, ("", "Unknown", "Unknown"))
+        new_country, city, st = new_entry
+    elif isinstance(geo_lookup, dict):
+        old_country = geo_lookup.get(old_gk, ("", "", ""))[0]
+        new_entry = geo_lookup.get(new_gk, ("", "Unknown", "Unknown"))
+        new_country, city, st = new_entry
+    else:
+        # Legacy DataFrame path
+        old_country = (
+            str(geo_lookup.loc[old_gk, "Country"])
+            if old_gk in geo_lookup.index else ""
+        )
+        if new_gk in geo_lookup.index:
+            row = geo_lookup.loc[new_gk]
+            new_country = str(row["Country"])
+            city = str(row["City"])
+            st = str(row["State"])
+        else:
+            new_country, city, st = "", "Unknown", "Unknown"
+    cross_country = old_country != new_country
+
+    # --- Helper: generate a single address string ---
+    def _make_address(c, s):
+        sn = str(rng.integers(1, 9999))
+        sname = str(rng.choice(_STREET_NAMES))
+        stype = str(rng.choice(_STREET_TYPES))
+        ulabel = str(rng.choice(np.array(["Apt", "Suite", "Unit", "Fl", "#"])))
+        unum = str(state.get("CustomerID", 0))
+        return f"{sn} {sname} {stype}, {ulabel} {unum}, {c}, {s}"
+
+    # Regenerate home address (always)
+    state["HomeAddress"] = _make_address(city, st)
+
+    # Regenerate work address only on cross-country moves
+    if cross_country:
+        state["WorkAddress"] = _make_address(city, st)
+
+    # Map country to region code for lat/lon and postal code generation
+    _country_to_region = {
+        "United States": "US", "India": "IN",
+        "United Kingdom": "EU", "Germany": "EU", "France": "EU",
+        "Japan": "AS", "China": "AS", "Australia": "AS",
+    }
+    rc = _country_to_region.get(new_country, "US")
+
+    # Regenerate lat/lon
+    clat, clon = _REGION_LAT_LON_CENTER.get(rc, (39.8, -98.5))
+    jlat, jlon = _LAT_LON_JITTER.get(rc, (5.0, 5.0))
+    state["Latitude"] = round(float(clat + rng.uniform(-jlat, jlat)), 4)
+    state["Longitude"] = round(float(clon + rng.uniform(-jlon, jlon)), 4)
+
+    # Regenerate postal code
+    fmt = _POSTCODE_FMT.get(rc, "5digit")
+    if fmt == "5digit":
+        state["PostalCode"] = f"{rng.integers(10001, 99999):05d}"
+    elif fmt == "6digit":
+        state["PostalCode"] = f"{rng.integers(100001, 999999):06d}"
+    elif fmt == "uk":
+        pfx = str(rng.choice(np.array(["SW", "EC", "W", "SE", "N", "NW", "E", "WC"])))
+        state["PostalCode"] = f"{pfx}{rng.integers(1, 19)} {rng.integers(1, 9)}{chr(rng.integers(65, 91))}{chr(rng.integers(65, 91))}"
+    elif fmt == "jp":
+        v = int(rng.integers(1000000, 9999999))
+        state["PostalCode"] = f"{v // 10000:03d}-{v % 10000:04d}"
+
+
+def _apply_life_event(
+    rng: np.random.Generator,
+    state: dict,
+    event: str,
+    geo_keys: np.ndarray,
+    tier_keys: np.ndarray,
+    geo_lookup,
+    *,
+    _geo_cache: dict = None,
+) -> None:
+    """Apply a life event to the customer state dict (mutates in place)."""
+
+    if event == "career_growth":
+        bump = rng.uniform(0.12, 0.35)
+        income = int(state.get("YearlyIncome") or 0)
+        new_income = int(np.clip(income * (1 + bump), INCOME_MIN, INCOME_MAX))
+        state["YearlyIncome"] = new_income
+        state["IncomeGroup"] = _income_to_group(new_income)
+        # 30% chance of tier upgrade alongside career growth
+        if rng.random() < 0.30 and len(tier_keys) > 0:
+            current_idx = int(np.searchsorted(tier_keys, state["LoyaltyTierKey"]))
+            if current_idx < len(tier_keys) - 1:
+                state["LoyaltyTierKey"] = int(tier_keys[current_idx + 1])
+
+    elif event == "marriage":
+        state["MaritalStatus"] = "Married"
+        # 30% chance of relocation with marriage
+        if rng.random() < 0.30:
+            _relocate(rng, state, geo_keys, geo_lookup, _geo_cache=_geo_cache)
+
+    elif event == "family_growth":
+        nc = int(state.get("NumberOfChildren") or 0)
+        state["NumberOfChildren"] = nc + 1
+        # 40% chance of buying home when having kids
+        if state.get("HomeOwnership") in ("Rent", "Other") and rng.random() < 0.40:
+            state["HomeOwnership"] = "Own"
+        # 20% chance of relocation
+        if rng.random() < 0.20:
+            _relocate(rng, state, geo_keys, geo_lookup, _geo_cache=_geo_cache)
+
+    elif event == "home_purchase":
+        state["HomeOwnership"] = "Own"
+
+    elif event == "relocation":
+        _relocate(rng, state, geo_keys, geo_lookup, _geo_cache=_geo_cache)
+
+    elif event == "divorce":
+        state["MaritalStatus"] = "Divorced"
+        # 50% chance income decreases
+        if rng.random() < 0.50:
+            income = int(state.get("YearlyIncome") or 0)
+            new_income = int(np.clip(income * rng.uniform(0.75, 0.90), INCOME_MIN, INCOME_MAX))
+            state["YearlyIncome"] = new_income
+            state["IncomeGroup"] = _income_to_group(new_income)
+        # 60% chance of relocation
+        if rng.random() < 0.60:
+            _relocate(rng, state, geo_keys, geo_lookup, _geo_cache=_geo_cache)
+        # 35% chance of losing home
+        if state.get("HomeOwnership") == "Own" and rng.random() < 0.35:
+            state["HomeOwnership"] = "Rent"
+
+    elif event == "tier_upgrade":
+        if len(tier_keys) > 0:
+            current_idx = int(np.searchsorted(tier_keys, state["LoyaltyTierKey"]))
+            if current_idx < len(tier_keys) - 1:
+                state["LoyaltyTierKey"] = int(tier_keys[current_idx + 1])
+
+
+def generate_scd2_versions(
+    rng: np.random.Generator,
+    base_df: pd.DataFrame,
+    cust_cfg,
+    geo_keys: np.ndarray,
+    tier_keys: np.ndarray,
+    end_date: pd.Timestamp,
+    geo_lookup: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Expand customer rows with SCD Type 2 version history.
+
+    For a fraction of individual customers (scd2_change_rate), generates
+    coherent life events that modify tracked attributes (GeographyKey,
+    LoyaltyTierKey, YearlyIncome, IncomeGroup, MaritalStatus, HomeOwnership,
+    NumberOfChildren).  Each event creates a new version row with updated
+    EffectiveStartDate / EffectiveEndDate / VersionNumber / IsCurrent.
+    """
+    change_rate = float(getattr(cust_cfg, "change_rate", 0.15))
+    max_versions = int(getattr(cust_cfg, "max_versions", 4))
+
+    # Only individuals get SCD2 versions (orgs stay at version 1)
+    person_mask = base_df["CustomerType"] == "Individual"
+    person_ids = base_df.loc[person_mask, "CustomerID"].to_numpy()
+
+    if len(person_ids) == 0:
+        return base_df
+
+    n_change = max(1, int(len(person_ids) * change_rate))
+    n_change = min(n_change, len(person_ids))
+    change_id_set = set(
+        rng.choice(person_ids, size=n_change, replace=False).tolist()
+    )
+
+    # Separate unchanged customers (pass through) from changed ones
+    _change_mask = base_df["CustomerID"].isin(change_id_set)
+    unchanged_df = base_df[~_change_mask]
+    changed_df = base_df[_change_mask]
+
+    # Pre-build geo cache dict for fast _relocate lookups (avoid DataFrame.loc in tight loop)
+    _geo_cache: dict = {}
+    if isinstance(geo_lookup, pd.DataFrame) and not geo_lookup.empty:
+        for gk in geo_lookup.index:
+            row = geo_lookup.loc[gk]
+            _geo_cache[gk] = (str(row["Country"]), str(row["City"]), str(row["State"]))
+
+    # Pre-allocate with estimated capacity (avg ~2 versions per changed customer)
+    new_rows = []
+    _est_rows = int(len(changed_df) * 2.5)
+    if _est_rows > 0:
+        new_rows = [None] * _est_rows
+    _row_count = 0
+
+    # Pre-convert end_date to int for fast arithmetic
+    _end_epoch = end_date.value // 10**9 // 86400  # days since epoch
+
+    # Use column arrays directly instead of to_dict("records")
+    _col_names = changed_df.columns.tolist()
+    _col_arrays = {col: changed_df[col].to_numpy() for col in _col_names}
+    _n_changed = len(changed_df)
+
+    for _ri in range(_n_changed):
+        # Build row dict from column arrays (faster than to_dict("records"))
+        row_dict = {col: _col_arrays[col][_ri] for col in _col_names}
+
+        # Determine number of life events (1 to max_versions-1)
+        n_events = int(rng.integers(1, max_versions))
+
+        # Space event dates across customer's active period
+        cust_start = pd.Timestamp(row_dict["EffectiveStartDate"])
+        total_days = (end_date - cust_start).days
+
+        # Need at least 90 days per event segment
+        if total_days <= 90:
+            if _row_count < len(new_rows):
+                new_rows[_row_count] = row_dict
+            else:
+                new_rows.append(row_dict)
+            _row_count += 1
+            continue
+
+        n_events = min(n_events, (total_days - 90) // 90)
+        if n_events <= 0:
+            if _row_count < len(new_rows):
+                new_rows[_row_count] = row_dict
+            else:
+                new_rows.append(row_dict)
+            _row_count += 1
+            continue
+
+        # Generate sorted random event offsets.
+        max_offset = max(91, total_days - 90)
+        offsets = np.sort(rng.integers(90, max_offset, size=n_events))
+        # Enforce minimum 60-day gap between events
+        for i in range(1, len(offsets)):
+            if offsets[i] - offsets[i - 1] < 60:
+                offsets[i] = min(offsets[i - 1] + 60, max_offset - 1)
+        # Vectorized date creation: avoid per-event pd.Timedelta
+        _offset_td = offsets.astype("timedelta64[D]")
+        event_dates = np.datetime64(cust_start, "D") + _offset_td
+
+        # Build version chain
+        current_state = dict(row_dict)
+
+        for i in range(len(event_dates)):
+            event_date = pd.Timestamp(event_dates[i])
+            # Close the current version
+            current_state["EffectiveEndDate"] = event_date - pd.Timedelta(days=1)
+            current_state["IsCurrent"] = 0
+            if _row_count < len(new_rows):
+                new_rows[_row_count] = dict(current_state)
+            else:
+                new_rows.append(dict(current_state))
+            _row_count += 1
+
+            # Create new version
+            new_state = dict(current_state)
+            new_state["VersionNumber"] = i + 2
+            new_state["EffectiveStartDate"] = event_date
+            new_state["EffectiveEndDate"] = pd.Timestamp("9999-12-31")
+            new_state["IsCurrent"] = 1
+
+            # Pick and apply a coherent life event
+            available = _available_events(new_state, tier_keys)
+            if not available:
+                break
+            event_names, weights = zip(*available)
+            weights_arr = np.array(weights, dtype="float64")
+            weights_arr /= weights_arr.sum()
+            chosen = str(rng.choice(list(event_names), p=weights_arr))
+            _apply_life_event(rng, new_state, chosen, geo_keys, tier_keys,
+                              geo_lookup, _geo_cache=_geo_cache)
+
+            current_state = new_state
+
+        # Add the final (current) version
+        if _row_count < len(new_rows):
+            new_rows[_row_count] = dict(current_state)
+        else:
+            new_rows.append(dict(current_state))
+        _row_count += 1
+
+    # Trim pre-allocated list
+    new_rows = new_rows[:_row_count]
+
+    # Combine unchanged + expanded rows
+    expanded_df = pd.concat(
+        [unchanged_df, pd.DataFrame(new_rows)],
+        ignore_index=True,
+    )
+
+    # Reassign CustomerKey to be sequential across all version rows
+    expanded_df["CustomerKey"] = np.arange(1, len(expanded_df) + 1, dtype="int64")
+
+    n_total = len(expanded_df)
+    n_base = len(base_df)
+    n_versions = n_total - n_base
+    info(f"SCD2: {n_change} customers expanded, {n_versions} version rows added ({n_total} total)")
+
+    return expanded_df

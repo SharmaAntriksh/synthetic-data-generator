@@ -186,7 +186,7 @@ def _resolve_subcategory_names(df: pd.DataFrame, output_folder: Path) -> np.ndar
     return df["SubcategoryKey"].map(subcat_map).fillna("Unknown").to_numpy()
 
 
-def _enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output_folder: Path) -> pd.DataFrame:
+def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output_folder: Path) -> pd.DataFrame:
     """
     Adds:
       BrandTier, ProductLine, ColorFamily, Material, Style, AgeGroup,

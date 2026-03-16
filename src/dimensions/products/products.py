@@ -3,7 +3,7 @@ from src.utils import info
 from src.utils.logging_utils import stage
 
 from src.dimensions.static_loader import load_static_dimension
-from .product_loader import load_product_dimension
+from .generator import load_product_dimension
 
 
 def generate_product_dimension(config, output_folder: Path):

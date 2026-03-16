@@ -57,7 +57,21 @@ src/
   defaults.py                    # Centralized hardcoded constants (stores, customers, promos, etc.)
   exceptions.py                  # Custom exception hierarchy (PipelineError, ConfigError, etc.)
   dimensions/                    # One generator per dimension table
-    customers.py, products/, stores.py, employees.py, dates.py,
+    customers/                   # Customer dimension package (split from monolithic customers.py)
+      __init__.py                # Re-exports run_customers, generate_synthetic_customers
+      generator.py               # Main orchestrator: generate_synthetic_customers(), run_customers()
+      helpers.py                 # Date math, acquisition curves, income/phone/credit/address generation
+      org_profile.py             # OrganizationProfile constants + generate_org_profile()
+      households.py              # Household assignment (spouse/dependent matching)
+      scd2.py                    # SCD2 life event engine (career, marriage, relocation, etc.)
+    products/                    # Product dimension package
+      products.py                # Entry point: generate_product_dimension()
+      generator.py               # Orchestrator: load → expand → price → enrich → SCD2 → write
+      product_profile.py         # ProductProfile enrichment (analytical attributes)
+      pricing.py                 # Price grid: bands, margin, snap, brand normalization
+      contoso_loader.py          # Load base Contoso product catalog
+      contoso_expander.py        # Stratified trim/expand of Contoso products
+    stores.py, employees.py, dates.py,
     currency.py, exchange_rates.py, promotions.py, geography.py,
     subscriptions.py, lookups.py (sales channels, loyalty tiers, etc.)
   facts/
