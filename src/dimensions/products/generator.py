@@ -10,6 +10,7 @@ from src.utils import info, skip
 from src.versioning import should_regenerate, save_version
 
 from src.utils.config_precedence import resolve_dates
+from src.defaults import SCD2_END_OF_TIME
 
 from .contoso_loader import load_contoso_products
 from .contoso_expander import expand_contoso_products
@@ -99,7 +100,7 @@ def _generate_scd2_versions(
 
     result = pd.DataFrame(version_rows)
 
-    # Set EffectiveEndDate: next version's start - 1 day, or 9999-12-31 for current
+    # Set EffectiveEndDate: next version's start - 1 day, or 2099-12-31 for current
     result = result.sort_values(["ProductID", "VersionNumber"]).reset_index(drop=True)
 
     # Vectorised EffectiveEndDate: shift within ProductID groups
@@ -111,7 +112,7 @@ def _generate_scd2_versions(
     same_pid_as_next[:-1] = pid_arr[:-1] == pid_arr[1:]
     same_pid_as_next[-1] = False
 
-    eff_end_arr = np.full(len(result), pd.Timestamp("9999-12-31"), dtype="datetime64[ns]")
+    eff_end_arr = np.full(len(result), SCD2_END_OF_TIME, dtype="datetime64[ns]")
     is_current_arr = np.ones(len(result), dtype=np.int64)
     _shift_mask = np.flatnonzero(same_pid_as_next)
     eff_end_arr[_shift_mask] = eff_start_arr[_shift_mask + 1] - np.timedelta64(1, "D")
@@ -302,7 +303,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         end_date = pd.Timestamp("2025-12-31")
 
     df["EffectiveStartDate"] = start_date
-    df["EffectiveEndDate"] = pd.Timestamp("9999-12-31")
+    df["EffectiveEndDate"] = SCD2_END_OF_TIME
     df["IsCurrent"] = np.ones(N, dtype="int64")
 
     # SCD2 expansion (if enabled)

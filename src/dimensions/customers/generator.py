@@ -13,6 +13,7 @@ import pandas as pd
 
 from src.utils import info, skip, stage
 from src.utils.config_precedence import resolve_seed
+from src.defaults import SCD2_END_OF_TIME
 from src.versioning import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
 from src.utils.name_pools import (
@@ -814,7 +815,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
             # --- SCD2 metadata (always present, defaults for Type 1 mode) ---
             "VersionNumber": np.ones(N, dtype="int64"),
             "EffectiveStartDate": pd.to_datetime(CustomerStartDate),
-            "EffectiveEndDate": pd.Timestamp("9999-12-31"),
+            "EffectiveEndDate": SCD2_END_OF_TIME,
             "IsCurrent": np.ones(N, dtype="int64"),
         }
     )
