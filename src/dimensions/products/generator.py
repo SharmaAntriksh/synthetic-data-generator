@@ -14,7 +14,7 @@ from src.utils.config_precedence import resolve_dates
 from .contoso_loader import load_contoso_products
 from .contoso_expander import expand_contoso_products
 from .pricing import apply_product_pricing
-from .product_profile import _enrich_products_attributes
+from .product_profile import enrich_products_attributes
 
 
 # ---------------------------------------------------------------------
@@ -255,7 +255,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     )
 
     # Enrichment columns
-    df = _enrich_products_attributes(df, config, seed=seed, output_folder=output_folder)
+    df = enrich_products_attributes(df, config, seed=seed, output_folder=output_folder)
 
     # SupplierKey (deterministic)
     if sup_enabled:

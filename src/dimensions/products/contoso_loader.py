@@ -10,7 +10,7 @@ def load_contoso_products(output_folder: Path):
 
     IMPORTANT:
       - This function DOES NOT write products.parquet.
-      - product_loader.py is the single writer after pricing + active flag are applied.
+      - generator.py is the single writer after pricing + active flag are applied.
 
     Args:
       output_folder: kept for backward compatibility with callers; not used.

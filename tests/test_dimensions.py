@@ -950,11 +950,11 @@ class TestCustomerGenerator:
             pytest.skip("Name pool data not available")
         pools = load_people_pools(str(people_folder), enable_asia=False, legacy_support=True)
 
-        with patch("src.dimensions.customers.load_dimension", return_value=(geo_df, False)), \
-             patch("src.dimensions.customers._read_parquet_dim", side_effect=self._mock_read_parquet), \
-             patch("src.dimensions.customers.resolve_org_names_file", return_value="fake_org.csv"), \
-             patch("src.dimensions.customers.load_org_names", return_value=self._fake_org_names()), \
-             patch("src.dimensions.customers.load_people_pools", return_value=pools):
+        with patch("src.dimensions.customers.generator.load_dimension", return_value=(geo_df, False)), \
+             patch("src.dimensions.customers.generator.read_parquet_dim", side_effect=self._mock_read_parquet), \
+             patch("src.dimensions.customers.generator.resolve_org_names_file", return_value="fake_org.csv"), \
+             patch("src.dimensions.customers.generator.load_org_names", return_value=self._fake_org_names()), \
+             patch("src.dimensions.customers.generator.load_people_pools", return_value=pools):
             result = generate_synthetic_customers(cfg, Path("/tmp/fake"))
         # Returns (customers_df, profile_df, org_profile_df, active_set)
         return result
@@ -1007,11 +1007,11 @@ class TestCustomerGenerator:
         # The ValueError is raised early, before any file I/O, but we still
         # need to provide geography mock since load_dimension runs first.
         geo_df = self._fake_geography()
-        with patch("src.dimensions.customers.load_dimension", return_value=(geo_df, False)), \
-             patch("src.dimensions.customers._read_parquet_dim", side_effect=self._mock_read_parquet), \
-             patch("src.dimensions.customers.resolve_org_names_file", return_value="fake_org.csv"), \
-             patch("src.dimensions.customers.load_org_names", return_value=self._fake_org_names()), \
-             patch("src.dimensions.customers.load_people_pools", return_value=None):
+        with patch("src.dimensions.customers.generator.load_dimension", return_value=(geo_df, False)), \
+             patch("src.dimensions.customers.generator.read_parquet_dim", side_effect=self._mock_read_parquet), \
+             patch("src.dimensions.customers.generator.resolve_org_names_file", return_value="fake_org.csv"), \
+             patch("src.dimensions.customers.generator.load_org_names", return_value=self._fake_org_names()), \
+             patch("src.dimensions.customers.generator.load_people_pools", return_value=None):
             with pytest.raises(ValueError, match="must be > 0"):
                 generate_synthetic_customers(cfg, Path("/tmp/fake"))
 

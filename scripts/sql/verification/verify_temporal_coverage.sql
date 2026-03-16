@@ -1,0 +1,270 @@
+-- ============================================================================
+-- VERIFY TEMPORAL COVERAGE
+-- Run after loading generated data into SQL Server.
+-- Checks that every month has data, no gaps, dates within configured range.
+-- ============================================================================
+
+
+-- ============================================================================
+-- 1. Sales Coverage — Every Month Has Transactions
+-- ============================================================================
+
+-- 1a. Monthly sales count — no month should be zero
+SELECT
+    d.CalendarYear,
+    d.MonthNumberOfYear,
+    COUNT(f.SalesOrderNumber)                                       AS SalesLines
+FROM Dates d
+LEFT JOIN Sales f ON f.DateKey = d.DateKey
+WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
+                 AND (SELECT MAX(OrderDate) FROM Sales)
+GROUP BY d.CalendarYear, d.MonthNumberOfYear
+ORDER BY d.CalendarYear, d.MonthNumberOfYear;
+-- EXPECTED: every month has sales > 0; no gaps
+
+-- 1b. Identify any gap months (zero sales)
+SELECT
+    d.CalendarYear,
+    d.MonthNumberOfYear
+FROM Dates d
+WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
+                 AND (SELECT MAX(OrderDate) FROM Sales)
+  AND d.DayNumberOfMonth = 1
+  AND NOT EXISTS (
+      SELECT 1 FROM Sales f
+      WHERE YEAR(f.OrderDate) = d.CalendarYear
+        AND MONTH(f.OrderDate) = d.MonthNumberOfYear
+  );
+-- EXPECTED: zero rows (no month without sales)
+
+
+-- ============================================================================
+-- 2. Date Range Boundaries
+-- ============================================================================
+
+-- 2a. Sales dates should fall within configured range
+SELECT
+    MIN(OrderDate) AS EarliestSale,
+    MAX(OrderDate) AS LatestSale,
+    MIN(DueDate)   AS EarliestDue,
+    MAX(DueDate)   AS LatestDue
+FROM Sales;
+-- EXPECTED: EarliestSale >= config start date, LatestSale <= config end date
+--           DueDate may extend slightly past end date (fulfillment lag)
+
+-- 2b. Customer start dates within range
+SELECT
+    MIN(CustomerStartDate) AS EarliestCustomer,
+    MAX(CustomerStartDate) AS LatestCustomer,
+    MIN(CustomerEndDate)   AS EarliestChurn,
+    MAX(CustomerEndDate)   AS LatestChurn
+FROM Customers;
+-- EXPECTED: within configured defaults.dates range
+
+-- 2c. Employee hire dates — should precede or fall within sales window
+SELECT
+    MIN(HireDate)        AS EarliestHire,
+    MAX(HireDate)        AS LatestHire,
+    MIN(TerminationDate) AS EarliestTermination,
+    MAX(TerminationDate) AS LatestTermination
+FROM Employees;
+-- EXPECTED: EarliestHire may precede sales start (pre-existing staff)
+
+-- 2d. Promotion dates within range
+SELECT
+    MIN(StartDate) AS EarliestPromo,
+    MAX(EndDate)   AS LatestPromo
+FROM Promotions
+WHERE PromotionKey > 1;
+-- EXPECTED: within configured date range
+
+
+-- ============================================================================
+-- 3. Exchange Rates Coverage
+-- ============================================================================
+
+-- 3a. FX rates should cover every day in the sales date range
+SELECT
+    COUNT(DISTINCT Date) AS FXDaysCovered,
+    MIN(Date)            AS FXStart,
+    MAX(Date)            AS FXEnd
+FROM ExchangeRates;
+-- EXPECTED: FXStart <= sales start, FXEnd >= sales end
+
+-- 3b. Any sales dates without FX rates?
+SELECT DISTINCT f.OrderDate
+FROM Sales f
+LEFT JOIN ExchangeRates er ON er.Date = f.OrderDate
+WHERE er.Date IS NULL;
+-- EXPECTED: zero rows (every sales day has FX coverage)
+
+-- 3c. All configured currencies should have rates
+SELECT DISTINCT ToCurrency FROM ExchangeRates ORDER BY ToCurrency;
+-- EXPECTED: CAD, GBP, EUR, INR, AUD, CNY, JPY (+ any configured extras)
+
+
+-- ============================================================================
+-- 4. Date Dimension Coverage
+-- ============================================================================
+
+-- 4a. Date table should cover full sales range with no gaps
+SELECT
+    MIN(Date) AS DateStart,
+    MAX(Date) AS DateEnd,
+    COUNT(*)  AS TotalDays,
+    DATEDIFF(DAY, MIN(Date), MAX(Date)) + 1 AS ExpectedDays
+FROM Dates;
+-- EXPECTED: TotalDays = ExpectedDays (no gaps)
+
+-- 4b. Every sales OrderDate should have a matching DateKey
+SELECT COUNT(*) AS OrphanedDates
+FROM Sales f
+LEFT JOIN Dates d ON d.DateKey = f.DateKey
+WHERE d.DateKey IS NULL;
+-- EXPECTED: zero
+
+
+-- ============================================================================
+-- 5. Budget Temporal Coverage
+-- ============================================================================
+
+-- 5a. Budget years should cover the full date range
+SELECT DISTINCT BudgetYear, Scenario
+FROM BudgetYearly
+ORDER BY BudgetYear, Scenario;
+-- EXPECTED: every year in config range, each with Low/Medium/High
+
+-- 5b. Monthly budget should cover every month in every year
+SELECT
+    BudgetYear,
+    Scenario,
+    COUNT(DISTINCT BudgetMonthStart)    AS MonthsCovered
+FROM BudgetMonthly
+GROUP BY BudgetYear, Scenario
+ORDER BY BudgetYear, Scenario;
+-- EXPECTED: 12 months per year per scenario
+
+
+-- ============================================================================
+-- 6. Inventory Temporal Coverage
+-- ============================================================================
+
+-- 6a. Inventory snapshots per period
+SELECT
+    YEAR(SnapshotDate)                                              AS SnapYear,
+    MONTH(SnapshotDate)                                             AS SnapMonth,
+    COUNT(*)                                                        AS SnapshotRows,
+    COUNT(DISTINCT ProductKey)                                      AS UniqueProducts,
+    COUNT(DISTINCT StoreKey)                                        AS UniqueStores
+FROM InventorySnapshot
+GROUP BY YEAR(SnapshotDate), MONTH(SnapshotDate)
+ORDER BY SnapYear, SnapMonth;
+-- EXPECTED: consistent row counts per period; no missing months
+--           (if grain=monthly, every month present)
+
+-- 6b. Any months with zero inventory snapshots?
+SELECT
+    d.CalendarYear,
+    d.MonthNumberOfYear
+FROM Dates d
+WHERE d.DayNumberOfMonth = 1
+  AND d.Date BETWEEN (SELECT MIN(SnapshotDate) FROM InventorySnapshot)
+                 AND (SELECT MAX(SnapshotDate) FROM InventorySnapshot)
+  AND NOT EXISTS (
+      SELECT 1 FROM InventorySnapshot i
+      WHERE YEAR(i.SnapshotDate) = d.CalendarYear
+        AND MONTH(i.SnapshotDate) = d.MonthNumberOfYear
+  );
+-- EXPECTED: zero rows (no gaps in inventory coverage)
+
+
+-- ============================================================================
+-- 7. Subscription & Complaint Temporal Coverage
+-- ============================================================================
+
+-- 7a. Subscription start dates span the full range
+SELECT
+    MIN(StartDate) AS EarliestSub,
+    MAX(StartDate) AS LatestSub,
+    MIN(EndDate)   AS EarliestEnd,
+    MAX(EndDate)   AS LatestEnd
+FROM CustomerSubscriptions;
+-- EXPECTED: spans configured date range
+
+-- 7b. Complaint dates span the range
+SELECT
+    MIN(ComplaintDate)   AS EarliestComplaint,
+    MAX(ComplaintDate)   AS LatestComplaint,
+    MIN(ResolutionDate)  AS EarliestResolution,
+    MAX(ResolutionDate)  AS LatestResolution
+FROM Complaints;
+-- EXPECTED: within configured date range
+
+
+-- ============================================================================
+-- 8. TEMPORAL COVERAGE SCORECARD
+-- ============================================================================
+SELECT
+    'Sales: no gap months' AS [Check],
+    'Every month in the sales date range must have transactions; FAIL = missing month with zero sales' AS [Description],
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
+FROM (
+    SELECT d.CalendarYear, d.MonthNumberOfYear
+    FROM Dates d
+    WHERE d.DayNumberOfMonth = 1
+      AND d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
+                     AND (SELECT MAX(OrderDate) FROM Sales)
+      AND NOT EXISTS (
+          SELECT 1 FROM Sales f
+          WHERE YEAR(f.OrderDate) = d.CalendarYear
+            AND MONTH(f.OrderDate) = d.MonthNumberOfYear
+      )
+) x
+
+UNION ALL
+
+SELECT 'Date dim: no gaps',
+    'Date table must have one row per calendar day with no missing days; FAIL = holes in calendar dimension',
+    CASE WHEN COUNT(*) = DATEDIFF(DAY, MIN(Date), MAX(Date)) + 1
+         THEN 'PASS' ELSE 'FAIL' END
+FROM Dates
+
+UNION ALL
+
+SELECT 'FX: covers all sales dates',
+    'ExchangeRates must have rates for every day with sales; FAIL = sales date has no FX rate available',
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM (
+    SELECT DISTINCT f.OrderDate FROM Sales f
+    LEFT JOIN ExchangeRates er ON er.Date = f.OrderDate
+    WHERE er.Date IS NULL
+) x
+
+UNION ALL
+
+SELECT 'Budget: 3 scenarios per year',
+    'Each budget year must have Low/Medium/High scenarios; FAIL = missing scenario for a year',
+    CASE WHEN MIN(ScenarioCount) = 3 AND MAX(ScenarioCount) = 3
+         THEN 'PASS' ELSE 'FAIL' END
+FROM (
+    SELECT BudgetYear, COUNT(DISTINCT Scenario) AS ScenarioCount
+    FROM BudgetYearly GROUP BY BudgetYear
+) x
+
+UNION ALL
+
+SELECT 'Inventory: no gap months',
+    'Inventory snapshots must exist for every month in the range; FAIL = missing monthly snapshot',
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM (
+    SELECT d.CalendarYear, d.MonthNumberOfYear
+    FROM Dates d
+    WHERE d.DayNumberOfMonth = 1
+      AND d.Date BETWEEN (SELECT MIN(SnapshotDate) FROM InventorySnapshot)
+                     AND (SELECT MAX(SnapshotDate) FROM InventorySnapshot)
+      AND NOT EXISTS (
+          SELECT 1 FROM InventorySnapshot i
+          WHERE YEAR(i.SnapshotDate) = d.CalendarYear
+            AND MONTH(i.SnapshotDate) = d.MonthNumberOfYear
+      )
+) x;
