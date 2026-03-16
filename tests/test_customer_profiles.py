@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.engine.config.config_schema import ModelsInnerConfig
 from src.utils.customer_profiles import (
     VALID_PROFILES,
     _deep_merge,
@@ -121,16 +122,19 @@ class TestResolveCustomerProfile:
         from src.engine.config.config_schema import AppConfig
         return AppConfig.model_validate(d)
 
+    def _models(self, d=None):
+        return ModelsInnerConfig.model_validate(d or {})
+
     def test_unknown_profile_raises(self):
         cfg = self._cfg({"customers": {"profile": "unknown"}})
 
         with pytest.raises(ValueError, match="Unknown customer profile"):
-            resolve_customer_profile(cfg, {})
+            resolve_customer_profile(cfg, self._models())
 
     def test_no_profile_applies_default_steady(self):
         """With Pydantic, customers always has profile='steady' by default."""
         cfg = self._cfg({"customers": {"total_customers": 100}})
-        models = {"quantity": {}}
+        models = self._models()
 
         result_cfg, result_models = resolve_customer_profile(cfg, models)
 
@@ -140,7 +144,7 @@ class TestResolveCustomerProfile:
     def test_no_customers_section_returns_unchanged(self):
         """AppConfig always has a customers section, so this test uses a bare cfg."""
         cfg = self._cfg({})
-        models = {}
+        models = self._models()
 
         result_cfg, result_models = resolve_customer_profile(cfg, models)
 
@@ -149,18 +153,18 @@ class TestResolveCustomerProfile:
 
     def test_gradual_injects_lifecycle(self):
         cfg = self._cfg({"customers": {"profile": "gradual"}})
-        models = {}
+        models = self._models()
 
         result_cfg, result_models = resolve_customer_profile(cfg, models)
         lc = result_cfg.customers.lifecycle
 
         assert lc["enable_churn"] is True
-        assert "customers" in result_models
-        assert "macro_demand" in result_models
+        assert result_models.customers is not None
+        assert result_models.macro_demand is not None
 
     def test_instant_no_churn(self):
         cfg = self._cfg({"customers": {"profile": "instant"}})
-        models = {}
+        models = self._models()
 
         result_cfg, _ = resolve_customer_profile(cfg, models)
 
@@ -172,7 +176,7 @@ class TestResolveCustomerProfile:
             "profile": "steady",
             "lifecycle": {"base_monthly_churn": 0.99},
         }})
-        models = {}
+        models = self._models()
 
         result_cfg, _ = resolve_customer_profile(cfg, models)
 
@@ -180,7 +184,7 @@ class TestResolveCustomerProfile:
 
     def test_first_year_pct_applied(self):
         cfg = self._cfg({"customers": {"profile": "gradual", "first_year_pct": 0.50}})
-        models = {}
+        models = self._models()
 
         result_cfg, result_models = resolve_customer_profile(cfg, models)
 
@@ -190,11 +194,11 @@ class TestResolveCustomerProfile:
         cfg = self._cfg({"customers": {"profile": "gradual", "first_year_pct": 0.01}})
 
         with pytest.raises(ValueError, match="between 0.05 and 1.0"):
-            resolve_customer_profile(cfg, {})
+            resolve_customer_profile(cfg, self._models())
 
     def test_case_insensitive(self):
         cfg = self._cfg({"customers": {"profile": "STEADY"}})
-        models = {}
+        models = self._models()
 
         result_cfg, _ = resolve_customer_profile(cfg, models)
 

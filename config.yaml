@@ -6,7 +6,7 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1032850
+  sales_rows: 50328500
   products: 2517
   customers: 88348
   stores: 500
@@ -34,7 +34,7 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "csv"              # csv | parquet | deltaparquet
+  file_format: "parquet"              # csv | parquet | deltaparquet
   sales_output: "sales"               # sales | sales_order | both
   skip_order_cols: false
 
@@ -49,7 +49,7 @@ sales:
   quality_report: false                  # generate HTML data quality report after packaging
 
   advanced:
-    chunk_size: 1_000_000
+    chunk_size: 500000
     workers: 12                        # null = auto-detect
     row_group_size: 1_000_000
     compression: "snappy"

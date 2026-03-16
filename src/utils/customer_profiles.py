@@ -8,10 +8,10 @@ Usage in config.yaml:
     customers:
       profile: gradual     # gradual | steady | aggressive | instant
 
-The profile is resolved into three dicts:
-  - lifecycle:      injected into cfg["customers"]["lifecycle"]
-  - demand:         injected into models_cfg["customers"]
-  - macro_demand:   injected into models_cfg["macro_demand"]
+The profile is resolved into three parts:
+  - lifecycle:      injected into cfg.customers.lifecycle (dict)
+  - demand:         injected into models_cfg.customers (CustomersDemandConfig)
+  - macro_demand:   injected into models_cfg.macro_demand (MacroDemandConfig)
 
 Any explicit overrides in config.yaml or models.yaml take priority
 over profile defaults (merge, not replace).
@@ -22,6 +22,7 @@ from collections.abc import Mapping
 
 from typing import Any, Dict, Optional, Tuple
 
+from src.engine.config.config_schema import CustomersDemandConfig, MacroDemandConfig
 from src.utils.logging_utils import info
 
 
@@ -267,7 +268,7 @@ def _deep_merge(base: dict, overrides: dict) -> dict:
     return result
 
 
-def _apply_first_year_pct(fyr: float, lifecycle: dict, demand: dict) -> None:
+def _apply_first_year_pct(fyr: float, lifecycle: dict, demand: CustomersDemandConfig) -> None:
     """
     Derive acquisition knobs from a single first_year_pct value.
 
@@ -283,14 +284,14 @@ def _apply_first_year_pct(fyr: float, lifecycle: dict, demand: dict) -> None:
     lifecycle["initial_active_customers"] = fyr
     lifecycle["initial_spread_months"] = 12
 
-    demand["new_customer_share"] = round(0.04 + remaining * 0.12, 3)
-    demand["max_new_fraction_per_month"] = round(0.02 + remaining * 0.06, 3)
+    demand.new_customer_share = round(0.04 + remaining * 0.12, 3)
+    demand.max_new_fraction_per_month = round(0.02 + remaining * 0.06, 3)
 
 
 def resolve_customer_profile(
-    cfg: Dict[str, Any],
-    models_cfg: Dict[str, Any],
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    cfg,
+    models_cfg,
+):
     """
     Resolve customer profile and inject values into cfg and models_cfg.
 
@@ -330,21 +331,21 @@ def resolve_customer_profile(
     merged_lifecycle = _deep_merge(profile["lifecycle"], existing_lifecycle)
     cust_cfg.lifecycle = merged_lifecycle  # noqa: E501
 
-    # --- Inject demand into models_cfg["customers"] (replaces Pydantic sub-model with plain dict) ---
+    # --- Inject demand into models_cfg.customers (Pydantic model) ---
     existing_demand = models_cfg.get("customers", None) or {}
     # Strip Pydantic defaults so only YAML-explicit values override profile defaults
     if hasattr(existing_demand, "model_fields_set"):
         existing_demand = _pydantic_to_explicit_dict(existing_demand)
     merged_demand = _deep_merge(profile["demand"], existing_demand)
-    models_cfg["customers"] = merged_demand
+    models_cfg.customers = CustomersDemandConfig.model_validate(merged_demand)
 
-    # --- Inject macro_demand into models_cfg["macro_demand"] (replaces Pydantic sub-model with plain dict) ---
+    # --- Inject macro_demand into models_cfg.macro_demand (Pydantic model) ---
     existing_macro = models_cfg.get("macro_demand", None) or {}
     # Strip Pydantic defaults so only YAML-explicit values override profile defaults
     if hasattr(existing_macro, "model_fields_set"):
         existing_macro = _pydantic_to_explicit_dict(existing_macro)
     merged_macro = _deep_merge(profile["macro_demand"], existing_macro)
-    models_cfg["macro_demand"] = merged_macro
+    models_cfg.macro_demand = MacroDemandConfig.model_validate(merged_macro)
 
     # --- Apply first_year_pct override (after profile, before return) ---
     first_year_pct = getattr(cust_cfg, "first_year_pct", None)
@@ -354,7 +355,7 @@ def resolve_customer_profile(
             raise ValueError(
                 f"customers.first_year_pct must be between 0.05 and 1.0, got {fyr}"
             )
-        _apply_first_year_pct(fyr, cust_cfg.lifecycle, models_cfg["customers"])
+        _apply_first_year_pct(fyr, cust_cfg.lifecycle, models_cfg.customers)
 
     info(f"Customer profile: '{profile_name}' applied"
          + (f" (first_year_pct={first_year_pct})" if first_year_pct is not None else ""))

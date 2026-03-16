@@ -154,36 +154,57 @@ def _build_scd2_product_versions(
 
     N_pool = len(pool_product_ids)
 
-    # Filter to active pool and map ProductID → pool index
-    pid_to_pool = {int(pid): i for i, pid in enumerate(pool_product_ids)}
-    active_pids = set(pool_product_ids.tolist())
-    active_df = all_df[all_df["ProductID"].isin(active_pids)].copy()
-    active_df["pool_idx"] = active_df["ProductID"].map(pid_to_pool).astype(np.int32)
-    active_df.sort_values(["pool_idx", "eff_start_days"], inplace=True)
+    # Vectorized pool index mapping via dense lookup array
+    max_pid = max(int(pool_product_ids.max()), int(all_df["ProductID"].max())) + 1
+    pid_lookup = np.full(max_pid, -1, dtype=np.int32)
+    pid_lookup[pool_product_ids] = np.arange(N_pool, dtype=np.int32)
 
-    # Determine max versions across all pool entries
-    max_ver = int(active_df.groupby("pool_idx").size().max()) if len(active_df) > 0 else 1
+    pool_idx = pid_lookup[all_df["ProductID"].to_numpy()]
+    mask = pool_idx >= 0
+    pool_idx = pool_idx[mask]
+    eff_start = all_df["eff_start_days"].to_numpy()[mask]
+    pkey_arr = all_df["ProductKey"].to_numpy(dtype=np.float64)[mask]
+    lprice_arr = all_df["ListPrice"].to_numpy(dtype=np.float64)[mask]
+    ucost_arr = all_df["UnitCost"].to_numpy(dtype=np.float64)[mask]
 
-    # Initialize: slot 0 = IsCurrent=1 fallback, rest padded
+    # Sort by (pool_idx, eff_start_days) via lexsort (secondary key first)
+    order = np.lexsort((eff_start, pool_idx))
+    pool_idx = pool_idx[order]
+    eff_start = eff_start[order]
+    pkey_arr = pkey_arr[order]
+    lprice_arr = lprice_arr[order]
+    ucost_arr = ucost_arr[order]
+
+    # Compute per-entity version slot indices using group boundaries
+    breaks = np.empty(len(pool_idx), dtype=np.int32)
+    breaks[0] = 0
+    breaks[1:] = np.cumsum(pool_idx[1:] != pool_idx[:-1])
+    group_starts = np.concatenate([[0], np.where(pool_idx[1:] != pool_idx[:-1])[0] + 1])
+    slot = np.arange(len(pool_idx), dtype=np.int32)
+    slot -= np.repeat(group_starts, np.diff(np.append(group_starts, len(pool_idx))))
+
+    max_ver = int(slot.max()) + 1 if len(slot) > 0 else 1
+
+    # Initialize with IsCurrent=1 defaults
     starts = np.full((N_pool, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
     data = np.empty((N_pool, max_ver, 3), dtype=np.float64)
-    # Fill all slots with IsCurrent=1 values as default
-    for s in range(max_ver):
-        data[:, s, 0] = pool_product_np[:, 0]  # ProductKey
-        data[:, s, 1] = pool_product_np[:, 1]  # ListPrice
-        data[:, s, 2] = pool_product_np[:, 2]  # UnitCost
+    data[:, :, 0] = pool_product_np[:, 0:1]  # ProductKey broadcast
+    data[:, :, 1] = pool_product_np[:, 1:2]  # ListPrice broadcast
+    data[:, :, 2] = pool_product_np[:, 2:3]  # UnitCost broadcast
 
-    # Fill from actual versions (sorted by start date)
-    for pi, grp in active_df.groupby("pool_idx"):
-        rows = grp.sort_values("eff_start_days")
-        n = min(len(rows), max_ver)
-        s_vals = rows["eff_start_days"].to_numpy(copy=True)[:n]
-        # Clamp first version start to 0 (covers all time before second version)
-        s_vals[0] = 0
-        starts[pi, :n] = s_vals
-        data[pi, :n, 0] = rows["ProductKey"].to_numpy(dtype=np.float64)[:n]
-        data[pi, :n, 1] = rows["ListPrice"].to_numpy(dtype=np.float64)[:n]
-        data[pi, :n, 2] = rows["UnitCost"].to_numpy(dtype=np.float64)[:n]
+    # Cap slot indices at max_ver - 1
+    valid = slot < max_ver
+    pi = pool_idx[valid]
+    si = slot[valid]
+
+    # Vectorized scatter into output arrays
+    starts[pi, si] = eff_start[valid]
+    data[pi, si, 0] = pkey_arr[valid]
+    data[pi, si, 1] = lprice_arr[valid]
+    data[pi, si, 2] = ucost_arr[valid]
+
+    # Clamp first version start to 0 (covers all time before second version)
+    starts[pi, 0] = 0
 
     return starts, data
 
@@ -219,36 +240,51 @@ def _build_scd2_customer_versions(
 
     N_pool = len(pool_customer_keys)
 
-    cid_to_pool = {int(cid): i for i, cid in enumerate(pool_customer_ids)}
-
-    # Build reverse lookup: IsCurrent CustomerKey → pool index
+    # Vectorized reverse lookup: IsCurrent CustomerKey → pool index
     max_key = int(pool_customer_keys.max()) + 1
     key_to_pool_idx = np.full(max_key, -1, dtype=np.int32)
-    for i, k in enumerate(pool_customer_keys):
-        key_to_pool_idx[int(k)] = i
+    key_to_pool_idx[pool_customer_keys] = np.arange(N_pool, dtype=np.int32)
 
-    # Filter to active pool and map CustomerID → pool index
-    active_cids = set(pool_customer_ids.tolist())
-    active_df = all_df[all_df["CustomerID"].isin(active_cids)].copy()
-    active_df["pool_idx"] = active_df["CustomerID"].map(cid_to_pool).astype(np.int32)
-    active_df.sort_values(["pool_idx", "eff_start_days"], inplace=True)
+    # Vectorized pool index mapping via dense lookup array
+    max_cid = max(int(pool_customer_ids.max()), int(all_df["CustomerID"].max())) + 1
+    cid_lookup = np.full(max_cid, -1, dtype=np.int32)
+    cid_lookup[pool_customer_ids] = np.arange(N_pool, dtype=np.int32)
 
-    # Determine max versions across all pool entries
-    max_ver = int(active_df.groupby("pool_idx").size().max()) if len(active_df) > 0 else 1
+    all_cids = all_df["CustomerID"].to_numpy()
+    pool_idx = cid_lookup[all_cids]
+    mask = pool_idx >= 0
+    pool_idx = pool_idx[mask]
+    eff_start = all_df["eff_start_days"].to_numpy()[mask]
+    ckey_arr = all_df["CustomerKey"].to_numpy(dtype=np.int32)[mask]
+
+    # Sort by (pool_idx, eff_start_days) via lexsort (secondary key first)
+    order = np.lexsort((eff_start, pool_idx))
+    pool_idx = pool_idx[order]
+    eff_start = eff_start[order]
+    ckey_arr = ckey_arr[order]
+
+    # Compute per-entity version slot indices using group boundaries
+    group_starts = np.concatenate([[0], np.where(pool_idx[1:] != pool_idx[:-1])[0] + 1])
+    slot = np.arange(len(pool_idx), dtype=np.int32)
+    slot -= np.repeat(group_starts, np.diff(np.append(group_starts, len(pool_idx))))
+
+    max_ver = int(slot.max()) + 1 if len(slot) > 0 else 1
 
     # Initialize: all slots default to IsCurrent=1 key, starts padded with MAX
     starts = np.full((N_pool, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
-    keys = np.tile(pool_customer_keys.astype(np.int32)[:, np.newaxis], (1, max_ver))  # (N_pool, max_ver)
+    keys = np.tile(pool_customer_keys.astype(np.int32)[:, np.newaxis], (1, max_ver))
 
-    # Fill from actual versions (sorted by start date)
-    for pi, grp in active_df.groupby("pool_idx"):
-        rows = grp.sort_values("eff_start_days")
-        n = min(len(rows), max_ver)
-        s_vals = rows["eff_start_days"].to_numpy(copy=True)[:n]
-        # Clamp first version start to 0 (covers all time before second version)
-        s_vals[0] = 0
-        starts[pi, :n] = s_vals
-        keys[pi, :n] = rows["CustomerKey"].to_numpy(dtype=np.int32)[:n]
+    # Cap slot indices at max_ver - 1
+    valid = slot < max_ver
+    pi = pool_idx[valid]
+    si = slot[valid]
+
+    # Vectorized scatter into output arrays
+    starts[pi, si] = eff_start[valid]
+    keys[pi, si] = ckey_arr[valid]
+
+    # Clamp first version start to 0 (covers all time before second version)
+    starts[pi, 0] = 0
 
     return starts, keys, key_to_pool_idx
 
@@ -1107,22 +1143,24 @@ def generate_sales_fact(
     # geo_to_country_id: dense array GeographyKey -> country_id
     _max_geo = int(_geo_country_df["GeographyKey"].max()) if len(_geo_country_df) else 0
     geo_to_country_id = np.full(_max_geo + 1, 0, dtype=np.int32)
-    for _, row in _geo_country_df.iterrows():
-        geo_to_country_id[int(row["GeographyKey"])] = _country_to_id.get(
-            str(row["Country"]) if row["Country"] is not None else "Unknown", 0)
+    _geo_keys = _geo_country_df["GeographyKey"].to_numpy(dtype=np.int32)
+    _geo_countries = _geo_country_df["Country"].fillna("Unknown").map(_country_to_id).to_numpy(dtype=np.int32)
+    geo_to_country_id[_geo_keys] = _geo_countries
 
     # store_to_country_id: dense StoreKey -> country_id (via store_to_geo)
     _max_sk = int(store_keys.max()) if store_keys.size else 0
     store_to_country_id = np.full(_max_sk + 1, 0, dtype=np.int32)
-    for sk, gk in store_to_geo.items():
-        if int(sk) <= _max_sk and int(gk) <= _max_geo:
-            store_to_country_id[int(sk)] = geo_to_country_id[int(gk)]
+    _sg_sk = np.fromiter(store_to_geo.keys(), dtype=np.int32, count=len(store_to_geo))
+    _sg_gk = np.fromiter(store_to_geo.values(), dtype=np.int32, count=len(store_to_geo))
+    _sg_valid = (_sg_sk <= _max_sk) & (_sg_gk <= _max_geo)
+    store_to_country_id[_sg_sk[_sg_valid]] = geo_to_country_id[_sg_gk[_sg_valid]]
 
     # country_to_store_keys: list of arrays
-    _country_store_buckets: list[list[int]] = [[] for _ in range(_n_countries)]
-    for sk in store_keys:
-        _country_store_buckets[store_to_country_id[int(sk)]].append(int(sk))
-    country_to_store_keys = [np.array(b, dtype=np.int32) for b in _country_store_buckets]
+    _sk_country_ids = store_to_country_id[store_keys.astype(np.int32)]
+    country_to_store_keys = [
+        store_keys[_sk_country_ids == cid].astype(np.int32)
+        for cid in range(_n_countries)
+    ]
 
     # customer_geo_key: customer pool index -> GeographyKey
     customer_geo_key = None
@@ -1207,27 +1245,27 @@ def generate_sales_fact(
             _pk_to_row[_prod_keys_arr] = np.arange(len(_prod_keys_arr), dtype=np.int32)
             # 4 groups: store=0, online=1, marketplace=2, b2b=3
             product_channel_eligible = np.ones((len(product_np), 4), dtype=np.int8)
-            for _, row in _elig_df.iterrows():
-                pk = int(row["ProductKey"])
-                if pk <= _max_pk and _pk_to_row[pk] >= 0:
-                    ri = _pk_to_row[pk]
-                    product_channel_eligible[ri, 0] = int(row.get("EligibleStore", 1))
-                    product_channel_eligible[ri, 1] = int(row.get("EligibleOnline", 1))
-                    product_channel_eligible[ri, 2] = int(row.get("EligibleMarketplace", 1))
-                    product_channel_eligible[ri, 3] = int(row.get("EligibleB2B", 1))
+            _elig_pks = _elig_df["ProductKey"].to_numpy(dtype=np.int32)
+            _elig_mask = (_elig_pks <= _max_pk)
+            _elig_pks_valid = _elig_pks[_elig_mask]
+            _elig_rows = _pk_to_row[_elig_pks_valid]
+            _mapped = _elig_rows >= 0
+            _ri = _elig_rows[_mapped]
+            _elig_mask_idx = np.where(_elig_mask)[0][_mapped]
+            for col_idx, col_name in enumerate(["EligibleStore", "EligibleOnline",
+                                                 "EligibleMarketplace", "EligibleB2B"]):
+                product_channel_eligible[_ri, col_idx] = (
+                    _elig_df[col_name].to_numpy(dtype=np.int8)[_elig_mask_idx]
+                )
         except (KeyError, OSError):
             pass
 
     # 4) Promotion channel group (from PromotionCategory)
     promo_channel_group = np.zeros(len(promo_keys_all), dtype=np.int8)  # 0=any
     if not promo_df.empty and "PromotionCategory" in promo_df.columns:
-        _PHYSICAL_CATS = {"Store", "Physical"}
-        _DIGITAL_CATS = {"Online", "Digital"}
-        for i, cat in enumerate(promo_df["PromotionCategory"].astype(str)):
-            if cat in _PHYSICAL_CATS:
-                promo_channel_group[i] = 1  # physical channels only
-            elif cat in _DIGITAL_CATS:
-                promo_channel_group[i] = 2  # digital channels only
+        _cat_series = promo_df["PromotionCategory"].astype(str)
+        promo_channel_group[_cat_series.isin({"Store", "Physical"}).to_numpy()] = 1
+        promo_channel_group[_cat_series.isin({"Online", "Digital"}).to_numpy()] = 2
 
     # 5) Channel fulfillment days (from SalesChannels dimension)
     channel_fulfillment_days = np.full(11, 3, dtype=np.int16)  # default 3 days
@@ -1247,12 +1285,10 @@ def generate_sales_fact(
         try:
             _sc_df = pd.read_parquet(str(_sc_path))
             if "TypicalFulfillmentDays" in _sc_df.columns and "SalesChannelKey" in _sc_df.columns:
-                for _, row in _sc_df.iterrows():
-                    _ck = int(row["SalesChannelKey"])
-                    if 0 <= _ck < len(channel_fulfillment_days):
-                        val = row["TypicalFulfillmentDays"]
-                        if val is not None and not (isinstance(val, float) and np.isnan(val)):
-                            channel_fulfillment_days[_ck] = int(val)
+                _sc_keys = _sc_df["SalesChannelKey"].to_numpy(dtype=np.int32)
+                _sc_days = _sc_df["TypicalFulfillmentDays"]
+                _sc_valid = (_sc_keys >= 0) & (_sc_keys < len(channel_fulfillment_days)) & _sc_days.notna()
+                channel_fulfillment_days[_sc_keys[_sc_valid]] = _sc_days.to_numpy(dtype=np.int16)[_sc_valid]
         except (KeyError, OSError):
             pass
 
@@ -1327,9 +1363,13 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     _models = State.models_cfg
     if isinstance(_models, Mapping):
-        _cust_mdl = _models.get("customers", {}) or {}
-        configured_share = float(_cust_mdl.get("new_customer_share", 0.10))
-        configured_max_frac = float(_cust_mdl.get("max_new_fraction_per_month", 0.015))
+        from src.engine.config.config_schema import CustomersDemandConfig
+
+        _cust_mdl = _models.customers
+        if _cust_mdl is None:
+            _cust_mdl = CustomersDemandConfig()
+        configured_share = float(_cust_mdl.new_customer_share)
+        configured_max_frac = float(_cust_mdl.max_new_fraction_per_month)
 
         total_active = int((is_active_in_sales == 1).sum())
         # Customers with negative start_month are backdated (pre-existing)
@@ -1358,27 +1398,22 @@ def generate_sales_fact(
             needed_frac = (undiscovered * headroom) / (avg_eligible * T_est)
             needed_frac = float(np.clip(needed_frac, 0.0, 0.50))
 
-            adjusted = False
-            _cust_mdl_copy = dict(_cust_mdl)
-
+            updates = {}
             if needed_share > configured_share:
-                _cust_mdl_copy["new_customer_share"] = needed_share
-                adjusted = True
-
+                updates["new_customer_share"] = needed_share
             if needed_frac > configured_max_frac:
-                _cust_mdl_copy["max_new_fraction_per_month"] = needed_frac
-                adjusted = True
+                updates["max_new_fraction_per_month"] = needed_frac
 
-            if adjusted:
+            if updates:
+                new_cust = _cust_mdl.model_copy(update=updates)
                 debug(
                     f"Auto-adjusting customer discovery: new_customer_share "
-                    f"{configured_share:.3f} -> {_cust_mdl_copy.get('new_customer_share', configured_share):.3f}, "
+                    f"{configured_share:.3f} -> {new_cust.new_customer_share:.3f}, "
                     f"max_new_fraction_per_month "
-                    f"{configured_max_frac:.4f} -> {_cust_mdl_copy.get('max_new_fraction_per_month', configured_max_frac):.4f} "
+                    f"{configured_max_frac:.4f} -> {new_cust.max_new_fraction_per_month:.4f} "
                     f"({undiscovered:,} undiscovered customers across {total_rows:,} rows)."
                 )
-                _models_copy = dict(_models)
-                _models_copy["customers"] = _cust_mdl_copy
+                _models_copy = _models.model_copy(update={"customers": new_cust})
                 State.models_cfg = _models_copy
 
     # ------------------------------------------------------------

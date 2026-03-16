@@ -711,9 +711,13 @@ class YearLevelFactorsConfig(_Base):
     @model_validator(mode="before")
     @classmethod
     def _rename_values(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "values" in data and "factor_values" not in data:
+        if isinstance(data, dict) and "values" in data:
             data = dict(data)
-            data["factor_values"] = data.pop("values")
+            if "factor_values" not in data:
+                data["factor_values"] = data.pop("values")
+            else:
+                # Deep merge can produce both keys; factor_values wins
+                del data["values"]
         return data
 
 
@@ -734,7 +738,7 @@ class MacroDemandConfig(_Base):
     shock_impact: List[float] = [-0.25, -0.08]
     yoy_growth_schedule: Optional[YearLevelFactorsConfig] = None
     year_level_factors: Optional[YearLevelFactorsConfig] = None
-    early_month_cap: Optional[Dict[str, Any]] = None
+    early_month_cap: Optional[EarlyMonthCapConfig] = None
     eligible_blend: float = 0.0
 
 
@@ -841,6 +845,23 @@ class ReturnsModelsConfig(_Base):
     quantity: ReturnQuantityConfig = ReturnQuantityConfig()
 
 
+# -- Customers (models.yaml: injected by resolve_customer_profile) --
+
+class SeasonalSpikeConfig(_Base):
+    month: int
+    boost: float
+
+
+class CustomersDemandConfig(_Base):
+    distinct_ratio: float = 0.55
+    new_customer_share: float = 0.10
+    max_new_fraction_per_month: float = 0.015
+    cycle_amplitude: float = 0.35
+    discovery_shape: float = 0.0
+    participation_noise: float = 0.10
+    seasonal_spikes: Optional[List[SeasonalSpikeConfig]] = None
+
+
 # =========================================================================
 # models.yaml — root model
 # =========================================================================
@@ -853,7 +874,7 @@ class ModelsInnerConfig(_Base):
     brand_popularity: BrandPopularityConfig = BrandPopularityConfig()
     returns: ReturnsModelsConfig = ReturnsModelsConfig()
     # Injected at runtime by resolve_customer_profile
-    customers: Optional[Dict[str, Any]] = None
+    customers: Optional[CustomersDemandConfig] = None
 
 
 class ModelsConfig(_Base):

@@ -714,15 +714,13 @@ def init_sales_worker(worker_cfg: dict) -> None:
         _FAR_PAST = np.datetime64("1900-01-01", "D")
         _FAR_FUTURE = np.datetime64("2262-04-11", "D")
         _store_open_day_dense = np.full(_max_sk, _FAR_PAST, dtype="datetime64[D]")
-        for i, sk in enumerate(store_keys):
-            _store_open_day_dense[int(sk)] = _open_d[i]
+        _store_open_day_dense[store_keys.astype(np.intp)] = _open_d
     if _raw_close_day is not None:
         _close_d = np.asarray(_raw_close_day, dtype="datetime64[D]")
         _max_sk = int(store_keys.max()) + 1
         _FAR_FUTURE = np.datetime64("2262-04-11", "D")
         _store_close_day_dense = np.full(_max_sk, _FAR_FUTURE, dtype="datetime64[D]")
-        for i, sk in enumerate(store_keys):
-            _store_close_day_dense[int(sk)] = _close_d[i]
+        _store_close_day_dense[store_keys.astype(np.intp)] = _close_d
 
     # ------------------------------------------------------------
     # Store-product assortment (optional)
