@@ -132,7 +132,7 @@ JOIN Products p2
  AND p2.VersionNumber = p1.VersionNumber + 1
 WHERE p1.ProductName <> p2.ProductName
    OR p1.SubcategoryKey <> p2.SubcategoryKey
-   OR p1.BrandName <> p2.BrandName;
+   OR p1.Brand <> p2.Brand;
 -- EXPECTED: zero (only prices change between product versions)
 
 

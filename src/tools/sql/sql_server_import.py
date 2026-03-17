@@ -557,10 +557,15 @@ def _is_cci_file(p: Path) -> bool:
     return "cci" in n or "columnstore" in n
 
 
-def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[Path], List[Path]]:
+def _is_verify_file(p: Path) -> bool:
+    n = p.name.lower()
+    return "verify" in n
+
+
+def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[Path], List[Path], List[Path]]:
     """
     Collect scripts for phases:
-      tables, views, constraints, cci_apply
+      tables, views, constraints, cci_apply, verify
 
     Supported layouts:
 
@@ -602,7 +607,7 @@ def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[
 
         cci_apply = list_sql_files(cci_dir)
         cci_apply += [p for p in list_sql_files(indexes_dir) if _is_cci_file(p)]
-        return tables, views, constraints, cci_apply
+        return tables, views, constraints, cci_apply, []
 
     # Flat schema folder with inference
     schema_files = list_sql_files(schema_dir)
@@ -613,8 +618,9 @@ def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[
     cci_apply = list_sql_files(cci_dir)
     cci_apply += [p for p in list_sql_files(indexes_dir) if _is_cci_file(p)]
     inferred_cci_from_schema = [p for p in schema_files if _is_cci_file(p)]
+    verify = [p for p in schema_files if _is_verify_file(p)]
 
-    excluded = set(views) | set(constraints) | set(inferred_cci_from_schema)
+    excluded = set(views) | set(constraints) | set(inferred_cci_from_schema) | set(verify)
     tables = [p for p in schema_files if p not in excluded]
 
     cci_apply += inferred_cci_from_schema
@@ -627,12 +633,61 @@ def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[
             seen.add(p)
             cci_apply_unique.append(p)
 
-    return tables, views, constraints, cci_apply_unique
+    return tables, views, constraints, cci_apply_unique, verify
 
 
 # -------------------------
 # Main import
 # -------------------------
+def _run_verify(cursor) -> None:
+    """
+    Execute verify.RunAll if the procedure exists.
+
+    Fetches the detail rows (Suite, Category, Check, Description, Result, ActualValue)
+    and the summary row, then logs the results.
+    """
+    # Check if the proc exists
+    cursor.execute(
+        "SELECT 1 FROM sys.procedures p "
+        "JOIN sys.schemas s ON s.schema_id = p.schema_id "
+        "WHERE s.name = 'verify' AND p.name = 'RunAll'"
+    )
+    if cursor.fetchone() is None:
+        _log("SKIP", "  verify.RunAll not found; skipping verification")
+        return
+
+    cursor.execute("EXEC verify.RunAll")
+
+    # First result set: detail rows
+    # Columns: Suite, Category, Check, Description, Result, ActualValue
+    rows = cursor.fetchall()
+    passed = 0
+    failed = 0
+    info = 0
+    for row in rows:
+        suite, _cat, check, _desc, result, actual = (
+            row[0], row[1], row[2], row[3], row[4], row[5],
+        )
+        if result == "PASS":
+            passed += 1
+            _log("DONE", f"    [{suite}] {check}  ({actual})")
+        elif result == "INFO":
+            info += 1
+        else:
+            failed += 1
+            _log("FAIL", f"    [{suite}] {check}  ({actual})")
+
+    # Second result set: summary (TotalChecks, Passed, Failed, Info, Verdict)
+    if cursor.nextset():
+        summary = cursor.fetchone()
+        if summary:
+            verdict = summary[4] if len(summary) > 4 else "UNKNOWN"
+            level = "DONE" if failed == 0 else "WARN"
+            _log(level, f"  Verification: {passed} passed, {failed} failed, {info} info — {verdict}")
+
+    _drain_results(cursor)
+
+
 def import_sql_server(
     *,
     server: str,
@@ -640,6 +695,7 @@ def import_sql_server(
     run_dir: Path,
     connection_string: str,
     apply_cci: bool = False,
+    verify: bool = False,
 ) -> None:
     import time as _time
 
@@ -657,7 +713,7 @@ def import_sql_server(
     bootstrap_dir = PROJECT_ROOT / "scripts" / "sql" / "bootstrap"
     cci_proc_file = bootstrap_dir / "create_cci_proc.sql"
 
-    tables_files, view_files, constraint_files, cci_apply_files = _collect_phase_scripts(sql_dir)
+    tables_files, view_files, constraint_files, cci_apply_files, verify_files = _collect_phase_scripts(sql_dir)
 
     if not tables_files:
         raise SqlServerImportError(
@@ -711,7 +767,7 @@ def import_sql_server(
             _t_schema = _time.time()
             _log("INFO", "  Creating Schema")
 
-            all_schema_files = list(tables_files) + list(constraint_files) + list(view_files)
+            all_schema_files = list(tables_files) + list(constraint_files) + list(view_files) + list(verify_files)
             for f in all_schema_files:
                 _log("WORK", f"    {f.name}")
             execute_sql_files(cursor, all_schema_files)
@@ -836,3 +892,21 @@ def import_sql_server(
         raise SqlServerImportError(
             f"Failed running CCI apply scripts in database '{database}'. Details: {exc.args}"
         ) from exc
+
+    # Step 4: optional verification (run verify.RunAll scorecard)
+    if not verify:
+        return
+
+    try:
+        with pyodbc.connect(db_conn_str, autocommit=True) as conn:
+            _try_disable_query_timeout(conn)
+            cursor = conn.cursor()
+
+            _t_verify = _time.time()
+            _log("INFO", "  Running Data Verification")
+            _run_verify(cursor)
+            _log("DONE", f"  Data Verification completed in {_time.time() - _t_verify:.1f}s")
+
+    except pyodbc.Error as exc:
+        _log("WARN", f"  Verification failed: {exc.args}")
+        # Non-fatal — data is already loaded

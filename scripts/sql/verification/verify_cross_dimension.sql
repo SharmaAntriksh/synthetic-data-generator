@@ -22,19 +22,19 @@ LEFT JOIN (
     WHERE StoreKey IS NOT NULL AND StoreKey > 0
     GROUP BY StoreKey
 ) e ON e.StoreKey = s.StoreKey
-WHERE s.StoreStatus = 'Open'
+WHERE s.Status = 'Open'
   AND ABS(s.EmployeeCount - ISNULL(e.ActualCount, 0)) > 0;
 -- EXPECTED: zero rows (run_employees syncs EmployeeCount back to stores.parquet)
 
 -- 1b. Closed stores should have zero active employees
 SELECT
     s.StoreKey,
-    s.StoreStatus,
+    s.Status,
     COUNT(e.EmployeeKey) AS ActiveEmployees
 FROM Stores s
 JOIN Employees e ON e.StoreKey = s.StoreKey AND e.IsActive = 1
-WHERE s.StoreStatus = 'Closed'
-GROUP BY s.StoreKey, s.StoreStatus
+WHERE s.Status = 'Closed'
+GROUP BY s.StoreKey, s.Status
 HAVING COUNT(e.EmployeeKey) > 0;
 -- EXPECTED: zero rows
 
@@ -177,11 +177,11 @@ WHERE e.IsActive = 1
 -- 7. Supplier Consistency
 -- ============================================================================
 
--- 7a. All SupplierKeys in Products exist in Suppliers
-SELECT DISTINCT p.SupplierKey
-FROM Products p
-LEFT JOIN Suppliers s ON s.SupplierKey = p.SupplierKey
-WHERE p.SupplierKey IS NOT NULL AND s.SupplierKey IS NULL;
+-- 7a. All SupplierKeys in ProductProfile exist in Suppliers
+SELECT DISTINCT pp.SupplierKey
+FROM ProductProfile pp
+LEFT JOIN Suppliers s ON s.SupplierKey = pp.SupplierKey
+WHERE pp.SupplierKey IS NOT NULL AND s.SupplierKey IS NULL;
 -- EXPECTED: zero rows
 
 
@@ -217,7 +217,7 @@ LEFT JOIN (
     SELECT StoreKey, COUNT(*) AS Cnt FROM Employees
     WHERE StoreKey IS NOT NULL AND StoreKey > 0 GROUP BY StoreKey
 ) e ON e.StoreKey = s.StoreKey
-WHERE s.StoreStatus = 'Open'
+WHERE s.Status = 'Open'
   AND ABS(s.EmployeeCount - ISNULL(e.Cnt, 0)) > 0
 
 UNION ALL

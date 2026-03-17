@@ -100,6 +100,15 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Run data verification after import. "
+            "Executes verify.RunAll scorecard and reports PASS/FAIL results."
+        ),
+    )
+
+    parser.add_argument(
         "--odbc-driver",
         default=None,
         help="Override ODBC driver name (default: ODBC Driver 17 for SQL Server).",
@@ -117,6 +126,7 @@ def main() -> int:
             run_dir=run_dir,
             connection_string=connection_string,
             apply_cci=bool(args.apply_cci),
+            verify=bool(args.verify),
         )
 
     except ValueError as exc:

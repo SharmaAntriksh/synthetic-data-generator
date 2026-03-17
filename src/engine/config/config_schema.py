@@ -269,6 +269,7 @@ class DefaultsConfig(_Base):
     random: bool = False
     dates: GlobalDatesConfig = GlobalDatesConfig()
     paths: Optional[Dict[str, str]] = None
+    view_schema: str = "dbo"
 
 
 # -- Employees --
