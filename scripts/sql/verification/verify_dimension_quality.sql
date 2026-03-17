@@ -79,20 +79,20 @@ WHERE RevenueClass NOT IN ('A', 'B', 'C')
 GROUP BY RevenueClass;
 -- EXPECTED: zero rows
 
--- 3c. StoreStatus distribution
+-- 3c. Status distribution
 SELECT
-    StoreStatus,
+    Status,
     COUNT(*)                                                        AS Cnt,
     CAST(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () AS DECIMAL(5,1)) AS Pct
 FROM Stores
-GROUP BY StoreStatus
+GROUP BY Status
 ORDER BY Cnt DESC;
 -- EXPECTED: Open ~85%, Closed ~10%, Renovating ~5%
 
 -- 3d. EmployeeCount should be > 0 for open stores
-SELECT StoreKey, StoreStatus, EmployeeCount
+SELECT StoreKey, Status, EmployeeCount
 FROM Stores
-WHERE StoreStatus = 'Open' AND EmployeeCount <= 0;
+WHERE Status = 'Open' AND EmployeeCount <= 0;
 -- EXPECTED: zero rows
 
 
@@ -336,7 +336,7 @@ UNION ALL
 SELECT 'Store: open stores have employees',
     'Open stores must have EmployeeCount > 0; FAIL = open store with no staff',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM Stores WHERE StoreStatus = 'Open' AND EmployeeCount <= 0
+FROM Stores WHERE Status = 'Open' AND EmployeeCount <= 0
 
 UNION ALL
 

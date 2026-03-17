@@ -11,29 +11,29 @@
 
 -- 1a. Monthly sales count — no month should be zero
 SELECT
-    d.CalendarYear,
-    d.MonthNumberOfYear,
+    d.[Year],
+    d.[Month],
     COUNT(f.SalesOrderNumber)                                       AS SalesLines
 FROM Dates d
-LEFT JOIN Sales f ON f.DateKey = d.DateKey
+LEFT JOIN Sales f ON f.TimeKey = d.DateKey
 WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
                  AND (SELECT MAX(OrderDate) FROM Sales)
-GROUP BY d.CalendarYear, d.MonthNumberOfYear
-ORDER BY d.CalendarYear, d.MonthNumberOfYear;
+GROUP BY d.[Year], d.[Month]
+ORDER BY d.[Year], d.[Month];
 -- EXPECTED: every month has sales > 0; no gaps
 
 -- 1b. Identify any gap months (zero sales)
 SELECT
-    d.CalendarYear,
-    d.MonthNumberOfYear
+    d.[Year],
+    d.[Month]
 FROM Dates d
 WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
                  AND (SELECT MAX(OrderDate) FROM Sales)
-  AND d.DayNumberOfMonth = 1
+  AND d.[Day] = 1
   AND NOT EXISTS (
       SELECT 1 FROM Sales f
-      WHERE YEAR(f.OrderDate) = d.CalendarYear
-        AND MONTH(f.OrderDate) = d.MonthNumberOfYear
+      WHERE YEAR(f.OrderDate) = d.[Year]
+        AND MONTH(f.OrderDate) = d.[Month]
   );
 -- EXPECTED: zero rows (no month without sales)
 
@@ -116,10 +116,10 @@ SELECT
 FROM Dates;
 -- EXPECTED: TotalDays = ExpectedDays (no gaps)
 
--- 4b. Every sales OrderDate should have a matching DateKey
+-- 4b. Every sales OrderDate should have a matching TimeKey
 SELECT COUNT(*) AS OrphanedDates
 FROM Sales f
-LEFT JOIN Dates d ON d.DateKey = f.DateKey
+LEFT JOIN Dates d ON d.DateKey = f.TimeKey
 WHERE d.DateKey IS NULL;
 -- EXPECTED: zero
 
@@ -164,16 +164,16 @@ ORDER BY SnapYear, SnapMonth;
 
 -- 6b. Any months with zero inventory snapshots?
 SELECT
-    d.CalendarYear,
-    d.MonthNumberOfYear
+    d.[Year],
+    d.[Month]
 FROM Dates d
-WHERE d.DayNumberOfMonth = 1
+WHERE d.[Day] = 1
   AND d.Date BETWEEN (SELECT MIN(SnapshotDate) FROM InventorySnapshot)
                  AND (SELECT MAX(SnapshotDate) FROM InventorySnapshot)
   AND NOT EXISTS (
       SELECT 1 FROM InventorySnapshot i
-      WHERE YEAR(i.SnapshotDate) = d.CalendarYear
-        AND MONTH(i.SnapshotDate) = d.MonthNumberOfYear
+      WHERE YEAR(i.SnapshotDate) = d.[Year]
+        AND MONTH(i.SnapshotDate) = d.[Month]
   );
 -- EXPECTED: zero rows (no gaps in inventory coverage)
 
@@ -184,10 +184,10 @@ WHERE d.DayNumberOfMonth = 1
 
 -- 7a. Subscription start dates span the full range
 SELECT
-    MIN(StartDate) AS EarliestSub,
-    MAX(StartDate) AS LatestSub,
-    MIN(EndDate)   AS EarliestEnd,
-    MAX(EndDate)   AS LatestEnd
+    MIN(SubscribedDate) AS EarliestSub,
+    MAX(SubscribedDate) AS LatestSub,
+    MIN(CancelledDate)  AS EarliestEnd,
+    MAX(CancelledDate)  AS LatestEnd
 FROM CustomerSubscriptions;
 -- EXPECTED: spans configured date range
 
@@ -209,15 +209,15 @@ SELECT
     'Every month in the sales date range must have transactions; FAIL = missing month with zero sales' AS [Description],
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
 FROM (
-    SELECT d.CalendarYear, d.MonthNumberOfYear
+    SELECT d.[Year], d.[Month]
     FROM Dates d
-    WHERE d.DayNumberOfMonth = 1
+    WHERE d.[Day] = 1
       AND d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
                      AND (SELECT MAX(OrderDate) FROM Sales)
       AND NOT EXISTS (
           SELECT 1 FROM Sales f
-          WHERE YEAR(f.OrderDate) = d.CalendarYear
-            AND MONTH(f.OrderDate) = d.MonthNumberOfYear
+          WHERE YEAR(f.OrderDate) = d.[Year]
+            AND MONTH(f.OrderDate) = d.[Month]
       )
 ) x
 
@@ -257,14 +257,14 @@ SELECT 'Inventory: no gap months',
     'Inventory snapshots must exist for every month in the range; FAIL = missing monthly snapshot',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM (
-    SELECT d.CalendarYear, d.MonthNumberOfYear
+    SELECT d.[Year], d.[Month]
     FROM Dates d
-    WHERE d.DayNumberOfMonth = 1
+    WHERE d.[Day] = 1
       AND d.Date BETWEEN (SELECT MIN(SnapshotDate) FROM InventorySnapshot)
                      AND (SELECT MAX(SnapshotDate) FROM InventorySnapshot)
       AND NOT EXISTS (
           SELECT 1 FROM InventorySnapshot i
-          WHERE YEAR(i.SnapshotDate) = d.CalendarYear
-            AND MONTH(i.SnapshotDate) = d.MonthNumberOfYear
+          WHERE YEAR(i.SnapshotDate) = d.[Year]
+            AND MONTH(i.SnapshotDate) = d.[Month]
       )
 ) x;

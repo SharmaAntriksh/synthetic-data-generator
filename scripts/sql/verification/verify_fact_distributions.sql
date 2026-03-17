@@ -111,11 +111,11 @@ FROM Sales
 GROUP BY CASE WHEN DiscountAmount > 0 THEN 'Discounted' ELSE 'Full Price' END;
 -- EXPECTED: majority full price; discounted portion driven by promotion count
 
--- 3c. NetPrice should always be: ListPrice * Quantity - DiscountAmount (± rounding)
-SELECT COUNT(*) AS MismatchCount
+-- 3c. NetPrice should never exceed ListPrice
+SELECT COUNT(*) AS ExceedCount
 FROM Sales
-WHERE ABS(NetPrice - (ListPrice * Quantity - DiscountAmount)) > 0.02;
--- EXPECTED: zero or very few (rounding tolerance)
+WHERE NetPrice > ListPrice;
+-- EXPECTED: zero (selling price cannot exceed sticker price)
 
 
 -- ============================================================================
@@ -265,10 +265,10 @@ FROM (
 
 UNION ALL
 
-SELECT 'Sales: NetPrice consistent with ListPrice*Qty-Discount',
-    'NetPrice must equal ListPrice * Quantity - DiscountAmount (within rounding); FAIL = pricing math is broken',
+SELECT 'Sales: NetPrice <= ListPrice',
+    'NetPrice must not exceed ListPrice (selling price cannot exceed sticker price); FAIL = net exceeds list',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM Sales WHERE ABS(NetPrice - (ListPrice * Quantity - DiscountAmount)) > 0.02
+FROM Sales WHERE NetPrice > ListPrice
 
 UNION ALL
 

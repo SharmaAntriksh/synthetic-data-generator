@@ -26,6 +26,9 @@ param (
     # --- Optional flags ---
     [bool]$ApplyCCI = $false,
 
+    # Run data verification after import (EXEC verify.RunAll)
+    [switch]$Verify,
+
     # e.g. "ODBC Driver 18 for SQL Server"
     [string]$OdbcDriver,
 
@@ -89,6 +92,7 @@ try {
     }
 
     if ($ApplyCCI) { $argsList += "--apply-cci" }
+    if ($Verify)   { $argsList += "--verify" }
     if ($OdbcDriver) { $argsList += @("--odbc-driver", $OdbcDriver) }
 
     # Log the command
@@ -118,6 +122,7 @@ try {
 
         $flags = @()
         if ($ApplyCCI) { $flags += "apply-cci" }
+        if ($Verify)   { $flags += "verify" }
         if ($OdbcDriver) { $flags += ("odbc=" + $OdbcDriver) }
 
         $flagText = if ($flags.Count -gt 0) { " [" + ($flags -join ", ") + "]" } else { "" }

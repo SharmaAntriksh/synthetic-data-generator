@@ -13,6 +13,7 @@ from .sql_scripts import (
     write_bulk_insert_scripts,
     write_create_table_scripts,
     compose_constraints_sql,
+    compose_verification_sql,
     copy_views_sql,
     copy_static_sql_assets,
 )
@@ -168,6 +169,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         write_create_table_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
         compose_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
         copy_views_sql(sql_root=sql_root)
+        compose_verification_sql(sql_root=sql_root)
 
         # Load scripts
         write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
