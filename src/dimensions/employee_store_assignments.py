@@ -1133,6 +1133,14 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
             _ps_role = str_or(a_cfg.get("primary_sales_role"), "Sales Associate")
 
+            # Build HireDate lookup for clamping transfer StartDate
+            _hire_lookup: dict[int, pd.Timestamp] = {}
+            for _, erow in employees.iterrows():
+                _hire_lookup[int(erow["EmployeeKey"])] = pd.to_datetime(erow["HireDate"])
+
+            # Track EmployeeKey -> dest_sk for updating employees.parquet
+            _transfer_dest: dict[int, int] = {}
+
             for _, trow in transfers_df.iterrows():
                 ek = int(trow["EmployeeKey"])
                 orig_sk = int(trow["OriginalStoreKey"])
@@ -1180,6 +1188,13 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
                 # Look up employee's FTE from the employees data
                 _emp_fte = float(trow.get("FTE", 1.0)) if "FTE" in trow.index else 1.0
 
+                # Clamp StartDate to HireDate (transfer can't start before hire)
+                hire_date = _hire_lookup.get(ek)
+                if hire_date is not None and t_date < hire_date:
+                    t_date = hire_date
+
+                _transfer_dest[ek] = dest_sk
+
                 transfer_rows.append({
                     "EmployeeKey": np.int32(ek),
                     "StoreKey": np.int32(dest_sk),
@@ -1196,6 +1211,42 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
                 t_df = pd.DataFrame(transfer_rows, columns=out_cols)
                 df = pd.concat([df, t_df], ignore_index=True)
                 info(f"Added {len(transfer_rows)} transfer assignments from closed stores")
+
+            # Update employees.parquet: set StoreKey to destination for transferred employees
+            if _transfer_dest:
+                emp_full = pd.read_parquet(employees_path)
+                updated = 0
+                for ek, dest in _transfer_dest.items():
+                    mask = emp_full["EmployeeKey"] == ek
+                    if mask.any():
+                        emp_full.loc[mask, "StoreKey"] = np.int32(dest)
+                        updated += 1
+                if updated > 0:
+                    emp_full.to_parquet(employees_path, index=False)
+                    info(f"Updated StoreKey for {updated} transferred employees in employees.parquet")
+
+                    # Re-sync stores.parquet EmployeeCount after transfers
+                    # Use actual StoreKey column (not EmployeeKey encoding)
+                    stores_path = parquet_folder / "stores.parquet"
+                    if stores_path.exists():
+                        sk_col = emp_full["StoreKey"].dropna()
+                        sk_col = sk_col[sk_col > 0].astype(np.int32)
+                        actual_counts = sk_col.value_counts().to_dict()
+
+                        stores_full = pd.read_parquet(stores_path)
+                        stores_full["EmployeeCount"] = stores_full["StoreKey"].map(
+                            lambda sk: actual_counts.get(int(sk), 0)
+                        ).astype(np.int64)
+
+                        from src.dimensions.employees import write_parquet_with_date32
+                        write_parquet_with_date32(
+                            stores_full, stores_path,
+                            date_cols=["OpeningDate", "ClosingDate"],
+                            cast_all_datetime=False,
+                            compression="snappy", compression_level=None,
+                            force_date32=True,
+                        )
+                        info("Re-synced stores.parquet EmployeeCount after transfers")
 
             # ---------------------------------------------------------------
             # Post-transfer coverage repair: for each closing store, ensure
