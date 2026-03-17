@@ -106,6 +106,26 @@ for _pname, _parr in [
 del _pname, _parr
 
 
+def _vectorized_cdf_sample(cdfs: np.ndarray, brackets: np.ndarray, u: np.ndarray) -> np.ndarray:
+    """Vectorized CDF sampling by bracket — replaces per-element searchsorted loops.
+
+    Args:
+        cdfs: shape (n_brackets, n_labels) — CDF per bracket (must be clamped to 1.0)
+        brackets: shape (n,) int — bracket index per element
+        u: shape (n,) float — uniform random per element
+
+    Returns:
+        shape (n,) int — sampled label index per element
+    """
+    n = len(brackets)
+    out = np.empty(n, dtype=np.intp)
+    for b in range(cdfs.shape[0]):
+        mask = brackets == b
+        if mask.any():
+            out[mask] = np.searchsorted(cdfs[b], u[mask])
+    return out
+
+
 # ---------------------------------------------------------
 # Main generator
 # ---------------------------------------------------------
@@ -274,10 +294,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         _ms_cdfs[:, -1] = 1.0  # clamp
         _u = rng.random(n_person)
         _bracket_per_person = person_age_bracket  # int array [0..n_brackets-1]
-        # For each person, pick from their bracket's CDF
-        _ms_idx = np.array([
-            np.searchsorted(_ms_cdfs[b], u) for b, u in zip(_bracket_per_person, _u)
-        ], dtype=np.intp)
+        # Vectorized: one searchsorted call per unique bracket instead of per person
+        _ms_idx = _vectorized_cdf_sample(_ms_cdfs, _bracket_per_person, _u)
         _ms_idx = np.clip(_ms_idx, 0, len(_ms_labels) - 1)
         MaritalStatus[person_idx] = _ms_labels[_ms_idx]
 
@@ -288,9 +306,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         _ed_cdfs = np.array([np.cumsum(EDUCATION_PROBS_BY_AGE[b]) for b in range(len(AGE_GROUP_LABELS))])
         _ed_cdfs[:, -1] = 1.0
         _u = rng.random(n_person)
-        _ed_idx = np.array([
-            np.searchsorted(_ed_cdfs[b], u) for b, u in zip(person_age_bracket, _u)
-        ], dtype=np.intp)
+        _ed_idx = _vectorized_cdf_sample(_ed_cdfs, person_age_bracket, _u)
         _ed_idx = np.clip(_ed_idx, 0, len(_ed_labels) - 1)
         Education[person_idx] = _ed_labels[_ed_idx]
 
@@ -303,11 +319,12 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         _occ_cdfs = np.array([np.cumsum(OCCUPATION_PROBS_BY_EDUCATION[lbl]) for lbl in EDUCATION_LABELS])
         _occ_cdfs[:, -1] = 1.0
         _person_edu = Education[person_mask]
-        _edu_codes = np.array([_edu_to_code.get(str(e), 0) for e in _person_edu], dtype=np.intp)
+        # Vectorized string-to-code via factorize-style lookup
+        _edu_code_arr = np.zeros(n_person, dtype=np.intp)
+        for _i, _lbl in enumerate(EDUCATION_LABELS):
+            _edu_code_arr[_person_edu == _lbl] = _i
         _u = rng.random(n_person)
-        _occ_idx = np.array([
-            np.searchsorted(_occ_cdfs[ec], u) for ec, u in zip(_edu_codes, _u)
-        ], dtype=np.intp)
+        _occ_idx = _vectorized_cdf_sample(_occ_cdfs, _edu_code_arr, _u)
         _occ_idx = np.clip(_occ_idx, 0, len(_occ_labels) - 1)
         Occupation[person_idx] = _occ_labels[_occ_idx]
 
@@ -321,8 +338,9 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         # Vectorized: build per-person lambda from (marital, bracket) lookup,
         # then single Poisson draw for all persons.
         person_marital = MaritalStatus[person_mask]
-        _ms_to_code = {lbl: i for i, lbl in enumerate(MARITAL_STATUS_LABELS)}
-        _ms_codes = np.array([_ms_to_code.get(str(m), 0) for m in person_marital], dtype=np.intp)
+        _ms_codes = np.zeros(n_person, dtype=np.intp)
+        for _i, _lbl in enumerate(MARITAL_STATUS_LABELS):
+            _ms_codes[person_marital == _lbl] = _i
         _n_ms = len(MARITAL_STATUS_LABELS)
         _n_br = len(AGE_GROUP_LABELS)
         # Build lambda lookup table: (n_marital, n_brackets)
@@ -387,12 +405,15 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
                 _ho_cdfs[_ii, _bi, -1] = 1.0
 
         ig = IncomeGroup[person_mask]
-        _ig_codes = np.array([_ig_to_code.get(str(g), 0) for g in ig], dtype=np.intp)
+        # Vectorized string-to-code
+        _ig_codes = np.zeros(n_person, dtype=np.intp)
+        for _i, _lbl in enumerate(_ig_list):
+            _ig_codes[ig == _lbl] = _i
         _u = rng.random(n_person)
-        _ho_idx = np.array([
-            np.searchsorted(_ho_cdfs[ic, br], u)
-            for ic, br, u in zip(_ig_codes, person_age_bracket, _u)
-        ], dtype=np.intp)
+        # Flatten 2D (income_group, bracket) into single composite key for vectorized sampling
+        _ho_cdfs_flat = _ho_cdfs.reshape(_n_ig * _n_br, _n_ho)
+        _composite_bracket = _ig_codes * _n_br + person_age_bracket
+        _ho_idx = _vectorized_cdf_sample(_ho_cdfs_flat, _composite_bracket, _u)
         _ho_idx = np.clip(_ho_idx, 0, _n_ho - 1)
         HomeOwnership[person_idx] = _ho_labels[_ho_idx]
 

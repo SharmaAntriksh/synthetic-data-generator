@@ -63,9 +63,10 @@ def run_inventory_pipeline(
 
     demand = accumulator.finalize()
 
-    n_pairs = demand.groupby(["ProductKey", "StoreKey"]).ngroups
-    months_per_pair = demand.groupby(["ProductKey", "StoreKey"]).size()
-    qualified_pairs = int((months_per_pair >= icfg.min_demand_months).sum())
+    # Single groupby for both metrics (avoids 2 redundant O(n log n) passes)
+    _pair_groups = demand.groupby(["ProductKey", "StoreKey"])
+    n_pairs = _pair_groups.ngroups
+    qualified_pairs = int((_pair_groups.size() >= icfg.min_demand_months).sum())
     n_stores = demand["StoreKey"].nunique()
     from src.utils.output_utils import format_number_short
     info(

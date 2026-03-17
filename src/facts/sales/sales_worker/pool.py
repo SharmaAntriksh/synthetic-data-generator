@@ -1,10 +1,59 @@
 from __future__ import annotations
 
+import os
+import signal
 import time
 from collections import deque
 from dataclasses import dataclass
 from multiprocessing import Pool
 from typing import Any, Callable, Iterator, Optional, Sequence, Tuple
+
+
+def _worker_init_wrapper(user_init, user_args):
+    """Wrapper that ignores SIGINT in worker processes (Unix only; Windows
+    inherits the ignore from the main process via _suppress_ctrl_c context)."""
+    if os.name != "nt":
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    if user_init is not None:
+        user_init(*user_args)
+
+
+class _suppress_ctrl_c:
+    """Context manager: ignore CTRL_C in the main process while the pool
+    is being created so that spawned workers inherit the ignore flag.
+
+    On Windows, child processes inherit the console ctrl handler state from
+    the parent at spawn time. If a stray CTRL_C_EVENT arrives during spawn
+    (e.g. VS Code venv activation), it kills workers mid-import. By
+    temporarily ignoring CTRL_C in the parent, spawned children are born
+    with the ignore flag and survive the race.
+
+    The main process re-enables CTRL_C after pool creation.
+    """
+
+    def __enter__(self):
+        if os.name == "nt":
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(None, True)
+                self._nt = True
+            except (AttributeError, OSError):
+                self._nt = False
+        else:
+            self._nt = False
+            self._old = signal.getsignal(signal.SIGINT)
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        return self
+
+    def __exit__(self, *exc):
+        if self._nt:
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(None, False)
+            except (AttributeError, OSError):
+                pass
+        else:
+            signal.signal(signal.SIGINT, self._old)
 
 
 @dataclass(frozen=True)
@@ -128,20 +177,28 @@ def iter_imap_unordered(
 
     use_timeout = spec.timeout_s is not None and spec.timeout_s > 0
 
-    with Pool(
-        processes=spec.processes,
-        initializer=initializer,
-        initargs=initargs,
-        maxtasksperchild=spec.maxtasksperchild,
-    ) as pool:
+    # Suppress CTRL_C in main process during pool creation so spawned
+    # workers inherit the ignore flag and survive stray console events
+    # (e.g. VS Code venv activation on Windows).
+    with _suppress_ctrl_c():
+        pool = Pool(
+            processes=spec.processes,
+            initializer=_worker_init_wrapper,
+            initargs=(initializer, initargs),
+            maxtasksperchild=spec.maxtasksperchild,
+        )
+
+    try:
+        if use_timeout:
+            yield from _iter_with_timeout(pool, tasks, task_fn, spec)
+        else:
+            yield from _iter_fast(pool, tasks, task_fn, spec)
+    except Exception:
         try:
-            if use_timeout:
-                yield from _iter_with_timeout(pool, tasks, task_fn, spec)
-            else:
-                yield from _iter_fast(pool, tasks, task_fn, spec)
-        except Exception:
-            try:
-                pool.terminate()
-            finally:
-                pool.join()
-            raise
+            pool.terminate()
+        finally:
+            pool.join()
+        raise
+    finally:
+        pool.close()
+        pool.join()

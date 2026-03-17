@@ -276,6 +276,15 @@ def generate_scd2_versions(
     _col_arrays = {col: changed_df[col].to_numpy() for col in _col_names}
     _n_changed = len(changed_df)
 
+    # Pre-convert all EffectiveStartDate values to epoch days for fast arithmetic
+    _eff_start_raw = _col_arrays.get("EffectiveStartDate")
+    if _eff_start_raw is not None:
+        _eff_start_ts = pd.to_datetime(pd.Series(_eff_start_raw))
+        _eff_start_days = _eff_start_ts.values.astype("datetime64[D]").astype("int64")
+    else:
+        _eff_start_days = None
+    _end_date_days = np.datetime64(end_date, "D").astype("int64")
+
     for _ri in range(_n_changed):
         # Build row dict from column arrays (faster than to_dict("records"))
         row_dict = {col: _col_arrays[col][_ri] for col in _col_names}
@@ -283,9 +292,13 @@ def generate_scd2_versions(
         # Determine number of life events (1 to max_versions-1)
         n_events = int(rng.integers(1, max_versions))
 
-        # Space event dates across customer's active period
-        cust_start = pd.Timestamp(row_dict["EffectiveStartDate"])
-        total_days = (end_date - cust_start).days
+        # Space event dates across customer's active period (pre-computed days)
+        if _eff_start_days is not None:
+            total_days = int(_end_date_days - _eff_start_days[_ri])
+            cust_start = _eff_start_ts.iloc[_ri]
+        else:
+            cust_start = pd.Timestamp(row_dict["EffectiveStartDate"])
+            total_days = (end_date - cust_start).days
 
         # Need at least 90 days per event segment
         if total_days <= 90:
@@ -318,11 +331,14 @@ def generate_scd2_versions(
 
         # Build version chain
         current_state = dict(row_dict)
+        # Pre-compute end dates as numpy datetime64 (avoids pd.Timestamp/pd.Timedelta per event)
+        _one_day = np.timedelta64(1, "D")
 
         for i in range(len(event_dates)):
-            event_date = pd.Timestamp(event_dates[i])
-            # Close the current version
-            current_state["EffectiveEndDate"] = event_date - pd.Timedelta(days=1)
+            event_date_np = event_dates[i]
+            event_date = pd.Timestamp(event_date_np)
+            # Close the current version (numpy datetime64 arithmetic, no pd.Timedelta)
+            current_state["EffectiveEndDate"] = event_date_np - _one_day
             current_state["IsCurrent"] = 0
             if _row_count < len(new_rows):
                 new_rows[_row_count] = dict(current_state)
@@ -342,9 +358,9 @@ def generate_scd2_versions(
             if not available:
                 break
             event_names, weights = zip(*available)
-            weights_arr = np.array(weights, dtype="float64")
-            weights_arr /= weights_arr.sum()
-            chosen = str(rng.choice(list(event_names), p=weights_arr))
+            weights_arr = np.asarray(weights, dtype="float64")
+            weights_arr = weights_arr / weights_arr.sum()
+            chosen = event_names[int(rng.choice(len(event_names), p=weights_arr))]
             _apply_life_event(rng, new_state, chosen, geo_keys, tier_keys,
                               geo_lookup, _geo_cache=_geo_cache)
 

@@ -337,7 +337,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
 
         _run_step("Generating Budget", _do_budget)
 
-    # --- Step 2b: Inventory snapshot generation (optional, must run before packaging)
+    # --- Step 2b: Inventory (uses its own multiprocessing pool — run alone)
     if inventory_acc is not None and inventory_acc.has_data:
         from src.facts.inventory.runner import run_inventory_pipeline
 
@@ -353,7 +353,9 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
 
         _run_step("Generating Inventory Snapshots", _do_inventory)
 
-    # --- Step 2c: Wishlists (optional, runs after sales to use purchase data)
+    # --- Step 2c-d: Wishlists + Complaints (lightweight, independent — run in parallel)
+    _parallel_steps = []
+
     if wishlists_acc is not None and wishlists_acc.has_data:
         from src.facts.wishlists.runner import run_wishlist_pipeline
 
@@ -365,9 +367,8 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
                 file_format=ctx.fmt,
             )
 
-        _run_step("Generating Customer Wishlists", _do_wishlists)
+        _parallel_steps.append(("Generating Customer Wishlists", _do_wishlists))
 
-    # --- Step 2d: Complaints (optional, runs after sales to use order data)
     if complaints_acc is not None and complaints_acc.has_data:
         from src.facts.complaints.runner import run_complaints_pipeline
 
@@ -380,7 +381,24 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
                 file_format=ctx.fmt,
             )
 
-        _run_step("Generating Fact Complaints", _do_complaints)
+        _parallel_steps.append(("Generating Fact Complaints", _do_complaints))
+
+    if len(_parallel_steps) > 1:
+        # Run lightweight post-sales pipelines concurrently via threads.
+        # These are I/O-heavy and release the GIL during numpy/parquet ops.
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _run_labeled(label_fn):
+            label, fn = label_fn
+            _run_step(label, fn)
+
+        with ThreadPoolExecutor(max_workers=len(_parallel_steps)) as pool:
+            futures = [pool.submit(_run_labeled, step) for step in _parallel_steps]
+            for fut in as_completed(futures):
+                fut.result()  # re-raise any exception
+    else:
+        for label, fn in _parallel_steps:
+            _run_step(label, fn)
 
     # --- Step 3: Package output + PBIP
     final_folder_result = None
