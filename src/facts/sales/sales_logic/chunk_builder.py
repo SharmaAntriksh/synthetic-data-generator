@@ -54,6 +54,33 @@ def _as_datetime64_D(x):
     # Fallback
     return np.asarray(x, dtype="datetime64[D]")
 
+# Module-level cache for brand flat index + offsets (rebuilt once per worker).
+_brand_flat_cache_ref: list | None = None
+_brand_flat_cache_data: tuple | None = None  # (flat_idx, offsets)
+
+
+def _get_brand_flat_cache(brand_to_rows: list, B: int) -> tuple:
+    """Return (flat_idx, offsets) for brand_to_rows, caching across calls."""
+    global _brand_flat_cache_ref, _brand_flat_cache_data
+    if _brand_flat_cache_ref is brand_to_rows and _brand_flat_cache_data is not None:
+        return _brand_flat_cache_data
+
+    flat_parts = []
+    offsets = np.zeros(B + 1, dtype="int64")
+    for b in range(B):
+        bucket = brand_to_rows[b]
+        if bucket is not None and len(bucket) > 0:
+            flat_parts.append(np.asarray(bucket, dtype="int32"))
+            offsets[b + 1] = offsets[b] + len(bucket)
+        else:
+            offsets[b + 1] = offsets[b]
+
+    flat_idx = np.concatenate(flat_parts) if flat_parts else np.empty(0, dtype="int32")
+    _brand_flat_cache_ref = brand_to_rows
+    _brand_flat_cache_data = (flat_idx, offsets)
+    return flat_idx, offsets
+
+
 def _normalize_prob(p: np.ndarray) -> np.ndarray | None:
     p = np.asarray(p, dtype="float64")
     p = np.where(np.isfinite(p) & (p > 0), p, 0.0)
@@ -140,22 +167,12 @@ def _sample_product_row_indices(
 
     brand_ids = rng.choice(B, size=n_int, p=p)
 
-    # Build a flat index array + offsets for all brands to eliminate per-brand Python loop.
-    # This converts per-brand row lists into a single contiguous array for vectorized indexing.
-    flat_parts = []
-    offsets = np.zeros(B + 1, dtype="int64")
-    for b in range(B):
-        bucket = brand_to_rows[b]
-        if bucket is not None and len(bucket) > 0:
-            flat_parts.append(np.asarray(bucket, dtype="int32"))
-            offsets[b + 1] = offsets[b] + len(bucket)
-        else:
-            offsets[b + 1] = offsets[b]
+    # Build flat index array + offsets once and cache at module level (deterministic
+    # per worker).  Avoids rebuilding from brand_to_rows (up to 300K brands) per call.
+    flat_idx, offsets = _get_brand_flat_cache(brand_to_rows, B)
 
     if offsets[-1] == 0:
         return rng.integers(0, n_products, size=n_int).astype("int32", copy=False)
-
-    flat_idx = np.concatenate(flat_parts) if flat_parts else np.empty(0, dtype="int32")
 
     # Vectorized sampling: for each order, pick a random offset within its brand's bucket
     bucket_sizes = offsets[1:] - offsets[:-1]
@@ -235,6 +252,13 @@ def _sample_products_per_store(
     max_sk = len(store_to_product_rows)
     out = np.empty(n, dtype=np.int32)
 
+    # Pre-compute normalized global weights once (used by fallback path)
+    _global_p = None
+    if product_weight is not None:
+        ws = float(product_weight.sum())
+        if ws > 1e-12:
+            _global_p = product_weight / ws
+
     # Group lines by store via argsort (avoids O(stores×n) per-store mask scans)
     unique_stores, inverse = np.unique(store_key_arr, return_inverse=True)
     _store_order = np.argsort(inverse, kind="stable")
@@ -281,12 +305,8 @@ def _sample_products_per_store(
             else:
                 out[orig_idx] = pool[rng.integers(0, len(pool), size=count)]
         else:
-            if product_weight is not None:
-                ws = float(product_weight.sum())
-                if ws > 1e-12:
-                    out[orig_idx] = rng.choice(n_products, size=count, p=product_weight / ws)
-                else:
-                    out[orig_idx] = rng.integers(0, n_products, size=count)
+            if _global_p is not None:
+                out[orig_idx] = rng.choice(n_products, size=count, p=_global_p)
             else:
                 out[orig_idx] = rng.integers(0, n_products, size=count)
 

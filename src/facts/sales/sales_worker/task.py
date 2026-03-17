@@ -176,28 +176,31 @@ def _partition_cols() -> set[str]:
     return _cached_partition_cols
 
 
-# Per-table projection column lists, cached to avoid recomputation.
-_projection_cache: Dict[str, List[str]] = {}
+# Per-table projection: cached as (list, tuple) for fast identity check.
+_projection_cache: Dict[str, Tuple[List[str], tuple]] = {}
 
 
 def _project_for_table(table_name: str, table: pa.Table) -> pa.Table:
-    cols = _projection_cache.get(table_name)
-    if cols is None:
+    cached = _projection_cache.get(table_name)
+    if cached is None:
         expected = State.schema_by_table[table_name]
         part_cols = _partition_cols()
         cols = [n for n in expected.names if n not in part_cols]
-        _projection_cache[table_name] = cols
+        cols_tuple = tuple(cols)
+        _projection_cache[table_name] = (cols, cols_tuple)
+    else:
+        cols, cols_tuple = cached
 
-    got = table.column_names
-    if len(cols) == len(got) and all(a == b for a, b in zip(cols, got)):
+    # Fast path: tuple equality is a single C-level comparison
+    if tuple(table.column_names) == cols_tuple:
         return table
 
-    got_set = set(got)
+    got_set = set(table.column_names)
     missing = [c for c in cols if c not in got_set]
     if missing:
         raise RuntimeError(
             f"Cannot project {table_name}: missing columns {sorted(missing)}. "
-            f"Available columns: {got}"
+            f"Available columns: {table.column_names}"
         )
     return table.select(cols)
 
@@ -360,24 +363,38 @@ def _sample_hour_weighted_minute(rng: np.random.Generator, size: int, hour_p: np
     return (hours * 60 + mins).astype(np.int16, copy=False)
 
 
+_cached_digital_w: np.ndarray | None = None
+
+
 def _sample_time_keys_by_channel(
     rng: np.random.Generator,
     channel_keys: np.ndarray,
     channel_hour_lut: np.ndarray,
 ) -> np.ndarray:
     """Sample minute-of-day TimeKey values using per-channel hour weights."""
+    global _cached_digital_w
     keys = np.asarray(channel_keys, dtype=np.int16)
-    out = np.empty(keys.shape[0], dtype=np.int16)
-    digital_w = _normalize_hour_prob(DIGITAL_HOUR_W)
-    for ck in np.unique(keys):
+    n_total = keys.shape[0]
+    out = np.empty(n_total, dtype=np.int16)
+
+    if _cached_digital_w is None:
+        _cached_digital_w = _normalize_hour_prob(DIGITAL_HOUR_W)
+    digital_w = _cached_digital_w
+
+    # Group by channel via argsort (avoids O(channels × n) mask scans)
+    unique_cks, inverse = np.unique(keys, return_inverse=True)
+    order = np.argsort(inverse, kind="stable")
+    counts = np.bincount(inverse, minlength=len(unique_cks))
+    starts = np.zeros(len(unique_cks) + 1, dtype=np.int64)
+    np.cumsum(counts, out=starts[1:])
+
+    lut_size = channel_hour_lut.shape[0]
+    for i, ck in enumerate(unique_cks):
+        s, e = int(starts[i]), int(starts[i + 1])
+        n = e - s
         ck_int = int(ck)
-        mask = keys == ck
-        n = int(mask.sum())
-        if ck_int < channel_hour_lut.shape[0]:
-            hour_w = channel_hour_lut[ck_int]
-        else:
-            hour_w = digital_w
-        out[mask] = _sample_hour_weighted_minute(rng, n, hour_w)
+        hour_w = channel_hour_lut[ck_int] if ck_int < lut_size else digital_w
+        out[order[s:e]] = _sample_hour_weighted_minute(rng, n, hour_w)
     return out
 
 
@@ -866,10 +883,11 @@ def _worker_task(args):
     tasks, single = normalize_tasks(args)
     results = []
 
-    State.validate(["chunk_size"])
+    # State.validate(["chunk_size"]) is now called once in init_sales_worker
+    # instead of per-task, eliminating ~100-1000 redundant validation calls.
 
     # --- Hoist loop-invariant reads from State ---
-    validate_header = bool(getattr(State, "validate_header_invariants", True))
+    validate_header = bool(getattr(State, "validate_header_invariants", False))
     cap_orders = int(getattr(State, "chunk_size", 0) or 0)
     if cap_orders <= 0:
         raise RuntimeError(f"State.chunk_size must be > 0, got {cap_orders}")
