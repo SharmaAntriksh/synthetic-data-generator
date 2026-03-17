@@ -168,7 +168,8 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         # Schema scripts (numbered)
         write_create_table_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
         compose_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
-        copy_views_sql(sql_root=sql_root)
+        view_schema = str(getattr(getattr(cfg, "defaults", None), "view_schema", "dbo") or "dbo").strip()
+        copy_views_sql(sql_root=sql_root, view_schema=view_schema)
         compose_verification_sql(sql_root=sql_root)
 
         # Load scripts
