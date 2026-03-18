@@ -1,7 +1,11 @@
-"""Household assignment for customer dimension."""
+"""Household assignment for customer dimension.
+
+Optimized for large N (1M+): uses fully vectorized numpy operations
+for spouse matching and dependent recruitment with no per-head Python loops.
+"""
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Tuple
 
 import numpy as np
 
@@ -12,6 +16,37 @@ from src.defaults import (
     CUSTOMER_HOUSEHOLD_DEPENDENT_MIN_AGE_GAP as _DEPENDENT_MIN_AGE_GAP,
     CUSTOMER_HOUSEHOLD_DEPENDENT_MAX_AGE as _DEPENDENT_MAX_AGE,
 )
+
+
+def _match_sorted_1to1(
+    head_ages: np.ndarray,
+    cand_ages: np.ndarray,
+    max_gap: float,
+    min_cand_age: float,
+) -> np.ndarray:
+    """Greedy 1-to-1 matching of sorted head ages to sorted candidate ages.
+
+    Both arrays must be sorted ascending.  Returns an int array of length
+    len(head_ages) where result[i] is the index into cand_ages matched to
+    head i, or -1 if no match.  Each candidate is used at most once.
+
+    O(n_heads + n_cands) — single pass, no inner scan.
+    """
+    n_h = len(head_ages)
+    n_c = len(cand_ages)
+    result = np.full(n_h, -1, dtype=np.intp)
+    ci = 0
+    for hi in range(n_h):
+        lo = max(head_ages[hi] - max_gap, min_cand_age)
+        hi_age = head_ages[hi] + max_gap
+        # Advance past candidates below the window
+        while ci < n_c and cand_ages[ci] < lo:
+            ci += 1
+        # Take the first candidate in the window
+        if ci < n_c and cand_ages[ci] <= hi_age:
+            result[hi] = ci
+            ci += 1
+    return result
 
 
 def assign_households(
@@ -29,24 +64,8 @@ def assign_households(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Assign HouseholdKey and HouseholdRole for all customers.
 
-    Strategy — proactively *form* households rather than relying on
-    coincidental name/geography collisions:
-
-      1. Select married individuals as household "Head" candidates.
-         Pick *household_pct* of them (capped by available married pool).
-      2. For each head, find a spouse: opposite gender, age gap within
-         threshold, preferring same HomeOwnership.  Copy the head's
-         LastName and GeographyKey onto the spouse so the family shares
-         a surname and location.
-      3. If the head's TotalChildren > 0, recruit up to that many young
-         individuals (age gap >= DEPENDENT_MIN_AGE_GAP) as "Dependent",
-         again copying LastName and GeographyKey.
-      4. Everyone not placed into a multi-person household gets their own
-         single-person household with role "Head" (individuals) or
-         role=None (orgs).
-
     Mutates *last_name* and *geography_key* in place so downstream
-    columns (CustomerName, Email, address) reflect the shared surname.
+    columns reflect shared surnames within households.
 
     Returns (HouseholdKey, HouseholdRole) arrays of length N.
     """
@@ -62,7 +81,6 @@ def assign_households(
         household_key[:] = np.arange(1, N + 1)
         return household_key, household_role
 
-    # --- Identify head candidates: married individuals old enough ---
     married_mask = (marital_status[person_idx] == "Married") & (ages_years[person_idx] >= _HEAD_MIN_AGE)
     married_idx = person_idx[married_mask]
 
@@ -70,119 +88,138 @@ def assign_households(
     n_heads = min(n_target_heads, len(married_idx))
 
     if n_heads == 0:
-        # No married individuals — everyone gets a solo household
         household_key[:] = np.arange(1, N + 1)
         household_role[person_mask] = "Head"
         return household_key, household_role
 
     head_indices = rng.choice(married_idx, size=n_heads, replace=False)
+    ages_f64 = ages_years.astype(np.float64)
 
-    # -----------------------------------------------------------------
-    # Build sorted-by-age pools per gender for O(log n) spouse search
-    # -----------------------------------------------------------------
-    head_set = set(head_indices.tolist())
-    avail_mask = np.zeros(N, dtype=bool)          # global availability tracker
-    avail_mask[person_idx] = True
-    avail_mask[head_indices] = False               # heads are not in the pool
+    # Assign household IDs to all heads upfront
+    hh_ids = np.arange(1, n_heads + 1, dtype="int64")
+    household_key[head_indices] = hh_ids
+    household_role[head_indices] = "Head"
 
-    ages_f64 = ages_years.astype(np.float64)       # ensure float for arithmetic
-    ho_arr = home_ownership                        # alias for readability
+    avail = np.zeros(N, dtype=bool)
+    avail[person_idx] = True
+    avail[head_indices] = False
 
-    # Per-gender sorted pools: (sorted_ages, sorted_indices, alive_mask)
-    _pools: Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
-    for g in ("Male", "Female"):
-        g_avail = np.where(avail_mask & (gender == g))[0]
-        if len(g_avail) == 0:
-            _pools[g] = (np.empty(0), np.empty(0, dtype="int64"), np.empty(0, dtype=bool))
+    # =================================================================
+    # SPOUSE MATCHING — vectorized greedy 1:1 by sorted age
+    # =================================================================
+    all_matched_spouses = []
+    all_matched_hh_ids = []
+    all_matched_head_idx = []
+
+    for target_g, head_g in [("Female", "Male"), ("Male", "Female")]:
+        h_mask = gender[head_indices] == head_g
+        h_local = np.where(h_mask)[0]
+        if len(h_local) == 0:
             continue
-        order = np.argsort(ages_f64[g_avail])
-        sorted_idx = g_avail[order]
-        sorted_ages = ages_f64[sorted_idx]
-        alive = np.ones(len(sorted_idx), dtype=bool)
-        _pools[g] = (sorted_ages, sorted_idx, alive)
 
-    # Dependent pool: all genders, age <= DEPENDENT_MAX_AGE, sorted ascending
-    dep_avail = np.where(avail_mask & (ages_f64 <= _DEPENDENT_MAX_AGE))[0]
-    dep_order = np.argsort(ages_f64[dep_avail])
-    dep_sorted_idx = dep_avail[dep_order]
-    dep_sorted_ages = ages_f64[dep_sorted_idx]
-    dep_alive = np.ones(len(dep_sorted_idx), dtype=bool)
+        # Sort heads by age
+        h_ages = ages_f64[head_indices[h_local]]
+        h_order = np.argsort(h_ages)
+        h_sorted_local = h_local[h_order]
+        h_sorted_ages = h_ages[h_order]
 
-    hh_id = 0
+        # Candidate pool sorted by age
+        c_idx = np.where(avail & (gender == target_g))[0]
+        if len(c_idx) == 0:
+            continue
+        c_ages = ages_f64[c_idx]
+        c_order = np.argsort(c_ages)
+        c_sorted = c_idx[c_order]
+        c_sorted_ages = c_ages[c_order]
 
-    for head in head_indices:
-        hh_id += 1
-        household_key[head] = hh_id
-        household_role[head] = "Head"
+        # O(n) greedy match
+        matched_c = _match_sorted_1to1(
+            h_sorted_ages, c_sorted_ages, _SPOUSE_MAX_AGE_GAP, _SPOUSE_MIN_AGE,
+        )
 
-        head_age = ages_f64[head]
-        head_gender = gender[head]
-        head_ln = last_name[head]
-        head_geo = geography_key[head]
-        head_ho = ho_arr[head]
+        got = matched_c >= 0
+        if got.any():
+            spouse_global = c_sorted[matched_c[got]]
+            head_local_matched = h_sorted_local[got]
+            all_matched_spouses.append(spouse_global)
+            all_matched_hh_ids.append(hh_ids[head_local_matched])
+            all_matched_head_idx.append(head_indices[head_local_matched])
+            avail[spouse_global] = False
 
-        # --- Find a spouse: opposite gender, within age gap ---
-        spouse_gender = "Female" if head_gender == "Male" else "Male"
-        s_ages, s_idx, s_alive = _pools.get(spouse_gender, (np.empty(0), np.empty(0, dtype="int64"), np.empty(0, dtype=bool)))
+    # Apply spouse matches in bulk
+    if all_matched_spouses:
+        sp = np.concatenate(all_matched_spouses)
+        sp_hh = np.concatenate(all_matched_hh_ids)
+        sp_head = np.concatenate(all_matched_head_idx)
+        household_key[sp] = sp_hh
+        household_role[sp] = "Spouse"
+        last_name[sp] = last_name[sp_head]
+        geography_key[sp] = geography_key[sp_head]
 
-        best_pool_pos = -1
+    # =================================================================
+    # DEPENDENT RECRUITMENT — vectorized greedy
+    # =================================================================
+    dep_wanted = children_raw[head_indices].astype(int)
+    heads_wanting = np.where(dep_wanted > 0)[0]
 
-        if len(s_ages) > 0:
-            lo_age = max(head_age - _SPOUSE_MAX_AGE_GAP, _SPOUSE_MIN_AGE)
-            hi_age = head_age + _SPOUSE_MAX_AGE_GAP
-            lo_pos = int(np.searchsorted(s_ages, lo_age, side="left"))
-            hi_pos = int(np.searchsorted(s_ages, hi_age, side="right"))
+    if len(heads_wanting) > 0:
+        dep_pool_idx = np.where(avail & (ages_f64 <= _DEPENDENT_MAX_AGE))[0]
 
-            if lo_pos < hi_pos:
-                window_alive = s_alive[lo_pos:hi_pos]
-                alive_positions = np.flatnonzero(window_alive)
-                if len(alive_positions) > 0:
-                    w_ages = s_ages[lo_pos:hi_pos][alive_positions]
-                    w_idx = s_idx[lo_pos:hi_pos][alive_positions]
-                    scores = np.abs(head_age - w_ages)
-                    ho_match = (ho_arr[w_idx] == head_ho)
-                    scores = np.where(ho_match, scores - 2.0, scores)
-                    best_w = int(np.argmin(scores))
-                    best_pool_pos = lo_pos + int(alive_positions[best_w])
+        if len(dep_pool_idx) > 0:
+            dep_ages = ages_f64[dep_pool_idx]
+            # Sort descending (oldest first)
+            dep_order = np.argsort(-dep_ages)
+            dep_sorted = dep_pool_idx[dep_order]
+            dep_sorted_ages = dep_ages[dep_order]
 
-        if best_pool_pos >= 0:
-            matched = int(s_idx[best_pool_pos])
-            household_key[matched] = hh_id
-            household_role[matched] = "Spouse"
-            s_alive[best_pool_pos] = False
-            avail_mask[matched] = False
-            last_name[matched] = head_ln
-            geography_key[matched] = head_geo
+            # Head info
+            hwd_global = head_indices[heads_wanting]
+            hwd_max_dep_age = ages_f64[hwd_global] - _DEPENDENT_MIN_AGE_GAP
+            hwd_n_wanted = dep_wanted[heads_wanting]
+            hwd_hh = hh_ids[heads_wanting]
 
-        # --- Recruit dependents based on TotalChildren ---
-        n_children_wanted = int(children_raw[head])
-        if n_children_wanted > 0:
-            max_dep_age = head_age - _DEPENDENT_MIN_AGE_GAP
-            if max_dep_age > 0:
-                # dep_sorted_ages is ascending; valid range is [0, max_dep_age]
-                hi_dep = int(np.searchsorted(dep_sorted_ages, max_dep_age, side="right"))
-                # Vectorized: find alive candidates in the eligible window, take oldest first
-                _dep_window_alive = np.flatnonzero(dep_alive[:hi_dep])
-                if _dep_window_alive.size > 0:
-                    # Also check global avail_mask for candidates
-                    _dep_cands = dep_sorted_idx[_dep_window_alive]
-                    _dep_avail = avail_mask[_dep_cands]
-                    _dep_valid = _dep_window_alive[_dep_avail]
-                    # Take up to n_children_wanted from the oldest end (reversed)
-                    _take = _dep_valid[-n_children_wanted:][::-1] if len(_dep_valid) > n_children_wanted else _dep_valid[::-1]
-                    for dp in _take:
-                        cand = int(dep_sorted_idx[dp])
-                        household_key[cand] = hh_id
-                        household_role[cand] = "Dependent"
-                        dep_alive[dp] = False
-                        avail_mask[cand] = False
-                        last_name[cand] = head_ln
-                        geography_key[cand] = head_geo
+            # Sort heads by max_dep_age descending
+            hwd_order = np.argsort(-hwd_max_dep_age)
 
-    # --- Assign solo households to everyone not yet assigned ---
+            # Collect assignments in bulk arrays
+            assign_dep = []
+            assign_hh = []
+            assign_head = []
+
+            dep_ptr = 0
+            n_deps = len(dep_sorted)
+
+            for wi in range(len(hwd_order)):
+                hi_idx = hwd_order[wi]
+                max_age = hwd_max_dep_age[hi_idx]
+                if max_age <= 0:
+                    continue
+                n_want = int(hwd_n_wanted[hi_idx])
+                n_got = 0
+
+                while dep_ptr < n_deps and n_got < n_want:
+                    if dep_sorted_ages[dep_ptr] <= max_age:
+                        assign_dep.append(int(dep_sorted[dep_ptr]))
+                        assign_hh.append(hwd_hh[hi_idx])
+                        assign_head.append(hwd_global[hi_idx])
+                        n_got += 1
+                    dep_ptr += 1
+
+            # Apply in bulk
+            if assign_dep:
+                dep_arr = np.array(assign_dep, dtype="int64")
+                hh_arr = np.array(assign_hh, dtype="int64")
+                head_arr = np.array(assign_head, dtype="int64")
+                household_key[dep_arr] = hh_arr
+                household_role[dep_arr] = "Dependent"
+                avail[dep_arr] = False
+                last_name[dep_arr] = last_name[head_arr]
+                geography_key[dep_arr] = geography_key[head_arr]
+
+    # --- Assign solo households ---
+    hh_id = n_heads
     unassigned = np.where(household_key == 0)[0]
     household_key[unassigned] = np.arange(hh_id + 1, hh_id + 1 + len(unassigned))
-    # Solo persons get "Head" role; orgs stay None
     solo_persons = unassigned[person_mask[unassigned]]
     household_role[solo_persons] = "Head"
 

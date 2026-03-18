@@ -470,6 +470,9 @@ CURRENCY_BASE = "USD"
 # Below this pair count, run single-process (overhead of spawning isn't worth it)
 INVENTORY_PARALLEL_THRESHOLD = 50_000
 
+# Below this customer count, customer generation stays single-process
+CUSTOMER_PARALLEL_THRESHOLD = 200_000
+
 
 # =================================================================
 #  MODULE-LEVEL VALIDATION

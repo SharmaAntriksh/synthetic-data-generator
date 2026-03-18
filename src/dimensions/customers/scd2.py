@@ -215,65 +215,48 @@ def _apply_life_event(
                 state["LoyaltyTierKey"] = int(tier_keys[current_idx + 1])
 
 
-def generate_scd2_versions(
-    rng: np.random.Generator,
-    base_df: pd.DataFrame,
-    cust_cfg,
-    geo_keys: np.ndarray,
-    tier_keys: np.ndarray,
-    end_date: pd.Timestamp,
-    geo_lookup: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Expand customer rows with SCD Type 2 version history.
-
-    For a fraction of individual customers (scd2_change_rate), generates
-    coherent life events that modify tracked attributes (GeographyKey,
-    LoyaltyTierKey, YearlyIncome, IncomeGroup, MaritalStatus, HomeOwnership,
-    NumberOfChildren).  Each event creates a new version row with updated
-    EffectiveStartDate / EffectiveEndDate / VersionNumber / IsCurrent.
-    """
-    change_rate = float(getattr(cust_cfg, "change_rate", 0.15))
-    max_versions = int(getattr(cust_cfg, "max_versions", 4))
-
-    # Only individuals get SCD2 versions (orgs stay at version 1)
-    person_mask = base_df["CustomerType"] == "Individual"
-    person_ids = base_df.loc[person_mask, "CustomerID"].to_numpy()
-
-    if len(person_ids) == 0:
-        return base_df
-
-    n_change = max(1, int(len(person_ids) * change_rate))
-    n_change = min(n_change, len(person_ids))
-    change_id_set = set(
-        rng.choice(person_ids, size=n_change, replace=False).tolist()
-    )
-
-    # Separate unchanged customers (pass through) from changed ones
-    _change_mask = base_df["CustomerID"].isin(change_id_set)
-    unchanged_df = base_df[~_change_mask]
-    changed_df = base_df[_change_mask]
-
-    # Pre-build geo cache dict for fast _relocate lookups (avoid DataFrame.loc in tight loop)
-    _geo_cache: dict = {}
+def _build_geo_cache(geo_lookup) -> dict:
+    """Build {GeographyKey: (Country, City, State)} cache for fast lookups."""
+    cache: dict = {}
     if isinstance(geo_lookup, pd.DataFrame) and not geo_lookup.empty:
         for gk in geo_lookup.index:
             row = geo_lookup.loc[gk]
-            _geo_cache[gk] = (str(row["Country"]), str(row["City"]), str(row["State"]))
+            cache[gk] = (str(row["Country"]), str(row["City"]), str(row["State"]))
+    elif isinstance(geo_lookup, dict):
+        cache = geo_lookup
+    return cache
 
-    # Pre-allocate with estimated capacity (avg ~2 versions per changed customer)
+
+def expand_changed_customers(
+    rng: np.random.Generator,
+    changed_df: pd.DataFrame,
+    max_versions: int,
+    geo_keys: np.ndarray,
+    tier_keys: np.ndarray,
+    end_date: pd.Timestamp,
+    geo_lookup,
+) -> pd.DataFrame:
+    """Expand pre-selected changed customers with SCD2 version rows.
+
+    Unlike generate_scd2_versions, this does NOT perform random selection —
+    all rows in changed_df are expanded.  The caller is responsible for
+    selecting which customers to change.
+
+    Returns a DataFrame containing all version rows (including originals).
+    """
+    _geo_cache = _build_geo_cache(geo_lookup)
+
+    # Pre-allocate with estimated capacity
     new_rows = []
     _est_rows = int(len(changed_df) * 2.5)
     if _est_rows > 0:
         new_rows = [None] * _est_rows
     _row_count = 0
 
-    # Use column arrays directly instead of to_dict("records")
     _col_names = changed_df.columns.tolist()
     _col_arrays = {col: changed_df[col].to_numpy() for col in _col_names}
     _n_changed = len(changed_df)
 
-    # Pre-convert all EffectiveStartDate values to epoch days for fast arithmetic
     _eff_start_raw = _col_arrays.get("EffectiveStartDate")
     if _eff_start_raw is not None:
         _eff_start_ts = pd.to_datetime(pd.Series(_eff_start_raw))
@@ -285,13 +268,10 @@ def generate_scd2_versions(
     _end_date_days = np.datetime64(end_date, "D").astype("int64")
 
     for _ri in range(_n_changed):
-        # Build row dict from column arrays (faster than to_dict("records"))
         row_dict = {col: _col_arrays[col][_ri] for col in _col_names}
 
-        # Determine number of life events (1 to max_versions-1)
         n_events = int(rng.integers(1, max_versions))
 
-        # Space event dates across customer's active period (pre-computed days)
         if _eff_start_days is not None:
             total_days = int(_end_date_days - _eff_start_days[_ri])
             cust_start = pd.Timestamp(_eff_start_np[_ri])
@@ -299,7 +279,6 @@ def generate_scd2_versions(
             cust_start = pd.Timestamp(row_dict["EffectiveStartDate"])
             total_days = (end_date - cust_start).days
 
-        # Need at least 90 days per event segment
         if total_days <= 90:
             if _row_count < len(new_rows):
                 new_rows[_row_count] = row_dict
@@ -317,26 +296,20 @@ def generate_scd2_versions(
             _row_count += 1
             continue
 
-        # Generate sorted random event offsets.
         max_offset = max(91, total_days - 90)
         offsets = np.sort(rng.integers(90, max_offset, size=n_events))
-        # Enforce minimum 60-day gap between events
         for i in range(1, len(offsets)):
             if offsets[i] - offsets[i - 1] < 60:
                 offsets[i] = min(offsets[i - 1] + 60, max_offset - 1)
-        # Vectorized date creation: avoid per-event pd.Timedelta
         _offset_td = offsets.astype("timedelta64[D]")
         event_dates = np.datetime64(cust_start, "D") + _offset_td
 
-        # Build version chain
         current_state = dict(row_dict)
-        # Pre-compute end dates as numpy datetime64 (avoids pd.Timestamp/pd.Timedelta per event)
         _one_day = np.timedelta64(1, "D")
 
         for i in range(len(event_dates)):
             event_date_np = event_dates[i]
             event_date = pd.Timestamp(event_date_np)
-            # Close the current version (numpy datetime64 arithmetic, no pd.Timedelta)
             current_state["EffectiveEndDate"] = event_date_np - _one_day
             current_state["IsCurrent"] = 0
             if _row_count < len(new_rows):
@@ -345,14 +318,12 @@ def generate_scd2_versions(
                 new_rows.append(dict(current_state))
             _row_count += 1
 
-            # Create new version
             new_state = dict(current_state)
             new_state["VersionNumber"] = i + 2
             new_state["EffectiveStartDate"] = event_date
             new_state["EffectiveEndDate"] = SCD2_END_OF_TIME
             new_state["IsCurrent"] = 1
 
-            # Pick and apply a coherent life event
             available = _available_events(new_state, tier_keys)
             if not available:
                 break
@@ -365,23 +336,65 @@ def generate_scd2_versions(
 
             current_state = new_state
 
-        # Add the final (current) version
         if _row_count < len(new_rows):
             new_rows[_row_count] = dict(current_state)
         else:
             new_rows.append(dict(current_state))
         _row_count += 1
 
-    # Trim pre-allocated list
     new_rows = new_rows[:_row_count]
+    return pd.DataFrame(new_rows)
 
-    # Combine unchanged + expanded rows
+
+def generate_scd2_versions(
+    rng: np.random.Generator,
+    base_df: pd.DataFrame,
+    cust_cfg,
+    geo_keys: np.ndarray,
+    tier_keys: np.ndarray,
+    end_date: pd.Timestamp,
+    geo_lookup: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Expand customer rows with SCD Type 2 version history.
+
+    Selects a fraction of individual customers (change_rate), then delegates
+    to expand_changed_customers() for the per-row life event simulation.
+    """
+    change_rate = float(getattr(cust_cfg, "change_rate", 0.15))
+    max_versions = int(getattr(cust_cfg, "max_versions", 4))
+
+    person_mask = base_df["CustomerType"] == "Individual"
+    person_ids = base_df.loc[person_mask, "CustomerID"].to_numpy()
+
+    if len(person_ids) == 0:
+        return base_df
+
+    n_change = max(1, int(len(person_ids) * change_rate))
+    n_change = min(n_change, len(person_ids))
+    change_id_set = set(
+        rng.choice(person_ids, size=n_change, replace=False).tolist()
+    )
+
+    _change_mask = base_df["CustomerID"].isin(change_id_set)
+    unchanged_df = base_df[~_change_mask]
+    changed_df = base_df[_change_mask]
+
+    expanded_rows_df = expand_changed_customers(
+        rng=rng,
+        changed_df=changed_df,
+        max_versions=max_versions,
+        geo_keys=geo_keys,
+        tier_keys=tier_keys,
+        end_date=end_date,
+        geo_lookup=geo_lookup,
+    )
+
     expanded_df = pd.concat(
-        [unchanged_df, pd.DataFrame(new_rows)],
+        [unchanged_df, expanded_rows_df],
         ignore_index=True,
     )
 
-    # Reassign CustomerKey to be sequential across all version rows
     expanded_df["CustomerKey"] = np.arange(1, len(expanded_df) + 1, dtype="int64")
 
     n_total = len(expanded_df)
