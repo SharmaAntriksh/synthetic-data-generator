@@ -473,6 +473,12 @@ INVENTORY_PARALLEL_THRESHOLD = 50_000
 # Below this customer count, customer generation stays single-process
 CUSTOMER_PARALLEL_THRESHOLD = 200_000
 
+# Below this eligible-customer count, subscriptions stay single-process
+SUBSCRIPTION_PARALLEL_THRESHOLD = 200_000
+
+# Below this estimated row count, wishlists stay single-process
+WISHLIST_PARALLEL_THRESHOLD = 100_000
+
 
 # =================================================================
 #  MODULE-LEVEL VALIDATION

@@ -5,12 +5,20 @@ Runs AFTER sales generation, using the WishlistAccumulator to create realistic
 wishlist-to-purchase conversion rates.  A configurable fraction of each
 customer's wishlist items are drawn from products they actually bought;
 the remainder are selected via popularity-weighted subcategory affinity.
+
+For large datasets (total_rows >= WISHLIST_PARALLEL_THRESHOLD), the per-customer
+loop is distributed across multiple worker processes.  Each worker receives a
+slice of participants plus shared read-only product data, writes a chunk parquet,
+and the main process merges them.  Small datasets use the serial path unchanged.
 """
 from __future__ import annotations
 
+import os
+import time
 from dataclasses import dataclass
+from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,6 +27,7 @@ import pyarrow.parquet as pq
 
 from src.facts.wishlists.accumulator import WishlistAccumulator
 from src.utils.logging_utils import info, skip
+from src.defaults import WISHLIST_PARALLEL_THRESHOLD
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +294,7 @@ def _pick_products_for_customer(
 
 
 # ---------------------------------------------------------------------------
-# Bridge writer
+# Bridge writer (serial path)
 # ---------------------------------------------------------------------------
 
 def _write_bridge(
@@ -543,6 +552,285 @@ def _write_bridge(
 
 
 # ---------------------------------------------------------------------------
+# Parallel path helpers
+# ---------------------------------------------------------------------------
+
+def _build_product_data_dict(
+    prod_keys: np.ndarray,
+    prod_prices: np.ndarray,
+    prod_subcat: np.ndarray,
+    product_weights: np.ndarray,
+) -> Dict[str, Any]:
+    """Serialize product arrays + CDFs into a picklable dict for workers."""
+    n_products = len(prod_keys)
+
+    global_cdf = np.cumsum(product_weights)
+    global_cdf[-1] = 1.0
+
+    unique_subcats = np.unique(prod_subcat)
+
+    # Build sorted flat arrays of per-subcat pool indices and weights
+    # so workers can receive everything as plain lists (no dict of arrays)
+    subcat_keys_list: List[int] = []
+    subcat_starts_list: List[int] = []
+    subcat_ends_list: List[int] = []
+    pool_indices_list: List[int] = []
+    pool_weights_list: List[float] = []
+    subcat_cdf_starts_list: List[int] = []
+    subcat_cdf_ends_list: List[int] = []
+    cdf_data_list: List[float] = []
+
+    pool_cursor = 0
+    cdf_cursor = 0
+    for sc in unique_subcats:
+        idx = np.where(prod_subcat == sc)[0]
+        w = product_weights[idx]
+        ws = float(w.sum())
+
+        subcat_keys_list.append(int(sc))
+        subcat_starts_list.append(pool_cursor)
+        subcat_ends_list.append(pool_cursor + len(idx))
+        pool_indices_list.extend(idx.tolist())
+        pool_weights_list.extend(w.tolist())
+
+        subcat_cdf_starts_list.append(cdf_cursor)
+        if ws > 0:
+            sc_cdf = np.cumsum(w / ws)
+            sc_cdf[-1] = 1.0
+            cdf_data_list.extend(sc_cdf.tolist())
+            subcat_cdf_ends_list.append(cdf_cursor + len(sc_cdf))
+            cdf_cursor += len(sc_cdf)
+        else:
+            subcat_cdf_ends_list.append(cdf_cursor)
+
+        pool_cursor += len(idx)
+
+    return {
+        "prod_keys": prod_keys.tolist(),
+        "prod_prices": prod_prices.tolist(),
+        "prod_subcat": prod_subcat.tolist(),
+        "global_cdf": global_cdf.tolist(),
+        "subcat_keys": subcat_keys_list,
+        "subcat_starts": subcat_starts_list,
+        "subcat_ends": subcat_ends_list,
+        "pool_indices": pool_indices_list,
+        "pool_weights": pool_weights_list,
+        "subcat_cdf_starts": subcat_cdf_starts_list,
+        "subcat_cdf_ends": subcat_cdf_ends_list,
+        "cdf_data": cdf_data_list,
+    }
+
+
+def _partition_participants(
+    participant_cust_keys: np.ndarray,
+    participant_earliest_ns: np.ndarray,
+    participant_latest_ns: np.ndarray,
+    items_per: np.ndarray,
+    n_chunks: int,
+) -> List[Dict[str, Any]]:
+    """Split participants evenly across n_chunks; each chunk gets its slice."""
+    n = len(participant_cust_keys)
+    # Compute cumulative row offsets for WishlistKey assignment across chunks
+    cumulative_offsets = np.zeros(n + 1, dtype=np.int64)
+    np.cumsum(items_per, out=cumulative_offsets[1:])
+
+    chunks = []
+    splits = np.array_split(np.arange(n), n_chunks)
+    for indices in splits:
+        if len(indices) == 0:
+            continue
+        global_offset_start = int(cumulative_offsets[indices[0]])
+        chunk_items = items_per[indices]
+        chunks.append({
+            "cust_keys": participant_cust_keys[indices].tolist(),
+            "earliest_ns": participant_earliest_ns[indices].tolist(),
+            "latest_ns": participant_latest_ns[indices].tolist(),
+            "items_per": chunk_items.tolist(),
+            # offsets[0] = global row start for this chunk (for WishlistKey)
+            "offsets": [global_offset_start],
+        })
+    return chunks
+
+
+def _partition_purchased_pairs(
+    purchased_pairs: pd.DataFrame,
+    prod_key_to_idx: "pd.Series",
+    participant_chunks: List[Dict[str, Any]],
+) -> List[Dict[int, List[int]]]:
+    """For each chunk, build {customer_key: [product_indices]} filtered to that chunk's customers."""
+    # Build a full mapping: customer_key -> list[product_indices]
+    full_map: Dict[int, List[int]] = {}
+    if len(purchased_pairs) > 0:
+        _pp_ckeys = purchased_pairs["CustomerKey"].to_numpy().astype(np.int64)
+        _pp_pkeys = purchased_pairs["ProductKey"].to_numpy().astype(np.int64)
+        _pp_idx_series = prod_key_to_idx.reindex(_pp_pkeys)
+        _pp_valid = _pp_idx_series.notna().to_numpy()
+        _pp_ckeys_valid = _pp_ckeys[_pp_valid]
+        _pp_idxs_valid = _pp_idx_series[_pp_valid].to_numpy(dtype=np.int64)
+        if len(_pp_ckeys_valid) > 0:
+            _sort_order = np.argsort(_pp_ckeys_valid)
+            _sorted_ckeys = _pp_ckeys_valid[_sort_order]
+            _sorted_idxs = _pp_idxs_valid[_sort_order]
+            _uniq_ckeys, _split_pos = np.unique(_sorted_ckeys, return_index=True)
+            _split_groups = np.split(_sorted_idxs, _split_pos[1:])
+            for _ck, _idxs in zip(_uniq_ckeys, _split_groups):
+                full_map[int(_ck)] = _idxs.tolist()
+
+    chunk_maps: List[Dict[int, List[int]]] = []
+    for chunk in participant_chunks:
+        ck_set = set(chunk["cust_keys"])
+        chunk_maps.append({ck: v for ck, v in full_map.items() if ck in ck_set})
+    return chunk_maps
+
+
+def _merge_chunk_parquets(
+    chunk_paths: List[Path],
+    out_path: Path,
+    schema: pa.Schema,
+    delete_chunks: bool = True,
+) -> None:
+    """Concatenate chunk parquets in order into a single output parquet."""
+    writer = pq.ParquetWriter(str(out_path), schema)
+    for cp in sorted(chunk_paths):
+        tbl = pq.read_table(str(cp))
+        writer.write_table(tbl)
+    writer.close()
+    if delete_chunks:
+        for cp in chunk_paths:
+            try:
+                cp.unlink()
+            except OSError:
+                pass
+        # Remove chunk directory if empty
+        if chunk_paths:
+            try:
+                chunk_paths[0].parent.rmdir()
+            except OSError:
+                pass
+
+
+def _run_parallel(
+    customers: pd.DataFrame,
+    products: pd.DataFrame,
+    product_weights: np.ndarray,
+    purchased_pairs: pd.DataFrame,
+    c: _WishlistsCfg,
+    g_start: pd.Timestamp,
+    g_end: pd.Timestamp,
+    out_path: Path,
+    workers: Optional[int] = None,
+) -> int:
+    """Parallel wishlist generation: distribute customers across worker pool."""
+    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from src.facts.wishlists.worker import _wishlist_worker_task
+
+    n_cpus = max(1, cpu_count() - 1)
+    if workers is not None and workers >= 1:
+        n_cpus = min(n_cpus, workers)
+
+    # --- Shared setup (runs in main process) ---
+    rng = np.random.default_rng(c.seed)
+
+    cust_keys, earliest_ns, latest_ns = _compute_customer_windows(
+        customers, g_start, g_end, c.pre_browse_days,
+    )
+    n_customers = len(cust_keys)
+    n_participants = max(1, int(round(n_customers * c.participation_rate)))
+
+    participant_idx = rng.choice(n_customers, size=n_participants, replace=False)
+    participant_idx.sort()
+
+    participant_cust_keys = cust_keys[participant_idx]
+    participant_earliest_ns = earliest_ns[participant_idx]
+    participant_latest_ns = latest_ns[participant_idx]
+
+    prod_keys = products["ProductKey"].to_numpy().astype(np.int64)
+    prod_prices = products["ListPrice"].to_numpy().astype(np.float64)
+    prod_subcat = products["SubcategoryKey"].to_numpy().astype(np.int64)
+    n_products = len(prod_keys)
+
+    items_per = rng.poisson(lam=c.avg_items, size=n_participants)
+    items_per = np.clip(items_per, 1, min(c.max_items, n_products))
+    total_rows = int(items_per.sum())
+
+    # Determine actual chunk count
+    n_chunks = min(n_participants, n_cpus * 2)
+    n_chunks = max(2, n_chunks)
+    n_workers = min(n_chunks, n_cpus)
+
+    info(f"Wishlists parallel: {n_chunks} chunks across {n_workers} workers "
+         f"({n_participants:,} participants, ~{total_rows:,} rows)")
+
+    # Build shared product data dict (sent to all workers via pickling)
+    product_data = _build_product_data_dict(prod_keys, prod_prices, prod_subcat, product_weights)
+
+    # Build prod_key_to_idx for purchased_pairs partitioning
+    prod_key_to_idx = pd.Series(np.arange(n_products), index=prod_keys)
+
+    # Partition participants across chunks
+    participant_chunks = _partition_participants(
+        participant_cust_keys,
+        participant_earliest_ns,
+        participant_latest_ns,
+        items_per,
+        n_chunks,
+    )
+    n_chunks = len(participant_chunks)  # may be fewer if participants < n_chunks
+
+    # Partition purchased_pairs per chunk
+    chunk_purchased_maps = _partition_purchased_pairs(
+        purchased_pairs, prod_key_to_idx, participant_chunks,
+    )
+
+    config_scalars = {
+        "conversion_rate": c.conversion_rate,
+        "affinity_strength": c.affinity_strength,
+        "avg_items": c.avg_items,
+        "max_items": c.max_items,
+        "write_chunk_rows": c.write_chunk_rows,
+    }
+
+    # Prepare chunk output directory
+    chunk_dir = out_path.parent / "_wishlist_chunks"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+
+    tasks = []
+    for idx, (pdata, pmap) in enumerate(zip(participant_chunks, chunk_purchased_maps)):
+        chunk_out = str(chunk_dir / f"wishlist_chunk_{idx:05d}.parquet")
+        tasks.append((
+            idx,
+            c.seed,
+            n_chunks,
+            pdata,
+            product_data,
+            pmap,
+            config_scalars,
+            chunk_out,
+        ))
+
+    pool_spec = PoolRunSpec(
+        processes=n_workers,
+        chunksize=1,
+        label="wishlists",
+    )
+
+    total_written = 0
+    completed = 0
+    for result in iter_imap_unordered(tasks=tasks, task_fn=_wishlist_worker_task, spec=pool_spec):
+        completed += 1
+        total_written += result["rows"]
+
+    info(f"Wishlists: {completed}/{n_chunks} chunks done ({total_written:,} rows)")
+
+    # Merge chunk parquets into final output
+    chunk_files = sorted(chunk_dir.glob("wishlist_chunk_*.parquet"))
+    if chunk_files:
+        _merge_chunk_parquets(chunk_files, out_path, _bridge_schema(), delete_chunks=True)
+
+    return total_written
+
+
+# ---------------------------------------------------------------------------
 # Pipeline entry point
 # ---------------------------------------------------------------------------
 
@@ -593,23 +881,49 @@ def run_wishlist_pipeline(
     wishlists_dir.mkdir(parents=True, exist_ok=True)
     pq_path = wishlists_dir / "customer_wishlists.parquet"
 
-    n_rows = _write_bridge(
-        customers=customers,
-        products=products,
-        product_weights=product_weights,
-        purchased_pairs=purchased_pairs,
-        c=c,
-        g_start=g_start,
-        g_end=g_end,
-        out_path=pq_path,
-    )
+    # Estimate total rows to decide serial vs parallel
+    _rng_est = np.random.default_rng(c.seed)
+    _n_custs = len(customers)
+    _n_participants_est = max(1, int(round(_n_custs * c.participation_rate)))
+    _items_est = _rng_est.poisson(lam=c.avg_items, size=_n_participants_est)
+    _items_est = np.clip(_items_est, 1, min(c.max_items, len(products)))
+    _total_rows_est = int(_items_est.sum())
 
+    # Workers from config (optional)
+    _workers: Optional[int] = None
+    _sales_cfg = getattr(cfg, "sales", None)
+    if _sales_cfg is not None:
+        _workers = getattr(_sales_cfg, "workers", None)
+
+    if _total_rows_est >= WISHLIST_PARALLEL_THRESHOLD:
+        n_rows = _run_parallel(
+            customers=customers,
+            products=products,
+            product_weights=product_weights,
+            purchased_pairs=purchased_pairs,
+            c=c,
+            g_start=g_start,
+            g_end=g_end,
+            out_path=pq_path,
+            workers=_workers,
+        )
+    else:
+        n_rows = _write_bridge(
+            customers=customers,
+            products=products,
+            product_weights=product_weights,
+            purchased_pairs=purchased_pairs,
+            c=c,
+            g_start=g_start,
+            g_end=g_end,
+            out_path=pq_path,
+        )
+
+    # Write CSV (chunked for large datasets)
     if file_format == "csv" and n_rows > 0:
-        _sales_cfg = getattr(cfg, "sales", None)
         _csv_chunk = int(getattr(_sales_cfg, "chunk_size", 0)) if _sales_cfg else 0
         df = pq.read_table(str(pq_path)).to_pandas()
-        # Remove the intermediate parquet — CSV mode doesn't need it
-        pq_path.unlink()
+        pq_path.unlink()  # remove intermediate parquet in CSV mode
 
         if _csv_chunk and _csv_chunk > 0 and n_rows > _csv_chunk:
             n_files = 0

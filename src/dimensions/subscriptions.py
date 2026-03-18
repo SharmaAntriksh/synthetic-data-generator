@@ -7,8 +7,13 @@ Writes:
   - plans.parquet          (subscription plan dimension)
   - customer_subscriptions.parquet  (many-to-many bridge)
 
-Bridge is written STREAMING with pyarrow ParquetWriter (does not hold the
-whole bridge in RAM).
+Bridge is written in parallel for large datasets (>200K eligible customers)
+using a chunk-per-worker pattern.  Each worker generates rows IN MEMORY for
+its customer slice, writes a chunk parquet, and returns its row count.
+The main process merges chunks and reassigns SubscriptionKey sequentially.
+
+For small datasets (<=200K eligible customers) the original single-process
+streaming writer is used as a fallback.
 
 Schema:
   DimPlans (14 cols):
@@ -43,6 +48,7 @@ Power BI:
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -55,6 +61,7 @@ import pyarrow.parquet as pq
 from src.utils.config_precedence import resolve_seed
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
+from src.defaults import SUBSCRIPTION_PARALLEL_THRESHOLD
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +336,7 @@ def _bridge_schema() -> pa.Schema:
 
 
 # ---------------------------------------------------------------------------
-# Bridge writer (streaming)
+# Bridge writer (streaming) -- serial path for small datasets
 # ---------------------------------------------------------------------------
 
 def _write_bridge_streaming(
@@ -527,6 +534,400 @@ def _write_bridge_streaming(
 
 
 # ---------------------------------------------------------------------------
+# Parallel bridge writer -- top-level worker (must be importable for spawn)
+# ---------------------------------------------------------------------------
+
+def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
+    """
+    Worker entry point (must be top-level for Windows spawn pickling).
+
+    Generates subscription rows IN MEMORY for a slice of eligible customers,
+    writes a chunk parquet to disk, and returns its row count.
+
+    SubscriptionKey values written here are LOCAL (1-based within chunk).
+    The main process reassigns keys sequentially after merge.
+
+    Args (tuple positional):
+        chunk_idx          int   -- chunk sequence number
+        seed               int   -- base seed; worker derives its own via SeedSequence
+        n_chunks           int   -- total number of chunks (for SeedSequence spawn)
+        eligible_ck        ndarray int64  -- CustomerKey for this chunk
+        eligible_lo        ndarray int64  -- window start ns
+        eligible_hi        ndarray int64  -- window end ns
+        eligible_span      ndarray int64  -- span in days
+        plan_keys          ndarray int32
+        plan_monthly       ndarray float64
+        plan_cycle_months  ndarray int32
+        plan_weights       ndarray float64  -- normalised plan selection weights
+        n_plans            int
+        g_end_ns           int64
+        max_subs           int
+        avg_subscriptions  float
+        churn_rate         float
+        trial_rate         float
+        payment_weights    ndarray float64
+        out_chunk_path     str   -- full path to write chunk parquet
+
+    Returns:
+        dict with chunk_idx and rows
+    """
+    (
+        chunk_idx, seed, n_chunks,
+        eligible_ck, eligible_lo, eligible_hi, eligible_span,
+        plan_keys, plan_monthly, plan_cycle_months, plan_weights,
+        n_plans, g_end_ns, max_subs,
+        avg_subscriptions, churn_rate, trial_rate,
+        payment_weights,
+        out_chunk_path,
+    ) = args
+
+    # Each worker gets its own independent RNG stream
+    ss = np.random.SeedSequence(seed)
+    child_seeds = ss.spawn(n_chunks)
+    rng = np.random.default_rng(child_seeds[chunk_idx])
+
+    n_eligible = len(eligible_ck)
+    schema = _bridge_schema()
+
+    # Estimate capacity: n_eligible * max_subs rows at most
+    cap = max(n_eligible * max_subs + 10, 100)
+
+    arr_sk = np.empty(cap, dtype=np.int64)
+    arr_ck = np.empty(cap, dtype=np.int64)
+    arr_pk = np.empty(cap, dtype=np.int32)
+    arr_sub_date = np.empty(cap, dtype=np.int64)
+    arr_cancel: List[Optional[int]] = []
+    arr_status: List[str] = []
+    arr_price = np.empty(cap, dtype=np.float64)
+    arr_renew = np.empty(cap, dtype=np.int8)
+    arr_trial: List[Optional[int]] = []
+    arr_payment: List[str] = []
+    arr_loyalty = np.empty(cap, dtype=np.float64)
+
+    pos = 0
+    local_key = 1  # local key, reassigned by main process after merge
+
+    for i in range(n_eligible):
+        ck = int(eligible_ck[i])
+        lo_ns = int(eligible_lo[i])
+        hi_ns = int(eligible_hi[i])
+        span_days = int(eligible_span[i])
+
+        n_subs = max(1, int(rng.poisson(avg_subscriptions)))
+        n_subs = min(n_subs, max_subs)
+
+        chosen_idx = rng.choice(n_plans, size=n_subs, replace=True, p=plan_weights)
+        sub_offsets = np.sort(rng.integers(0, max(span_days - 30, 1), size=n_subs))
+
+        for s in range(n_subs):
+            pidx = int(chosen_idx[s])
+            pk = int(plan_keys[pidx])
+
+            sub_ns = lo_ns + int(sub_offsets[s]) * _NS_PER_DAY
+
+            cycle_months = int(plan_cycle_months[pidx])
+            n_periods = max(1, int(rng.geometric(0.3)))
+            base_duration_days = cycle_months * 30 * n_periods
+
+            price = float(plan_monthly[pidx])
+
+            has_trial = rng.random() < trial_rate
+            trial_end_ns: Optional[int] = int(sub_ns + 14 * _NS_PER_DAY) if has_trial else None
+
+            is_churned = rng.random() < churn_rate
+            end_ns = sub_ns + int(base_duration_days) * _NS_PER_DAY
+
+            if is_churned and end_ns <= hi_ns:
+                cancel_ns: Optional[int] = int(end_ns)
+                status = "Cancelled"
+                auto_renew = np.int8(0)
+            elif end_ns > g_end_ns:
+                cancel_ns = None
+                status = "Active"
+                auto_renew = np.int8(1)
+            else:
+                cancel_ns = None
+                status = "Expired"
+                auto_renew = np.int8(0)
+
+            ref_ns = cancel_ns if cancel_ns is not None else g_end_ns
+            tenure_days = (int(ref_ns) - sub_ns) // _NS_PER_DAY
+            if tenure_days >= 730:
+                loyalty_disc = 0.10
+            elif tenure_days >= 365:
+                loyalty_disc = 0.05
+            else:
+                loyalty_disc = 0.00
+
+            pm_idx = int(rng.choice(len(PAYMENT_METHODS), p=payment_weights))
+            payment = PAYMENT_METHODS[pm_idx]
+
+            if pos >= cap:
+                # Grow buffers (shouldn't happen often given the estimate)
+                new_cap = cap * 2
+                arr_sk = _grow(arr_sk, new_cap)
+                arr_ck = _grow(arr_ck, new_cap)
+                arr_pk = _grow(arr_pk, new_cap)
+                arr_sub_date = _grow(arr_sub_date, new_cap)
+                arr_price = _grow(arr_price, new_cap)
+                arr_renew = _grow(arr_renew, new_cap)
+                arr_loyalty = _grow(arr_loyalty, new_cap)
+                cap = new_cap
+
+            arr_sk[pos] = local_key
+            arr_ck[pos] = ck
+            arr_pk[pos] = pk
+            arr_sub_date[pos] = sub_ns
+            arr_cancel.append(cancel_ns)
+            arr_status.append(status)
+            arr_price[pos] = round(price * (1 - loyalty_disc), 2)
+            arr_renew[pos] = auto_renew
+            arr_trial.append(trial_end_ns)
+            arr_payment.append(payment)
+            arr_loyalty[pos] = loyalty_disc
+
+            local_key += 1
+            pos += 1
+
+    n_rows = pos
+
+    if n_rows > 0:
+        out_path = Path(out_chunk_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        table = pa.Table.from_arrays(
+            [
+                pa.array(arr_sk[:n_rows], type=pa.int64()),
+                pa.array(arr_ck[:n_rows], type=pa.int64()),
+                pa.array(arr_pk[:n_rows], type=pa.int32()),
+                pa.array(arr_sub_date[:n_rows].copy(), type=pa.timestamp("ns")),
+                pa.array(arr_cancel, type=pa.timestamp("ns")),
+                pa.array(arr_status, type=pa.utf8()),
+                pa.array(arr_price[:n_rows], type=pa.float64()),
+                pa.array(arr_renew[:n_rows], type=pa.int8()),
+                pa.array(arr_trial, type=pa.timestamp("ns")),
+                pa.array(arr_payment, type=pa.utf8()),
+                pa.array(arr_loyalty[:n_rows], type=pa.float64()),
+            ],
+            schema=schema,
+        )
+        pq.write_table(
+            table,
+            out_chunk_path,
+            compression="snappy",
+            row_group_size=500_000,
+        )
+
+    return {"chunk_idx": chunk_idx, "rows": n_rows}
+
+
+def _grow(arr: np.ndarray, new_cap: int) -> np.ndarray:
+    """Return a new array with size new_cap, copying existing data."""
+    new_arr = np.empty(new_cap, dtype=arr.dtype)
+    new_arr[: len(arr)] = arr
+    return new_arr
+
+
+# ---------------------------------------------------------------------------
+# Parallel bridge entry point
+# ---------------------------------------------------------------------------
+
+def _write_bridge_parallel(
+    customers: pd.DataFrame,
+    dim_plans: pd.DataFrame,
+    c: SubscriptionsCfg,
+    g_start: pd.Timestamp,
+    g_end: pd.Timestamp,
+    out_bridge: Path,
+    workers: Optional[int] = None,
+) -> int:
+    """
+    Parallel bridge writer for large datasets.
+
+    Pre-filters eligible customers, splits into chunks, dispatches to worker
+    pool, merges chunk parquets, reassigns SubscriptionKey, writes final file.
+    Returns total rows written.
+    """
+    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+
+    if "CustomerKey" not in customers.columns:
+        raise KeyError("customers must include CustomerKey")
+
+    # --- Plan data (read-only, passed to every worker) ---
+    plan_keys = dim_plans["PlanKey"].astype(np.int32).to_numpy()
+    plan_types = dim_plans["PlanType"].astype(str).to_numpy()
+    plan_monthly = dim_plans["MonthlyPrice"].to_numpy(dtype=np.float64, na_value=0.0)
+    plan_cycles = dim_plans["BillingCycle"].astype(str).to_numpy()
+    plan_cycle_months = np.array(
+        [_CYCLE_MONTHS.get(cyc, 1) for cyc in plan_cycles], dtype=np.int32
+    )
+    n_plans = len(plan_keys)
+    plan_weights = _compute_plan_weights(plan_types)
+
+    # --- Customer windows ---
+    cust_keys, cust_start_ns, cust_end_ns = _compute_customer_windows(
+        customers, g_start, g_end
+    )
+    g_end_ns = np.int64(g_end.value)
+    max_subs = min(c.max_subscriptions, n_plans)
+
+    # --- Eligibility filter (same RNG as serial path for consistency) ---
+    n_cust = len(cust_keys)
+    rng_main = np.random.default_rng(c.seed)
+    participate_mask = rng_main.random(n_cust) < c.participation_rate
+    _part_idx = np.where(participate_mask)[0]
+    _spans = np.maximum(0, (cust_end_ns[_part_idx] - cust_start_ns[_part_idx]) // _NS_PER_DAY)
+    _ok = _spans >= 30
+    eligible_ck = cust_keys[_part_idx[_ok]]
+    eligible_lo = cust_start_ns[_part_idx[_ok]]
+    eligible_hi = cust_end_ns[_part_idx[_ok]]
+    eligible_span = _spans[_ok]
+    n_eligible = len(eligible_ck)
+
+    if n_eligible == 0:
+        out_bridge.parent.mkdir(parents=True, exist_ok=True)
+        schema = _bridge_schema()
+        pq.write_table(pa.table({f.name: pa.array([], type=f.type) for f in schema}, schema=schema), str(out_bridge))
+        return 0
+
+    # --- Chunk planning ---
+    n_cpus = max(1, cpu_count() - 1)
+    if workers is not None and workers >= 1:
+        n_cpus = min(n_cpus, workers)
+    n_chunks = max(2, min(n_eligible, n_cpus * 2))
+    n_workers = min(n_chunks, n_cpus)
+
+    info(f"Subscriptions parallel: {n_eligible:,} eligible customers, "
+         f"{n_chunks} chunks, {n_workers} workers")
+
+    # Split eligible customers into chunks (round-robin by index for even distribution)
+    chunk_boundaries = np.array_split(np.arange(n_eligible), n_chunks)
+
+    # Scratch directory for chunk parquets
+    scratch_dir = out_bridge.parent / "_sub_chunks"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build task list
+    tasks = []
+    for idx, indices in enumerate(chunk_boundaries):
+        if len(indices) == 0:
+            continue
+        chunk_path = str(scratch_dir / f"sub_chunk_{idx:05d}.parquet")
+        tasks.append((
+            idx,
+            c.seed,
+            n_chunks,
+            eligible_ck[indices],
+            eligible_lo[indices],
+            eligible_hi[indices],
+            eligible_span[indices],
+            plan_keys,
+            plan_monthly,
+            plan_cycle_months,
+            plan_weights,
+            n_plans,
+            int(g_end_ns),
+            max_subs,
+            c.avg_subscriptions,
+            c.churn_rate,
+            c.trial_rate,
+            _PAYMENT_WEIGHTS,
+            chunk_path,
+        ))
+
+    actual_n_chunks = len(tasks)
+
+    pool_spec = PoolRunSpec(
+        processes=n_workers,
+        chunksize=1,
+        label="subscriptions",
+    )
+
+    chunk_rows: List[int] = [0] * actual_n_chunks
+    completed = 0
+    for result in iter_imap_unordered(
+        tasks=tasks,
+        task_fn=_subscription_worker_task,
+        spec=pool_spec,
+    ):
+        completed += 1
+        chunk_rows[result["chunk_idx"]] = result["rows"]
+
+    info(f"Subscriptions: {completed}/{actual_n_chunks} chunks done")
+
+    # --- Merge chunks and reassign SubscriptionKey sequentially ---
+    total_rows = _merge_subscription_chunks(
+        scratch_dir=scratch_dir,
+        out_bridge=out_bridge,
+        n_chunks=actual_n_chunks,
+        delete_chunks=True,
+    )
+
+    # Clean up scratch dir
+    try:
+        scratch_dir.rmdir()
+    except OSError:
+        pass
+
+    return total_rows
+
+
+def _merge_subscription_chunks(
+    scratch_dir: Path,
+    out_bridge: Path,
+    n_chunks: int,
+    delete_chunks: bool = True,
+) -> int:
+    """
+    Read chunk parquets in order, reassign SubscriptionKey 1..N, write final parquet.
+    Returns total rows written.
+    """
+    schema = _bridge_schema()
+    chunk_files = sorted(scratch_dir.glob("sub_chunk_*.parquet"))
+
+    if not chunk_files:
+        out_bridge.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(pa.table({f.name: pa.array([], type=f.type) for f in schema}, schema=schema), str(out_bridge))
+        return 0
+
+    out_bridge.parent.mkdir(parents=True, exist_ok=True)
+    if out_bridge.exists():
+        out_bridge.unlink()
+
+    total_rows = 0
+    next_key = np.int64(1)
+
+    with pq.ParquetWriter(out_bridge, schema=schema, compression="snappy") as writer:
+        for chunk_path in chunk_files:
+            tbl = pq.read_table(chunk_path)
+            n = len(tbl)
+            if n == 0:
+                continue
+
+            # Reassign SubscriptionKey to be globally sequential
+            new_keys = pa.array(
+                np.arange(next_key, next_key + n, dtype=np.int64),
+                type=pa.int64(),
+            )
+            tbl = tbl.set_column(
+                tbl.schema.get_field_index("SubscriptionKey"),
+                "SubscriptionKey",
+                new_keys,
+            )
+            writer.write_table(tbl)
+            next_key = np.int64(next_key + n)
+            total_rows += n
+
+            if delete_chunks:
+                try:
+                    chunk_path.unlink()
+                except OSError:
+                    pass
+
+    return total_rows
+
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
@@ -578,14 +979,37 @@ def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
         if c.generate_bridge:
             customers = pd.read_parquet(customers_fp)
             g_start, g_end = _parse_global_dates(cfg)
-            n_rows = _write_bridge_streaming(
-                customers=customers,
-                dim_plans=dim,
-                c=c,
-                g_start=g_start,
-                g_end=g_end,
-                out_bridge=out_bridge,
-            )
+
+            # Estimate eligible customers to decide serial vs parallel path
+            n_cust = len(customers)
+            estimated_eligible = int(n_cust * c.participation_rate * 0.9)  # rough lower bound
+
+            workers: Optional[int] = None
+            w_attr = getattr(cfg, "scale", None) or getattr(cfg, "defaults", None)
+            if w_attr is not None:
+                workers = int(getattr(w_attr, "workers", 0) or 0) or None
+
+            if estimated_eligible >= SUBSCRIPTION_PARALLEL_THRESHOLD:
+                info(f"Subscriptions: {n_cust:,} customers -> parallel path "
+                     f"(estimated {estimated_eligible:,} eligible)")
+                n_rows = _write_bridge_parallel(
+                    customers=customers,
+                    dim_plans=dim,
+                    c=c,
+                    g_start=g_start,
+                    g_end=g_end,
+                    out_bridge=out_bridge,
+                    workers=workers,
+                )
+            else:
+                n_rows = _write_bridge_streaming(
+                    customers=customers,
+                    dim_plans=dim,
+                    c=c,
+                    g_start=g_start,
+                    g_end=g_end,
+                    out_bridge=out_bridge,
+                )
             save_version("subscriptions", version_cfg, out_bridge)
             info(f"Customer subscriptions written: {out_bridge} ({n_rows:,} rows)")
         else:
