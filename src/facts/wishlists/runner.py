@@ -919,7 +919,7 @@ def run_wishlist_pipeline(
             out_path=pq_path,
         )
 
-    # Write CSV (chunked for large datasets)
+    # Format-specific post-processing
     if file_format == "csv" and n_rows > 0:
         _csv_chunk = int(getattr(_sales_cfg, "chunk_size", 0)) if _sales_cfg else 0
         df = pq.read_table(str(pq_path)).to_pandas()
@@ -933,6 +933,15 @@ def run_wishlist_pipeline(
                 n_files += 1
         else:
             df.to_csv(str(wishlists_dir / "customer_wishlists.csv"), index=False)
+
+    elif file_format == "deltaparquet" and n_rows > 0:
+        table = pq.read_table(str(pq_path))
+        try:
+            from deltalake import write_deltalake
+        except ImportError:
+            from deltalake.writer import write_deltalake
+        write_deltalake(str(wishlists_dir), table, mode="overwrite")
+        pq_path.unlink()  # remove intermediate parquet
 
     info(f"Customer wishlists: {n_rows:,} rows")
 
