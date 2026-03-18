@@ -848,6 +848,22 @@ def generate_employee_store_assignments(
     out["AssignmentSequence"] = out.groupby("EmployeeKey").cumcount().astype(np.int32) + 1
 
     if bool(ensure_store_sales_coverage):
+        # Build hire/term lookups for gap-fill clamping
+        _emp_hire_lookup = {
+            int(ek_arr[i]): pd.Timestamp(hire_ns[i])
+            for i in range(len(ek_arr)) if not np.isnat(hire_ns[i])
+        }
+        _emp_term_lookup = {
+            int(ek_arr[i]): pd.Timestamp(term_ns[i])
+            for i in range(len(ek_arr)) if not np.isnat(term_ns[i])
+        }
+        out = _fill_coverage_gaps(
+            out, ps_role, all_stores, window_start, window_end,
+            store_opening_dates=store_opening_dates,
+            store_closing_dates=store_closing_dates,
+            emp_hire=_emp_hire_lookup,
+            emp_term=_emp_term_lookup,
+        )
         _validate_store_coverage(
             out, ps_role, all_stores, window_start, window_end,
             store_opening_dates=store_opening_dates,
@@ -855,6 +871,142 @@ def generate_employee_store_assignments(
         )
 
     return out
+
+
+def _fill_coverage_gaps(
+    df: pd.DataFrame,
+    ps_role: str,
+    all_stores: List[int],
+    window_start: pd.Timestamp,
+    window_end: pd.Timestamp,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]] = None,
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]] = None,
+    emp_hire: Optional[Dict[int, pd.Timestamp]] = None,
+    emp_term: Optional[Dict[int, pd.Timestamp]] = None,
+) -> pd.DataFrame:
+    """
+    Safety-net repair: scan each store's SA coverage and extend assignment
+    dates to fill any gaps.  Extensions are clamped to each employee's
+    HireDate/TerminationDate so we never create assignments outside the
+    employment window.
+    """
+    one_day = pd.Timedelta(days=1)
+    ws = pd.to_datetime(window_start).normalize()
+    we = pd.to_datetime(window_end).normalize()
+    _hire = emp_hire or {}
+    _term = emp_term or {}
+    repairs = 0
+
+    for store in all_stores:
+        # Determine the store's operational window
+        s_start = ws
+        s_end = we
+        if store_opening_dates and store in store_opening_dates:
+            od = pd.to_datetime(store_opening_dates[store]).normalize()
+            if od > s_start:
+                s_start = od
+        if store_closing_dates and store in store_closing_dates:
+            cd = pd.to_datetime(store_closing_dates[store]).normalize()
+            last_op = cd - one_day  # ClosingDate = first non-operational day
+            if last_op < s_end:
+                s_end = last_op
+        if s_end < s_start:
+            continue  # store not active in dataset window
+
+        # Find SA assignments at this store
+        sa_mask = (
+            (df["StoreKey"] == store)
+            & (df["RoleAtStore"].astype(str) == ps_role)
+        )
+        if not sa_mask.any():
+            continue
+
+        sa_idx = df.loc[sa_mask].sort_values("StartDate").index
+        starts = pd.to_datetime(df.loc[sa_idx, "StartDate"]).dt.normalize()
+        ends = pd.to_datetime(df.loc[sa_idx, "EndDate"]).dt.normalize()
+
+        # Leading gap: extend first SA's StartDate back, clamped to HireDate
+        if starts.iloc[0] > s_start:
+            ek = int(df.at[sa_idx[0], "EmployeeKey"])
+            hire_dt = _hire.get(ek)
+            target = s_start
+            if hire_dt is not None:
+                hire_dt = pd.to_datetime(hire_dt).normalize()
+                target = max(target, hire_dt)
+            if target < starts.iloc[0]:
+                df.at[sa_idx[0], "StartDate"] = target
+                repairs += 1
+
+        # Trailing gap: extend last SA's EndDate, clamped to TerminationDate
+        if ends.iloc[-1] < s_end:
+            ek = int(df.at[sa_idx[-1], "EmployeeKey"])
+            term_dt = _term.get(ek)
+            target = s_end
+            if term_dt is not None:
+                term_dt = pd.to_datetime(term_dt).normalize()
+                target = min(target, term_dt)
+            if target > ends.iloc[-1]:
+                df.at[sa_idx[-1], "EndDate"] = target
+                repairs += 1
+
+        # Intermediate gaps: extend preceding SA's EndDate, clamped to their
+        # TerminationDate.  If that doesn't close the gap, try extending the
+        # next SA's StartDate back to its HireDate.
+        for k in range(len(sa_idx) - 1):
+            cur_end = pd.to_datetime(df.at[sa_idx[k], "EndDate"]).normalize()
+            nxt_start = pd.to_datetime(df.at[sa_idx[k + 1], "StartDate"]).normalize()
+            if cur_end + one_day >= nxt_start:
+                continue  # no gap
+
+            # Try extending current SA forward
+            ek_cur = int(df.at[sa_idx[k], "EmployeeKey"])
+            term_cur = _term.get(ek_cur)
+            extend_to = nxt_start - one_day
+            if term_cur is not None:
+                extend_to = min(extend_to, pd.to_datetime(term_cur).normalize())
+            if extend_to > cur_end:
+                df.at[sa_idx[k], "EndDate"] = extend_to
+                repairs += 1
+
+            # If gap remains, try pulling next SA backward
+            new_gap_start = extend_to + one_day
+            if new_gap_start < nxt_start:
+                ek_nxt = int(df.at[sa_idx[k + 1], "EmployeeKey"])
+                hire_nxt = _hire.get(ek_nxt)
+                pull_to = new_gap_start
+                if hire_nxt is not None:
+                    pull_to = max(pull_to, pd.to_datetime(hire_nxt).normalize())
+                if pull_to < nxt_start:
+                    df.at[sa_idx[k + 1], "StartDate"] = pull_to
+                    repairs += 1
+
+    # Post-repair: trim any same-employee-same-store overlaps created by
+    # gap-fill extensions.  If two assignments for the same employee at
+    # the same store overlap, trim the earlier one's EndDate to the day
+    # before the later one's StartDate.
+    overlap_fixes = 0
+    for (ek, sk), grp in df.groupby(["EmployeeKey", "StoreKey"]):
+        if len(grp) < 2:
+            continue
+        grp_sorted = grp.sort_values("StartDate")
+        idxs = grp_sorted.index.tolist()
+        for i in range(len(idxs) - 1):
+            cur_end = pd.to_datetime(df.at[idxs[i], "EndDate"]).normalize()
+            nxt_start = pd.to_datetime(df.at[idxs[i + 1], "StartDate"]).normalize()
+            if cur_end >= nxt_start:
+                df.at[idxs[i], "EndDate"] = nxt_start - one_day
+                overlap_fixes += 1
+
+    total_fixes = repairs + overlap_fixes
+    if total_fixes > 0:
+        parts = []
+        if repairs > 0:
+            parts.append(f"extended {repairs} SA assignment(s) to fill gaps")
+        if overlap_fixes > 0:
+            parts.append(f"trimmed {overlap_fixes} overlap(s)")
+        info("Coverage repair: " + ", ".join(parts))
+
+    return df
 
 
 def _validate_store_coverage(
@@ -869,9 +1021,11 @@ def _validate_store_coverage(
     """Raise if any store has a coverage gap for the sales-eligible role."""
     ws = np.datetime64(window_start, "D")
     we = np.datetime64(window_end, "D")
+    one_day = np.timedelta64(1, "D")
 
     # Build set of stores active during the dataset window
-    # (exclude stores that closed before the window started)
+    # (exclude stores that closed before the window started).
+    # ClosingDate = first non-operational day; last operational day = close - 1.
     active_stores = []
     for s in all_stores:
         s_ws = ws
@@ -881,7 +1035,7 @@ def _validate_store_coverage(
             if _od > s_ws:
                 s_ws = _od
         if store_closing_dates and s in store_closing_dates:
-            _cd = np.datetime64(store_closing_dates[s], "D")
+            _cd = np.datetime64(store_closing_dates[s], "D") - one_day
             if _cd < s_we:
                 s_we = _cd
         if s_we >= s_ws:
@@ -915,10 +1069,6 @@ def _validate_store_coverage(
     starts = df_cov["StartDate"].to_numpy().astype("datetime64[D]")
     ends = df_cov["EndDate"].to_numpy().astype("datetime64[D]")
 
-    ws = np.datetime64(window_start, "D")
-    we = np.datetime64(window_end, "D")
-    one_day = np.timedelta64(1, "D")
-
     store_breaks = np.flatnonzero(np.r_[True, sk[1:] != sk[:-1]])
     group_ends = np.r_[store_breaks[1:], len(sk)]
 
@@ -927,7 +1077,8 @@ def _validate_store_coverage(
         seg_s = starts[gs:ge]
         seg_e = ends[gs:ge]
 
-        # Per-store expected window: use store opening/closing dates if available
+        # Per-store expected window: use store opening/closing dates if available.
+        # ClosingDate = first non-operational day; last operational = close - 1.
         store_ws = ws
         store_we = we
         if store_opening_dates and store in store_opening_dates:
@@ -935,7 +1086,7 @@ def _validate_store_coverage(
             if _od > store_ws:
                 store_ws = _od
         if store_closing_dates and store in store_closing_dates:
-            _cd = np.datetime64(store_closing_dates[store], "D")
+            _cd = np.datetime64(store_closing_dates[store], "D") - one_day
             if _cd < store_we:
                 store_we = _cd
 
@@ -955,14 +1106,18 @@ def _validate_store_coverage(
                 if cur_me < cur:
                     pass
                 elif cur_ms > cur:
-                    gaps.append(
-                        f"StoreKey={store} gap "
-                        f"{cur}..{min(cur_ms - one_day, store_we)}"
-                    )
+                    gap_end = min(cur_ms - one_day, store_we)
+                    if gap_end >= cur:
+                        gaps.append(
+                            f"StoreKey={store} gap {cur}..{gap_end}"
+                        )
                     gap_found = True
                     break
                 else:
                     cur = cur_me + one_day
+                    if cur > store_we:
+                        gap_found = True  # fully covered
+                        break
                 cur_ms, cur_me = seg_s[j], seg_e[j]
 
         if not gap_found:
@@ -970,7 +1125,9 @@ def _validate_store_coverage(
             if cur_me >= cur and cur_ms <= cur:
                 cur = cur_me + one_day
             elif cur_ms > cur:
-                gaps.append(f"StoreKey={store} gap {cur}..{min(cur_ms - one_day, store_we)}")
+                gap_end = min(cur_ms - one_day, store_we)
+                if gap_end >= cur:
+                    gaps.append(f"StoreKey={store} gap {cur}..{gap_end}")
                 continue
 
             if cur <= store_we:
@@ -1249,32 +1406,28 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
                         info("Re-synced stores.parquet EmployeeCount after transfers")
 
             # ---------------------------------------------------------------
-            # Post-transfer coverage repair: for each closing store, ensure
-            # at least one SA assignment extends to close_date - 1 (the last
-            # day the store generates sales).  Without this, staggered
-            # departures can leave a gap between the last SA's trimmed end
-            # date and the store's closing date.
+            # Post-transfer coverage repair: comprehensive gap-fill for all
+            # stores (not just closing ones).  Extends SA assignments to
+            # cover any gaps caused by transfer staggering, attrition chain
+            # timing, or closing-date boundary mismatches.
             # ---------------------------------------------------------------
-            if store_closing_dates:
-                for sk, cd in store_closing_dates.items():
-                    sk = int(sk)
-                    close_d = pd.to_datetime(cd).normalize()
-                    need_until = (close_d - pd.Timedelta(days=1)).normalize()
-                    # Find SA assignments at this closing store
-                    sa_mask = (
-                        (df["StoreKey"] == sk)
-                        & (df["RoleAtStore"].astype(str) == _ps_role)
-                    )
-                    if not sa_mask.any():
-                        continue
-                    sa_rows = df.loc[sa_mask].copy()
-                    sa_rows["_end"] = pd.to_datetime(sa_rows["EndDate"])
-                    max_end = sa_rows["_end"].max()
-                    if max_end >= need_until:
-                        continue  # coverage OK
-                    # Extend the SA with the latest EndDate to close_date - 1
-                    best_idx = sa_rows["_end"].idxmax()
-                    df.at[best_idx, "EndDate"] = need_until
+            _all_stores_for_repair = sorted({
+                int(sk) for sk in df["StoreKey"].unique()
+            })
+            # Build hire/term lookups from employees for clamping
+            _eh = pd.to_datetime(employees["HireDate"], errors="coerce")
+            _et = pd.to_datetime(employees["TerminationDate"], errors="coerce")
+            _ek_vals = employees["EmployeeKey"].astype(np.int32).to_numpy()
+            _emp_hire_l = {int(_ek_vals[i]): _eh.iloc[i] for i in range(len(_ek_vals)) if pd.notna(_eh.iloc[i])}
+            _emp_term_l = {int(_ek_vals[i]): _et.iloc[i] for i in range(len(_ek_vals)) if pd.notna(_et.iloc[i])}
+            df = _fill_coverage_gaps(
+                df, _ps_role, _all_stores_for_repair,
+                global_start, global_end,
+                store_opening_dates=store_opening_dates,
+                store_closing_dates=store_closing_dates,
+                emp_hire=_emp_hire_l,
+                emp_term=_emp_term_l,
+            )
 
             # Re-sort and recompute AssignmentSequence
             df = df.sort_values(["EmployeeKey", "StartDate", "EndDate"]).reset_index(drop=True)

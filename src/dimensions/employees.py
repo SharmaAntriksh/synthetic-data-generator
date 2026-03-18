@@ -999,8 +999,13 @@ def generate_employee_dimension(
                 n_term = len(all_terminate_idx)
                 notice_start = close_date - pd.Timedelta(days=max(1, notice_days))
                 term_offsets = rng.integers(0, notice_days + 1, size=n_term)
+                hire_col_loc = df.columns.get_loc("HireDate")
                 for j, idx in enumerate(all_terminate_idx):
                     t_date = (notice_start + pd.Timedelta(days=int(term_offsets[j]))).normalize()
+                    # Clamp: TerminationDate must not precede HireDate
+                    emp_hire = pd.to_datetime(df.iat[idx, hire_col_loc]).normalize()
+                    if t_date < emp_hire:
+                        t_date = emp_hire
                     df.iat[idx, df.columns.get_loc("TerminationDate")] = t_date
                     df.iat[idx, df.columns.get_loc("IsActive")] = np.int8(0)
                     df.iat[idx, df.columns.get_loc("TransferStatus")] = "Terminated_StoreClose"
