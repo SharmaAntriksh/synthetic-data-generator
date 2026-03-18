@@ -459,6 +459,17 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     products_df = df[core_cols].copy()
     profile_df = profile_source[profile_cols].copy()
 
+    # Reorder profile columns to match static_schemas.py (SQL CREATE TABLE order).
+    # BULK INSERT is positional — CSV column order must match the schema exactly.
+    from src.utils.static_schemas import STATIC_SCHEMAS
+    schema_cols = [name for name, _ in STATIC_SCHEMAS.get("ProductProfile", ())]
+    if schema_cols:
+        # Keep only columns present in both schema and DataFrame, in schema order
+        ordered = [c for c in schema_cols if c in profile_df.columns]
+        # Append any extra DataFrame columns not in schema (future-proof)
+        extra = [c for c in profile_df.columns if c not in schema_cols]
+        profile_df = profile_df[ordered + extra]
+
     profile_path = output_folder / "product_profile.parquet"
     products_df.to_parquet(parquet_path, index=False)
     profile_df.to_parquet(profile_path, index=False)
