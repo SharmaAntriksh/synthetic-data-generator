@@ -819,7 +819,7 @@ class BrandPopularityConfig(_Base):
     noise_sd: float = 0.15
     min_share: float = 0.02
     year_len_months: int = 12
-    brand_weights: Dict[str, float] = {}
+    brand_weights: Dict[str, float] = {}  # deprecated: ignored at runtime, kept for schema compat
 
 
 # -- Returns (models.yaml) --

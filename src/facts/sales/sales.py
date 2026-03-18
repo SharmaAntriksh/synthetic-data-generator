@@ -797,7 +797,7 @@ def generate_sales_fact(
         cust_df = cust_df_full[_is_current_mask].reset_index(drop=True)
         cust_df = cust_df.drop(columns=["IsCurrent"], errors="ignore")
         _cust_pool_ids = _as_np(cust_df["CustomerID"], np.int32)
-        info(f"Customer SCD2: dedup {_n_before:,} → {len(cust_df):,} rows (IsCurrent=1 pool)")
+        info(f"Customer SCD2: dedup {_n_before:,} -> {len(cust_df):,} rows (IsCurrent=1 pool)")
     else:
         cust_df = cust_df_full.drop(columns=["IsCurrent"], errors="ignore")
 
@@ -1431,6 +1431,36 @@ def generate_sales_fact(
     else:
         n_workers = min(len(tasks), max(1, _int_or(workers, cpu_count() - 1)))
 
+    # Auto-cap workers on Windows to prevent page-file thrashing during
+    # spawn-mode init.  Each worker imports numpy/pandas/pyarrow (~350 MB).
+    if os.name == "nt":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong),
+                             ("dwMemoryLoad", ctypes.c_ulong),
+                             ("ullTotalPhys", ctypes.c_ulonglong),
+                             ("ullAvailPhys", ctypes.c_ulonglong),
+                             ("ullTotalPageFile", ctypes.c_ulonglong),
+                             ("ullAvailPageFile", ctypes.c_ulonglong),
+                             ("ullTotalVirtual", ctypes.c_ulonglong),
+                             ("ullAvailVirtual", ctypes.c_ulonglong),
+                             ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            stat = MEMORYSTATUSEX(dwLength=ctypes.sizeof(MEMORYSTATUSEX))
+            kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            avail_mb = stat.ullAvailPhys / (1024 * 1024)
+            from src.defaults import WORKER_OS_RESERVE_MB, WORKER_ESTIMATE_MB
+            usable_mb = max(0, avail_mb - WORKER_OS_RESERVE_MB)
+            per_worker_mb = WORKER_ESTIMATE_MB
+            mem_cap = max(1, int(usable_mb / per_worker_mb))
+            if mem_cap < n_workers:
+                info(f"Auto-capping workers {n_workers} -> {mem_cap} (available RAM: {avail_mb:.0f} MB)")
+                n_workers = mem_cap
+        except Exception as exc:
+            logging.getLogger(__name__).debug(
+                "Could not query available RAM (%s); skipping worker cap", exc
+            )
 
     info(f"Spawning {n_workers} worker processes...")
 
@@ -1763,8 +1793,7 @@ def generate_sales_fact(
     # shared-memory descriptors after publish_dict above.
     # ------------------------------------------------------------
     from .sales_worker.init import (
-        _build_store_assortment,
-        _build_buckets_from_brand_key,
+        _build_store_subcat_matrix,
         _build_brand_prob_by_month_rotate_winner,
         _build_salesperson_effective_by_store,
         _DEFAULT_ASSORTMENT_COVERAGE,
@@ -1773,22 +1802,31 @@ def generate_sales_fact(
         float_or,
     )
 
-    # 1) brand_to_row_idx — list of ~300K arrays, share via jagged shared memory
-    #    (pickling 300K individual arrays is extremely slow on Windows spawn)
+    # 1) brand_to_row_idx — pre-compute sorted index + offsets (two compact
+    #    shared arrays) so workers reconstruct buckets without argsort.
     _brand_product_counts = None  # reused by brand_prob pre-build
     if product_brand_key is not None:
-        _prebuilt_brand = _build_buckets_from_brand_key(product_brand_key)
-        worker_cfg["_prebuilt_brand_to_row_idx"] = _shm.publish_jagged(
-            "brand_idx", _prebuilt_brand, dtype=np.int32,
-        )
-        # Extract brand product counts before freeing (reused for brand_prob)
-        _brand_product_counts = np.array(
-            [len(b) if b is not None else 0 for b in _prebuilt_brand],
-            dtype=np.float64,
-        )
-        del _prebuilt_brand
+        _bk = np.asarray(product_brand_key, dtype=np.int32)
+        _brand_product_counts = np.bincount(_bk).astype(np.float64)
+        # Build flat sorted index + offsets for zero-copy brand bucket access
+        _brand_order = np.argsort(_bk, kind="mergesort").astype(np.int32)
+        _bk_sorted = _bk[_brand_order]
+        _brand_starts = np.flatnonzero(np.r_[True, _bk_sorted[1:] != _bk_sorted[:-1]])
+        B = int(_bk.max()) + 1
+        _brand_offsets = np.zeros(B + 1, dtype=np.int64)
+        for s_idx in range(len(_brand_starts)):
+            k = int(_bk_sorted[_brand_starts[s_idx]])
+            e = int(_brand_starts[s_idx + 1]) if s_idx + 1 < len(_brand_starts) else len(_bk_sorted)
+            _brand_offsets[k + 1] = e
+        # Forward-fill: offsets must be non-decreasing
+        np.maximum.accumulate(_brand_offsets, out=_brand_offsets)
+        worker_cfg["_brand_flat_idx"] = _shm.publish("brand_flat_idx", _brand_order)
+        worker_cfg["_brand_flat_offsets"] = _shm.publish("brand_flat_off", _brand_offsets)
+        del _brand_order, _bk_sorted, _brand_starts, _brand_offsets
 
-    # 2) store_to_product_rows (~350 MB — share via jagged shared memory)
+    # 2) store-product assortment — compact subcat matrix (stores × subcats bool)
+    #    Workers expand to row indices on-the-fly at init, avoiding a 500MB+
+    #    shared memory allocation that blocks the main process for minutes.
     if assortment_cfg.get("enabled") and product_subcat_key is not None and store_type_map is not None:
         store_type_arr = np.array(
             [str(store_type_map.get(int(sk), "Supermarket")) for sk in store_keys],
@@ -1796,18 +1834,21 @@ def generate_sales_fact(
         )
         coverage = assortment_cfg.get("coverage", _DEFAULT_ASSORTMENT_COVERAGE)
         assort_seed = int(assortment_cfg.get("seed", seed))
-        _prebuilt_assortment = _build_store_assortment(
+        _unique_subcats, _subcat_matrix = _build_store_subcat_matrix(
             store_keys=store_keys,
             store_type_arr=store_type_arr,
-            product_np=product_np,
             product_subcat_key=product_subcat_key,
             coverage_cfg=coverage,
             seed=assort_seed,
         )
-        worker_cfg["_prebuilt_store_to_product_rows"] = _shm.publish_jagged(
-            "assortment", _prebuilt_assortment, dtype=np.int32,
+        # Publish tiny matrix via shared memory (~stores × subcats bytes)
+        worker_cfg["_assortment_subcat_matrix"] = _shm.publish(
+            "assort_matrix", _subcat_matrix,
         )
-        del _prebuilt_assortment  # free the original list
+        worker_cfg["_assortment_unique_subcats"] = _shm.publish(
+            "assort_subcats", _unique_subcats,
+        )
+        del _subcat_matrix, _unique_subcats
 
     # 3) salesperson_effective_by_store (dict of small arrays — pickle)
     if employee_assign_employee_key is not None and employee_assign_store_key is not None:
@@ -1841,34 +1882,6 @@ def generate_sales_fact(
             # Brand product counts (reused from section 1 if available)
             _bp_counts = _brand_product_counts if (_brand_product_counts is not None and len(_brand_product_counts) == _B) else None
 
-            # Explicit brand weights from config
-            _bp_explicit = None
-            _cfg_weights = _brand_cfg.get("brand_weights")
-            if isinstance(_cfg_weights, Mapping) and _cfg_weights and brand_names is not None and len(brand_names) == _B:
-                _bp_explicit = np.zeros(_B, dtype=np.float64)
-                _name_to_idx = {str(n): i for i, n in enumerate(brand_names)}
-                _has_override = False
-                for _bname, _bw in _cfg_weights.items():
-                    _idx = _name_to_idx.get(str(_bname))
-                    if _idx is not None:
-                        _bp_explicit[_idx] = float(_bw)
-                        _has_override = True
-                if _has_override:
-                    _unset = _bp_explicit == 0.0
-                    if _unset.any() and _bp_counts is not None:
-                        _fallback = np.sqrt(np.maximum(_bp_counts, 1.0))
-                        _leftover = max(0.0, 1.0 - _bp_explicit.sum())
-                        _fallback_sum = _fallback[_unset].sum()
-                        if _fallback_sum > 0 and _leftover > 0:
-                            _bp_explicit[_unset] = _fallback[_unset] / _fallback_sum * _leftover
-                        elif _leftover > 0:
-                            _bp_explicit[_unset] = _leftover / _unset.sum()
-                    elif _unset.any():
-                        _leftover = max(0.0, 1.0 - _bp_explicit.sum())
-                        _bp_explicit[_unset] = _leftover / _unset.sum() if _unset.sum() > 0 else 0.0
-                else:
-                    _bp_explicit = None
-
             _brand_prob = _build_brand_prob_by_month_rotate_winner(
                 _rng_bp,
                 T=_T, B=_B,
@@ -1877,7 +1890,6 @@ def generate_sales_fact(
                 min_share=float_or(_brand_cfg.get("min_share"), 0.02),
                 year_len_months=int_or(_brand_cfg.get("year_len_months"), 12),
                 brand_product_counts=_bp_counts,
-                explicit_weights=_bp_explicit,
             )
             worker_cfg["_prebuilt_brand_prob_by_month"] = _shm.publish(
                 "brand_prob", _brand_prob,

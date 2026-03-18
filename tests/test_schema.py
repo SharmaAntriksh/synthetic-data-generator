@@ -160,7 +160,7 @@ class TestModelsConfigFromYAML:
         m = ModelsConfig.from_raw_dict(raw_models)
         bp = m.models.brand_popularity
         assert bp.enabled is True
-        assert "Contoso" in bp.brand_weights
+        assert bp.winner_boost == 2.5
 
     def test_returns_reasons(self, raw_models):
         m = ModelsConfig.from_raw_dict(raw_models)

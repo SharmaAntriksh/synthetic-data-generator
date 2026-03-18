@@ -33,6 +33,126 @@ _DEFAULT_ASSORTMENT_COVERAGE = {
 _HASH_MULT = np.int64(2654435761)
 
 
+def _build_store_subcat_matrix(
+    store_keys: np.ndarray,
+    store_type_arr: np.ndarray,
+    product_subcat_key: np.ndarray,
+    coverage_cfg: dict,
+    seed: int = 42,
+) -> tuple:
+    """Build a compact store × subcategory boolean inclusion matrix.
+
+    Returns ``(unique_subcats, matrix)`` where *matrix* is a bool array of
+    shape ``(max_store_key + 1, n_subcats)`` indicating which subcategories
+    each store stocks.  Workers expand this to product row indices on-the-fly,
+    avoiding the huge materialised jagged array.
+    """
+    unique_subcats = np.unique(product_subcat_key)
+    n_subcats = len(unique_subcats)
+
+    max_sk = int(store_keys.max()) + 1
+    matrix = np.zeros((max_sk, n_subcats), dtype=np.bool_)
+
+    seed_offset = np.int64(seed * 31 + 7)
+    sc_hash_term = np.abs(unique_subcats.astype(np.int64) * np.int64(40503))
+
+    for sk, st in zip(store_keys, store_type_arr):
+        sk_int = int(sk)
+        coverage = float(coverage_cfg.get(str(st), coverage_cfg.get("default", 0.50)))
+
+        if coverage >= 1.0:
+            matrix[sk_int, :] = True
+            continue
+
+        threshold = int(coverage * 10000)
+        hashes = np.abs((np.int64(sk_int) * _HASH_MULT + sc_hash_term + seed_offset) % np.int64(10000))
+        included_mask = hashes < threshold
+
+        if included_mask.any():
+            matrix[sk_int] = included_mask
+        else:
+            best_idx = int(np.argmin(hashes))
+            matrix[sk_int, best_idx] = True
+
+    return unique_subcats, matrix
+
+
+class _LazyStoreAssortment:
+    """Lazy store-product assortment that expands rows on first access per store.
+
+    Avoids expanding all 200 stores × 1M products at init (4+ GB).  Each store's
+    product row indices are built on first lookup and cached thereafter.
+    Supports ``len()`` and ``[]`` access like a list.
+    """
+    __slots__ = ("_cache", "_subcat_matrix", "_unique_subcats",
+                 "_subcat_to_rows", "_all_rows", "_n_products", "_max_sk")
+
+    def __init__(
+        self,
+        unique_subcats: np.ndarray,
+        subcat_matrix: np.ndarray,
+        product_subcat_key: np.ndarray,
+        n_products: int,
+    ):
+        self._subcat_matrix = subcat_matrix
+        self._unique_subcats = unique_subcats
+        self._n_products = n_products
+        self._max_sk = subcat_matrix.shape[0]
+        self._cache: dict = {}
+        self._all_rows: np.ndarray | None = None
+
+        # Build subcat → row indices once (shared across all stores)
+        self._subcat_to_rows: dict[int, np.ndarray] = {}
+        for sc in unique_subcats:
+            self._subcat_to_rows[int(sc)] = np.flatnonzero(product_subcat_key == sc)
+
+    def __len__(self):
+        return self._max_sk
+
+    def __getitem__(self, sk_int: int):
+        if sk_int < 0 or sk_int >= self._max_sk:
+            return None
+        cached = self._cache.get(sk_int)
+        if cached is not None:
+            return cached
+
+        row_mask = self._subcat_matrix[sk_int]
+        if not row_mask.any():
+            return None
+
+        if row_mask.all():
+            if self._all_rows is None:
+                self._all_rows = np.arange(self._n_products, dtype=np.int32)
+            result = self._all_rows
+        else:
+            included = [self._subcat_to_rows[int(sc)]
+                        for sc in self._unique_subcats[row_mask]]
+            result = np.concatenate(included).astype(np.int32)
+
+        self._cache[sk_int] = result
+        return result
+
+
+def _expand_store_assortment_from_matrix(
+    store_keys: np.ndarray,
+    unique_subcats: np.ndarray,
+    subcat_matrix: np.ndarray,
+    product_subcat_key: np.ndarray,
+    n_products: int,
+) -> "_LazyStoreAssortment":
+    """Return a lazy assortment that expands stores on first access.
+
+    Only the ``subcat_to_rows`` index is built eagerly (~40 scans of
+    ``product_subcat_key``).  Per-store row arrays are materialized on
+    demand, keeping memory proportional to actual stores accessed.
+    """
+    return _LazyStoreAssortment(
+        unique_subcats, subcat_matrix, product_subcat_key, n_products,
+    )
+
+
+# Legacy wrapper: used by the fallback path in init_sales_worker when
+# neither the compact subcat matrix nor the pre-built jagged array is available.
 def _build_store_assortment(
     store_keys: np.ndarray,
     store_type_arr: np.ndarray,
@@ -41,57 +161,17 @@ def _build_store_assortment(
     coverage_cfg: dict,
     seed: int = 42,
 ) -> list:
+    """Build per-store product row index arrays (backward-compatible wrapper).
+
+    For small product counts, materialises directly.  For large catalogs,
+    prefer :func:`_build_store_subcat_matrix` + per-worker expansion.
     """
-    Build per-store product row index arrays for assortment filtering.
-
-    Uses subcategory-level deterministic hashing: for each (StoreKey, SubcategoryKey)
-    pair, a hash decides whether that subcategory is stocked at that store. All
-    products within a stocked subcategory are available.
-
-    Returns:
-        List indexed by StoreKey (dense). Each entry is a np.ndarray of row indices
-        into product_np, or None for missing store keys.
-    """
-    n_products = len(product_np)
-    unique_subcats = np.unique(product_subcat_key)
-    n_subcats = len(unique_subcats)
-
-    # Pre-build subcategory → product row indices
-    subcat_to_rows: dict[int, np.ndarray] = {}
-    for sc in unique_subcats:
-        subcat_to_rows[int(sc)] = np.flatnonzero(product_subcat_key == sc)
-
-    max_sk = int(store_keys.max()) + 1
-    result: list = [None] * max_sk
-
-    # Build a hash seed offset from the config seed for reproducibility
-    seed_offset = np.int64(seed * 31 + 7)
-
-    # Pre-compute the subcategory hash term once (vectorized over subcats)
-    sc_hash_term = np.abs(unique_subcats.astype(np.int64) * np.int64(40503))
-
-    for sk, st in zip(store_keys, store_type_arr):
-        sk_int = int(sk)
-        coverage = float(coverage_cfg.get(str(st), coverage_cfg.get("default", 0.50)))
-
-        if coverage >= 1.0:
-            result[sk_int] = np.arange(n_products, dtype=np.int32)
-            continue
-
-        # Vectorized hash: compute all (store, subcategory) hashes at once
-        threshold = int(coverage * 10000)
-        hashes = np.abs((np.int64(sk_int) * _HASH_MULT + sc_hash_term + seed_offset) % np.int64(10000))
-        included_mask = hashes < threshold
-
-        if included_mask.any():
-            included_rows = [subcat_to_rows[int(sc)] for sc in unique_subcats[included_mask]]
-            result[sk_int] = np.concatenate(included_rows)
-        else:
-            # Ensure at least 1 subcategory (pick the one with lowest hash)
-            best_idx = int(np.argmin(hashes))
-            result[sk_int] = subcat_to_rows[int(unique_subcats[best_idx])]
-
-    return result
+    unique_subcats, matrix = _build_store_subcat_matrix(
+        store_keys, store_type_arr, product_subcat_key, coverage_cfg, seed,
+    )
+    return _expand_store_assortment_from_matrix(
+        store_keys, unique_subcats, matrix, product_subcat_key, len(product_np),
+    )
 
 
 # ---------------------------------------------------------------------
@@ -472,18 +552,13 @@ def _build_brand_prob_by_month_rotate_winner(
     min_share: float = 0.02,
     year_len_months: int = 12,
     brand_product_counts: np.ndarray | None = None,
-    explicit_weights: np.ndarray | None = None,
 ) -> np.ndarray:
     if T <= 0 or B <= 0:
         raise RuntimeError(f"Invalid T/B for brand_prob_by_month: T={T}, B={B}")
 
     year_len = max(1, int(year_len_months))
 
-    if explicit_weights is not None and len(explicit_weights) == B and explicit_weights.sum() > 0:
-        base = explicit_weights.astype(np.float64).copy()
-        base = np.maximum(base, 0.0)
-        base = base / base.sum()
-    elif brand_product_counts is not None and len(brand_product_counts) == B:
+    if brand_product_counts is not None and len(brand_product_counts) == B:
         counts = np.maximum(brand_product_counts.astype(np.float64), 1.0)
         base = np.sqrt(counts)
         base = base / base.sum()
@@ -647,10 +722,27 @@ def init_sales_worker(worker_cfg: dict) -> None:
 
     product_np = np.asarray(product_np)
 
-    _prebuilt_brand_desc = worker_cfg.get("_prebuilt_brand_to_row_idx")
-    if _prebuilt_brand_desc is not None:
+    # Brand buckets: reconstruct from pre-computed flat index + offsets
+    # (shared memory, no per-worker argsort).
+    _brand_flat_idx = worker_cfg.get("_brand_flat_idx")
+    _brand_flat_offsets = worker_cfg.get("_brand_flat_offsets")
+    if _brand_flat_idx is not None and _brand_flat_offsets is not None:
+        _brand_flat_idx = resolve_array(_brand_flat_idx)
+        _brand_flat_offsets = resolve_array(_brand_flat_offsets)
+        B = len(_brand_flat_offsets) - 1
+        brand_to_row_idx = [None] * B
+        for b in range(B):
+            s, e = int(_brand_flat_offsets[b]), int(_brand_flat_offsets[b + 1])
+            if e > s:
+                brand_to_row_idx[b] = _brand_flat_idx[s:e]
+            else:
+                brand_to_row_idx[b] = np.empty(0, dtype=np.int32)
+        if product_brand_key is not None:
+            product_brand_key = as_int32(product_brand_key)
+    elif worker_cfg.get("_prebuilt_brand_to_row_idx") is not None:
+        # Legacy path: pre-built jagged shared memory
         from src.utils.shared_arrays import resolve_jagged
-        brand_to_row_idx = resolve_jagged(_prebuilt_brand_desc)
+        brand_to_row_idx = resolve_jagged(worker_cfg["_prebuilt_brand_to_row_idx"])
         if product_brand_key is not None:
             product_brand_key = as_int32(product_brand_key)
     elif product_brand_key is not None:
@@ -724,12 +816,34 @@ def init_sales_worker(worker_cfg: dict) -> None:
     # ------------------------------------------------------------
     # Store-product assortment (optional)
     # ------------------------------------------------------------
-    _prebuilt_assortment = worker_cfg.get("_prebuilt_store_to_product_rows")
-    if _prebuilt_assortment is not None:
-        from src.utils.shared_arrays import resolve_jagged
-        store_to_product_rows = resolve_jagged(_prebuilt_assortment)
-    else:
-        store_to_product_rows = None
+    store_to_product_rows = None
+
+    # New compact path: expand subcat matrix to row indices per-worker
+    _assort_matrix_desc = worker_cfg.get("_assortment_subcat_matrix")
+    _assort_subcats_desc = worker_cfg.get("_assortment_unique_subcats")
+    if _assort_matrix_desc is not None and _assort_subcats_desc is not None:
+        _subcat_matrix = resolve_array(_assort_matrix_desc)
+        _unique_subcats = resolve_array(_assort_subcats_desc)
+        product_subcat_key_arr = worker_cfg.get("product_subcat_key")
+        if product_subcat_key_arr is not None:
+            product_subcat_key_arr = np.asarray(product_subcat_key_arr, dtype=np.int32)
+            store_to_product_rows = _expand_store_assortment_from_matrix(
+                store_keys=store_keys,
+                unique_subcats=_unique_subcats,
+                subcat_matrix=_subcat_matrix,
+                product_subcat_key=product_subcat_key_arr,
+                n_products=len(product_np),
+            )
+
+    # Legacy fallback: pre-built jagged shared memory (backward compat)
+    if store_to_product_rows is None:
+        _prebuilt_assortment = worker_cfg.get("_prebuilt_store_to_product_rows")
+        if _prebuilt_assortment is not None:
+            from src.utils.shared_arrays import resolve_jagged
+            store_to_product_rows = resolve_jagged(_prebuilt_assortment)
+
+    # Final fallback: build from scratch (no shared memory at all)
+    if store_to_product_rows is None:
         assortment_cfg = worker_cfg.get("assortment")
         if isinstance(assortment_cfg, Mapping) and assortment_cfg.get("enabled"):
             product_subcat_key = worker_cfg.get("product_subcat_key")
@@ -868,34 +982,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
                         dtype=np.float64,
                     )
 
-                bp_explicit = None
-                cfg_weights = brand_cfg.get("brand_weights")
-                bp_brand_names = worker_cfg.get("brand_names")
-                if isinstance(cfg_weights, Mapping) and cfg_weights and bp_brand_names is not None and len(bp_brand_names) == B:
-                    bp_explicit = np.zeros(B, dtype=np.float64)
-                    name_to_idx = {str(n): i for i, n in enumerate(bp_brand_names)}
-                    has_override = False
-                    for bname, bw in cfg_weights.items():
-                        idx = name_to_idx.get(str(bname))
-                        if idx is not None:
-                            bp_explicit[idx] = float(bw)
-                            has_override = True
-                    if has_override:
-                        unset = bp_explicit == 0.0
-                        if unset.any() and bp_counts is not None:
-                            fallback = np.sqrt(np.maximum(bp_counts, 1.0))
-                            leftover = max(0.0, 1.0 - bp_explicit.sum())
-                            fallback_sum = fallback[unset].sum()
-                            if fallback_sum > 0 and leftover > 0:
-                                bp_explicit[unset] = fallback[unset] / fallback_sum * leftover
-                            elif leftover > 0:
-                                bp_explicit[unset] = leftover / unset.sum()
-                        elif unset.any():
-                            leftover = max(0.0, 1.0 - bp_explicit.sum())
-                            bp_explicit[unset] = leftover / unset.sum() if unset.sum() > 0 else 0.0
-                    else:
-                        bp_explicit = None
-
                 brand_prob_by_month = _build_brand_prob_by_month_rotate_winner(
                     rng_bp,
                     T=T,
@@ -905,7 +991,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
                     min_share=float_or(brand_cfg.get("min_share"), 0.02),
                     year_len_months=int_or(brand_cfg.get("year_len_months"), 12),
                     brand_product_counts=bp_counts,
-                    explicit_weights=bp_explicit,
                 )
 
     store_to_geo_arr = dense_map(store_to_geo) if isinstance(store_to_geo, Mapping) else None

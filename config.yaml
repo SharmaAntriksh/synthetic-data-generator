@@ -6,10 +6,10 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 103285
-  products: 2517
-  customers: 28348
-  stores: 100
+  sales_rows: 1003285
+  products: 12517
+  customers: 52834
+  stores: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -51,7 +51,7 @@ sales:
 
   advanced:
     chunk_size: 500000
-    workers: 12                        # null = auto-detect
+    workers: 6                        # null = auto-detect
     row_group_size: 1_000_000
     compression: "snappy"
     write_pyarrow: true
@@ -269,7 +269,7 @@ budget:
 inventory:
   enabled: true
   seed: 42
-  grain: quarterly                       # monthly | quarterly
+  grain: monthly                       # monthly | quarterly
   partition_by: ["Year", "Month"]      # null or [] to disable (used by deltaparquet)
   abc_filter: null                     # null = all classes; ["A", "B"] = skip C-class products
 

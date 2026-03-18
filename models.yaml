@@ -107,9 +107,6 @@ models:
     enabled: true
     seed: 123
     winner_boost: 2.5
-    brand_weights:
-      Tailspin Toys: 0.25
-      Contoso: 0.12
 
 
   # ================================================================

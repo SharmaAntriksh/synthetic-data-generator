@@ -15,7 +15,7 @@ from src.defaults import SCD2_END_OF_TIME
 from .contoso_loader import load_contoso_products
 from .contoso_expander import expand_contoso_products
 from .pricing import apply_product_pricing
-from .product_profile import enrich_products_attributes
+from .product_profile import enrich_products_attributes, apply_post_merge_enrichment
 
 
 # ---------------------------------------------------------------------
@@ -29,16 +29,11 @@ def _generate_scd2_versions(
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
 ) -> pd.DataFrame:
-    """
-    Expand products into SCD2 version rows with price revisions.
+    """Expand products into SCD2 version rows with price revisions.
 
-    Each version represents a price revision period. ListPrice and UnitCost
-    change per version (drift ± scd2_price_drift), while all other product
-    attributes remain static.
-
-    Version 1 = original product (EffectiveStartDate = config start_date).
-    Subsequent versions have EffectiveStartDate spaced by scd2_revision_frequency
-    months from the product's first revision date.
+    Fully vectorized — no per-product Python loops.  Each version represents
+    a price revision period.  Version 1 keeps the original price; subsequent
+    versions apply cumulative drift.
 
     Returns a new DataFrame sorted by ProductID + VersionNumber, with
     ProductKey reassigned sequentially (1..N_total_rows).
@@ -49,71 +44,107 @@ def _generate_scd2_versions(
 
     N = len(base_df)
     if max_versions <= 1 or revision_freq <= 0:
-        # No revisions — just add SCD2 metadata with defaults
         return base_df
 
-    # How many revision slots fit in the date range?
     total_months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
     max_possible_versions = min(max_versions, max(1, total_months // revision_freq + 1))
 
     if max_possible_versions <= 1:
         return base_df
 
-    # Determine how many versions each product gets (1 to max_possible_versions)
-    # Use a geometric-ish distribution: most products get few revisions
-    n_extra = rng.integers(0, max_possible_versions, size=N, dtype=np.int64)
-    # Products with 0 extra versions stay at version 1 only
+    # How many versions each product gets (1-based)
+    n_versions = rng.integers(1, max_possible_versions + 1, size=N, dtype=np.int64)
 
-    version_rows = []
-    base_records = base_df.to_dict("records")
-    for i in range(N):
-        base_rec = base_records[i]
-        n_versions = int(n_extra[i]) + 1  # at least 1
+    # Random offset for first revision (months from start_date)
+    first_offsets = rng.integers(1, max(2, revision_freq), size=N, dtype=np.int64)
 
-        list_price = float(base_rec["ListPrice"])
-        unit_cost = float(base_rec["UnitCost"])
+    # Pre-generate all drift values for max_possible_versions-1 extra versions per product
+    # Shape: (N, max_possible_versions-1)
+    n_extra_max = max_possible_versions - 1
+    if n_extra_max > 0:
+        all_drifts = 1.0 + rng.uniform(-price_drift, price_drift * 2, size=(N, n_extra_max))
+    else:
+        all_drifts = np.empty((N, 0), dtype=np.float64)
 
-        # First revision starts at a random offset within the first revision period
-        first_revision_offset = rng.integers(1, max(2, revision_freq))
-        revision_start = start_date + pd.DateOffset(months=int(first_revision_offset))
+    # Build row indices: which base row does each output row come from?
+    # Product i contributes n_versions[i] rows
+    total_rows = int(n_versions.sum())
+    row_idx = np.repeat(np.arange(N, dtype=np.int64), n_versions)
+    # Version number within each product (0-based): position minus group start
+    offsets = np.zeros(N + 1, dtype=np.int64)
+    np.cumsum(n_versions, out=offsets[1:])
+    ver_within = np.arange(total_rows, dtype=np.int64) - offsets[row_idx]
 
-        for v in range(n_versions):
-            version_data = base_rec.copy()
-            version_data["VersionNumber"] = v + 1
+    # Compute EffectiveStartDate as month offset from start_date
+    # Version 0: start_date (offset=0)
+    # Version v>=1: first_offsets[product] + (v-1) * revision_freq
+    month_offsets = np.where(
+        ver_within == 0,
+        0,
+        first_offsets[row_idx] + (ver_within - 1) * revision_freq,
+    )
 
-            if v == 0:
-                version_data["EffectiveStartDate"] = start_date
-            else:
-                eff_start = revision_start + pd.DateOffset(months=int((v - 1) * revision_freq))
-                if eff_start > end_date:
-                    break  # no more versions fit
-                version_data["EffectiveStartDate"] = eff_start
+    # Convert month offsets to dates via pure numpy arithmetic (no Python loop)
+    start_day = min(start_date.day, 28)  # safe day for all months
+    start_year = start_date.year
+    start_month = start_date.month
+    total_month = start_month - 1 + month_offsets  # 0-based months from Jan of start_year
+    eff_years = start_year + total_month // 12
+    eff_months = total_month % 12 + 1  # back to 1-based
 
-                # Apply price drift
-                drift = 1.0 + rng.uniform(-price_drift, price_drift * 2)
-                list_price = round(list_price * drift, 2)
-                unit_cost = round(min(unit_cost * drift, list_price), 2)
-                version_data["ListPrice"] = list_price
-                version_data["UnitCost"] = unit_cost
+    eff_dates = (
+        (eff_years - 1970).astype("datetime64[Y]")
+        + (eff_months - 1).astype("timedelta64[M]")
+        + np.timedelta64(start_day - 1, "D")
+    ).astype("datetime64[D]")
 
-            version_rows.append(version_data)
+    # Clip versions that exceed end_date
+    end_np = np.datetime64(end_date.date(), "D")
+    valid = (ver_within == 0) | (eff_dates <= end_np)
 
-    result = pd.DataFrame(version_rows)
+    # Filter to valid rows only
+    row_idx = row_idx[valid]
+    ver_within = ver_within[valid]
+    eff_dates = eff_dates[valid]
+    total_rows = int(valid.sum())
 
-    # Set EffectiveEndDate: next version's start - 1 day, or 2099-12-31 for current
+    # Build result DataFrame by repeating base rows
+    result = base_df.iloc[row_idx].reset_index(drop=True)
+    result["VersionNumber"] = ver_within + 1
+    result["EffectiveStartDate"] = pd.to_datetime(eff_dates)
+
+    # Apply cumulative price drift for versions > 1
+    # For each row, compute cumulative drift product up to its version
+    list_prices = result["ListPrice"].to_numpy(dtype=np.float64, copy=True)
+    unit_costs = result["UnitCost"].to_numpy(dtype=np.float64, copy=True)
+
+    if n_extra_max > 0:
+        # Compute cumulative drift per product per version
+        cum_drifts = np.cumprod(all_drifts, axis=1)  # shape (N, n_extra_max)
+        for v in range(1, max_possible_versions):
+            mask = ver_within == v
+            if not mask.any():
+                continue
+            prods = row_idx[mask]
+            drift_v = cum_drifts[prods, v - 1]
+            list_prices[mask] = np.round(list_prices[mask] * drift_v, 2)
+            unit_costs[mask] = np.round(np.minimum(unit_costs[mask] * drift_v, list_prices[mask]), 2)
+
+    result["ListPrice"] = list_prices
+    result["UnitCost"] = unit_costs
+
+    # Sort by ProductID + VersionNumber
     result = result.sort_values(["ProductID", "VersionNumber"]).reset_index(drop=True)
 
-    # Vectorised EffectiveEndDate: shift within ProductID groups
+    # Vectorised EffectiveEndDate
     eff_start_arr = result["EffectiveStartDate"].to_numpy()
     pid_arr = result["ProductID"].to_numpy()
-    # Data is already sorted by [ProductID, VersionNumber]
-    # Next row's start date within same ProductID → current row's end date - 1 day
-    same_pid_as_next = np.empty(len(result), dtype=bool)
+    same_pid_as_next = np.empty(total_rows, dtype=bool)
     same_pid_as_next[:-1] = pid_arr[:-1] == pid_arr[1:]
     same_pid_as_next[-1] = False
 
-    eff_end_arr = np.full(len(result), SCD2_END_OF_TIME, dtype="datetime64[ns]")
-    is_current_arr = np.ones(len(result), dtype=np.int64)
+    eff_end_arr = np.full(total_rows, SCD2_END_OF_TIME, dtype="datetime64[ns]")
+    is_current_arr = np.ones(total_rows, dtype=np.int64)
     _shift_mask = np.flatnonzero(same_pid_as_next)
     eff_end_arr[_shift_mask] = eff_start_arr[_shift_mask + 1] - np.timedelta64(1, "D")
     is_current_arr[_shift_mask] = 0
@@ -121,11 +152,10 @@ def _generate_scd2_versions(
     result["EffectiveEndDate"] = eff_end_arr
     result["IsCurrent"] = is_current_arr
 
-    # Reassign ProductKey sequentially (PK, unique per version row)
-    result["ProductKey"] = np.arange(1, len(result) + 1, dtype="int64")
+    # Reassign ProductKey sequentially
+    result["ProductKey"] = np.arange(1, total_rows + 1, dtype="int64")
 
-    n_with_history = int((n_extra > 0).sum())
-    total_rows = len(result)
+    n_with_history = int((n_versions > 1).sum())
     info(f"Products SCD2: {n_with_history:,}/{N:,} products have price history "
          f"({total_rows:,} total rows, max {max_possible_versions} versions)")
 
@@ -161,6 +191,86 @@ def _load_supplier_keys(output_folder: Path) -> np.ndarray:
     if keys.size == 0:
         raise ValueError("suppliers.parquet has zero valid SupplierKey values")
     return np.sort(keys)
+
+
+# ---------------------------------------------------------------------
+# Parallel enrichment orchestrator
+# ---------------------------------------------------------------------
+def _generate_parallel_enrichment(
+    df: pd.DataFrame,
+    config,
+    seed: int,
+    output_folder: Path,
+    n_workers: int,
+) -> pd.DataFrame:
+    """Enrich products in parallel: chunk -> enrich -> merge -> rank columns."""
+    import shutil
+    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from .worker import product_enrich_chunk_worker
+
+    N = len(df)
+
+    # Chunk partitioning (same formula as customers)
+    n_chunks = min(n_workers * 2, max(2, N // 10_000))
+    n_chunks = max(2, n_chunks)
+    n_actual_workers = min(n_chunks, n_workers)
+
+    # Serialize config for workers (must be picklable plain dict)
+    from src.utils.config_helpers import as_dict
+    cfg_dump = as_dict(config)
+
+    # Scratch directory
+    scratch_dir = output_folder / "_product_chunks"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+
+    # Split df into chunks and write to scratch
+    chunk_boundaries = np.array_split(np.arange(N), n_chunks)
+
+    tasks = []
+    for i, indices in enumerate(chunk_boundaries):
+        input_path = str(scratch_dir / f"chunk_{i:05d}_input.parquet")
+        output_path = str(scratch_dir / f"chunk_{i:05d}_enriched.parquet")
+        df.iloc[indices].to_parquet(input_path, index=False)
+        tasks.append((
+            i, seed,
+            input_path, output_path,
+            cfg_dump, str(output_folder),
+        ))
+
+    info(f"Product enrichment: {n_chunks} chunks across {n_actual_workers} workers")
+
+    pool_spec = PoolRunSpec(
+        processes=n_actual_workers,
+        chunksize=1,
+        label="product_enrichment",
+    )
+
+    try:
+        chunk_results = []
+        for result in iter_imap_unordered(
+            tasks=tasks,
+            task_fn=product_enrich_chunk_worker,
+            spec=pool_spec,
+        ):
+            chunk_results.append(result)
+
+        chunk_results.sort(key=lambda r: r["chunk_idx"])
+
+        # Merge enriched chunks (read in order for determinism)
+        enriched_dfs = []
+        for i in range(n_chunks):
+            path = scratch_dir / f"chunk_{i:05d}_enriched.parquet"
+            enriched_dfs.append(pd.read_parquet(path))
+
+        merged = pd.concat(enriched_dfs, ignore_index=True)
+        del enriched_dfs
+
+        # Apply rank-dependent columns on full dataset
+        merged = apply_post_merge_enrichment(merged, seed)
+
+        return merged
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------
@@ -255,8 +365,21 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         seed=seed,
     )
 
-    # Enrichment columns
-    df = enrich_products_attributes(df, config, seed=seed, output_folder=output_folder)
+    # Enrichment columns (parallel when above threshold)
+    from multiprocessing import cpu_count
+    from src.defaults import PRODUCT_PARALLEL_THRESHOLD
+
+    sales_cfg = getattr(config, "sales", None)
+    configured_workers = getattr(sales_cfg, "workers", None) if sales_cfg else None
+    from src.utils.config_helpers import int_or
+    n_workers = max(1, int_or(configured_workers, cpu_count() - 1))
+
+    if len(df) >= PRODUCT_PARALLEL_THRESHOLD and n_workers >= 2:
+        df = _generate_parallel_enrichment(df, config, seed=seed,
+                                            output_folder=output_folder,
+                                            n_workers=n_workers)
+    else:
+        df = enrich_products_attributes(df, config, seed=seed, output_folder=output_folder)
 
     # SupplierKey (deterministic)
     if sup_enabled:
@@ -335,6 +458,17 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
 
     products_df = df[core_cols].copy()
     profile_df = profile_source[profile_cols].copy()
+
+    # Reorder profile columns to match static_schemas.py (SQL CREATE TABLE order).
+    # BULK INSERT is positional — CSV column order must match the schema exactly.
+    from src.utils.static_schemas import STATIC_SCHEMAS
+    schema_cols = [name for name, _ in STATIC_SCHEMAS.get("ProductProfile", ())]
+    if schema_cols:
+        # Keep only columns present in both schema and DataFrame, in schema order
+        ordered = [c for c in schema_cols if c in profile_df.columns]
+        # Append any extra DataFrame columns not in schema (future-proof)
+        extra = [c for c in profile_df.columns if c not in schema_cols]
+        profile_df = profile_df[ordered + extra]
 
     profile_path = output_folder / "product_profile.parquet"
     products_df.to_parquet(parquet_path, index=False)

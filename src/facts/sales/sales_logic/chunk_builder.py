@@ -91,6 +91,18 @@ def _normalize_prob(p: np.ndarray) -> np.ndarray | None:
     return p / s
 
 
+def _get_brand_probs(m_offset: int, B: int) -> np.ndarray | None:
+    """Return normalized brand probability vector for month *m_offset*, or None."""
+    bp = _get_state_attr("brand_prob_by_month", default=None)
+    if bp is not None:
+        bp = np.asarray(bp, dtype="float64")
+        cand = bp[int(m_offset) % bp.shape[0]] if bp.ndim > 1 else bp
+        probs = _normalize_prob(cand)
+        if probs is not None and int(probs.size) == B:
+            return probs
+    return None
+
+
 def _sample_product_row_indices(
     rng: np.random.Generator,
     n: int,
@@ -138,26 +150,18 @@ def _sample_product_row_indices(
             if b is not None and len(b) > 0:
                 mx = max(mx, int(np.max(b)))
         if mx >= n_products:
+            import logging
+            logging.getLogger(__name__).warning(
+                "brand_to_row_idx max index (%d) >= n_products (%d); "
+                "falling back to uniform product sampling", mx, n_products,
+            )
             brand_to_rows = None  # force uniform fallback
-
-    brand_probs_by_month = _get_state_attr("brand_prob_by_month", default=None)
 
     if brand_to_rows is None or len(brand_to_rows) == 0:
         return rng.integers(0, n_products, size=n_int).astype("int32", copy=False)
 
     B = int(len(brand_to_rows))
-
-    # Select probability vector for this month
-    p = None
-    if brand_probs_by_month is not None:
-        probs = np.asarray(brand_probs_by_month, dtype="float64")
-        if probs.ndim == 1:
-            cand = probs
-        else:
-            cand = probs[int(m_offset) % int(probs.shape[0])]
-        cand = _normalize_prob(cand)
-        if cand is not None and int(cand.size) == B:
-            p = cand
+    p = _get_brand_probs(m_offset, B)
 
     # Fallback: equal probability across brands with at least 1 SKU
     if p is None:
@@ -235,23 +239,36 @@ def _sample_products_per_store(
     product_weight: np.ndarray | None = None,
     _cdf_cache: dict | None = None,
     _cal_month: int = 0,
+    m_offset: int = 0,
+    use_brand_popularity: bool = False,
 ) -> np.ndarray:
     """
     Sample product row indices from each store's assortment pool.
 
-    When product_weight is provided (e.g. PopularityScore-derived weights),
-    sampling is weighted within each store's pool.  Falls back to uniform
-    sampling if weights are absent or invalid.
+    When brand popularity is enabled, orders first pick a brand via
+    ``brand_prob_by_month``, then sample within the intersection of
+    store pool and brand bucket.  Otherwise sampling is weighted by
+    ``product_weight`` (popularity) within each store's full pool.
 
-    Performance: when ``_cdf_cache`` is provided, per-store CDFs are cached
-    by ``(pool_key, _cal_month)`` and reused across months that share the
-    same calendar month (only 12 unique months in a multi-year range).
-    This avoids redundant O(pool_size) CDF construction — the dominant cost.
+    Performance: per-(store, brand) intersection arrays and CDFs are
+    cached in ``_cdf_cache`` keyed by ``(pool_key, brand, cal_month)``.
     """
     n = len(store_key_arr)
     n_products = len(product_np)
     max_sk = len(store_to_product_rows)
     out = np.empty(n, dtype=np.int32)
+
+    # Brand popularity state
+    brand_to_rows = None
+    brand_probs = None
+    B = 0
+    if use_brand_popularity:
+        brand_to_rows = _get_state_attr("brand_to_row_idx", default=None)
+        if brand_to_rows is not None and len(brand_to_rows) > 0:
+            B = len(brand_to_rows)
+            brand_probs = _get_brand_probs(m_offset, B)
+        if brand_probs is None:
+            brand_to_rows = None  # disable brand path
 
     # Pre-compute normalized global weights once (used by fallback path)
     _global_p = None
@@ -275,15 +292,20 @@ def _sample_products_per_store(
 
         if sk_int < max_sk and store_to_product_rows[sk_int] is not None:
             pool = store_to_product_rows[sk_int]
-            if product_weight is not None and pool.size > 1:
-                # --- CDF-cached weighted sampling ---
-                # Content-based key: (size, first element, last element, month).
-                # This avoids id() reuse after GC while staying O(1).
-                pool_key = (pool.size, int(pool[0]), int(pool[-1]))
-                cache_key = (pool_key, _cal_month)
+
+            # --- Brand-aware path ---
+            if brand_to_rows is not None and pool.size > 0:
+                _sample_brand_aware(
+                    rng, out, orig_idx, count, pool, brand_to_rows,
+                    brand_probs, B, product_weight, _cdf_cache, _cal_month,
+                    n_products,
+                )
+            elif product_weight is not None and pool.size > 1:
+                # --- Popularity-weighted (no brand) ---
+                cache_key = (id(pool), -1, _cal_month)
 
                 if _cdf_cache is not None and cache_key in _cdf_cache:
-                    pool_cached, cdf = _cdf_cache[cache_key]
+                    _, cdf = _cdf_cache[cache_key]
                 else:
                     w = product_weight[pool]
                     cdf = _normalize_cdf(w)
@@ -307,6 +329,70 @@ def _sample_products_per_store(
                 out[orig_idx] = rng.integers(0, n_products, size=count)
 
     return out
+
+
+def _sample_brand_aware(
+    rng, out, orig_idx, count, pool, brand_to_rows, brand_probs, B,
+    product_weight, _cdf_cache, _cal_month, n_products,
+):
+    """Pick brand first, then sample from store-pool ∩ brand-bucket."""
+    # Pick a brand for each order line
+    brand_ids = rng.choice(B, size=count, p=brand_probs)
+
+    # Cache key: id(pool) is stable within a worker (pools are persistent numpy views)
+    pool_set_key = id(pool)
+
+    # Group by brand
+    brand_order = np.argsort(brand_ids, kind="stable")
+    brand_counts = np.bincount(brand_ids, minlength=B)
+    brand_starts = np.zeros(B + 1, dtype=np.int64)
+    np.cumsum(brand_counts, out=brand_starts[1:])
+
+    for b in range(B):
+        bs, be = int(brand_starts[b]), int(brand_starts[b + 1])
+        cnt = be - bs
+        if cnt == 0:
+            continue
+        b_orig = orig_idx[brand_order[bs:be]]
+
+        # Get store ∩ brand rows (cached)
+        cache_key = (pool_set_key, b, _cal_month)
+        if _cdf_cache is not None and cache_key in _cdf_cache:
+            isect, cdf = _cdf_cache[cache_key]
+        else:
+            # Intersect: store pool rows that belong to brand b
+            brand_rows = brand_to_rows[b]
+            if brand_rows is not None and len(brand_rows) > 0:
+                # brand_rows is sorted (from argsort); pool may not be
+                pool_s = np.sort(pool) if pool.size > 1 else pool
+                pos = np.searchsorted(brand_rows, pool_s)
+                pos = np.clip(pos, 0, len(brand_rows) - 1)
+                mask = brand_rows[pos] == pool_s
+                isect = pool_s[mask]
+            else:
+                isect = np.empty(0, dtype=np.int32)
+
+            # Build CDF for weighted sampling within intersection
+            if isect.size > 0 and product_weight is not None:
+                cdf = _normalize_cdf(product_weight[isect])
+            else:
+                cdf = None
+
+            if _cdf_cache is not None:
+                _cdf_cache[cache_key] = (isect, cdf)
+
+        # Sample from intersection
+        if isect.size > 0:
+            if cdf is not None and cdf.size > 0 and float(cdf[-1]) > 1e-12:
+                u = rng.random(cnt)
+                picks = np.searchsorted(cdf, u, side="right")
+                np.minimum(picks, len(isect) - 1, out=picks)
+                out[b_orig] = isect[picks]
+            else:
+                out[b_orig] = isect[rng.integers(0, len(isect), size=cnt)]
+        else:
+            # Brand has no products in this store — fall back to full pool
+            out[b_orig] = pool[rng.integers(0, len(pool), size=cnt)]
 
 
 def _get_state_attr(*names, default=None):
@@ -1240,6 +1326,8 @@ def build_chunk_table(
                 product_weight=_product_weight,
                 _cdf_cache=_product_cdf_cache,
                 _cal_month=_cal_month,
+                m_offset=int(m_offset),
+                use_brand_popularity=use_brand_popularity,
             )
         else:
             prod_idx = _sample_product_row_indices(
