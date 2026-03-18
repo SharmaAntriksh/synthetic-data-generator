@@ -552,18 +552,13 @@ def _build_brand_prob_by_month_rotate_winner(
     min_share: float = 0.02,
     year_len_months: int = 12,
     brand_product_counts: np.ndarray | None = None,
-    explicit_weights: np.ndarray | None = None,
 ) -> np.ndarray:
     if T <= 0 or B <= 0:
         raise RuntimeError(f"Invalid T/B for brand_prob_by_month: T={T}, B={B}")
 
     year_len = max(1, int(year_len_months))
 
-    if explicit_weights is not None and len(explicit_weights) == B and explicit_weights.sum() > 0:
-        base = explicit_weights.astype(np.float64).copy()
-        base = np.maximum(base, 0.0)
-        base = base / base.sum()
-    elif brand_product_counts is not None and len(brand_product_counts) == B:
+    if brand_product_counts is not None and len(brand_product_counts) == B:
         counts = np.maximum(brand_product_counts.astype(np.float64), 1.0)
         base = np.sqrt(counts)
         base = base / base.sum()
@@ -987,34 +982,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
                         dtype=np.float64,
                     )
 
-                bp_explicit = None
-                cfg_weights = brand_cfg.get("brand_weights")
-                bp_brand_names = worker_cfg.get("brand_names")
-                if isinstance(cfg_weights, Mapping) and cfg_weights and bp_brand_names is not None and len(bp_brand_names) == B:
-                    bp_explicit = np.zeros(B, dtype=np.float64)
-                    name_to_idx = {str(n): i for i, n in enumerate(bp_brand_names)}
-                    has_override = False
-                    for bname, bw in cfg_weights.items():
-                        idx = name_to_idx.get(str(bname))
-                        if idx is not None:
-                            bp_explicit[idx] = float(bw)
-                            has_override = True
-                    if has_override:
-                        unset = bp_explicit == 0.0
-                        if unset.any() and bp_counts is not None:
-                            fallback = np.sqrt(np.maximum(bp_counts, 1.0))
-                            leftover = max(0.0, 1.0 - bp_explicit.sum())
-                            fallback_sum = fallback[unset].sum()
-                            if fallback_sum > 0 and leftover > 0:
-                                bp_explicit[unset] = fallback[unset] / fallback_sum * leftover
-                            elif leftover > 0:
-                                bp_explicit[unset] = leftover / unset.sum()
-                        elif unset.any():
-                            leftover = max(0.0, 1.0 - bp_explicit.sum())
-                            bp_explicit[unset] = leftover / unset.sum() if unset.sum() > 0 else 0.0
-                    else:
-                        bp_explicit = None
-
                 brand_prob_by_month = _build_brand_prob_by_month_rotate_winner(
                     rng_bp,
                     T=T,
@@ -1024,7 +991,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
                     min_share=float_or(brand_cfg.get("min_share"), 0.02),
                     year_len_months=int_or(brand_cfg.get("year_len_months"), 12),
                     brand_product_counts=bp_counts,
-                    explicit_weights=bp_explicit,
                 )
 
     store_to_geo_arr = dense_map(store_to_geo) if isinstance(store_to_geo, Mapping) else None

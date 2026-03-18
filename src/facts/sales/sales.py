@@ -1882,34 +1882,6 @@ def generate_sales_fact(
             # Brand product counts (reused from section 1 if available)
             _bp_counts = _brand_product_counts if (_brand_product_counts is not None and len(_brand_product_counts) == _B) else None
 
-            # Explicit brand weights from config
-            _bp_explicit = None
-            _cfg_weights = _brand_cfg.get("brand_weights")
-            if isinstance(_cfg_weights, Mapping) and _cfg_weights and brand_names is not None and len(brand_names) == _B:
-                _bp_explicit = np.zeros(_B, dtype=np.float64)
-                _name_to_idx = {str(n): i for i, n in enumerate(brand_names)}
-                _has_override = False
-                for _bname, _bw in _cfg_weights.items():
-                    _idx = _name_to_idx.get(str(_bname))
-                    if _idx is not None:
-                        _bp_explicit[_idx] = float(_bw)
-                        _has_override = True
-                if _has_override:
-                    _unset = _bp_explicit == 0.0
-                    if _unset.any() and _bp_counts is not None:
-                        _fallback = np.sqrt(np.maximum(_bp_counts, 1.0))
-                        _leftover = max(0.0, 1.0 - _bp_explicit.sum())
-                        _fallback_sum = _fallback[_unset].sum()
-                        if _fallback_sum > 0 and _leftover > 0:
-                            _bp_explicit[_unset] = _fallback[_unset] / _fallback_sum * _leftover
-                        elif _leftover > 0:
-                            _bp_explicit[_unset] = _leftover / _unset.sum()
-                    elif _unset.any():
-                        _leftover = max(0.0, 1.0 - _bp_explicit.sum())
-                        _bp_explicit[_unset] = _leftover / _unset.sum() if _unset.sum() > 0 else 0.0
-                else:
-                    _bp_explicit = None
-
             _brand_prob = _build_brand_prob_by_month_rotate_winner(
                 _rng_bp,
                 T=_T, B=_B,
@@ -1918,7 +1890,6 @@ def generate_sales_fact(
                 min_share=float_or(_brand_cfg.get("min_share"), 0.02),
                 year_len_months=int_or(_brand_cfg.get("year_len_months"), 12),
                 brand_product_counts=_bp_counts,
-                explicit_weights=_bp_explicit,
             )
             worker_cfg["_prebuilt_brand_prob_by_month"] = _shm.publish(
                 "brand_prob", _brand_prob,

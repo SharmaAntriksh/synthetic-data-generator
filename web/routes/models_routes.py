@@ -136,7 +136,7 @@ def get_models_form():
         "brandEnabled": bool(bp.get("enabled", True)),
         "brandSeed": int(bp.get("seed", 123) or 123),
         "brandWinnerBoost": float(bp.get("winner_boost", 2.5)),
-        "brandWeights": dict(bp.get("brand_weights", {})),
+        "brandWeights": {},  # deprecated: kept for frontend compat
         # Returns
         "retEnabled": bool(ret.get("enabled", True)),
         "retReasons": list(ret.get("reasons", [])),
@@ -193,8 +193,7 @@ def update_models_form(body: ConfigUpdate):
         if "brandEnabled" in v: m["brand_popularity"]["enabled"] = bool(v["brandEnabled"])
         if "brandSeed" in v: m["brand_popularity"]["seed"] = int(v["brandSeed"])
         if "brandWinnerBoost" in v: m["brand_popularity"]["winner_boost"] = float(v["brandWinnerBoost"])
-        if "brandWeights" in v and isinstance(v["brandWeights"], dict):
-            m["brand_popularity"]["brand_weights"] = {k: float(vv) for k, vv in v["brandWeights"].items()}
+        # brand_weights deprecated — ignore if sent by frontend
 
         # Returns
         if "retEnabled" in v: m["returns"]["enabled"] = bool(v["retEnabled"])
