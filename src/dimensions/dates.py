@@ -779,7 +779,7 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
     buffer_years = max(0, _int_or(dates_cfg.buffer_years, 1))
     start_date = pd.Timestamp(raw_start_ts.year - buffer_years, 1, 1)
     end_date = pd.Timestamp(raw_end_ts.year + buffer_years, 12, 31)
-    info(f"Dates window: requested [{raw_start_ts.date()}..{raw_end_ts.date()}], generated [{start_date.date()}..{end_date.date()}] (buffer_years={buffer_years})")
+    info(f"Dates: {start_date.date()} to {end_date.date()} (±{buffer_years}yr buffer)")
 
     fiscal_start_month = _int_or(dates_cfg.fiscal_start_month or dates_cfg.fiscal_month_offset or 5, 5)
     if dates_cfg.fiscal_start_month is None and dates_cfg.fiscal_month_offset is not None:

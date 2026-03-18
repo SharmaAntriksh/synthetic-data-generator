@@ -7,7 +7,7 @@ from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 
-from src.utils.logging_utils import info, skip, stage, warn
+from src.utils.logging_utils import debug, info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 from src.utils.name_pools import (
@@ -342,7 +342,8 @@ def _build_phone(key: int, iso: str) -> str:
         return f"+81 {a % 90 + 10:02d} {b:04d} {c:04d}"
     if iso == "SGD":
         return f"+65 {b:04d} {c:04d}"
-    # Generic international fallback
+    # Generic international fallback for unrecognized currency codes
+    debug(f"No phone format for ISO code {iso!r} (store key={key}); using generic international format")
     cc = 10 + key % 89
     return f"+{cc} {a:03d} {b // 10:03d} {c:04d}"
 

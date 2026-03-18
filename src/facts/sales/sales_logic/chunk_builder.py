@@ -16,6 +16,7 @@ from .globals import PA_AVAILABLE, State
 from .core import (
     _eligible_customer_mask_for_month,
     _make_seen_lookup,
+    _normalize_cdf,
     _normalize_end_month,
     _sample_customers,
     _update_seen_lookup,
@@ -285,12 +286,7 @@ def _sample_products_per_store(
                     pool_cached, cdf = _cdf_cache[cache_key]
                 else:
                     w = product_weight[pool]
-                    cdf = np.cumsum(w, dtype=np.float64)
-                    # Normalize to [0,1] then clamp to prevent FP rounding
-                    # causing searchsorted out-of-bounds (CLAUDE.md gotcha #16)
-                    if cdf.size > 0 and cdf[-1] > 0:
-                        cdf /= cdf[-1]
-                        cdf[-1] = 1.0
+                    cdf = _normalize_cdf(w)
                     if _cdf_cache is not None:
                         _cdf_cache[cache_key] = (pool, cdf)
 

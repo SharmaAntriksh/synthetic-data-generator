@@ -156,9 +156,10 @@ EMPLOYEE_GENDER_PROBS: Dict[str, float] = {
     "female": 0.49,
     "male": 0.49,
 }
-assert abs(sum(EMPLOYEE_GENDER_PROBS.values()) - 1.0) < 1e-9, (
-    f"EMPLOYEE_GENDER_PROBS must sum to 1.0, got {sum(EMPLOYEE_GENDER_PROBS.values())}"
-)
+if abs(sum(EMPLOYEE_GENDER_PROBS.values()) - 1.0) > 1e-9:
+    raise ValueError(
+        f"EMPLOYEE_GENDER_PROBS must sum to 1.0, got {sum(EMPLOYEE_GENDER_PROBS.values())}"
+    )
 
 # Part-time probability by role (Store Managers always full-time)
 EMPLOYEE_PART_TIME_RATE_BY_ROLE: Dict[str, float] = {
@@ -178,9 +179,10 @@ EMPLOYEE_TERMINATION_REASON_LABELS = np.array(
     ["Voluntary", "Involuntary", "Retirement", "Relocation"], dtype=object
 )
 EMPLOYEE_TERMINATION_REASON_PROBS = np.array([0.45, 0.30, 0.15, 0.10], dtype=np.float64)
-assert abs(EMPLOYEE_TERMINATION_REASON_PROBS.sum() - 1.0) < 1e-9, (
-    f"EMPLOYEE_TERMINATION_REASON_PROBS must sum to 1.0, got {EMPLOYEE_TERMINATION_REASON_PROBS.sum()}"
-)
+if abs(EMPLOYEE_TERMINATION_REASON_PROBS.sum() - 1.0) > 1e-9:
+    raise ValueError(
+        f"EMPLOYEE_TERMINATION_REASON_PROBS must sum to 1.0, got {EMPLOYEE_TERMINATION_REASON_PROBS.sum()}"
+    )
 
 # Transfer reasons for non-primary (away) assignments
 EMPLOYEE_TRANSFER_REASON_LABELS = np.array(
@@ -188,9 +190,10 @@ EMPLOYEE_TRANSFER_REASON_LABELS = np.array(
     dtype=object,
 )
 EMPLOYEE_TRANSFER_REASON_PROBS = np.array([0.30, 0.20, 0.25, 0.15, 0.10], dtype=np.float64)
-assert abs(EMPLOYEE_TRANSFER_REASON_PROBS.sum() - 1.0) < 1e-9, (
-    f"EMPLOYEE_TRANSFER_REASON_PROBS must sum to 1.0, got {EMPLOYEE_TRANSFER_REASON_PROBS.sum()}"
-)
+if abs(EMPLOYEE_TRANSFER_REASON_PROBS.sum() - 1.0) > 1e-9:
+    raise ValueError(
+        f"EMPLOYEE_TRANSFER_REASON_PROBS must sum to 1.0, got {EMPLOYEE_TRANSFER_REASON_PROBS.sum()}"
+    )
 
 
 # =================================================================

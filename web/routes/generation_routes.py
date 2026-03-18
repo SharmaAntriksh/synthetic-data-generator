@@ -29,6 +29,7 @@ from web.shared_state import (
     _g,
     _job_lock,
     cfg_to_dict,
+    write_yaml_secure,
 )
 import web.shared_state as _state
 
@@ -131,10 +132,8 @@ def _run_pipeline_thread(job: dict, cfg_snapshot: dict, models_snapshot: dict, r
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "config.yaml"
             models_path = Path(tmp) / "models.yaml"
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(cfg_to_dict(cfg_snapshot), f, sort_keys=False)
-            with open(models_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(models_snapshot, f, sort_keys=False)
+            write_yaml_secure(cfg_path, cfg_to_dict(cfg_snapshot))
+            write_yaml_secure(models_path, models_snapshot)
 
             cmd = [
                 sys.executable, "-u", str(REPO_ROOT / "main.py"),
@@ -160,7 +159,13 @@ def _run_pipeline_thread(job: dict, cfg_snapshot: dict, models_snapshot: dict, r
                 clean = _ANSI_RE.sub("", line.rstrip())
                 job["logs"].append(clean)
 
-            proc.wait()
+            # 4-hour hard timeout to prevent zombie processes
+            try:
+                proc.wait(timeout=4 * 3600)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()  # ensure returncode is set after kill
+                job["logs"].append("ERROR: Pipeline killed after 4-hour timeout")
             job["exit_code"] = proc.returncode
             job["status"] = "done" if proc.returncode == 0 else "failed"
     except Exception as e:

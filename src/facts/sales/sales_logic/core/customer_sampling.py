@@ -62,6 +62,11 @@ def _normalize_end_month(end_month_arr, n_customers: int) -> np.ndarray:
             out[out < 0] = -1
             return out
         except Exception:
+            warnings.warn(
+                "end_month_arr contains non-numeric object values; "
+                "falling back to per-element conversion (may be slow for large arrays)",
+                stacklevel=2,
+            )
             out = np.full(n_customers, -1, dtype="int64")
             for i in range(min(n_customers, a.shape[0])):
                 v = a[i]

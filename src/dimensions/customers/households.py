@@ -222,5 +222,7 @@ def assign_households(
     household_key[unassigned] = np.arange(hh_id + 1, hh_id + 1 + len(unassigned))
     solo_persons = unassigned[person_mask[unassigned]]
     household_role[solo_persons] = "Head"
+    # Org customers are standalone — None is the convention for org rows
+    # (consistent with MaritalStatus, Education, Occupation for orgs)
 
     return household_key, household_role

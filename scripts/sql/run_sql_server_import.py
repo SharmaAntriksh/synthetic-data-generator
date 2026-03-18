@@ -31,13 +31,17 @@ def build_connection_string(args) -> str:
 
     if not args.user or not args.user.strip():
         raise ValueError("Username must be a non-empty string when not using --trusted")
-    if not args.password:
+    password = args.password
+    if getattr(args, "password_env", False):
+        import os
+        password = os.environ.get("SYNDATA_DB_PASSWORD", password)
+    if not password:
         raise ValueError("Password must be provided when not using --trusted")
 
     return (
         f"DRIVER={{{driver}}};"
         f"SERVER={args.server};"
-        f"UID={args.user};PWD={args.password};"
+        f"UID={args.user};PWD={password};"
     )
 
 
@@ -83,6 +87,11 @@ def main() -> int:
 
     parser.add_argument("--user", help="SQL Server username")
     parser.add_argument("--password", help="SQL Server password")
+    parser.add_argument(
+        "--password-env",
+        action="store_true",
+        help="Read password from SYNDATA_DB_PASSWORD environment variable",
+    )
 
     parser.add_argument(
         "--trusted",

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+from src.engine.config.config import skip_order_blocks_feature
 from src.exceptions import DimensionError
 from src.utils.config_precedence import _is_random_mode
 from src.utils.logging_utils import info, skip, stage
@@ -73,14 +74,7 @@ def _returns_enabled(cfg) -> bool:
         return False
     if not bool(getattr(returns_cfg, "enabled", False)):
         return False
-    sales_cfg = cfg.sales if hasattr(cfg, "sales") else None
-    if not sales_cfg or not isinstance(sales_cfg, Mapping):
-        return False
-    skip_order = bool(getattr(sales_cfg, "skip_order_cols", False))
-    sales_output = str(getattr(sales_cfg, "sales_output", "sales")).strip().lower()
-    if skip_order and sales_output == "sales":
-        return False
-    return True
+    return not skip_order_blocks_feature(cfg)
 
 
 def _subscriptions_enabled(cfg) -> bool:

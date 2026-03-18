@@ -168,6 +168,10 @@ _PLAN_TYPE_WEIGHT = {
 
 PAYMENT_METHODS = ["Credit Card", "Debit Card", "PayPal", "Bank Transfer"]
 _PAYMENT_WEIGHTS = np.array([0.45, 0.25, 0.20, 0.10])
+if abs(_PAYMENT_WEIGHTS.sum() - 1.0) > 1e-9:
+    raise ValueError(
+        f"_PAYMENT_WEIGHTS must sum to 1.0, got {_PAYMENT_WEIGHTS.sum()}"
+    )
 
 CANCELLATION_REASONS = [
     "Too Expensive", "Not Using", "Switched Competitor",
@@ -973,7 +977,7 @@ def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
     with stage("Generating Subscriptions"):
         dim = build_dim_plans()
         dim.to_parquet(out_dim, index=False)
-        info(f"Plans written: {out_dim} ({len(dim):,} rows)")
+        info(f"Plans written: {out_dim.name} ({len(dim):,} rows)")
 
         n_rows = 0
         if c.generate_bridge:
@@ -1011,7 +1015,7 @@ def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
                     out_bridge=out_bridge,
                 )
             save_version("subscriptions", version_cfg, out_bridge)
-            info(f"Customer subscriptions written: {out_bridge} ({n_rows:,} rows)")
+            info(f"Customer subscriptions written: {out_bridge.name} ({n_rows:,} rows)")
         else:
             skip("customer_subscriptions bridge skipped (generate_bridge: false)")
             if out_bridge.exists():

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from src.exceptions import SalesError
 from ..globals import State
 
 
@@ -277,13 +278,16 @@ def build_orders(
                     break
                 still_open = candidates[repeats[candidates] < max_lines]
                 if still_open.size == 0:
-                    import warnings
-                    warnings.warn(f"Could not allocate {remaining} remaining order lines; candidates exhausted at max_lines limit")
                     break
                 take = min(remaining, int(still_open.size))
                 chosen = rng.choice(still_open, size=take, replace=False)
                 repeats[chosen] += 1
                 remaining -= take
+            if remaining > 0:
+                raise SalesError(
+                    f"Could not allocate {remaining} remaining order lines after 8 "
+                    f"iterations; all candidates at max_lines={max_lines} limit"
+                )
 
     elif delta < 0:
         # Need fewer lines: decrement orders that have > 1 line

@@ -144,7 +144,7 @@ CLI flags > config.yaml values (one-time, not persisted).
 
 3. **State class is sealed via metaclass:** `State` in `sales_logic/globals.py` uses `_SealableMeta` metaclass to enforce immutability after `bind_globals()` calls `seal()`. Any `setattr(State, ...)` after sealing raises `RuntimeError`. Never mutate it after binding. For new code, prefer `SalesContext.from_state()` (immutable dataclass snapshot) over accessing `State` directly. In tests, call `State.reset()` to unseal.
 
-4. **Returns conditional skip:** Returns are auto-disabled at config load time if `returns.enabled=true` AND `sales_output='sales'` AND `skip_order_cols=true` (returns need SalesOrderNumber to link back). A warning is logged by `validate_cross_section_rules()` in `config.py`.
+4. **Returns conditional skip:** Returns are auto-disabled at config load time if `returns.enabled=true` AND `sales_output='sales'` AND `skip_order_cols=true` (returns need SalesOrderNumber to link back). A warning is logged by `apply_cross_section_rules()` in `config.py`.
 
 5. **FX dates are coupled:** exchange_rates date range is overridden at runtime to match `defaults.dates.start/end`. You cannot set FX dates independently.
 

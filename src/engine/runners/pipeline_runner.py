@@ -267,7 +267,7 @@ def run_pipeline(
             "elapsed_sec": elapsed,
         }
 
-    except (PipelineError, ConfigError, OSError, KeyError, ValueError, TypeError) as ex:
+    except (PipelineError, OSError, KeyError, ValueError, TypeError) as ex:
         fail(str(ex))
         raise
 
@@ -341,8 +341,12 @@ def _apply_overrides(cfg, sales_cfg, overrides: PipelineOverrides):
 
 
 def _force_fx_to_global_dates(cfg) -> Any:
-    """
-    Ensure exchange_rates follows injected global dates.
+    """Ensure exchange_rates follows injected global dates.
+
+    NOTE: ``apply_cross_section_rules()`` in ``config.py`` enforces this
+    at config-load time.  This guard is kept for backward compatibility
+    with callers that build an ``AppConfig`` without going through the
+    standard loader (e.g. the web UI deep-copy path).
     """
     fx = cfg.exchange_rates
     if fx is not None and isinstance(fx, Mapping):
@@ -454,8 +458,10 @@ def _apply_promotions_total(promotions_cfg, total: int) -> None:
         fracs = [(i, scaled[i] - floors[i]) for i in range(len(keys))]
         fracs.sort(key=lambda t: t[1], reverse=True)
 
-        for i in range(remainder):
-            floors[fracs[i % len(keys)][0]] += 1
+        # Each bucket can receive at most +1 from rounding; cap to len(fracs)
+        # to prevent any bucket from getting +2 due to modulo wrap-around.
+        for i in range(min(remainder, len(fracs))):
+            floors[fracs[i][0]] += 1
 
         for i, k in enumerate(keys):
             object.__setattr__(promotions_cfg, k, floors[i])

@@ -26,6 +26,10 @@ import web.shared_state as _state
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
+from src.engine.config.config import _VALID_FILE_FORMATS as _VALID_FORMATS
+
+_VALID_SALES_OUTPUTS = {"sales", "sales_order", "both"}
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -242,8 +246,16 @@ def update_config(body: ConfigUpdate):
         if "seed" in v: cfg.defaults.seed = int(v["seed"])
 
         # Output
-        if "format" in v: cfg.sales.file_format = v["format"]
-        if "salesOutput" in v: cfg.sales.sales_output = v["salesOutput"]
+        if "format" in v:
+            fmt = str(v["format"]).strip().lower()
+            if fmt not in _VALID_FORMATS:
+                raise HTTPException(400, f"Invalid format: {fmt}. Must be one of {sorted(_VALID_FORMATS)}")
+            cfg.sales.file_format = fmt
+        if "salesOutput" in v:
+            so = str(v["salesOutput"]).strip().lower()
+            if so not in _VALID_SALES_OUTPUTS:
+                raise HTTPException(400, f"Invalid salesOutput: {so}. Must be one of {sorted(_VALID_SALES_OUTPUTS)}")
+            cfg.sales.sales_output = so
         if "skipOrderCols" in v: cfg.sales.skip_order_cols = bool(v["skipOrderCols"])
         if "compression" in v: cfg.sales.compression = v["compression"]
         if "rowGroupSize" in v: cfg.sales.row_group_size = int(v["rowGroupSize"])
@@ -448,8 +460,12 @@ def update_config_yaml(body: ConfigYamlUpdate):
     except yaml.YAMLError as e:
         raise HTTPException(400, f"Invalid YAML: {e}")
 
+    try:
+        normalized = normalize_config_yaml(parsed)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        raise HTTPException(400, f"Config normalization failed: {exc}")
     with _state._cfg_lock:
-        _state._cfg = normalize_config_yaml(parsed)
+        _state._cfg = normalized
     return {"ok": True}
 
 

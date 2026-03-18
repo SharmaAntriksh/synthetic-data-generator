@@ -8,6 +8,7 @@ from typing import Optional, Sequence
 
 from src import __version__
 from src.engine.runners.pipeline_runner import PipelineOverrides, run_pipeline
+from src.exceptions import PipelineError
 from src.utils.logging_utils import configure_logging, fail, info
 
 
@@ -209,7 +210,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             refresh_fx_master(master_path)
             return 0
-        except Exception as ex:
+        except (PipelineError, OSError, KeyError, ValueError, TypeError) as ex:
             fail(str(ex))
             return 1
 
@@ -225,7 +226,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             report=not args.no_report,
         )
         return 0
-    except Exception as ex:
+    except (PipelineError, OSError, KeyError, ValueError, TypeError) as ex:
         # pipeline_runner already logs fail(); keep a last-resort message + exit non-zero.
         fail(str(ex))
         return 1

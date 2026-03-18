@@ -97,8 +97,9 @@ def _run_import_thread(job: dict, req: ImportRequest):
         else:
             if req.user:
                 cmd.extend(["--user", req.user])
+            # Password passed via env var to avoid exposure in process listings
             if req.password:
-                cmd.extend(["--password", req.password])
+                cmd.append("--password-env")
 
         if req.apply_cci:
             cmd.append("--apply-cci")
@@ -108,6 +109,8 @@ def _run_import_thread(job: dict, req: ImportRequest):
 
         job["command"] = " ".join(cmd)
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        if req.password:
+            env["SYNDATA_DB_PASSWORD"] = req.password
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1, env=env, cwd=str(REPO_ROOT),

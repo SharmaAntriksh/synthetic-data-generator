@@ -336,8 +336,8 @@ def generate_correlated_income(
 
     z = rng.normal(0.0, 1.0, size=n_p)
     raw = np.exp(edu_mu + edu_sigma * z) * occ_mult
-    raw = np.round(raw / INCOME_ROUND_TO) * INCOME_ROUND_TO
-    income[person_mask] = np.clip(raw, INCOME_MIN, INCOME_MAX)
+    raw = np.clip(raw, INCOME_MIN, INCOME_MAX)
+    income[person_mask] = np.round(raw / INCOME_ROUND_TO) * INCOME_ROUND_TO
     return income.astype("int64")
 
 

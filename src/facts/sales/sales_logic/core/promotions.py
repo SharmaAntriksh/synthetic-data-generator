@@ -195,9 +195,8 @@ def apply_promotions(
                     if _s <= 0.0:
                         _chosen = _filtered[rng.integers(0, _filtered.size, size=_ct_count)]
                     else:
-                        _cdf = np.cumsum(_w, dtype=np.float64)
-                        _cdf /= _cdf[-1]
-                        _cdf[-1] = 1.0
+                        from . import _normalize_cdf
+                        _cdf = _normalize_cdf(_w)
                         _u = rng.random(_ct_count)
                         _j = np.searchsorted(_cdf, _u, side="right")
                         _chosen = _filtered[np.minimum(_j, _filtered.size - 1)]
@@ -212,9 +211,8 @@ def apply_promotions(
                 if s <= 0.0:
                     chosen = idx[rng.integers(0, idx.size, size=count)]
                 else:
-                    cdf = np.cumsum(w, dtype=np.float64)
-                    cdf /= cdf[-1]
-                    cdf[-1] = 1.0  # prevent fp rounding from leaving cdf[-1] < 1.0
+                    from . import _normalize_cdf
+                    cdf = _normalize_cdf(w)
                     u = rng.random(count)
                     j = np.searchsorted(cdf, u, side="right")
                     chosen = idx[np.minimum(j, idx.size - 1)]

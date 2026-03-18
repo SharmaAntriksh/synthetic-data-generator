@@ -110,14 +110,14 @@ def _load_active_products(parquet_dims: Path, *, active_ratio: float = 1.0, seed
         try:
             products_df = pd.read_parquet(products_path, columns=wanted_cols)
         except (KeyError, ValueError, OSError) as e:
-            raise RuntimeError(
+            raise SalesError(
                 f"Failed reading {products_path} with columns {wanted_cols}. "
                 f"Underlying error: {type(e).__name__}: {e}"
             ) from e
 
     missing = [c for c in wanted_cols if c not in products_df.columns]
     if missing:
-        raise RuntimeError(f"products.parquet missing required columns: {missing}. Found: {list(products_df.columns)}")
+        raise SalesError(f"products.parquet missing required columns: {missing}. Found: {list(products_df.columns)}")
 
     has_scd2 = (
         "IsCurrent" in products_df.columns
@@ -137,7 +137,7 @@ def _load_active_products(parquet_dims: Path, *, active_ratio: float = 1.0, seed
             current_df = current_df[current_df["ProductID"].isin(active_ids)]
 
         if current_df.empty:
-            raise RuntimeError("No active products found for sales generation")
+            raise SalesError("No active products found for sales generation")
 
         return current_df[wanted_cols].to_numpy()
     else:
@@ -154,7 +154,7 @@ def _load_active_products(parquet_dims: Path, *, active_ratio: float = 1.0, seed
             products_df = products_df.iloc[active_idx]
 
         if products_df.empty:
-            raise RuntimeError("No active products found for sales generation")
+            raise SalesError("No active products found for sales generation")
 
         return products_df[wanted_cols].to_numpy()
 

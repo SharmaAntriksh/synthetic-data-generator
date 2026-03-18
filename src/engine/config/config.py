@@ -44,7 +44,7 @@ SectionNormalizer = Callable[[Dict[str, Any]], Dict[str, Any]]
 
 # Sections that must be mappings if present but do not have a normalizer.
 # Keep this small; normalizer keys are automatically treated as mapping sections.
-_SECTION_MAPPING_ONLY_KEYS: frozenset[str] = frozenset({"customers", "scale", "paths"})
+_SECTION_MAPPING_ONLY_KEYS: frozenset[str] = frozenset({"scale", "paths"})
 
 # For config files that intentionally don't have defaults (e.g. models.yaml),
 # we keep normalization deliberately narrow to avoid surprising validation failures.
@@ -92,6 +92,20 @@ def _coerce_optional_int(cfg: Dict[str, Any], key: str, section: str = "") -> No
             val = int(cfg[key])
         except (ValueError, TypeError) as exc:
             raise ValueError(f"{section}.{key} must be an integer, got {cfg[key]!r}") from exc
+        cfg[key] = val
+
+
+def _coerce_optional_ratio(
+    cfg: Dict[str, Any], key: str, section: str,
+) -> None:
+    """Cast and validate *cfg[key]* as a float in [0, 1] if present and non-None."""
+    if key in cfg and cfg[key] is not None:
+        try:
+            val = float(cfg[key])
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"{section}.{key} must be a number, got {cfg[key]!r}") from exc
+        if not 0.0 <= val <= 1.0:
+            raise ValueError(f"{section}.{key} must be between 0 and 1, got {val}")
         cfg[key] = val
 
 
@@ -235,7 +249,7 @@ def _load_and_normalize(
 
     # Cross-section business-rule validation (only for pipeline config)
     if require_defaults:
-        cfg = validate_cross_section_rules(cfg)
+        cfg = apply_cross_section_rules(cfg)
 
     return cfg
 
@@ -378,10 +392,18 @@ def _expand_region_mix(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "india": "pct_india",
         "asia": "pct_asia",
     }
+    unknown_regions = []
     for name, pct in region_mix.items():
         flat_key = _REGION_MAP.get(str(name).lower())
         if flat_key:
             cust.setdefault(flat_key, float(pct))
+        else:
+            unknown_regions.append(name)
+    if unknown_regions:
+        raise ValueError(
+            f"Unknown region(s) in customers.region_mix: {unknown_regions}. "
+            f"Valid regions: us, eu, india, asia (aliases: usa, united states, europe)"
+        )
 
     cust.setdefault("pct_us", 0.0)
     cust.setdefault("pct_eu", 0.0)
@@ -542,9 +564,7 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     pr = products.get("price_range", [10, 3000])
     if not isinstance(pr, (list, tuple)) or len(pr) < 2:
-        import warnings
-        warnings.warn(f"products.price_range must be a 2-element list, got {pr!r}; using default [10, 3000]")
-        pr = [10, 3000]
+        raise ValueError(f"products.price_range must be a 2-element list, got {pr!r}")
     min_price, max_price = float(pr[0]), float(pr[1])
     if min_price < 0:
         raise ValueError(f"products.price_range minimum must be >= 0, got {min_price}")
@@ -555,9 +575,7 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     mr = products.get("margin_range", [0.20, 0.35])
     if not isinstance(mr, (list, tuple)) or len(mr) < 2:
-        import warnings
-        warnings.warn(f"products.margin_range must be a 2-element list, got {mr!r}; using default [0.20, 0.35]")
-        mr = [0.20, 0.35]
+        raise ValueError(f"products.margin_range must be a 2-element list, got {mr!r}")
     min_margin, max_margin = float(mr[0]), float(mr[1])
     if not (0.0 <= min_margin <= 1.0) or not (0.0 <= max_margin <= 1.0):
         raise ValueError(
@@ -942,10 +960,61 @@ def prepare_paths(
 # Register section normalizers
 # ---------------------------------------------------------------------------
 
+def normalize_products_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and coerce products section."""
+    cfg = dict(cfg)
+    _coerce_optional_positive_int(cfg, "num_products", "products")
+    _coerce_optional_ratio(cfg, "active_ratio", "products")
+    return cfg
+
+
+def normalize_customers_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and coerce customers section."""
+    cfg = dict(cfg)
+    _coerce_optional_positive_int(cfg, "total_customers", "customers")
+    for pct_key in ("pct_us", "pct_eu", "pct_india", "pct_asia", "pct_org"):
+        v = cfg.get(pct_key)
+        if v is not None:
+            v = float(v)
+            if v < 0:
+                raise ValueError(f"customers.{pct_key} must be >= 0, got {v}")
+            cfg[pct_key] = v
+    _coerce_optional_ratio(cfg, "active_ratio", "customers")
+    return cfg
+
+
+def normalize_stores_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and coerce stores section."""
+    cfg = dict(cfg)
+    _coerce_optional_positive_int(cfg, "num_stores", "stores")
+    _coerce_optional_positive_int(cfg, "district_size", "stores")
+    _coerce_optional_positive_int(cfg, "districts_per_region", "stores")
+    return cfg
+
+
+def normalize_promotions_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and coerce promotions section."""
+    cfg = dict(cfg)
+    bucket_keys = (
+        "num_seasonal", "num_clearance", "num_limited", "num_flash",
+        "num_volume", "num_loyalty", "num_bundle", "num_new_customer",
+    )
+    for k in bucket_keys:
+        _coerce_optional_int(cfg, k, "promotions")
+        v = cfg.get(k)
+        if v is not None and v < 0:
+            raise ValueError(f"promotions.{k} must be non-negative, got {v}")
+    return cfg
+
+
 _SECTION_NORMALIZERS.update(
     {
         "sales": normalize_sales_config,
         "geography": normalize_geography_config,
+        "products": normalize_products_config,
+        "customers": normalize_customers_config,
+        "stores": normalize_stores_config,
+        "promotions": normalize_promotions_config,
     }
 )
 
@@ -954,7 +1023,23 @@ _SECTION_NORMALIZERS.update(
 # Cross-section business-rule validation
 # ---------------------------------------------------------------------------
 
-def validate_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
+def skip_order_blocks_feature(cfg) -> bool:
+    """Return True when skip_order_cols + sales_output='sales' removes order IDs.
+
+    Shared predicate used by cross-section rules and dimension runners to
+    decide whether returns/complaints should be disabled.  Works with both
+    raw dicts and Pydantic config objects.
+    """
+    # .get() works on both plain dicts and Pydantic models (via _MutationMixin)
+    sales_cfg = cfg.get("sales") if isinstance(cfg, dict) else getattr(cfg, "sales", None)
+    if not sales_cfg or not isinstance(sales_cfg, Mapping):
+        return False
+    skip = bool(sales_cfg.get("skip_order_cols", False))
+    output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
+    return skip and output == "sales"
+
+
+def apply_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """Validate business rules that span multiple config sections.
 
     Called after all section normalizers have run.  Mutates *cfg* to

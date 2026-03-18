@@ -152,8 +152,8 @@ def _set_promotions_total(promos, total: int):
             floors = [int(x) for x in scaled]
             remainder = total - sum(floors)
             fracs = sorted(range(3), key=lambda i: scaled[i] - floors[i], reverse=True)
-            for i in range(remainder):
-                floors[fracs[i % 3]] += 1
+            for i in range(min(remainder, len(fracs))):
+                floors[fracs[i]] += 1
             for i, k in enumerate(keys):
                 promos[k] = floors[i]
         else:
@@ -168,12 +168,19 @@ def _set_promotions_total(promos, total: int):
             floors = [int(x) for x in scaled]
             remainder = total - sum(floors)
             fracs = sorted(range(3), key=lambda i: scaled[i] - floors[i], reverse=True)
-            for i in range(remainder):
-                floors[fracs[i % 3]] += 1
+            for i in range(min(remainder, len(fracs))):
+                floors[fracs[i]] += 1
             for i, k in enumerate(keys):
                 setattr(promos, k, floors[i])
         else:
             setattr(promos, "total_promotions", total)
+
+
+def write_yaml_secure(path: Path, data: dict) -> None:
+    """Write *data* as YAML to *path* with owner-only permissions (0o600)."""
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, sort_keys=False)
 
 
 def cfg_to_dict(obj) -> dict:
@@ -189,20 +196,13 @@ def normalize_config_yaml(parsed: dict) -> dict:
     if _HAS_NORMALIZER:
         tmp_path = None
         try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False, encoding="utf-8"
-            ) as tmp:
+            # mkstemp creates the file with 0o600 by default; use its fd
+            # directly to avoid a close-reopen race window.
+            raw_fd, tmp_path = tempfile.mkstemp(suffix=".yaml")
+            with os.fdopen(raw_fd, "w", encoding="utf-8") as tmp:
                 yaml.safe_dump(parsed, tmp, sort_keys=False)
-                tmp_path = tmp.name
-            result = _load_pipeline_config(tmp_path)
-            return result
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning(
-                "Config normalization failed, using raw parsed config: %s", exc
-            )
-            return parsed
+            return _load_pipeline_config(tmp_path)
         finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
     return parsed

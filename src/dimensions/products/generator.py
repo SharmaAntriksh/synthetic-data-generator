@@ -6,7 +6,7 @@ import datetime as _dt
 import numpy as np
 import pandas as pd
 
-from src.utils import info, skip
+from src.utils import info, skip, warn
 from src.versioning import should_regenerate, save_version
 
 from src.utils.config_precedence import resolve_dates
@@ -299,6 +299,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     try:
         start_date, end_date = resolve_dates(config, p, section_name="products")
     except (KeyError, ValueError):
+        warn("Could not resolve dates for products; using fallback 2020-01-01 to 2025-12-31")
         start_date = pd.Timestamp("2020-01-01")
         end_date = pd.Timestamp("2025-12-31")
 
