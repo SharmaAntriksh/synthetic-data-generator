@@ -476,28 +476,19 @@ def compute_inventory_snapshots(
     if row_idx.size == 0:
         return _empty_snapshot()
 
+    # Build DataFrame with correct dtypes directly (avoids 9 separate .astype() passes)
     result = pd.DataFrame({
-        "ProductKey": pair_pk[row_idx],
-        "StoreKey": pair_sk[row_idx],
+        "ProductKey": pair_pk[row_idx].astype(np.int32),
+        "StoreKey": pair_sk[row_idx].astype(np.int32),
         "SnapshotDate": snapshot_dates[col_idx],
-        "QuantityOnHand": out_qoh[row_idx, col_idx],
-        "QuantityOnOrder": out_on_order[row_idx, col_idx],
-        "QuantitySold": demand_matrix[row_idx, col_idx],
-        "QuantityReceived": out_received[row_idx, col_idx],
-        "ReorderFlag": out_reorder[row_idx, col_idx],
-        "StockoutFlag": out_stockout[row_idx, col_idx],
-        "DaysOutOfStock": out_days_oos[row_idx, col_idx],
+        "QuantityOnHand": out_qoh[row_idx, col_idx].astype(np.int32),
+        "QuantityOnOrder": out_on_order[row_idx, col_idx].astype(np.int32),
+        "QuantitySold": demand_matrix[row_idx, col_idx].astype(np.int32),
+        "QuantityReceived": out_received[row_idx, col_idx].astype(np.int32),
+        "ReorderFlag": out_reorder[row_idx, col_idx].astype(np.int8),
+        "StockoutFlag": out_stockout[row_idx, col_idx].astype(np.int8),
+        "DaysOutOfStock": out_days_oos[row_idx, col_idx].astype(np.int8),
     })
-
-    result["ProductKey"] = result["ProductKey"].astype(np.int32)
-    result["StoreKey"] = result["StoreKey"].astype(np.int32)
-    result["QuantityOnHand"] = result["QuantityOnHand"].astype(np.int32)
-    result["QuantityOnOrder"] = result["QuantityOnOrder"].astype(np.int32)
-    result["QuantitySold"] = result["QuantitySold"].astype(np.int32)
-    result["QuantityReceived"] = result["QuantityReceived"].astype(np.int32)
-    result["ReorderFlag"] = result["ReorderFlag"].astype(np.int8)
-    result["StockoutFlag"] = result["StockoutFlag"].astype(np.int8)
-    result["DaysOutOfStock"] = result["DaysOutOfStock"].astype(np.int8)
 
     if icfg.grain == "quarterly":
         result = _aggregate_quarterly(result)

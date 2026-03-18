@@ -13,7 +13,7 @@ from ..output_paths import (
     TABLE_SALES_ORDER_HEADER,
     TABLE_SALES_RETURN,
 )
-from ..sales_logic import bind_globals
+from ..sales_logic import bind_globals, State
 from .schemas import build_worker_schemas
 from src.utils.config_helpers import int_or, float_or, str_or
 from src.utils.shared_arrays import resolve_array
@@ -67,6 +67,9 @@ def _build_store_assortment(
     # Build a hash seed offset from the config seed for reproducibility
     seed_offset = np.int64(seed * 31 + 7)
 
+    # Pre-compute the subcategory hash term once (vectorized over subcats)
+    sc_hash_term = np.abs(unique_subcats.astype(np.int64) * np.int64(40503))
+
     for sk, st in zip(store_keys, store_type_arr):
         sk_int = int(sk)
         coverage = float(coverage_cfg.get(str(st), coverage_cfg.get("default", 0.50)))
@@ -75,22 +78,18 @@ def _build_store_assortment(
             result[sk_int] = np.arange(n_products, dtype=np.int32)
             continue
 
-        # Deterministic hash per (store, subcategory) to decide inclusion
+        # Vectorized hash: compute all (store, subcategory) hashes at once
         threshold = int(coverage * 10000)
-        included_rows = []
-        for sc in unique_subcats:
-            sc_int = int(sc)
-            # Simple deterministic hash
-            h = abs(int((np.int64(sk_int) * _HASH_MULT + np.int64(sc_int) * np.int64(40503) + seed_offset) % np.int64(10000)))
-            if h < threshold:
-                included_rows.append(subcat_to_rows[sc_int])
+        hashes = np.abs((np.int64(sk_int) * _HASH_MULT + sc_hash_term + seed_offset) % np.int64(10000))
+        included_mask = hashes < threshold
 
-        if included_rows:
+        if included_mask.any():
+            included_rows = [subcat_to_rows[int(sc)] for sc in unique_subcats[included_mask]]
             result[sk_int] = np.concatenate(included_rows)
         else:
             # Ensure at least 1 subcategory (pick the one with lowest hash)
-            best_sc = min(unique_subcats, key=lambda sc: abs(int((np.int64(sk_int) * _HASH_MULT + np.int64(int(sc)) * np.int64(40503) + seed_offset) % np.int64(10000))))
-            result[sk_int] = subcat_to_rows[int(best_sc)]
+            best_idx = int(np.argmin(hashes))
+            result[sk_int] = subcat_to_rows[int(unique_subcats[best_idx])]
 
     return result
 
@@ -1046,6 +1045,12 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "customer_scd2_starts": worker_cfg.get("customer_scd2_starts"),
             "customer_scd2_keys": worker_cfg.get("customer_scd2_keys"),
             "cust_key_to_pool_idx": worker_cfg.get("cust_key_to_pool_idx"),
+
+            # Header invariant validation toggle (default False for perf)
+            "validate_header_invariants": bool(worker_cfg.get("validate_header_invariants", False)),
         }
     )
+
+    # Validate critical State attributes once at worker init instead of per-task
+    State.validate(["chunk_size"])
 

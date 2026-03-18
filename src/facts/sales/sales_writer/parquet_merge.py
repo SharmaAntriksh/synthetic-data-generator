@@ -66,11 +66,23 @@ def _pm_build_canonical_schema(
     if schema_strategy != "union":
         raise ValueError(f"Unknown schema_strategy={schema_strategy!r} (use 'first' or 'union')")
 
+    remaining = parquet_files[1:]
+    if not remaining:
+        return base
+
+    # Parallel schema reads for union strategy (I/O-bound, benefits from threads).
+    # For small file counts (<8), sequential is faster due to thread overhead.
+    if len(remaining) >= 8:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(8, len(remaining))) as pool:
+            schemas = list(pool.map(pq.read_schema, remaining))
+    else:
+        schemas = [pq.read_schema(p) for p in remaining]
+
     fields_by_name = {f.name: f for f in base}
     ordered_names = list(fields_by_name)
 
-    for path in parquet_files[1:]:
-        sch = pq.read_schema(path)
+    for sch in schemas:
         for f in sch:
             if f.name not in fields_by_name:
                 fields_by_name[f.name] = f

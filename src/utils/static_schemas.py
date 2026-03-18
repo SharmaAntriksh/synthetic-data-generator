@@ -658,15 +658,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("PaymentMethod", VARCHAR(30, not_null=True)),
         ("LoyaltyDiscount", DECIMAL(5, 2, not_null=True)),
     ),
-    "CustomerWishlists": (
-        ("WishlistKey", INT_NN),
-        ("CustomerKey", INT_NN),
-        ("ProductKey", INT_NN),
-        ("AddedDate", DATE_NN),
-        ("Priority", VARCHAR(10, not_null=True)),
-        ("Quantity", INT_NN),
-        ("NetPrice", DECIMAL(10, 2, not_null=True)),
-    ),
     "Complaints": (
         ("ComplaintKey", INT_NN),
         ("CustomerKey", INT_NN),
@@ -716,6 +707,15 @@ DIM_SCHEMAS: Dict[str, Schema] = {
 }
 
 FACT_SCHEMAS: Dict[str, Schema] = {
+    "CustomerWishlists": (
+        ("WishlistKey", INT_NN),
+        ("CustomerKey", INT_NN),
+        ("ProductKey", INT_NN),
+        ("AddedDate", DATE_NN),
+        ("Priority", VARCHAR(10, not_null=True)),
+        ("Quantity", INT_NN),
+        ("NetPrice", DECIMAL(10, 2, not_null=True)),
+    ),
     "Sales": _SALES_SCHEMA,
     "SalesOrderHeader": _SALES_ORDER_HEADER_SCHEMA,
     "SalesOrderDetail": _SALES_ORDER_DETAIL_SCHEMA,

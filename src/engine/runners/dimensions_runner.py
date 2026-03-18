@@ -445,9 +445,16 @@ def generate_dimensions(
     # should_regenerate() will return True when the file is missing.
     random_mode = _is_random_mode(cfg)
     if force_set:
-        deleted = [n for n in sorted(force_set) if delete_version(n)]
-        if deleted and not random_mode:
-            info(f"Deleted version files to force regeneration: {deleted}")
+        # When all dims are forced, clean the output folder to remove
+        # orphaned files from prior runs (e.g. moved or renamed outputs).
+        all_dim_names = {s.name for s in DIM_SPECS}
+        if force_set >= all_dim_names:
+            import shutil
+            for f in parquet_dims_folder.glob("*.parquet"):
+                f.unlink()
+
+        for n in sorted(force_set):
+            delete_version(n)
 
     regenerated: Dict[str, bool] = {}
 

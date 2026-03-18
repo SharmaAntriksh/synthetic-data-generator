@@ -11,10 +11,14 @@ Install into the target database after import:
     sqlcmd -S server -d MyDB -i create_cci_proc.sql
 
 Usage:
-    EXEC dbo.usp_ManageColumnstoreIndexes @Help = 1;
+    EXEC [admin].[ManageColumnstoreIndexes] @Help = 1;
 */
 
-CREATE OR ALTER PROCEDURE dbo.usp_ManageColumnstoreIndexes
+IF SCHEMA_ID('admin') IS NULL
+    EXEC('CREATE SCHEMA [admin] AUTHORIZATION [dbo];');
+GO
+
+CREATE OR ALTER PROCEDURE [admin].[ManageColumnstoreIndexes]
     @Action  varchar(10)   = 'CREATE',   -- 'CREATE' | 'DROP' | 'REBUILD'
     @Tables  nvarchar(max) = NULL,       -- comma-delimited table names; NULL = all user tables
     @Help    bit           = 0
@@ -29,7 +33,7 @@ BEGIN
     IF @Help = 1
     BEGIN
         PRINT N'=================================================================';
-        PRINT N'  dbo.usp_ManageColumnstoreIndexes';
+        PRINT N'  [admin].[ManageColumnstoreIndexes]';
         PRINT N'  Create, drop, or rebuild CLUSTERED COLUMNSTORE indexes.';
         PRINT N'  Schema-agnostic (works even if tables are not in dbo).';
         PRINT N'=================================================================';
@@ -43,24 +47,24 @@ BEGIN
         PRINT N'EXAMPLES:';
         PRINT N'';
         PRINT N'  -- 1. Create CCI on ALL user tables';
-        PRINT N'  EXEC dbo.usp_ManageColumnstoreIndexes;';
+        PRINT N'  EXEC [admin].[ManageColumnstoreIndexes];';
         PRINT N'';
         PRINT N'  -- 2. Create CCI on specific tables';
-        PRINT N'  EXEC dbo.usp_ManageColumnstoreIndexes';
+        PRINT N'  EXEC [admin].[ManageColumnstoreIndexes]';
         PRINT N'      @Tables = N''Sales, SalesReturn, Complaints'';';
         PRINT N'';
         PRINT N'  -- 3. Drop CCI from specific tables';
-        PRINT N'  EXEC dbo.usp_ManageColumnstoreIndexes';
+        PRINT N'  EXEC [admin].[ManageColumnstoreIndexes]';
         PRINT N'      @Action = ''DROP'', @Tables = N''Sales, SalesReturn'';';
         PRINT N'';
         PRINT N'  -- 4. Drop ALL CCIs';
-        PRINT N'  EXEC dbo.usp_ManageColumnstoreIndexes @Action = ''DROP'';';
+        PRINT N'  EXEC [admin].[ManageColumnstoreIndexes] @Action = ''DROP'';';
         PRINT N'';
         PRINT N'  -- 5. Rebuild CCIs on all tables (recompress + clean deleted rows)';
-        PRINT N'  EXEC dbo.usp_ManageColumnstoreIndexes @Action = ''REBUILD'';';
+        PRINT N'  EXEC [admin].[ManageColumnstoreIndexes] @Action = ''REBUILD'';';
         PRINT N'';
         PRINT N'  -- 6. Rebuild CCI on specific tables';
-        PRINT N'  EXEC dbo.usp_ManageColumnstoreIndexes';
+        PRINT N'  EXEC [admin].[ManageColumnstoreIndexes]';
         PRINT N'      @Action = ''REBUILD'', @Tables = N''Sales'';';
         PRINT N'=================================================================';
         RETURN;

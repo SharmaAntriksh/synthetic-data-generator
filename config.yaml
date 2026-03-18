@@ -6,10 +6,10 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 103285
+  sales_rows: 10328500
   products: 2517
-  customers: 48348
-  stores: 50
+  customers: 88348
+  stores: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -35,8 +35,8 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "csv"              # csv | parquet | deltaparquet
-  sales_output: "sales_order"               # sales | sales_order | both
+  file_format: "parquet"              # csv | parquet | deltaparquet
+  sales_output: "sales"               # sales | sales_order | both
   skip_order_cols: false
 
   merge:

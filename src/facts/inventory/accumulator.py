@@ -43,23 +43,21 @@ class InventoryAccumulator(BaseAccumulator):
                 "ProductKey", "StoreKey", "Year", "Month", "QuantitySold",
             ])
 
+        # Concatenate all micro-agg arrays and cast to final dtypes upfront
+        _pk = np.concatenate([p["product_key"] for p in self._parts]).astype(np.int32)
+        _sk = np.concatenate([p["store_key"] for p in self._parts]).astype(np.int32)
+        _yr = np.concatenate([p["year"] for p in self._parts]).astype(np.int16)
+        _mo = np.concatenate([p["month"] for p in self._parts]).astype(np.int8)
+        _qty = np.concatenate([p["quantity_sold"] for p in self._parts]).astype(np.int32)
+
         df = pd.DataFrame({
-            "ProductKey": np.concatenate([p["product_key"] for p in self._parts]),
-            "StoreKey": np.concatenate([p["store_key"] for p in self._parts]),
-            "Year": np.concatenate([p["year"] for p in self._parts]),
-            "Month": np.concatenate([p["month"] for p in self._parts]),
-            "QuantitySold": np.concatenate([p["quantity_sold"] for p in self._parts]),
+            "ProductKey": _pk, "StoreKey": _sk,
+            "Year": _yr, "Month": _mo, "QuantitySold": _qty,
         })
 
         df = df.groupby(
             ["ProductKey", "StoreKey", "Year", "Month"],
             as_index=False,
         ).agg({"QuantitySold": "sum"})
-
-        df["ProductKey"] = df["ProductKey"].astype(np.int32)
-        df["StoreKey"] = df["StoreKey"].astype(np.int32)
-        df["Year"] = df["Year"].astype(np.int16)
-        df["Month"] = df["Month"].astype(np.int8)
-        df["QuantitySold"] = df["QuantitySold"].astype(np.int32)
 
         return df

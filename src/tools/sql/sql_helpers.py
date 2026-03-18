@@ -70,3 +70,13 @@ def complaints_enabled(cfg: Optional[Mapping]) -> bool:
     if cc is None or not isinstance(cc, Mapping):
         return False
     return bool(getattr(cc, "enabled", False))
+
+
+def wishlists_enabled(cfg: Optional[Mapping]) -> bool:
+    """Return True if wishlists generation is enabled in config."""
+    if cfg is None:
+        return False
+    wl = getattr(cfg, "wishlists", None)
+    if wl is None or not isinstance(wl, Mapping):
+        return False
+    return bool(getattr(wl, "enabled", False))

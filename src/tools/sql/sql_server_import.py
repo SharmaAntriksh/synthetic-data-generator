@@ -851,42 +851,39 @@ def import_sql_server(
             f"Failed importing SQL into database '{database}'. Details: {exc.args}"
         ) from exc
 
-    # Step 3: optional CCI (types/procs + apply)
-    if not apply_cci:
-        return
-
+    # Step 3: CCI — always install the management proc; only apply when requested
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             _try_disable_query_timeout(conn)
             cursor = conn.cursor()
 
-            # 3.1 Install CCI management proc
+            # 3.1 Install CCI management proc (always — ships with the database)
             if cci_proc_file.is_file():
                 execute_sql_batches(cursor, cci_proc_file)
 
-            if not cci_apply_files:
-                _log("INFO", "  No CCI apply scripts found; skipping.")
-                return
+            # 3.2 Apply CCI scripts (only when --apply-cci is set)
+            if apply_cci:
+                if not cci_apply_files:
+                    _log("INFO", "  No CCI apply scripts found; skipping.")
+                else:
+                    fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
+                    fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
 
-            # 3.2 Apply CCI scripts with spinner (can take 30-60s)
-            fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
-            fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
+                    _t_cci = _time.time()
+                    _log("INFO", f"  Applying Columnstore Indexes ({len(fact_tables)} tables)")
+                    for f in cci_apply_files:
+                        _log("WORK", f"    {f.name}")
+                        _execute_cci_with_progress(cursor, f, fact_tables)
+                    _log("DONE", f"  Applying Columnstore Indexes completed in {_time.time() - _t_cci:.1f}s")
 
-            _t_cci = _time.time()
-            _log("INFO", f"  Applying Columnstore Indexes ({len(fact_tables)} tables)")
-            for f in cci_apply_files:
-                _log("WORK", f"    {f.name}")
-                _execute_cci_with_progress(cursor, f, fact_tables)
-            _log("DONE", f"  Applying Columnstore Indexes completed in {_time.time() - _t_cci:.1f}s")
+                    # Verification
+                    cursor.execute("SELECT COUNT(*) FROM sys.indexes WHERE type_desc = 'CLUSTERED COLUMNSTORE';")
+                    total_ccis = int(cursor.fetchone()[0])
 
-            # Verification
-            cursor.execute("SELECT COUNT(*) FROM sys.indexes WHERE type_desc = 'CLUSTERED COLUMNSTORE';")
-            total_ccis = int(cursor.fetchone()[0])
-
-            if total_ccis == 0:
-                raise SqlServerImportError(
-                    "CCI apply completed without errors, but no CLUSTERED COLUMNSTORE index exists."
-                )
+                    if total_ccis == 0:
+                        raise SqlServerImportError(
+                            "CCI apply completed without errors, but no CLUSTERED COLUMNSTORE index exists."
+                        )
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(

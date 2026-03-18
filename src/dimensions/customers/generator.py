@@ -4,7 +4,7 @@ and OrganizationProfile tables.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Dict
 
@@ -106,10 +106,39 @@ for _pname, _parr in [
 del _pname, _parr
 
 
+def _labels_to_codes(values: np.ndarray, labels: Sequence) -> np.ndarray:
+    """Map a string array to integer codes given an ordered label list."""
+    codes = np.zeros(len(values), dtype=np.intp)
+    for i, lbl in enumerate(labels):
+        codes[values == lbl] = i
+    return codes
+
+
+def _vectorized_cdf_sample(cdfs: np.ndarray, brackets: np.ndarray, u: np.ndarray) -> np.ndarray:
+    """Vectorized CDF sampling by bracket — replaces per-element searchsorted loops.
+
+    Args:
+        cdfs: shape (n_brackets, n_labels) — CDF per bracket (must be clamped to 1.0)
+        brackets: shape (n,) int — bracket index per element
+        u: shape (n,) float — uniform random per element
+
+    Returns:
+        shape (n,) int — sampled label index per element
+    """
+    n = len(brackets)
+    out = np.empty(n, dtype=np.intp)
+    for b in range(cdfs.shape[0]):
+        mask = brackets == b
+        if mask.any():
+            out[mask] = np.searchsorted(cdfs[b], u[mask])
+    return out
+
+
 # ---------------------------------------------------------
 # Main generator
 # ---------------------------------------------------------
-def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
+def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
+                                  *, _skip_post_phases: bool = False):
     cust_cfg = cfg.customers
     total_customers = int(cust_cfg.total_customers)
     if total_customers <= 0:
@@ -274,10 +303,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         _ms_cdfs[:, -1] = 1.0  # clamp
         _u = rng.random(n_person)
         _bracket_per_person = person_age_bracket  # int array [0..n_brackets-1]
-        # For each person, pick from their bracket's CDF
-        _ms_idx = np.array([
-            np.searchsorted(_ms_cdfs[b], u) for b, u in zip(_bracket_per_person, _u)
-        ], dtype=np.intp)
+        # Vectorized: one searchsorted call per unique bracket instead of per person
+        _ms_idx = _vectorized_cdf_sample(_ms_cdfs, _bracket_per_person, _u)
         _ms_idx = np.clip(_ms_idx, 0, len(_ms_labels) - 1)
         MaritalStatus[person_idx] = _ms_labels[_ms_idx]
 
@@ -288,9 +315,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         _ed_cdfs = np.array([np.cumsum(EDUCATION_PROBS_BY_AGE[b]) for b in range(len(AGE_GROUP_LABELS))])
         _ed_cdfs[:, -1] = 1.0
         _u = rng.random(n_person)
-        _ed_idx = np.array([
-            np.searchsorted(_ed_cdfs[b], u) for b, u in zip(person_age_bracket, _u)
-        ], dtype=np.intp)
+        _ed_idx = _vectorized_cdf_sample(_ed_cdfs, person_age_bracket, _u)
         _ed_idx = np.clip(_ed_idx, 0, len(_ed_labels) - 1)
         Education[person_idx] = _ed_labels[_ed_idx]
 
@@ -299,15 +324,12 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     if n_person:
         # Build CDF per education level, then vectorized lookup
         _occ_labels = OCCUPATION_LABELS
-        _edu_to_code = {lbl: i for i, lbl in enumerate(EDUCATION_LABELS)}
         _occ_cdfs = np.array([np.cumsum(OCCUPATION_PROBS_BY_EDUCATION[lbl]) for lbl in EDUCATION_LABELS])
         _occ_cdfs[:, -1] = 1.0
         _person_edu = Education[person_mask]
-        _edu_codes = np.array([_edu_to_code.get(str(e), 0) for e in _person_edu], dtype=np.intp)
+        _edu_code_arr = _labels_to_codes(_person_edu, EDUCATION_LABELS)
         _u = rng.random(n_person)
-        _occ_idx = np.array([
-            np.searchsorted(_occ_cdfs[ec], u) for ec, u in zip(_edu_codes, _u)
-        ], dtype=np.intp)
+        _occ_idx = _vectorized_cdf_sample(_occ_cdfs, _edu_code_arr, _u)
         _occ_idx = np.clip(_occ_idx, 0, len(_occ_labels) - 1)
         Occupation[person_idx] = _occ_labels[_occ_idx]
 
@@ -321,8 +343,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         # Vectorized: build per-person lambda from (marital, bracket) lookup,
         # then single Poisson draw for all persons.
         person_marital = MaritalStatus[person_mask]
-        _ms_to_code = {lbl: i for i, lbl in enumerate(MARITAL_STATUS_LABELS)}
-        _ms_codes = np.array([_ms_to_code.get(str(m), 0) for m in person_marital], dtype=np.intp)
+        _ms_codes = _labels_to_codes(person_marital, MARITAL_STATUS_LABELS)
         _n_ms = len(MARITAL_STATUS_LABELS)
         _n_br = len(AGE_GROUP_LABELS)
         # Build lambda lookup table: (n_marital, n_brackets)
@@ -373,7 +394,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         # then single-pass sampling via uniform + searchsorted.
         _ho_labels = HOME_OWNERSHIP_LABELS
         _ig_list = list(HOME_OWNERSHIP_PROBS_BY_INCOME.keys())
-        _ig_to_code = {lbl: i for i, lbl in enumerate(_ig_list)}
         _n_ig = len(_ig_list)
         _n_br = len(AGE_GROUP_LABELS)
         _n_ho = len(_ho_labels)
@@ -387,12 +407,12 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
                 _ho_cdfs[_ii, _bi, -1] = 1.0
 
         ig = IncomeGroup[person_mask]
-        _ig_codes = np.array([_ig_to_code.get(str(g), 0) for g in ig], dtype=np.intp)
+        _ig_codes = _labels_to_codes(ig, _ig_list)
         _u = rng.random(n_person)
-        _ho_idx = np.array([
-            np.searchsorted(_ho_cdfs[ic, br], u)
-            for ic, br, u in zip(_ig_codes, person_age_bracket, _u)
-        ], dtype=np.intp)
+        # Flatten 2D (income_group, bracket) into single composite key for vectorized sampling
+        _ho_cdfs_flat = _ho_cdfs.reshape(_n_ig * _n_br, _n_ho)
+        _composite_bracket = _ig_codes * _n_br + person_age_bracket
+        _ho_idx = _vectorized_cdf_sample(_ho_cdfs_flat, _composite_bracket, _u)
         _ho_idx = np.clip(_ho_idx, 0, _n_ho - 1)
         HomeOwnership[person_idx] = _ho_labels[_ho_idx]
 
@@ -748,29 +768,34 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     )
 
     # =====================================================
-    # Household assignment
+    # Household assignment (skipped in parallel chunk mode)
     # =====================================================
-    household_pct_cfg = getattr(cust_cfg, "household_pct", None)
-    household_pct = float(household_pct_cfg) if household_pct_cfg is not None else _HOUSEHOLD_PCT_DEFAULT
+    if _skip_post_phases:
+        # Return raw arrays for the parallel orchestrator to merge and process
+        HouseholdKey = np.arange(1, N + 1, dtype="int64")
+        HouseholdRole = np.full(N, "Single", dtype=object)
+    else:
+        household_pct_cfg = getattr(cust_cfg, "household_pct", None)
+        household_pct = float(household_pct_cfg) if household_pct_cfg is not None else _HOUSEHOLD_PCT_DEFAULT
 
-    HouseholdKey, HouseholdRole = assign_households(
-        rng=rng,
-        N=N,
-        is_org=IsOrg,
-        last_name=safe_last,
-        geography_key=GeographyKey,
-        gender=Gender,
-        ages_years=ages_years,
-        marital_status=MaritalStatus,
-        children_raw=children_raw,
-        home_ownership=HomeOwnership,
-        household_pct=household_pct,
-    )
+        HouseholdKey, HouseholdRole = assign_households(
+            rng=rng,
+            N=N,
+            is_org=IsOrg,
+            last_name=safe_last,
+            geography_key=GeographyKey,
+            gender=Gender,
+            ages_years=ages_years,
+            marital_status=MaritalStatus,
+            children_raw=children_raw,
+            home_ownership=HomeOwnership,
+            household_pct=household_pct,
+        )
 
-    n_multi = int((HouseholdRole == "Spouse").sum() + (HouseholdRole == "Dependent").sum()
-                  + (HouseholdRole == "Relative").sum())
-    n_households = int(np.max(HouseholdKey))
-    info(f"Households: {n_households} total, {n_multi} customers in multi-person households")
+        n_multi = int((HouseholdRole == "Spouse").sum() + (HouseholdRole == "Dependent").sum()
+                      + (HouseholdRole == "Relative").sum())
+        n_households = int(np.max(HouseholdKey))
+        info(f"Households: {n_households} total, {n_multi} customers in multi-person households")
 
     # Rebuild CustomerName — household assignment may have updated last names
     CustomerName = np.where(
@@ -862,9 +887,243 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
 
     # =====================================================
     # Build OrganizationProfile dataframe (org-only)
+    # — skipped in parallel chunk mode (done after merge)
     # =====================================================
+    if _skip_post_phases:
+        org_profile_df = pd.DataFrame()
+    else:
+        org_profile_df = generate_org_profile(
+            rng=rng,
+            customer_key=CustomerKey,
+            is_org=IsOrg,
+            org_name=OrgName,
+            region=Region,
+            customer_start_date=CustomerStartDate,
+            churn_bias=CustomerChurnBias,
+            customer_weight=CustomerWeight,
+            people_pools=people_pools,
+            end_date=end_date,
+            seed=int(seed),
+        )
+
+    # =====================================================
+    # SCD Type 2 expansion (if enabled)
+    # — skipped in parallel chunk mode (done after merge)
+    # =====================================================
+    if not _skip_post_phases:
+        scd2_cfg = getattr(cust_cfg, "scd2", None)
+        scd2_enabled = bool(getattr(scd2_cfg, "enabled", False)) if scd2_cfg else False
+        if scd2_enabled:
+            customers_df = generate_scd2_versions(
+                rng=rng,
+                base_df=customers_df,
+                cust_cfg=scd2_cfg,
+                geo_keys=geo_keys,
+                tier_keys=tier_keys,
+                end_date=end_date,
+                geo_lookup=geo_lookup,
+            )
+
+            # Remap profile/org-profile CustomerKey → IsCurrent=1 version's CustomerKey
+            current_map = (
+                customers_df.loc[customers_df["IsCurrent"] == 1, ["CustomerID", "CustomerKey"]]
+                .set_index("CustomerID")["CustomerKey"]
+            )
+            profile_df["CustomerKey"] = (
+                profile_df["CustomerKey"].map(current_map).astype("int64")
+            )
+            if not org_profile_df.empty:
+                org_profile_df["CustomerKey"] = (
+                    org_profile_df["CustomerKey"].map(current_map).astype("int64")
+                )
+
+    active_customer_set = set(active_customer_keys.tolist())
+    return customers_df, profile_df, org_profile_df, active_customer_set
+
+
+# ---------------------------------------------------------
+# Parallel orchestrator
+# ---------------------------------------------------------
+def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
+    """Generate customers in parallel: chunk → merge → households → SCD2."""
+    from multiprocessing import cpu_count
+    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from src.dimensions.customers.worker import customer_chunk_worker, scd2_chunk_worker
+    from src.dimensions.customers.scd2 import expand_changed_customers, _build_geo_cache
+
+    cust_cfg = cfg.customers
+    N = int(cust_cfg.total_customers)
+    seed = resolve_seed(cfg, cust_cfg, fallback=42)
+
+    start_date, end_date = parse_cfg_dates(cfg)
+
+    # Serialize config for workers (must be picklable plain dict)
+    cfg_dump = cfg.model_dump() if hasattr(cfg, "model_dump") else dict(cfg)
+
+    # Chunk partitioning
+    n_chunks = min(n_workers * 2, max(2, N // 50_000))
+    n_chunks = max(2, n_chunks)
+    n_actual_workers = min(n_chunks, n_workers)
+
+    chunk_boundaries = []
+    base_chunk = N // n_chunks
+    remainder = N % n_chunks
+    for i in range(n_chunks):
+        cn = base_chunk + (1 if i < remainder else 0)
+        chunk_boundaries.append(cn)
+
+    info(f"Customer parallel: {n_chunks} chunks across {n_actual_workers} workers")
+
+    # Scratch directory for chunk parquets
+    scratch_dir = parquet_dims_folder / "_customer_chunks"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+
+    # Phase 2: Parallel chunk generation
+    tasks = []
+    for i, cn in enumerate(chunk_boundaries):
+        output_base = str(scratch_dir / f"chunk_{i:05d}")
+        tasks.append((
+            i, cn, seed, n_chunks,
+            cfg_dump, str(parquet_dims_folder), output_base,
+        ))
+
+    pool_spec = PoolRunSpec(
+        processes=n_actual_workers,
+        chunksize=1,
+        label="customers",
+    )
+
+    chunk_results = []
+    for result in iter_imap_unordered(
+        tasks=tasks,
+        task_fn=customer_chunk_worker,
+        spec=pool_spec,
+    ):
+        chunk_results.append(result)
+
+    chunk_results.sort(key=lambda r: r["chunk_idx"])
+
+    # Phase 3: Merge chunks
+    cust_dfs = []
+    prof_dfs = []
+    for i in range(n_chunks):
+        base = str(scratch_dir / f"chunk_{i:05d}")
+        cust_dfs.append(pd.read_parquet(f"{base}_customers.parquet"))
+        prof_dfs.append(pd.read_parquet(f"{base}_profile.parquet"))
+
+    customers_df = pd.concat(cust_dfs, ignore_index=True)
+    profile_df = pd.concat(prof_dfs, ignore_index=True)
+    del cust_dfs, prof_dfs
+
+    # Reassign CustomerKey sequentially across all chunks
+    customers_df["CustomerKey"] = np.arange(1, len(customers_df) + 1, dtype="int64")
+    customers_df["CustomerID"] = customers_df["CustomerKey"].copy()
+    profile_df["CustomerKey"] = customers_df["CustomerKey"].to_numpy()
+
+    # Collect active customer keys
+    active_customer_keys = set()
+    for r in chunk_results:
+        active_customer_keys.update(r["active_keys"])
+
+    # Run household assignment on merged data (serial — shared state)
+    household_pct_cfg = getattr(cust_cfg, "household_pct", None)
+    household_pct = float(household_pct_cfg) if household_pct_cfg is not None else _HOUSEHOLD_PCT_DEFAULT
+
+    hh_rng = np.random.default_rng(
+        np.random.SeedSequence(seed).spawn(n_chunks + 2)[n_chunks]
+    )
+
+    safe_last = np.where(
+        pd.isna(customers_df["CustomerName"]), "",
+        customers_df["CustomerName"].str.split(" ").str[-1],
+    ).astype(object).copy()
+    # Extract writable arrays from merged DataFrame (households mutate in-place)
+    IsOrg = (customers_df["CustomerType"] == "Organization").to_numpy().copy()
+    Gender = customers_df["Gender"].to_numpy().copy()
+    GeographyKey = customers_df["GeographyKey"].to_numpy().copy()
+    ages_days_raw = (pd.Timestamp(end_date) - pd.to_datetime(customers_df["DOB"])).dt.days
+    ages_years = (ages_days_raw / 365.25).to_numpy(dtype="float64", na_value=0.0).copy()
+    MaritalStatus = customers_df["MaritalStatus"].to_numpy().copy()
+    children_raw = customers_df["NumberOfChildren"].to_numpy(dtype="int64", na_value=0).copy()
+    HomeOwnership = customers_df["HomeOwnership"].to_numpy().copy()
+
+    HouseholdKey, HouseholdRole = assign_households(
+        rng=hh_rng,
+        N=len(customers_df),
+        is_org=IsOrg,
+        last_name=safe_last,
+        geography_key=GeographyKey,
+        gender=Gender,
+        ages_years=ages_years,
+        marital_status=MaritalStatus,
+        children_raw=children_raw,
+        home_ownership=HomeOwnership,
+        household_pct=household_pct,
+    )
+
+    customers_df["HouseholdKey"] = HouseholdKey
+    customers_df["HouseholdRole"] = HouseholdRole
+    customers_df["GeographyKey"] = GeographyKey  # may have been mutated
+
+    # Rebuild CustomerName (households may have changed last names)
+    safe_first = customers_df["CustomerName"].str.split(" ").str[0].fillna("").to_numpy(dtype=object)
+    customers_df["CustomerName"] = np.where(
+        IsOrg,
+        customers_df["CompanyName"].to_numpy(dtype=object),
+        safe_first.astype(str) + " " + safe_last.astype(str),
+    )
+
+    n_multi = int((HouseholdRole == "Spouse").sum() + (HouseholdRole == "Dependent").sum()
+                  + (HouseholdRole == "Relative").sum())
+    n_households = int(np.max(HouseholdKey))
+    info(f"Households: {n_households} total, {n_multi} customers in multi-person households")
+
+    # Generate org_profile (serial, small)
+    org_rng = np.random.default_rng(
+        np.random.SeedSequence(seed).spawn(n_chunks + 2)[n_chunks + 1]
+    )
+    OrgName = customers_df["CompanyName"].to_numpy(dtype=object)
+    Region = customers_df.get("CustomerType").to_numpy()  # placeholder
+    # Load name pools for org_profile
+    pct_asia = float(getattr(cust_cfg, "pct_asia", 0.0))
+    enable_asia = pct_asia > 0.0
+    names_folder = resolve_people_folder(cfg)
+    people_pools = load_people_pools(names_folder, enable_asia=enable_asia, legacy_support=True)
+
+    # Re-derive Region from geography for org_profile
+    geography, _ = load_dimension("geography", parquet_dims_folder, cfg.geography)
+    geo_lookup = geography.set_index("GeographyKey")[["City", "State", "Country"]]
+
+    # Map GeographyKey -> Country -> Region
+    _geo_country = geo_lookup["Country"].to_dict()
+    _country_to_region = {}
+    for gk, row_data in geo_lookup.iterrows():
+        c = row_data["Country"]
+        if c not in _country_to_region:
+            _country_to_region[c] = "US"  # default
+    # Simplified region derivation from customer config
+    p_in, p_us, p_eu, p_as = validate_percentages(
+        float(cust_cfg.pct_india), float(cust_cfg.pct_us),
+        float(cust_cfg.pct_eu), float(getattr(cust_cfg, "pct_asia", 0.0)),
+    )
+    region_labels = ["IN", "US", "EU"] + (["AS"] if enable_asia else [])
+    region_probs = [p_in, p_us, p_eu] + ([p_as] if enable_asia else [])
+
+    # For org_profile we need Region array — re-derive from chunk data
+    # Workers already generated Region, it's not in the parquet output directly.
+    # We'll regenerate it deterministically.
+    org_region_rng = np.random.default_rng(seed + 77777)
+    Region = org_region_rng.choice(region_labels, size=len(customers_df), p=region_probs)
+
+    CustomerStartDate = customers_df["CustomerStartDate"].to_numpy()
+    CustomerKey = customers_df["CustomerKey"].to_numpy()
+
+    # Derive churn_bias and customer_weight from existing columns
+    CustomerWeight = np.ones(len(customers_df), dtype="float64")  # approx
+    CustomerChurnBias = np.ones(len(customers_df), dtype="float64")  # approx
+
     org_profile_df = generate_org_profile(
-        rng=rng,
+        rng=org_rng,
         customer_key=CustomerKey,
         is_org=IsOrg,
         org_name=OrgName,
@@ -877,36 +1136,118 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         seed=int(seed),
     )
 
-    # =====================================================
-    # SCD Type 2 expansion (if enabled)
-    # =====================================================
+    # Phase 4: Parallel SCD2 (if enabled)
     scd2_cfg = getattr(cust_cfg, "scd2", None)
     scd2_enabled = bool(getattr(scd2_cfg, "enabled", False)) if scd2_cfg else False
-    if scd2_enabled:
-        customers_df = generate_scd2_versions(
-            rng=rng,
-            base_df=customers_df,
-            cust_cfg=scd2_cfg,
-            geo_keys=geo_keys,
-            tier_keys=tier_keys,
-            end_date=end_date,
-            geo_lookup=geo_lookup,
-        )
 
-        # Remap profile/org-profile CustomerKey → IsCurrent=1 version's CustomerKey
-        current_map = (
-            customers_df.loc[customers_df["IsCurrent"] == 1, ["CustomerID", "CustomerKey"]]
-            .set_index("CustomerID")["CustomerKey"]
-        )
-        profile_df["CustomerKey"] = (
-            profile_df["CustomerKey"].map(current_map).astype("int64")
-        )
-        if not org_profile_df.empty:
-            org_profile_df["CustomerKey"] = (
-                org_profile_df["CustomerKey"].map(current_map).astype("int64")
+    if scd2_enabled:
+        change_rate = float(getattr(scd2_cfg, "change_rate", 0.15))
+        max_versions = int(getattr(scd2_cfg, "max_versions", 4))
+
+        person_mask = customers_df["CustomerType"] == "Individual"
+        person_ids = customers_df.loc[person_mask, "CustomerID"].to_numpy()
+
+        if len(person_ids) > 0:
+            scd2_rng = np.random.default_rng(
+                np.random.SeedSequence(seed).spawn(n_chunks + 3)[n_chunks + 2]
             )
 
-    active_customer_set = set(active_customer_keys.tolist())
+            n_change = max(1, int(len(person_ids) * change_rate))
+            n_change = min(n_change, len(person_ids))
+            change_id_set = set(
+                scd2_rng.choice(person_ids, size=n_change, replace=False).tolist()
+            )
+
+            _change_mask = customers_df["CustomerID"].isin(change_id_set)
+            unchanged_df = customers_df[~_change_mask]
+            changed_df = customers_df[_change_mask]
+
+            geo_keys = geography["GeographyKey"].to_numpy()
+            loyalty_dim = read_parquet_dim(parquet_dims_folder, "loyalty_tiers")
+            loyalty_key_col = first_existing_col(loyalty_dim, ["LoyaltyTierKey", "TierKey", "Key"])
+            tier_keys = loyalty_dim[loyalty_key_col].dropna().astype("int64").sort_values().to_numpy()
+
+            geo_cache = _build_geo_cache(geo_lookup)
+
+            # Parallelize SCD2 if enough changed customers
+            if len(changed_df) > 10_000 and n_actual_workers > 1:
+                n_scd2_chunks = min(n_actual_workers, max(2, len(changed_df) // 5_000))
+                partitions = np.array_split(np.arange(len(changed_df)), n_scd2_chunks)
+                partitions = [p for p in partitions if len(p) > 0]
+                n_scd2_chunks = len(partitions)
+
+                scd2_tasks = []
+                col_names = changed_df.columns.tolist()
+                for si, idx_arr in enumerate(partitions):
+                    chunk_records = changed_df.iloc[idx_arr].to_numpy().tolist()
+                    out_path = str(scratch_dir / f"scd2_chunk_{si:05d}.parquet")
+                    scd2_tasks.append((
+                        si, n_scd2_chunks, seed,
+                        chunk_records, col_names,
+                        max_versions,
+                        geo_keys.tolist(), tier_keys.tolist(),
+                        str(end_date), geo_cache,
+                        out_path,
+                    ))
+
+                scd2_spec = PoolRunSpec(
+                    processes=min(n_actual_workers, n_scd2_chunks),
+                    chunksize=1,
+                    label="scd2",
+                )
+
+                for _r in iter_imap_unordered(
+                    tasks=scd2_tasks,
+                    task_fn=scd2_chunk_worker,
+                    spec=scd2_spec,
+                ):
+                    pass
+
+                scd2_expanded = []
+                for si in range(n_scd2_chunks):
+                    path = scratch_dir / f"scd2_chunk_{si:05d}.parquet"
+                    if path.exists():
+                        scd2_expanded.append(pd.read_parquet(path))
+                        path.unlink()
+
+                expanded_df = pd.concat([unchanged_df] + scd2_expanded, ignore_index=True)
+            else:
+                # Serial SCD2 for small change sets
+                expanded_rows = expand_changed_customers(
+                    rng=scd2_rng,
+                    changed_df=changed_df,
+                    max_versions=max_versions,
+                    geo_keys=geo_keys,
+                    tier_keys=tier_keys,
+                    end_date=end_date,
+                    geo_lookup=geo_lookup,
+                )
+                expanded_df = pd.concat([unchanged_df, expanded_rows], ignore_index=True)
+
+            expanded_df["CustomerKey"] = np.arange(1, len(expanded_df) + 1, dtype="int64")
+            customers_df = expanded_df
+
+            n_versions = len(customers_df) - N
+            info(f"SCD2: {n_change} customers expanded, {n_versions} version rows added ({len(customers_df)} total)")
+
+            # Remap profile/org-profile CustomerKey
+            current_map = (
+                customers_df.loc[customers_df["IsCurrent"] == 1, ["CustomerID", "CustomerKey"]]
+                .set_index("CustomerID")["CustomerKey"]
+            )
+            profile_df["CustomerKey"] = (
+                profile_df["CustomerKey"].map(current_map).astype("int64")
+            )
+            if not org_profile_df.empty:
+                org_profile_df["CustomerKey"] = (
+                    org_profile_df["CustomerKey"].map(current_map).astype("int64")
+                )
+
+    # Cleanup scratch directory
+    import shutil
+    shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    active_customer_set = active_customer_keys
     return customers_df, profile_df, org_profile_df, active_customer_set
 
 
@@ -933,7 +1274,25 @@ def run_customers(cfg: Dict, parquet_folder: Path):
         return
 
     with stage("Generating Customers"):
-        customers_df, profile_df, org_profile_df, _active = generate_synthetic_customers(cfg, parquet_folder)
+        from multiprocessing import cpu_count
+        from src.defaults import CUSTOMER_PARALLEL_THRESHOLD
+
+        N = int(cust_cfg.total_customers)
+        sales_cfg = getattr(cfg, "sales", None)
+        configured_workers = getattr(sales_cfg, "workers", None) if sales_cfg else None
+        if configured_workers is not None:
+            n_workers = max(1, int(configured_workers))
+        else:
+            n_workers = max(1, cpu_count() - 1)
+
+        if N >= CUSTOMER_PARALLEL_THRESHOLD and n_workers >= 2:
+            customers_df, profile_df, org_profile_df, _active = _generate_parallel(
+                cfg, parquet_folder, n_workers,
+            )
+        else:
+            customers_df, profile_df, org_profile_df, _active = generate_synthetic_customers(
+                cfg, parquet_folder,
+            )
         customers_df.to_parquet(out_path, index=False)
         profile_df.to_parquet(profile_out_path, index=False)
 

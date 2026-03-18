@@ -272,7 +272,9 @@ def _build_scd2_customer_versions(
 
     # Initialize: all slots default to IsCurrent=1 key, starts padded with MAX
     starts = np.full((N_pool, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
-    keys = np.tile(pool_customer_keys.astype(np.int32)[:, np.newaxis], (1, max_ver))
+    # Broadcast fill instead of np.tile (avoids full copy + intermediate array)
+    keys = np.empty((N_pool, max_ver), dtype=np.int32)
+    keys[:] = pool_customer_keys.astype(np.int32)[:, np.newaxis]
 
     # Cap slot indices at max_ver - 1
     valid = slot < max_ver
@@ -487,6 +489,63 @@ def _resolve_partitioning(cfg: dict, partition_enabled: bool, partition_cols: Op
     return bool(partition_enabled), partition_cols
 
 
+def _merge_fact_csv_chunks(
+    csv_chunks: list,
+    out_dir: Path,
+    chunk_prefix: str,
+    chunk_size: int,
+    delete_chunks: bool,
+) -> None:
+    """Re-chunk CSV files for a sales fact table to respect chunk_size.
+
+    Output files keep the existing chunk_prefix naming convention
+    (e.g. ``sales_chunk0000.csv``, ``sales_return_chunk0000.csv``).
+    """
+    if not csv_chunks:
+        return
+
+    with open(csv_chunks[0], "r", encoding="utf-8") as f:
+        header = f.readline()
+
+    out_files: list[Path] = []
+    out_f = None
+    rows_in_current = 0
+    file_idx = 0
+
+    def _open_next():
+        nonlocal out_f, rows_in_current, file_idx
+        if out_f is not None:
+            out_f.close()
+        path = out_dir / f"{chunk_prefix}{file_idx:04d}.csv"
+        out_files.append(path)
+        out_f = open(path, "w", newline="", encoding="utf-8")
+        out_f.write(header)
+        rows_in_current = 0
+        file_idx += 1
+
+    _open_next()
+    for chunk_path in csv_chunks:
+        with open(chunk_path, "r", encoding="utf-8") as in_f:
+            next(in_f, None)  # skip header
+            for line in in_f:
+                if rows_in_current >= chunk_size:
+                    _open_next()
+                out_f.write(line)
+                rows_in_current += 1
+    if out_f is not None:
+        out_f.close()
+
+    if delete_chunks:
+        # Only delete originals that aren't also output files
+        out_set = set(out_files)
+        for f in csv_chunks:
+            if f not in out_set:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+
+
 # =====================================================================
 # Main Fact Generation
 # =====================================================================
@@ -694,42 +753,56 @@ def generate_sales_fact(
     # ------------------------------------------------------------
     customers_path = parquet_folder_p / "customers.parquet"
 
-    # Load customer identity + date columns; month indices and active flag
-    # are derived at load time (no longer stored in customers.parquet).
+    # Single parquet read: discover available columns via schema, then
+    # load ALL needed columns in one I/O call instead of 3-5 separate opens.
+    import pyarrow.parquet as _pq
+    _cust_schema_names = set(_pq.read_schema(str(customers_path)).names)
+
     _cust_load_cols = ["CustomerKey", "CustomerStartDate", "CustomerEndDate"]
     # Backward compat: also load legacy columns if they still exist
     _cust_legacy = ["IsActiveInSales", "CustomerStartMonth", "CustomerEndMonth"]
-    try:
-        cust_df = load_parquet_df(customers_path, _cust_load_cols + _cust_legacy)
-    except Exception:
-        cust_df = load_parquet_df(customers_path, _cust_load_cols)
+    # SCD2 columns (previously a separate parquet open)
+    _cust_scd2_cols_wanted = ["CustomerID", "IsCurrent"]
+    # Weight columns (previously a separate parquet open)
+    _cust_weight_cols = ["CustomerBaseWeight", "CustomerWeight"]
+    # Geo column (previously a separate parquet open)
+    _cust_geo_cols = ["GeographyKey"]
 
-    if cust_df.empty:
+    _cust_all_cols = list(dict.fromkeys(
+        _cust_load_cols
+        + [c for c in _cust_legacy if c in _cust_schema_names]
+        + [c for c in _cust_scd2_cols_wanted if c in _cust_schema_names]
+        + [c for c in _cust_weight_cols if c in _cust_schema_names]
+        + [c for c in _cust_geo_cols if c in _cust_schema_names]
+    ))
+
+    cust_df_full = load_parquet_df(customers_path, _cust_all_cols)
+
+    if cust_df_full.empty:
         raise RuntimeError("customers.parquet is empty; cannot generate sales")
 
     # --- SCD2 customer deduplication ---
-    # Also try loading CustomerID + IsCurrent for SCD2 detection
     _cust_scd2_detected = False
     _cust_pool_ids = None   # CustomerID array (parallel to pool) — set if SCD2 active
-    try:
-        _cust_scd2_cols = pd.read_parquet(str(customers_path), columns=["CustomerID", "IsCurrent"])
-        if "CustomerID" in _cust_scd2_cols.columns and "IsCurrent" in _cust_scd2_cols.columns:
-            if (_cust_scd2_cols["IsCurrent"] == 0).any():
-                _cust_scd2_detected = True
-                _n_before = len(cust_df)
-                # Align by shared index (both DataFrames loaded from same parquet in same order)
-                cust_df = cust_df.assign(
-                    CustomerID=_cust_scd2_cols["CustomerID"].values,
-                    IsCurrent=_cust_scd2_cols["IsCurrent"].values,
-                )
-                # Keep only IsCurrent=1 rows for the sampling pool
-                cust_df = cust_df[cust_df["IsCurrent"] == 1].reset_index(drop=True)
-                cust_df = cust_df.drop(columns=["IsCurrent"])
-                _cust_pool_ids = _as_np(cust_df["CustomerID"], np.int32)
-                info(f"Customer SCD2: dedup {_n_before:,} → {len(cust_df):,} rows (IsCurrent=1 pool)")
-        del _cust_scd2_cols
-    except (KeyError, ValueError, OSError):
-        pass
+    # Save pre-filter geo column before SCD2 filtering (needed later for geo mapping)
+    _cust_geo_full = _as_np(cust_df_full["GeographyKey"], np.int32) if "GeographyKey" in cust_df_full.columns else None
+    _cust_is_current_full = cust_df_full["IsCurrent"].values if "IsCurrent" in cust_df_full.columns else None
+
+    if ("CustomerID" in cust_df_full.columns and "IsCurrent" in cust_df_full.columns
+            and (cust_df_full["IsCurrent"] == 0).any()):
+        _cust_scd2_detected = True
+        _n_before = len(cust_df_full)
+        # Keep only IsCurrent=1 rows for the sampling pool
+        _is_current_mask = cust_df_full["IsCurrent"] == 1
+        cust_df = cust_df_full[_is_current_mask].reset_index(drop=True)
+        cust_df = cust_df.drop(columns=["IsCurrent"], errors="ignore")
+        _cust_pool_ids = _as_np(cust_df["CustomerID"], np.int32)
+        info(f"Customer SCD2: dedup {_n_before:,} → {len(cust_df):,} rows (IsCurrent=1 pool)")
+    else:
+        cust_df = cust_df_full.drop(columns=["IsCurrent"], errors="ignore")
+
+    # Free the full DataFrame — cust_df now holds the filtered pool
+    del cust_df_full
 
     customer_keys = _as_np(cust_df["CustomerKey"], np.int32)
 
@@ -772,15 +845,12 @@ def generate_sales_fact(
             1, 0,
         ).astype(np.int32)
 
-    # Load customer weight column separately (robust)
+    # Extract customer weight from the already-loaded DataFrame (no extra parquet open)
     customer_base_weight = None
     for wcol in ("CustomerBaseWeight", "CustomerWeight"):
-        try:
-            w = pd.read_parquet(str(customers_path), columns=[wcol])[wcol]
-            customer_base_weight = _as_np(w, np.float64)
+        if wcol in cust_df.columns:
+            customer_base_weight = _as_np(cust_df[wcol], np.float64)
             break
-        except Exception:
-            pass
 
     # Products: respect runner-bound active_product_np
     product_brand_key = None
@@ -796,27 +866,45 @@ def generate_sales_fact(
         return np.asarray(codes, dtype=np.int32), np.asarray(uniques, dtype=object)
 
     # Read schema once (metadata only) to discover available columns
-    import pyarrow.parquet as _pq
     _prod_schema = set(_pq.read_schema(str(products_path)).names)
     _has_brand_col = "Brand" in _prod_schema
     _has_subcat_col = "SubcategoryKey" in _prod_schema
     _need_subcat = bool(assortment_cfg.get("enabled")) and _has_subcat_col
 
+    # Determine SCD2 capability upfront so we include required columns in
+    # the single product load below (avoids extra parquet opens later).
+    _prod_has_scd2 = (
+        "ProductID" in _prod_schema
+        and "IsCurrent" in _prod_schema
+        and "EffectiveStartDate" in _prod_schema
+    )
+
+    # Cached full product DataFrame — reused for SCD2 version table building
+    _prod_df_full = None
+
     if getattr(State, "active_product_np", None) is not None:
         product_np = State.active_product_np
         active_keys = np.asarray(product_np[:, 0], dtype=np.int32)
 
-        # Single load: Brand + optional SubcategoryKey (one parquet open)
+        # Single load: Brand + optional SubcategoryKey + SCD2 columns (one parquet open)
         _prod_cols = ["ProductKey"]
         if _has_brand_col:
             _prod_cols.append("Brand")
         if _need_subcat:
             _prod_cols.append("SubcategoryKey")
+        # Include SCD2 columns so we can reuse this DataFrame later
+        if _prod_has_scd2:
+            for _sc in ("ProductID", "IsCurrent"):
+                if _sc not in _prod_cols:
+                    _prod_cols.append(_sc)
 
         try:
             _prod_df = load_parquet_df(products_path, _prod_cols)
-            _prod_df = _prod_df.drop_duplicates("ProductKey", keep="first")
-            _prod_keys = _prod_df["ProductKey"].to_numpy(dtype=np.int32)
+            # Keep the full DF for SCD2 use before dedup
+            if _prod_has_scd2:
+                _prod_df_full = _prod_df
+            _prod_df_dedup = _prod_df.drop_duplicates("ProductKey", keep="first")
+            _prod_keys = _prod_df_dedup["ProductKey"].to_numpy(dtype=np.int32)
 
             # Sorted-key lookup (avoids pandas reindex float64 promotion)
             _sort_idx = np.argsort(_prod_keys)
@@ -825,7 +913,7 @@ def generate_sales_fact(
             _found = _sorted_keys[_pos] == active_keys
 
             if _has_brand_col:
-                codes, brand_names = _brand_codes_from_series(_prod_df["Brand"])
+                codes, brand_names = _brand_codes_from_series(_prod_df_dedup["Brand"])
                 bk = np.full(len(active_keys), -1, dtype=np.int32)
                 bk[_found] = codes[_sort_idx][_pos[_found]]
                 if np.any(bk < 0):
@@ -833,11 +921,13 @@ def generate_sales_fact(
                 else:
                     product_brand_key = bk
 
-            if _need_subcat and "SubcategoryKey" in _prod_df.columns:
-                subcat_vals = _prod_df["SubcategoryKey"].to_numpy(dtype=np.int32)
+            if _need_subcat and "SubcategoryKey" in _prod_df_dedup.columns:
+                subcat_vals = _prod_df_dedup["SubcategoryKey"].to_numpy(dtype=np.int32)
                 sc = np.zeros(len(active_keys), dtype=np.int32)
                 sc[_found] = subcat_vals[_sort_idx][_pos[_found]]
                 product_subcat_key = sc
+
+            del _prod_df_dedup
 
         except Exception as exc:
             info(f"Could not load/derive Brand from products.parquet ({type(exc).__name__}: {exc}); "
@@ -851,15 +941,22 @@ def generate_sales_fact(
             _prod_cols.append("Brand")
         if _need_subcat:
             _prod_cols.append("SubcategoryKey")
-        # SCD2: load IsCurrent to filter to current versions
+        # SCD2: load IsCurrent + ProductID to reuse for version table building
         if "IsCurrent" in _prod_schema:
             _prod_cols.append("IsCurrent")
+        if _prod_has_scd2 and "ProductID" in _prod_schema:
+            _prod_cols.append("ProductID")
 
         prod_df = load_parquet_df(products_path, _prod_cols)
+        # Keep the full DF for SCD2 use before filtering
+        if _prod_has_scd2:
+            _prod_df_full = prod_df
         # SCD2: only use current version rows for the product pool
         if "IsCurrent" in prod_df.columns:
             prod_df = prod_df[prod_df["IsCurrent"] == 1].copy()
-            prod_df = prod_df.drop(columns=["IsCurrent"])
+            prod_df = prod_df.drop(columns=["IsCurrent"], errors="ignore")
+        if "ProductID" in prod_df.columns:
+            prod_df = prod_df.drop(columns=["ProductID"], errors="ignore")
         prod_df["ProductKey"] = pd.to_numeric(prod_df["ProductKey"], errors="coerce")
         prod_df["ListPrice"] = pd.to_numeric(prod_df["ListPrice"], errors="coerce")
         prod_df["UnitCost"] = pd.to_numeric(prod_df["UnitCost"], errors="coerce")
@@ -921,26 +1018,17 @@ def generate_sales_fact(
     _customer_scd2_keys = None    # (N_pool, max_ver) int32
     _cust_key_to_pool_idx = None
 
-    # Detect product SCD2 and build version tables
-    _prod_has_scd2 = (
-        "ProductID" in _prod_schema
-        and "IsCurrent" in _prod_schema
-        and "EffectiveStartDate" in _prod_schema
-    )
-    if _prod_has_scd2:
+    # Detect product SCD2 and build version tables (reusing _prod_df_full
+    # from the single product load above — no extra parquet opens).
+    if _prod_has_scd2 and _prod_df_full is not None:
         try:
-            # Check if there are actually historical versions
-            _ic_check = pd.read_parquet(str(products_path), columns=["IsCurrent"])
-            _has_history = (_ic_check["IsCurrent"] == 0).any()
-            del _ic_check
-        except (KeyError, ValueError, OSError):
+            _has_history = (_prod_df_full["IsCurrent"] == 0).any()
+        except (KeyError, ValueError):
             _has_history = False
 
         if _has_history:
-            # Get ProductID for each product in the sampling pool
             try:
-                _pid_df = pd.read_parquet(str(products_path), columns=["ProductKey", "ProductID", "IsCurrent"])
-                _pid_current = _pid_df[_pid_df["IsCurrent"] == 1].drop_duplicates("ProductKey", keep="first")
+                _pid_current = _prod_df_full[_prod_df_full["IsCurrent"] == 1].drop_duplicates("ProductKey", keep="first")
                 _pid_map = pd.Series(
                     _pid_current["ProductID"].to_numpy(dtype=np.int32),
                     index=_pid_current["ProductKey"].to_numpy(dtype=np.int32),
@@ -952,7 +1040,7 @@ def generate_sales_fact(
                     info(f"Product SCD2: {int(_unmapped.sum())} pool keys have no "
                          f"IsCurrent=1 ProductID mapping; they will use current-version prices.")
                 _pool_product_ids = _reindexed.fillna(-1).to_numpy(dtype=np.int32)
-                del _pid_df, _pid_current, _pid_map, _reindexed
+                del _pid_current, _pid_map, _reindexed
 
                 _prod_result = _build_scd2_product_versions(
                     products_path, _pool_product_ids, product_np,
@@ -965,6 +1053,9 @@ def generate_sales_fact(
             except Exception as exc:
                 info(f"Product SCD2 build failed ({type(exc).__name__}: {exc}); "
                      "using current-version prices for all months.")
+
+    # Free the full product DataFrame now that SCD2 is built
+    del _prod_df_full
 
     # Build customer SCD2 version tables (if dedup detected earlier)
     if _cust_scd2_detected and _cust_pool_ids is not None:
@@ -981,7 +1072,6 @@ def generate_sales_fact(
     _store_cols = ["StoreKey", "GeographyKey"]
     _store_path = parquet_folder_p / "stores.parquet"
     if _store_path.exists():
-        import pyarrow.parquet as _pq
         _store_schema_names = set(_pq.read_schema(str(_store_path)).names)
         if "StoreType" in _store_schema_names:
             _store_cols.append("StoreType")
@@ -1163,17 +1253,18 @@ def generate_sales_fact(
     ]
 
     # customer_geo_key: customer pool index -> GeographyKey
+    # Reuse data from the consolidated customer load (no extra parquet open).
     customer_geo_key = None
-    try:
-        _cust_geo_df = pd.read_parquet(str(customers_path), columns=["CustomerKey", "GeographyKey"])
-        if _cust_scd2_detected:
-            # Align with the IsCurrent-filtered pool
-            _cust_geo_scd2 = pd.read_parquet(str(customers_path), columns=["IsCurrent", "GeographyKey"])
-            _cust_geo_df = _cust_geo_scd2[_cust_geo_scd2["IsCurrent"] == 1].reset_index(drop=True)
-        if "GeographyKey" in _cust_geo_df.columns:
-            customer_geo_key = _as_np(_cust_geo_df["GeographyKey"], np.int32)
-    except (KeyError, OSError):
-        pass
+    if _cust_geo_full is not None:
+        if _cust_scd2_detected and _cust_is_current_full is not None:
+            # Filter to IsCurrent=1 rows (same filter applied to cust_df)
+            customer_geo_key = _cust_geo_full[_cust_is_current_full == 1]
+        else:
+            customer_geo_key = _cust_geo_full
+    elif "GeographyKey" in cust_df.columns:
+        customer_geo_key = _as_np(cust_df["GeographyKey"], np.int32)
+    # Free the full-length arrays now that they've been consumed
+    del _cust_geo_full, _cust_is_current_full
 
     # 2) Store type -> valid SalesChannelKeys mapping
     # Channel classification:
@@ -1473,6 +1564,13 @@ def generate_sales_fact(
         sales_output=sales_output,
 
         no_discount_key=1,
+
+        # Disable per-chunk header invariant validation by default (halves
+        # group-by work in build_header_from_detail).  Enable via
+        # sales.validate_header_invariants: true in config for debugging.
+        validate_header_invariants=_bool_or(
+            getattr(sales_cfg, "validate_header_invariants", None), False
+        ),
 
         delta_output_folder=delta_output_folder,
         write_delta=write_delta,
@@ -1965,6 +2063,17 @@ def generate_sales_fact(
         return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 
     if file_format == "csv":
+        # Merge small CSV chunk files into chunk_size-respecting files.
+        # Sales chunks are already ~chunk_size rows each, but SalesReturn
+        # chunks are tiny (return_rate × chunk_size per worker).
+        for t in tables:
+            csv_dir = Path(output_paths.table_out_dir(t))
+            spec = output_paths.spec(t)
+            csv_chunks = sorted(csv_dir.glob(f"{spec.chunk_prefix}*.csv"))
+            if len(csv_chunks) <= 1:
+                continue
+            _merge_fact_csv_chunks(csv_chunks, csv_dir, spec.chunk_prefix, chunk_size, delete_chunks)
+
         manifest = _build_sales_manifest()
         return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 

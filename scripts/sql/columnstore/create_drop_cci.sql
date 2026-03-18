@@ -4,8 +4,8 @@ Create CLUSTERED COLUMNSTORE indexes on all user tables.
 This script is packaged into the generated output folder and executed
 by the automated SQL Server import pipeline.  It is CREATE-only and
 has no configurable options — the stored procedure
-dbo.usp_ManageColumnstoreIndexes (installed separately) provides
-interactive CREATE/DROP with table-level targeting.
+[admin].[ManageColumnstoreIndexes] (installed automatically) provides
+interactive CREATE/DROP/REBUILD with table-level targeting.
 
 Compatibility: SQL Server 2016+ (no STRING_AGG, no CONCAT).
 
