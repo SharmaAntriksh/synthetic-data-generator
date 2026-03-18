@@ -166,7 +166,7 @@ def refresh_fx_master(out_path):
             continue
 
         gap_start = last_date + pd.Timedelta(days=1)
-        info(f"Refreshing FX for {cur}: {gap_start.date()} → {today.date()}")
+        info(f"Refreshing FX for {cur}: {gap_start.date()} -> {today.date()}")
         df_gap = download_history(cur, gap_start, today)
         df_gap = fill_missing_days(df_gap, gap_start, today)
         df_gap["FromCurrency"] = BASE
@@ -188,7 +188,7 @@ def refresh_fx_master(out_path):
     )
 
     master_updated.to_parquet(out_path, index=False)
-    info(f"FX master refreshed → {out_path.name}  ({len(master_updated)} rows)")
+    info(f"FX master refreshed -> {out_path.name}  ({len(master_updated)} rows)")
     return master_updated
 
 
@@ -268,7 +268,7 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
             for gap_start, gap_end in gaps:
                 if gap_start > gap_end:
                     continue
-                info(f"Downloading FX for {cur}: {gap_start.date()} → {gap_end.date()}")
+                info(f"Downloading FX for {cur}: {gap_start.date()} -> {gap_end.date()}")
                 df_gap = download_history(cur, gap_start, gap_end)
                 df_gap = fill_missing_days(df_gap, gap_start, gap_end)
                 df_gap["FromCurrency"] = BASE

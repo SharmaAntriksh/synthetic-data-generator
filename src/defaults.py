@@ -479,8 +479,15 @@ CUSTOMER_PARALLEL_THRESHOLD = 200_000
 # Below this eligible-customer count, subscriptions stay single-process
 SUBSCRIPTION_PARALLEL_THRESHOLD = 200_000
 
+# Below this count, product enrichment stays single-process
+PRODUCT_PARALLEL_THRESHOLD = 50_000
+
 # Below this estimated row count, wishlists stay single-process
 WISHLIST_PARALLEL_THRESHOLD = 100_000
+
+# Windows worker memory auto-cap (used in sales.py)
+WORKER_OS_RESERVE_MB = 4_000   # MB reserved for OS + main process
+WORKER_ESTIMATE_MB = 500       # MB estimated per sales worker process
 
 
 # =================================================================

@@ -6,7 +6,8 @@ grouped by (ProductKey, StoreKey, Year, Month).
 
 Returns a small dict of numpy arrays (trivial to pickle across IPC).
 
-Performance: ~2-5ms per 2M-row chunk (numpy bincount, single O(n) pass).
+Uses structured-array sorting + np.add.reduceat for O(n log n) groupby.
+Scales safely to millions of distinct products (no dense allocation).
 """
 from __future__ import annotations
 
@@ -25,64 +26,67 @@ from src.facts.shared.micro_agg_helpers import (
 def micro_aggregate_inventory(
     table: pa.Table,
 ) -> Optional[Dict[str, np.ndarray]]:
-    """
-    Collapse a sales chunk to inventory-grain demand aggregates.
+    """Collapse a sales chunk to inventory-grain demand aggregates.
 
     Input:  Arrow table with ProductKey, StoreKey, OrderDate, Quantity columns.
 
     Output: dict of aligned arrays:
         product_key, store_key, year, month, quantity_sold
-
-    Uses np.bincount with a flat composite key — O(n) single pass.
     """
     if not validate_required_columns(table, {"ProductKey", "StoreKey", "OrderDate", "Quantity"}):
         return None
 
-    product_keys = extract_column(table, "ProductKey", np.int32)
-    store_keys = extract_column(table, "StoreKey", np.int32)
+    product_keys = extract_column(table, "ProductKey", np.int64)
+    store_keys = extract_column(table, "StoreKey", np.int64)
     order_dates = table.column("OrderDate").to_numpy(zero_copy_only=False)
     qty = extract_column(table, "Quantity", np.float64)
 
     year, month = decompose_dates(order_dates)
 
-    max_prod = int(product_keys.max())
-    max_store = int(store_keys.max())
-    min_year = int(year.min())
-    n_year = int(year.max()) - min_year + 1
-
-    n_prod = max_prod + 1
-    n_store = max_store + 1
-    n_month = 12
-
-    stride_month = 1
-    stride_year = n_month
-    stride_store = n_year * stride_year
-    stride_prod = n_store * stride_store
-    total_cells = n_prod * stride_prod
-
-    flat_key = (
-        product_keys.astype(np.int64) * stride_prod
-        + store_keys.astype(np.int64) * stride_store
-        + (year - min_year).astype(np.int64) * stride_year
-        + (month - 1).astype(np.int64) * stride_month
-    )
-
-    sum_qty = np.bincount(flat_key, weights=qty, minlength=total_cells)
-
-    mask = sum_qty != 0
-    indices = np.flatnonzero(mask)
-
-    if indices.size == 0:
+    n = len(product_keys)
+    if n == 0:
         return None
 
-    out_prod, rem = np.divmod(indices, stride_prod)
-    out_store, rem = np.divmod(rem, stride_store)
-    out_year_idx, out_month_idx = np.divmod(rem, stride_year)
+    # Build composite sort key: (product, store, year, month)
+    # Sort lexicographically then use reduceat for O(n log n) groupby.
+    sort_keys = np.empty(n, dtype=[
+        ("p", np.int64), ("s", np.int64),
+        ("y", np.int16), ("m", np.int8),
+    ])
+    sort_keys["p"] = product_keys
+    sort_keys["s"] = store_keys
+    sort_keys["y"] = year
+    sort_keys["m"] = month
 
+    order = np.argsort(sort_keys, order=("p", "s", "y", "m"))
+    s_p = product_keys[order]
+    s_s = store_keys[order]
+    s_y = year[order]
+    s_m = month[order]
+    s_q = qty[order]
+
+    # Find group boundaries (where any key column changes)
+    diff = np.empty(n, dtype=bool)
+    diff[0] = True
+    diff[1:] = (
+        (s_p[1:] != s_p[:-1])
+        | (s_s[1:] != s_s[:-1])
+        | (s_y[1:] != s_y[:-1])
+        | (s_m[1:] != s_m[:-1])
+    )
+    group_starts = np.flatnonzero(diff)
+
+    if group_starts.size == 0:
+        return None
+
+    # Sum qty within each group using reduceat
+    group_qty = np.add.reduceat(s_q, group_starts)
+
+    # Extract group keys (first element of each group)
     return {
-        "product_key": out_prod.astype(np.int32),
-        "store_key": out_store.astype(np.int32),
-        "year": (out_year_idx + min_year).astype(np.int16),
-        "month": (out_month_idx + 1).astype(np.int8),
-        "quantity_sold": sum_qty[indices].astype(np.int64),
+        "product_key": s_p[group_starts],
+        "store_key": s_s[group_starts],
+        "year": s_y[group_starts].astype(np.int16),
+        "month": s_m[group_starts].astype(np.int8),
+        "quantity_sold": group_qty.astype(np.int64),
     }

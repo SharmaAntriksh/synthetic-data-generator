@@ -410,9 +410,9 @@ def work(msg: str = "", *, outfile: Any = None, **_ignore: Any) -> None:
         final = msg
     elif outfile:
         try:
-            final = f"→ {Path(outfile).name}"
+            final = f"-> {Path(outfile).name}"
         except Exception:
-            final = f"→ {outfile}"
+            final = f"-> {outfile}"
     else:
         final = ""
 

@@ -186,14 +186,19 @@ def _resolve_subcategory_names(df: pd.DataFrame, output_folder: Path) -> np.ndar
     return df["SubcategoryKey"].map(subcat_map).fillna("Unknown").to_numpy()
 
 
-def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output_folder: Path) -> pd.DataFrame:
-    """
-    Adds:
-      BrandTier, ProductLine, ColorFamily, Material, Style, AgeGroup,
-      SeasonalityProfile,
-      EligibleStore/Online/Marketplace/B2B,
-      logistics & fulfillment,
-      quality & returns.
+def enrich_products_attributes(
+    df: pd.DataFrame,
+    cfg: dict,
+    *,
+    seed: int,
+    output_folder: Path,
+    _skip_post_merge: bool = False,
+) -> pd.DataFrame:
+    """Add enrichment columns to the product DataFrame.
+
+    When *_skip_post_merge* is True, rank-dependent columns (BrandTier and
+    everything derived from it) are skipped.  The parallel orchestrator calls
+    :func:`apply_post_merge_enrichment` on the merged result to compute them.
     """
     out = df.copy()
 
@@ -265,6 +270,7 @@ def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output
         da = _DEFAULT_ARCHETYPE
         cum = np.cumsum(da["mw"], dtype=np.float64)
         cum /= cum[-1]
+        cum[-1] = 1.0
         mat[unmatched] = np.array(da["mat"], dtype=object)[np.clip(np.searchsorted(cum, u_mat[unmatched]), 0, len(da["mat"]) - 1)]
         sty[unmatched] = np.array(da["sty"], dtype=object)[np.clip(np.floor(u_sty[unmatched] * len(da["sty"])).astype(int), 0, len(da["sty"]) - 1)]
         ln[unmatched] = np.array(da["ln"], dtype=object)[np.clip(np.floor(u_line[unmatched] * len(da["ln"])).astype(int), 0, len(da["ln"]) - 1)]
@@ -430,35 +436,7 @@ def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output
     out["CasePackQty"] = pd.Series(case_pack[inv], index=out.index).astype("int32")
     out["FulfillmentType"] = pd.Series(fulfil[inv], index=out.index, dtype="string")
 
-    # --- BrandTier from ListPrice (robust: rank-based so Mainstream isn't empty) ---
-    up = pd.to_numeric(out.get("ListPrice", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
-    N = len(out)
-
-    tier = np.full(N, "Mainstream", dtype=object)
-    finite = np.isfinite(up)
-
-    if finite.any() and N >= 3:
-        # stable tie-breaker: ProductKey (or BaseProductKey) to break equal prices deterministically
-        tie = pd.to_numeric(out.get("ProductKey", np.arange(N)), errors="coerce").fillna(0).to_numpy(dtype=np.int64, copy=False)
-
-        idx = np.where(finite)[0]
-        # sort by (price asc, productkey asc)
-        order = idx[np.lexsort((tie[idx], up[idx]))]
-
-        n = order.size
-        c1 = n // 3
-        c2 = (2 * n) // 3
-
-        tier[order[:c1]] = "Value"
-        tier[order[c1:c2]] = "Mainstream"
-        tier[order[c2:]] = "Premium"
-    else:
-        # small N or all non-finite: keep default "Mainstream"
-        pass
-
-    out["BrandTier"] = pd.Series(tier, index=out.index, dtype="string")
-
-    # --- Channel eligibility ---
+    # --- Channel eligibility (hash-seeded, safe in chunks) ---
     u_ch = _base_uniform(b_u64, seed, 0xF0F0F0F0)[inv]
     is_haz = out["IsHazmat"].to_numpy(dtype=np.int64, copy=False) == 1
     ship = out["ShippingClass"].astype("string")
@@ -476,42 +454,7 @@ def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output
     eligible_b2b = (u_ch < 0.10) | b2b_bias
     out["EligibleB2B"] = eligible_b2b.astype("int64")
 
-    # --- Quality / returns ---
-    bt = out["BrandTier"].astype("string")
-    u_q = _base_uniform(b_u64, seed, 0xABABABAB)[inv]
-
-    # Warranty
-    warr = np.where(
-        bt == "Premium",
-        np.where(u_q < 0.50, 24, np.where(u_q < 0.85, 36, 12)),
-        np.where(
-            bt == "Value",
-            np.where(u_q < 0.65, 6, 12),
-            np.where(u_q < 0.70, 12, 24),
-        ),
-    )
-    out["WarrantyMonths"] = pd.Series(warr, index=out.index).astype("int32")
-
-    # Return / defect baseline rates
-    fragile = out["IsFragile"].to_numpy(dtype=np.int64, copy=False) == 1
-    ship_freight = (ship == "Freight").to_numpy(dtype=bool, copy=False)
-
-    base_return = 0.02 + (fragile * 0.05) + (ship_freight * 0.03)
-    base_return = base_return - (bt == "Premium").to_numpy(dtype=np.float64, copy=False) * 0.01
-    jitter_r = (u_q * 0.03)
-    rr = np.clip(base_return + jitter_r, 0.005, 0.25)
-    out["ReturnRateBase"] = pd.Series(rr, index=out.index).astype("float32")
-
-    base_def = 0.002 + (bt == "Value").to_numpy(dtype=np.float64, copy=False) * 0.006 + is_haz.astype(np.float64) * 0.003
-    jitter_d = (_base_uniform(b_u64, seed, 0xCDCDCDCD)[inv] * 0.005)
-    dr = np.clip(base_def + jitter_d, 0.0005, 0.05)
-    out["DefectRateBase"] = pd.Series(dr, index=out.index).astype("float32")
-
-    # Return window
-    rw = np.where(bt == "Premium", 90, np.where(bt == "Mainstream", 60, 30))
-    out["ReturnWindowDays"] = pd.Series(rw, index=out.index).astype("int32")
-
-    # --- Sourcing & Compliance ---
+    # --- Sourcing & Compliance (hash-seeded, safe in chunks) ---
     _COUNTRY_OF_ORIGIN = ["China", "USA", "Germany", "India", "Vietnam", "Mexico", "Japan", "Taiwan"]
     _COO_PROBS_BY_MATERIAL = {
         "Steel":      [0.30, 0.15, 0.20, 0.10, 0.05, 0.05, 0.10, 0.05],
@@ -545,15 +488,6 @@ def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output
         coo[~assigned] = np.array(_COUNTRY_OF_ORIGIN)[idx]
     out["CountryOfOrigin"] = pd.Series(coo, index=out.index, dtype="string")
 
-    u_sus = _base_uniform(b_u64, seed, 0x2A2A2A2A)[inv]
-    tier_num = np.where(bt == "Premium", 0.7, np.where(bt == "Mainstream", 0.5, 0.3))
-    mat_eco_bonus = np.where(
-        np.isin(mat_vals, ["Cotton", "Wood", "Ceramic"]), 0.15, 0.0
-    )
-    sus_raw = (tier_num + mat_eco_bonus + u_sus * 0.3) / 1.15 * 100
-    out["SustainabilityScore"] = pd.Series(np.clip(sus_raw, 1, 100).astype("int32"), index=out.index)
-
-    _CERT_TYPES = ["CE", "UL", "ISO", "FDA", "None"]
     u_cert = _base_uniform(b_u64, seed, 0x3A3A3A3A)[inv]
     cert = np.where(
         u_cert < 0.25, "CE",
@@ -569,7 +503,140 @@ def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output
         np.where(u_asm < asm_prob, "Yes", "No"), index=out.index, dtype="string"
     )
 
-    # --- Inventory & Supply Chain ---
+    # PackagingType (hash-seeded, safe in chunks)
+    u_pkg = _base_uniform(b_u64, seed, 0x8A8A8A8A)[inv]
+    pkg = np.where(
+        size_bucket[inv] == 2,
+        np.where(u_pkg < 0.40, "Pallet", np.where(u_pkg < 0.75, "Bulk", "Box")),
+        np.where(
+            size_bucket[inv] == 1,
+            np.where(u_pkg < 0.60, "Box", np.where(u_pkg < 0.85, "Bag", "Blister")),
+            np.where(u_pkg < 0.35, "Blister", np.where(u_pkg < 0.70, "Box", "Bag")),
+        ),
+    )
+    out["PackagingType"] = pd.Series(pkg, index=out.index, dtype="string")
+
+    # IsGiftEligible (hash-seeded, safe in chunks)
+    u_gift = _base_uniform(b_u64, seed, 0xCC1C1C1C)[inv]
+    gift_prob = np.where(size_bucket[inv] == 0, 0.70, np.where(size_bucket[inv] == 1, 0.50, 0.20))
+    out["IsGiftEligible"] = pd.Series(
+        np.where(u_gift < gift_prob, "Yes", "No"), index=out.index, dtype="string"
+    )
+
+    # TargetGender (keyword-based, safe in chunks)
+    _GENDER_MALE_KW = ("men", " male", "boy", "gentleman")
+    _GENDER_FEMALE_KW = ("women", "woman", " female", "girl", "lady", "ladies")
+    tg = pd.Series("Unisex", index=out.index, dtype="string")
+    for kw in _GENDER_FEMALE_KW:
+        tg = tg.mask((tg == "Unisex") & text_l.str.contains(kw, regex=False), "Female")
+    for kw in _GENDER_MALE_KW:
+        tg = tg.mask((tg == "Unisex") & text_l.str.contains(kw, regex=False), "Male")
+    out["TargetGender"] = tg
+
+    # --- Digital product overrides ---
+    _is_digital = is_digital_base[inv]
+    if _is_digital.any():
+        dm = pd.Series(_is_digital, index=out.index)
+        out.loc[dm, "PackagingType"] = "Digital"
+        out.loc[dm, "AssemblyRequired"] = "No"
+        out.loc[dm, "IsGiftEligible"] = "Yes"
+
+    # --- Rank-dependent columns (BrandTier + dependents) ---
+    # Skipped in parallel chunk mode; computed on full dataset after merge.
+    if not _skip_post_merge:
+        out = apply_post_merge_enrichment(out, seed)
+
+    return out
+
+
+def apply_post_merge_enrichment(df: pd.DataFrame, seed: int) -> pd.DataFrame:
+    """Compute rank-dependent columns on the full (merged) product DataFrame.
+
+    These columns depend on BrandTier (a rank-based partition of ListPrice
+    across ALL products), so they cannot be computed correctly on chunks.
+    The parallel orchestrator calls this after merging enriched chunks.
+
+    Columns computed: BrandTier, WarrantyMonths, ReturnRateBase, DefectRateBase,
+    ReturnWindowDays, SustainabilityScore, PopularityScore, ABCClassification,
+    ReorderPointUnits, SafetyStockUnits, AvgCustomerRating, ReviewCount,
+    CompetitorPriceIndex, MarginCategory, IsBestseller, IsEcoFriendly.
+    """
+    out = df
+
+    # Recompute base key hash arrays (deterministic on BaseProductKey)
+    base = pd.to_numeric(
+        out.get("BaseProductKey", out["ProductKey"]), errors="coerce"
+    ).fillna(0).astype("int64").to_numpy()
+    uniq_base, inv = np.unique(base, return_inverse=True)
+    b_u64 = uniq_base.astype("uint64", copy=False)
+    N = len(out)
+
+    # --- BrandTier from ListPrice (rank-based) ---
+    up = pd.to_numeric(out.get("ListPrice", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
+
+    tier = np.full(N, "Mainstream", dtype=object)
+    finite = np.isfinite(up)
+
+    if finite.any() and N >= 3:
+        tie = pd.to_numeric(
+            out.get("ProductKey", np.arange(N)), errors="coerce"
+        ).fillna(0).to_numpy(dtype=np.int64, copy=False)
+        idx = np.where(finite)[0]
+        order = idx[np.lexsort((tie[idx], up[idx]))]
+        n = order.size
+        c1 = n // 3
+        c2 = (2 * n) // 3
+        tier[order[:c1]] = "Value"
+        tier[order[c1:c2]] = "Mainstream"
+        tier[order[c2:]] = "Premium"
+
+    out["BrandTier"] = pd.Series(tier, index=out.index, dtype="string")
+    bt = out["BrandTier"].astype("string")
+
+    # --- Quality / returns (BrandTier-dependent) ---
+    u_q = _base_uniform(b_u64, seed, 0xABABABAB)[inv]
+
+    warr = np.where(
+        bt == "Premium",
+        np.where(u_q < 0.50, 24, np.where(u_q < 0.85, 36, 12)),
+        np.where(
+            bt == "Value",
+            np.where(u_q < 0.65, 6, 12),
+            np.where(u_q < 0.70, 12, 24),
+        ),
+    )
+    out["WarrantyMonths"] = pd.Series(warr, index=out.index).astype("int32")
+
+    fragile = out["IsFragile"].to_numpy(dtype=np.int64, copy=False) == 1
+    is_haz = out["IsHazmat"].to_numpy(dtype=np.int64, copy=False) == 1
+    ship = out["ShippingClass"].astype("string")
+    ship_freight = (ship == "Freight").to_numpy(dtype=bool, copy=False)
+
+    base_return = 0.02 + (fragile * 0.05) + (ship_freight * 0.03)
+    base_return = base_return - (bt == "Premium").to_numpy(dtype=np.float64, copy=False) * 0.01
+    jitter_r = (u_q * 0.03)
+    rr = np.clip(base_return + jitter_r, 0.005, 0.25)
+    out["ReturnRateBase"] = pd.Series(rr, index=out.index).astype("float32")
+
+    base_def = 0.002 + (bt == "Value").to_numpy(dtype=np.float64, copy=False) * 0.006 + is_haz.astype(np.float64) * 0.003
+    jitter_d = (_base_uniform(b_u64, seed, 0xCDCDCDCD)[inv] * 0.005)
+    dr = np.clip(base_def + jitter_d, 0.0005, 0.05)
+    out["DefectRateBase"] = pd.Series(dr, index=out.index).astype("float32")
+
+    rw = np.where(bt == "Premium", 90, np.where(bt == "Mainstream", 60, 30))
+    out["ReturnWindowDays"] = pd.Series(rw, index=out.index).astype("int32")
+
+    # --- SustainabilityScore (BrandTier-dependent) ---
+    u_sus = _base_uniform(b_u64, seed, 0x2A2A2A2A)[inv]
+    mat_vals = out["Material"].astype(str).to_numpy()
+    tier_num = np.where(bt == "Premium", 0.7, np.where(bt == "Mainstream", 0.5, 0.3))
+    mat_eco_bonus = np.where(
+        np.isin(mat_vals, ["Cotton", "Wood", "Ceramic"]), 0.15, 0.0
+    )
+    sus_raw = (tier_num + mat_eco_bonus + u_sus * 0.3) / 1.15 * 100
+    out["SustainabilityScore"] = pd.Series(np.clip(sus_raw, 1, 100).astype("int32"), index=out.index)
+
+    # --- Inventory & Supply Chain (BrandTier-dependent) ---
     u_pop = _base_uniform(b_u64, seed, 0x5A5A5A5A)[inv]
     tier_pop_base = np.where(bt == "Premium", 0.6, np.where(bt == "Value", 0.3, 0.45))
     pop_raw = (tier_pop_base + u_pop * 0.5) / 1.1 * 100
@@ -597,20 +664,7 @@ def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output
     SafetyStockUnits = np.clip((ReorderPointUnits * (0.2 + u_ss * 0.3)).astype("int64"), 5, 1000)
     out["SafetyStockUnits"] = pd.Series(SafetyStockUnits, index=out.index).astype("int32")
 
-    _PKG_TYPES = ["Box", "Blister", "Bag", "Bulk", "Pallet"]
-    u_pkg = _base_uniform(b_u64, seed, 0x8A8A8A8A)[inv]
-    pkg = np.where(
-        size_bucket[inv] == 2,
-        np.where(u_pkg < 0.40, "Pallet", np.where(u_pkg < 0.75, "Bulk", "Box")),
-        np.where(
-            size_bucket[inv] == 1,
-            np.where(u_pkg < 0.60, "Box", np.where(u_pkg < 0.85, "Bag", "Blister")),
-            np.where(u_pkg < 0.35, "Blister", np.where(u_pkg < 0.70, "Box", "Bag")),
-        ),
-    )
-    out["PackagingType"] = pd.Series(pkg, index=out.index, dtype="string")
-
-    # --- Market & Customer Perception ---
+    # --- Market & Customer Perception (BrandTier-dependent) ---
     u_rat = _base_uniform(b_u64, seed, 0x9A9A9A9A)[inv]
     defect_arr = out["DefectRateBase"].to_numpy(dtype=np.float64, copy=False)
     rat_base = 4.2 - defect_arr * 30
@@ -641,38 +695,16 @@ def enrich_products_attributes(df: pd.DataFrame, cfg: dict, *, seed: int, output
     )
     out["MarginCategory"] = pd.Series(margin_cat, index=out.index, dtype="string")
 
-    # --- Fun / Beginner-Friendly ---
-    u_gift = _base_uniform(b_u64, seed, 0xCC1C1C1C)[inv]
-    gift_prob = np.where(size_bucket[inv] == 0, 0.70, np.where(size_bucket[inv] == 1, 0.50, 0.20))
-    out["IsGiftEligible"] = pd.Series(
-        np.where(u_gift < gift_prob, "Yes", "No"), index=out.index, dtype="string"
-    )
-
+    # IsBestseller (rank-based on PopularityScore)
     pop_rank = np.argsort(np.argsort(-PopularityScore))
     out["IsBestseller"] = pd.Series(
         np.where(pop_rank < N * 0.15, "Yes", "No"), index=out.index, dtype="string"
     )
 
+    # IsEcoFriendly (depends on SustainabilityScore which depends on BrandTier)
     sus_arr = out["SustainabilityScore"].to_numpy(dtype=np.int32, copy=False)
     out["IsEcoFriendly"] = pd.Series(
         np.where(sus_arr > 70, "Yes", "No"), index=out.index, dtype="string"
     )
-
-    _GENDER_MALE_KW = ("men", " male", "boy", "gentleman")
-    _GENDER_FEMALE_KW = ("women", "woman", " female", "girl", "lady", "ladies")
-    tg = pd.Series("Unisex", index=out.index, dtype="string")
-    for kw in _GENDER_FEMALE_KW:
-        tg = tg.mask((tg == "Unisex") & text_l.str.contains(kw, regex=False), "Female")
-    for kw in _GENDER_MALE_KW:
-        tg = tg.mask((tg == "Unisex") & text_l.str.contains(kw, regex=False), "Male")
-    out["TargetGender"] = tg
-
-    # --- Digital product overrides ---
-    _is_digital = is_digital_base[inv]
-    if _is_digital.any():
-        dm = pd.Series(_is_digital, index=out.index)
-        out.loc[dm, "PackagingType"] = "Digital"
-        out.loc[dm, "AssemblyRequired"] = "No"
-        out.loc[dm, "IsGiftEligible"] = "Yes"
 
     return out
