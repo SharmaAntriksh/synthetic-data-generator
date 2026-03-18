@@ -268,9 +268,6 @@ def generate_scd2_versions(
         new_rows = [None] * _est_rows
     _row_count = 0
 
-    # Pre-convert end_date to int for fast arithmetic
-    _end_epoch = end_date.value // 10**9 // 86400  # days since epoch
-
     # Use column arrays directly instead of to_dict("records")
     _col_names = changed_df.columns.tolist()
     _col_arrays = {col: changed_df[col].to_numpy() for col in _col_names}
@@ -281,8 +278,10 @@ def generate_scd2_versions(
     if _eff_start_raw is not None:
         _eff_start_ts = pd.to_datetime(pd.Series(_eff_start_raw))
         _eff_start_days = _eff_start_ts.values.astype("datetime64[D]").astype("int64")
+        _eff_start_np = _eff_start_ts.to_numpy()
     else:
         _eff_start_days = None
+        _eff_start_np = None
     _end_date_days = np.datetime64(end_date, "D").astype("int64")
 
     for _ri in range(_n_changed):
@@ -295,7 +294,7 @@ def generate_scd2_versions(
         # Space event dates across customer's active period (pre-computed days)
         if _eff_start_days is not None:
             total_days = int(_end_date_days - _eff_start_days[_ri])
-            cust_start = _eff_start_ts.iloc[_ri]
+            cust_start = pd.Timestamp(_eff_start_np[_ri])
         else:
             cust_start = pd.Timestamp(row_dict["EffectiveStartDate"])
             total_days = (end_date - cust_start).days

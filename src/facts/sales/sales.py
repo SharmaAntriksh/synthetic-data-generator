@@ -489,6 +489,63 @@ def _resolve_partitioning(cfg: dict, partition_enabled: bool, partition_cols: Op
     return bool(partition_enabled), partition_cols
 
 
+def _merge_fact_csv_chunks(
+    csv_chunks: list,
+    out_dir: Path,
+    chunk_prefix: str,
+    chunk_size: int,
+    delete_chunks: bool,
+) -> None:
+    """Re-chunk CSV files for a sales fact table to respect chunk_size.
+
+    Output files keep the existing chunk_prefix naming convention
+    (e.g. ``sales_chunk0000.csv``, ``sales_return_chunk0000.csv``).
+    """
+    if not csv_chunks:
+        return
+
+    with open(csv_chunks[0], "r", encoding="utf-8") as f:
+        header = f.readline()
+
+    out_files: list[Path] = []
+    out_f = None
+    rows_in_current = 0
+    file_idx = 0
+
+    def _open_next():
+        nonlocal out_f, rows_in_current, file_idx
+        if out_f is not None:
+            out_f.close()
+        path = out_dir / f"{chunk_prefix}{file_idx:04d}.csv"
+        out_files.append(path)
+        out_f = open(path, "w", newline="", encoding="utf-8")
+        out_f.write(header)
+        rows_in_current = 0
+        file_idx += 1
+
+    _open_next()
+    for chunk_path in csv_chunks:
+        with open(chunk_path, "r", encoding="utf-8") as in_f:
+            next(in_f, None)  # skip header
+            for line in in_f:
+                if rows_in_current >= chunk_size:
+                    _open_next()
+                out_f.write(line)
+                rows_in_current += 1
+    if out_f is not None:
+        out_f.close()
+
+    if delete_chunks:
+        # Only delete originals that aren't also output files
+        out_set = set(out_files)
+        for f in csv_chunks:
+            if f not in out_set:
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+
+
 # =====================================================================
 # Main Fact Generation
 # =====================================================================
@@ -2006,6 +2063,17 @@ def generate_sales_fact(
         return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 
     if file_format == "csv":
+        # Merge small CSV chunk files into chunk_size-respecting files.
+        # Sales chunks are already ~chunk_size rows each, but SalesReturn
+        # chunks are tiny (return_rate × chunk_size per worker).
+        for t in tables:
+            csv_dir = Path(output_paths.table_out_dir(t))
+            spec = output_paths.spec(t)
+            csv_chunks = sorted(csv_dir.glob(f"{spec.chunk_prefix}*.csv"))
+            if len(csv_chunks) <= 1:
+                continue
+            _merge_fact_csv_chunks(csv_chunks, csv_dir, spec.chunk_prefix, chunk_size, delete_chunks)
+
         manifest = _build_sales_manifest()
         return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 

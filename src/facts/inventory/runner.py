@@ -95,6 +95,8 @@ def run_inventory_pipeline(
             for col in product_attrs.columns
         }
 
+    csv_chunk_size = int(getattr(sales_cfg, "chunk_size", 2_000_000))
+
     if qualified_pairs >= _PARALLEL_THRESHOLD and n_stores >= 2:
         result = _run_parallel(
             demand, parquet_dims, icfg, inv_out, file_format, n_stores,
@@ -105,6 +107,7 @@ def run_inventory_pipeline(
             partition_by=partition_by,
             product_attrs_arrays=product_attrs_arrays,
             compression=compression,
+            csv_chunk_size=csv_chunk_size,
         )
     else:
         result = _run_single(demand, parquet_dims, icfg, inv_out, file_format, partition_by=partition_by,
@@ -208,6 +211,7 @@ def _run_parallel(
     partition_by: Optional[List[str]] = None,
     product_attrs_arrays: Optional[Dict[str, np.ndarray]] = None,
     compression: str = "snappy",
+    csv_chunk_size: int = 2_000_000,
 ) -> Dict[str, Any]:
     """Partition by store groups and run simulation in parallel."""
     from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
@@ -297,6 +301,10 @@ def _run_parallel(
                 delete_chunks=delete_chunks,
                 compression=compression,
             )
+            # Merge CSV chunks into fewer files so the packager and
+            # SQL import see a handful of BULK INSERTs instead of N small ones.
+            if file_format == "csv":
+                _merge_csv_chunks(inv_out, chunk_size=csv_chunk_size, delete_chunks=delete_chunks)
 
     n_pairs = demand.groupby(["ProductKey", "StoreKey"]).ngroups
     return {
@@ -377,6 +385,70 @@ def _merge_inventory_chunks(
                 pass
 
     done(f"Merged chunks: {merged_path.name}")
+
+
+def _merge_csv_chunks(
+    inv_out: Path,
+    chunk_size: int = 2_000_000,
+    delete_chunks: bool = True,
+) -> None:
+    """Re-chunk inventory CSV files to respect the configured chunk_size.
+
+    Reads all inventory_chunk_*.csv files and writes merged output files
+    of up to *chunk_size* data rows each.  A single file is named
+    ``inventory_snapshot.csv``; multiple files are named
+    ``inventory_snapshot_00000.csv``, etc.
+    """
+    csv_chunks = sorted(inv_out.glob("inventory_chunk_*.csv"))
+    if len(csv_chunks) <= 1:
+        return
+
+    # Read header from first chunk
+    with open(csv_chunks[0], "r", encoding="utf-8") as f:
+        header = f.readline()
+
+    out_files: list[Path] = []
+    out_f = None
+    rows_in_current = 0
+    file_idx = 0
+
+    def _open_next():
+        nonlocal out_f, rows_in_current, file_idx
+        if out_f is not None:
+            out_f.close()
+        path = inv_out / f"inventory_snapshot_{file_idx:05d}.csv"
+        out_files.append(path)
+        out_f = open(path, "w", newline="", encoding="utf-8")
+        out_f.write(header)
+        rows_in_current = 0
+        file_idx += 1
+
+    _open_next()
+    for chunk_path in csv_chunks:
+        with open(chunk_path, "r", encoding="utf-8") as in_f:
+            next(in_f, None)  # skip header
+            for line in in_f:
+                if rows_in_current >= chunk_size:
+                    _open_next()
+                out_f.write(line)
+                rows_in_current += 1
+    if out_f is not None:
+        out_f.close()
+
+    # If only one output file, rename to the non-numbered name
+    if len(out_files) == 1:
+        single = inv_out / "inventory_snapshot.csv"
+        out_files[0].rename(single)
+        out_files = [single]
+
+    if delete_chunks:
+        for f in csv_chunks:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+    info(f"Merged {len(csv_chunks)} CSV chunks into {len(out_files)} file(s)")
 
 
 def _merge_chunks_to_delta(

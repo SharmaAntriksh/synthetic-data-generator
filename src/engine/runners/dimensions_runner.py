@@ -445,9 +445,8 @@ def generate_dimensions(
     # should_regenerate() will return True when the file is missing.
     random_mode = _is_random_mode(cfg)
     if force_set:
-        deleted = [n for n in sorted(force_set) if delete_version(n)]
-        if deleted and not random_mode:
-            info(f"Deleted version files to force regeneration: {deleted}")
+        for n in sorted(force_set):
+            delete_version(n)
 
     regenerated: Dict[str, bool] = {}
 

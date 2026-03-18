@@ -550,10 +550,11 @@ def run_wishlist_pipeline(
     *,
     accumulator: WishlistAccumulator,
     parquet_dims: Path,
+    fact_out: Path,
     cfg: Any,
     file_format: str = "parquet",
 ) -> Optional[Dict[str, Any]]:
-    """Generate customer_wishlists.parquet using accumulated sales data."""
+    """Generate customer_wishlists into the facts output folder."""
     c = _read_cfg(cfg)
     if not c.enabled:
         return None
@@ -588,7 +589,9 @@ def run_wishlist_pipeline(
     product_weights = _build_product_weights(products, parquet_dims)
     purchased_pairs = accumulator.finalize()
 
-    out_path = parquet_dims / "customer_wishlists.parquet"
+    wishlists_dir = fact_out / "customer_wishlists"
+    wishlists_dir.mkdir(parents=True, exist_ok=True)
+    pq_path = wishlists_dir / "customer_wishlists.parquet"
 
     n_rows = _write_bridge(
         customers=customers,
@@ -598,13 +601,30 @@ def run_wishlist_pipeline(
         c=c,
         g_start=g_start,
         g_end=g_end,
-        out_path=out_path,
+        out_path=pq_path,
     )
-    info(f"Customer wishlists written: {out_path.name} ({n_rows:,} rows)")
+
+    if file_format == "csv" and n_rows > 0:
+        _sales_cfg = getattr(cfg, "sales", None)
+        _csv_chunk = int(getattr(_sales_cfg, "chunk_size", 0)) if _sales_cfg else 0
+        df = pq.read_table(str(pq_path)).to_pandas()
+        # Remove the intermediate parquet — CSV mode doesn't need it
+        pq_path.unlink()
+
+        if _csv_chunk and _csv_chunk > 0 and n_rows > _csv_chunk:
+            n_files = 0
+            for start in range(0, n_rows, _csv_chunk):
+                chunk_path = wishlists_dir / f"customer_wishlists_{n_files:05d}.csv"
+                df.iloc[start:start + _csv_chunk].to_csv(str(chunk_path), index=False)
+                n_files += 1
+        else:
+            df.to_csv(str(wishlists_dir / "customer_wishlists.csv"), index=False)
+
+    info(f"Customer wishlists: {n_rows:,} rows")
 
     return {
-        "bridge": str(out_path),
-        "bridge_rows": n_rows,
+        "wishlists": str(wishlists_dir),
+        "wishlists_rows": n_rows,
     }
 
 

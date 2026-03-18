@@ -26,6 +26,7 @@ def write_fact_table(
     csv_float_format: Optional[str] = None,
     compression: str = "snappy",
     row_group_size: int = 500_000,
+    csv_chunk_size: Optional[int] = None,
 ) -> None:
     """Write a fact table in the requested format.
 
@@ -39,6 +40,7 @@ def write_fact_table(
         csv_float_format: Optional float format string for CSV output.
         compression:    Parquet compression codec.
         row_group_size: Parquet row group size.
+        csv_chunk_size: Max rows per CSV file.  None or 0 = single file.
     """
     if isinstance(df_or_table, pa.Table):
         table = df_or_table
@@ -58,23 +60,32 @@ def write_fact_table(
         info(f"Wrote {name}/ ({n_rows:,} rows)")
         return
 
-    # Parquet — always written for both parquet and csv formats
-    parquet_path = out_dir / f"{name}.parquet"
-    pq.write_table(
-        table, str(parquet_path),
-        compression=compression,
-        row_group_size=row_group_size,
-        use_dictionary=True,
-    )
+    if file_format == "parquet":
+        parquet_path = out_dir / f"{name}.parquet"
+        pq.write_table(
+            table, str(parquet_path),
+            compression=compression,
+            row_group_size=row_group_size,
+            use_dictionary=True,
+        )
 
     if file_format == "csv":
-        csv_path = out_dir / f"{name}.csv"
         df = table.to_pandas() if isinstance(df_or_table, pa.Table) else df_or_table
         csv_df = csv_prep_fn(df) if csv_prep_fn else df
         kwargs: dict = {"index": False}
         if csv_float_format:
             kwargs["float_format"] = csv_float_format
-        csv_df.to_csv(str(csv_path), **kwargs)
-        info(f"Wrote {csv_path.name} ({n_rows:,} rows)")
-    else:
-        info(f"Wrote {parquet_path.name} ({n_rows:,} rows)")
+
+        if csv_chunk_size and csv_chunk_size > 0 and n_rows > csv_chunk_size:
+            n_files = 0
+            for start in range(0, n_rows, csv_chunk_size):
+                chunk_path = out_dir / f"{name}_{n_files:05d}.csv"
+                csv_df.iloc[start:start + csv_chunk_size].to_csv(str(chunk_path), **kwargs)
+                n_files += 1
+            info(f"Wrote {name} ({n_rows:,} rows, {n_files} files)")
+        else:
+            csv_path = out_dir / f"{name}.csv"
+            csv_df.to_csv(str(csv_path), **kwargs)
+            info(f"Wrote {csv_path.name} ({n_rows:,} rows)")
+    elif file_format == "parquet":
+        info(f"Wrote {name}.parquet ({n_rows:,} rows)")

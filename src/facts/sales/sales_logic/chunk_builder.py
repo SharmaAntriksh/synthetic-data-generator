@@ -1094,7 +1094,6 @@ def build_chunk_table(
             _ck_idx = np.clip(np.asarray(_cust_for_store, dtype=np.int32) - 1, 0, len(_cust_geo) - 1)
             _cust_countries = _geo2c[np.clip(_cust_geo[_ck_idx], 0, len(_geo2c) - 1)]
             _use_local = rng.random(_n_to_sample) < 0.70
-            _ms_set = frozenset(_month_stores.tolist())
             order_store = np.empty(_n_to_sample, dtype=np.int32)
 
             for _cid in np.unique(_cust_countries):

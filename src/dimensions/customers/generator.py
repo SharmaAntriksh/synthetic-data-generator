@@ -4,7 +4,7 @@ and OrganizationProfile tables.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Dict
 
@@ -104,6 +104,14 @@ for _pname, _parr in [
     if abs(float(_parr.sum()) - 1.0) > 1e-6:
         raise ValueError(f"generator.{_pname} sums to {float(_parr.sum())}, expected 1.0")
 del _pname, _parr
+
+
+def _labels_to_codes(values: np.ndarray, labels: Sequence) -> np.ndarray:
+    """Map a string array to integer codes given an ordered label list."""
+    codes = np.zeros(len(values), dtype=np.intp)
+    for i, lbl in enumerate(labels):
+        codes[values == lbl] = i
+    return codes
 
 
 def _vectorized_cdf_sample(cdfs: np.ndarray, brackets: np.ndarray, u: np.ndarray) -> np.ndarray:
@@ -315,14 +323,10 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
     if n_person:
         # Build CDF per education level, then vectorized lookup
         _occ_labels = OCCUPATION_LABELS
-        _edu_to_code = {lbl: i for i, lbl in enumerate(EDUCATION_LABELS)}
         _occ_cdfs = np.array([np.cumsum(OCCUPATION_PROBS_BY_EDUCATION[lbl]) for lbl in EDUCATION_LABELS])
         _occ_cdfs[:, -1] = 1.0
         _person_edu = Education[person_mask]
-        # Vectorized string-to-code via factorize-style lookup
-        _edu_code_arr = np.zeros(n_person, dtype=np.intp)
-        for _i, _lbl in enumerate(EDUCATION_LABELS):
-            _edu_code_arr[_person_edu == _lbl] = _i
+        _edu_code_arr = _labels_to_codes(_person_edu, EDUCATION_LABELS)
         _u = rng.random(n_person)
         _occ_idx = _vectorized_cdf_sample(_occ_cdfs, _edu_code_arr, _u)
         _occ_idx = np.clip(_occ_idx, 0, len(_occ_labels) - 1)
@@ -338,9 +342,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         # Vectorized: build per-person lambda from (marital, bracket) lookup,
         # then single Poisson draw for all persons.
         person_marital = MaritalStatus[person_mask]
-        _ms_codes = np.zeros(n_person, dtype=np.intp)
-        for _i, _lbl in enumerate(MARITAL_STATUS_LABELS):
-            _ms_codes[person_marital == _lbl] = _i
+        _ms_codes = _labels_to_codes(person_marital, MARITAL_STATUS_LABELS)
         _n_ms = len(MARITAL_STATUS_LABELS)
         _n_br = len(AGE_GROUP_LABELS)
         # Build lambda lookup table: (n_marital, n_brackets)
@@ -391,7 +393,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
         # then single-pass sampling via uniform + searchsorted.
         _ho_labels = HOME_OWNERSHIP_LABELS
         _ig_list = list(HOME_OWNERSHIP_PROBS_BY_INCOME.keys())
-        _ig_to_code = {lbl: i for i, lbl in enumerate(_ig_list)}
         _n_ig = len(_ig_list)
         _n_br = len(AGE_GROUP_LABELS)
         _n_ho = len(_ho_labels)
@@ -405,10 +406,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path):
                 _ho_cdfs[_ii, _bi, -1] = 1.0
 
         ig = IncomeGroup[person_mask]
-        # Vectorized string-to-code
-        _ig_codes = np.zeros(n_person, dtype=np.intp)
-        for _i, _lbl in enumerate(_ig_list):
-            _ig_codes[ig == _lbl] = _i
+        _ig_codes = _labels_to_codes(ig, _ig_list)
         _u = rng.random(n_person)
         # Flatten 2D (income_group, bracket) into single composite key for vectorized sampling
         _ho_cdfs_flat = _ho_cdfs.reshape(_n_ig * _n_br, _n_ho)

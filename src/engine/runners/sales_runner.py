@@ -363,6 +363,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             run_wishlist_pipeline(
                 accumulator=wishlists_acc,
                 parquet_dims=ctx.parquet_dims,
+                fact_out=ctx.fact_out,
                 cfg=ctx.cfg,
                 file_format=ctx.fmt,
             )

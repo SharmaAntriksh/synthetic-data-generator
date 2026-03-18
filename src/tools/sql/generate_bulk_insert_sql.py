@@ -13,6 +13,7 @@ from src.tools.sql.sql_helpers import (
     budget_enabled as _budget_enabled_from_cfg,
     inventory_enabled as _inventory_enabled_from_cfg,
     complaints_enabled as _complaints_enabled_from_cfg,
+    wishlists_enabled as _wishlists_enabled_from_cfg,
 )
 
 
@@ -60,6 +61,10 @@ _FOLDER_TABLE_ALIASES: dict[str, str] = {
 
     # complaints (files live under facts/complaints/)
     "complaints": "Complaints",
+
+    # wishlists (files live under facts/customer_wishlists/)
+    "customer_wishlists": "CustomerWishlists",
+    "wishlists": "CustomerWishlists",
 }
 
 def _infer_table_from_filename(csv_file: str) -> str:
@@ -135,6 +140,9 @@ def _allowed_fact_tables_from_cfg(cfg: Optional[Mapping]) -> Optional[Set[str]]:
 
     if _complaints_enabled_from_cfg(cfg):
         allowed.add("Complaints")
+
+    if _wishlists_enabled_from_cfg(cfg):
+        allowed.add("CustomerWishlists")
 
     return allowed
 

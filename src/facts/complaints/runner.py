@@ -402,10 +402,12 @@ def _prepare_complaints_csv(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _write_complaints(table: pa.Table, complaints_dir: Path, file_format: str) -> None:
+def _write_complaints(table: pa.Table, complaints_dir: Path, file_format: str,
+                      csv_chunk_size: Optional[int] = None) -> None:
     """Write complaints table in the requested format (parquet, csv, or delta)."""
     write_fact_table(table, complaints_dir, "complaints", file_format,
-                     csv_prep_fn=_prepare_complaints_csv)
+                     csv_prep_fn=_prepare_complaints_csv,
+                     csv_chunk_size=csv_chunk_size)
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +449,9 @@ def run_complaints_pipeline(
         skip("Complaints: generated 0 rows; skipping write.")
         return None
 
-    _write_complaints(table, complaints_dir, file_format)
+    _sales_cfg = getattr(cfg, "sales", None)
+    _csv_chunk = int(getattr(_sales_cfg, "chunk_size", 0)) if _sales_cfg else 0
+    _write_complaints(table, complaints_dir, file_format, csv_chunk_size=_csv_chunk)
 
     # For deltaparquet the delta table is written directly at complaints_dir;
     # the directory structure is the delta table itself — no cleanup needed.

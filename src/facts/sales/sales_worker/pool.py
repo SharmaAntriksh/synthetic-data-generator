@@ -188,17 +188,18 @@ def iter_imap_unordered(
             maxtasksperchild=spec.maxtasksperchild,
         )
 
+    _terminated = False
     try:
         if use_timeout:
             yield from _iter_with_timeout(pool, tasks, task_fn, spec)
         else:
             yield from _iter_fast(pool, tasks, task_fn, spec)
     except Exception:
-        try:
-            pool.terminate()
-        finally:
-            pool.join()
+        _terminated = True
+        pool.terminate()
+        pool.join()
         raise
     finally:
-        pool.close()
-        pool.join()
+        if not _terminated:
+            pool.close()
+            pool.join()
