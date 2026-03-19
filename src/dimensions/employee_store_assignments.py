@@ -1121,6 +1121,10 @@ def generate_employee_store_assignments(
                 candidates = [sk for sk in open_stores if sk != orig_sk]
             if not candidates:
                 candidates = open_stores
+            if not candidates:
+                # No physical destination store available (e.g. all physical stores closed
+                # or the fleet is 100% online). Skip this transfer record entirely.
+                continue
 
             weights = np.array(
                 [max(1, stores_emp_count.get(sk, 1)) for sk in candidates],
@@ -1270,11 +1274,11 @@ def generate_employee_store_assignments(
 
     sales_profile = dict(default_profile)
     sales_profile.update(per_role_profile.get(primary_sales_role, {}))
-    sales_profile.setdefault("role_multiplier", 2.0)
+    sales_profile.setdefault("role_multiplier", 2.5)
     sales_profile.setdefault("episodes_max", 4)
-    sales_profile.setdefault("episodes_min", 1)
-    sales_profile.setdefault("duration_days_min", 14)
-    sales_profile.setdefault("duration_days_max", 120)
+    sales_profile.setdefault("episodes_min", 2)
+    sales_profile.setdefault("duration_days_min", 60)
+    sales_profile.setdefault("duration_days_max", 240)
 
     base = float(np.clip(float_or(mover_share, 0.03), 0.0, 1.0))
     pt_mult = float(max(1.0, float_or(part_time_multiplier, 1.0)))

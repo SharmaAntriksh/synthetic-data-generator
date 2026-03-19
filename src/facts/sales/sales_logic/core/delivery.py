@@ -203,23 +203,27 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
             early_days = rng.integers(1, 3, size=n, dtype=np.int64)
             delivery_offset[early_mask] = -early_days[early_mask]
 
-    # Final delivery date
+    # Final delivery date (never before order date)
     delivery_date = due_date + delivery_offset.astype("timedelta64[D]")
+    delivery_date = np.maximum(delivery_date, order_dates)
+
+    # Recompute effective offset after clamping so status labels match
+    effective_offset = (delivery_date - due_date).astype(np.int64)
 
     # ------------------------------------------------------------
-    # Delivery status (use delivery_offset; avoids datetime compares)
+    # Delivery status (use effective offset after clamping)
     # ------------------------------------------------------------
     # 0 = On Time, 1 = Early, 2 = Delayed
     codes = np.zeros(n, dtype=np.int8)
-    codes[delivery_offset < 0] = 1
-    codes[delivery_offset > 0] = 2
+    codes[effective_offset < 0] = 1
+    codes[effective_offset > 0] = 2
     labels = np.array(["On Time", "Early Delivery", "Delayed"], dtype="U15")
     delivery_status = labels[codes]
 
     # ------------------------------------------------------------
     # Order delayed flag (order-level coherence when has order ids)
     # ------------------------------------------------------------
-    delayed_line = delivery_offset > 0
+    delayed_line = effective_offset > 0
 
     if has_orders:
         # Any delayed line → order delayed

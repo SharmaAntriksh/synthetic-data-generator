@@ -9,7 +9,7 @@ scale:
   sales_rows: 1003285
   products: 2517
   customers: 21834
-  stores: 100
+  stores: 50
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -158,66 +158,29 @@ promotions:
 # STORES
 # ------------------------------------------------------------------
 stores:
-  ensure_iso_coverage: true
-  district_size: 10
-  districts_per_region: 8
-  online_stores: 10                    # explicit count (carved from scale.stores total)
+  online_stores: 10                    # online store count (carved from scale.stores total)
   online_close_share: 0.10             # fraction of online stores that close
-
-  opening:
-    start: "2018-01-01"
-    end:   "2025-12-31"
-  closing_end: "2028-12-31"
-
-  # Store closure: controls which stores close during the dataset window
   closing:
     enabled: true
-    close_share: 0.10              # fraction of physical stores that close
-    transfer_share: 0.60           # fraction of employees transferred (rest terminated)
-    notice_days: 30                # wind-down period before closure (staggered departures)
-    prefer_same_district: true     # transferred employees go to same-district stores first
-    ramp_days: 30                  # productivity ramp-up period at new store
-    ramp_start_factor: 0.50        # sales weight starts at 50%, ramps to 100%
-
-  # Product assortment per store type (which subcategories each store carries)
-  assortment:
-    enabled: true                    # false = every store sells every product (debug/test only) i.e. CROSSJOIN
-                                     # Tiny test runs: For unit tests with 2 stores and 5 products, assortment filtering might eliminate 
-                                     # too many combinations and produce empty results.
-    seed: 42
-    coverage:                        # fraction of subcategories carried by store type
-      Online: 1.00                   # full catalog
-      Hypermarket: 0.85
-      Supermarket: 0.50
-      Convenience: 0.25
+    close_share: 0.10                  # fraction of physical stores that close
 
 # ------------------------------------------------------------------
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:
-  # district_size / districts_per_region now live under 'stores:' (single source of truth).
-  # Values here are ignored; hierarchy is read from stores.parquet.
-  use_store_employee_count: false
-  min_staff_per_store: 2
-  max_staff_per_store: 6
-
+  min_staff_per_store: 1
+  max_staff_per_store: 3
   hr:
     email_domain: "contoso.com"
 
   store_assignments:
-    enabled: true
-    ensure_store_sales_coverage: true
-    min_primary_sales_per_store: 1
-    primary_sales_role: "Sales Associate"
-    movable_sales_per_store: 2
-
     mover_share: 0.20
     pool_scope: district
     allow_store_revisit: true
 
     role_profiles:
       default:                 { mult: 0.25, episodes: [0, 1], duration: [60, 180]  }
-      Sales Associate:         { mult: 2.50, episodes: [2, 4], duration: [60, 240]  }
+      Sales Associate:         { mult: 2.50, episodes: [1, 2], duration: [60, 240]  }
       Cashier:                 { mult: 1.10, episodes: [0, 2], duration: [14, 120]  }
       Fulfillment Associate:   { mult: 0.40, episodes: [0, 1], duration: [45, 180]  }
 

@@ -41,16 +41,12 @@ def download_history(currency, start_date, end_date):
     fallback = f"{currency}{BASE}=X"  # may represent USD per 1 CUR, invert to get CUR per 1 USD
 
     def _download(ticker: str) -> pd.DataFrame:
-        import requests as _req
-        _sess = _req.Session()
-        _sess.timeout = 15
         data = yf.download(
             ticker,
             start=start_ts - timedelta(days=3),
             end=end_ts + timedelta(days=3),
             auto_adjust=False,
             progress=False,
-            session=_sess,
         )
         return data
 
@@ -314,10 +310,15 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
         anchor_date = df_cur["Date"].max()
         future_mask = merged["Date"] > anchor_date
         if future_mask.any():
-            # Derive anchor_rate from the ffill'd merged frame (works even when
-            # anchor_date falls outside full_range, e.g. end_ts < master max date)
+            # Derive anchor_rate from the ffill'd merged frame when possible.
+            # When the entire requested range is beyond anchor_date (e.g. a fully
+            # future date window), historical within the merged frame is empty —
+            # fall back to the last real rate from df_cur directly.
             historical = merged.loc[~future_mask, "Rate"]
-            anchor_rate = historical.iloc[-1] if not historical.empty else merged["Rate"].bfill().iloc[0]
+            if not historical.empty and not historical.iloc[-1:].isna().all():
+                anchor_rate = historical.iloc[-1]
+            else:
+                anchor_rate = df_cur["Rate"].iloc[-1]
             days_ahead = (merged.loc[future_mask, "Date"] - anchor_date).dt.days
             merged.loc[future_mask, "Rate"] = anchor_rate * (1 + annual_drift) ** (days_ahead / 365.25)
 

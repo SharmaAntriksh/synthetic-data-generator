@@ -289,19 +289,19 @@ class RoleProfileConfig(_Base):
 class StoreAssignmentsConfig(_Base):
     enabled: bool = True
     ensure_store_sales_coverage: bool = True
-    min_primary_sales_per_store: int = 2
+    min_primary_sales_per_store: int = 1
     primary_sales_role: str = "Sales Associate"
     movable_sales_per_store: int = 2
     mover_share: float = 0.20
-    pool_scope: str = "all"
+    pool_scope: str = "district"
     allow_store_revisit: bool = True
     role_profiles: Optional[Dict[str, Any]] = None
 
 
 class EmployeesConfig(_Base):
     use_store_employee_count: bool = False
-    min_staff_per_store: int = 3
-    max_staff_per_store: int = 5
+    min_staff_per_store: int = 2
+    max_staff_per_store: int = 6
     termination_rate: float = 0.08
     staff_scale: float = 0.25
     district_size: int = 10
@@ -517,8 +517,8 @@ class ScaleConfig(_Base):
 # -- Stores --
 
 class StoreOpeningConfig(_Base):
-    start: str = "1995-01-01"
-    end: str = "2023-12-31"
+    start: str = "2018-01-01"
+    end: str = "2025-12-31"
 
 
 class AssortmentCoverageConfig(_Base):

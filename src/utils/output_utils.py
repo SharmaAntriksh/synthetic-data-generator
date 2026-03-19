@@ -25,6 +25,7 @@ _DIM_FILE_PLANS = "plans.parquet"
 _DIM_FILE_SUBSCRIPTIONS_BRIDGE = "customer_subscriptions.parquet"
 _DIM_FILE_WISHLISTS = "customer_wishlists.parquet"
 _DIM_FILE_RETURN_REASON = "return_reason.parquet"
+_DIM_FILE_EMPLOYEE_TRANSFERS = "employee_transfers.parquet"
 
 
 # ============================================================
@@ -282,7 +283,9 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
     - ``generate_bridge: false`` → exclude only the bridge table
     - returns effectively disabled → exclude ReturnReason
     """
-    excluded: set[str] = set()
+    excluded: set[str] = {
+        _DIM_FILE_EMPLOYEE_TRANSFERS,  # internal sidecar, not a publishable dim
+    }
 
     sub_cfg = getattr(cfg, "subscriptions", None)
     if sub_cfg is not None:
