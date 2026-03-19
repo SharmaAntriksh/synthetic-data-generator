@@ -45,6 +45,7 @@ from src.defaults import (
     STORE_ISO_TO_ZONE as _ISO_TO_ZONE,
     STORE_BRAND_DOMAINS as _BRAND_DOMAINS,
     STORE_EU_COUNTRY_CODES as _EU_COUNTRY_CODES,
+    ONLINE_STORE_KEY_BASE as _ONLINE_SK_BASE,
 )
 
 
@@ -552,6 +553,8 @@ def generate_store_table(
     dataset_end: Optional[str] = None,
     close_share: float = 0.10,
     closing_enabled: bool = True,
+    online_stores: Optional[int] = None,
+    online_close_share: float = 0.10,
 ) -> pd.DataFrame:
     """
     Generate synthetic store dimension table.
@@ -573,14 +576,37 @@ def generate_store_table(
 
     rng = np.random.default_rng(int_or(seed, 42))
 
-    store_key = np.arange(1, num_stores + 1, dtype=np.int64)
+    # --- Key allocation: physical 1..N_phys, online 901..901+N_online ---
+    n_online = int_or(online_stores, 0)
+    if n_online < 0:
+        raise ValueError(f"online_stores must be >= 0, got {n_online}")
+    if n_online >= num_stores:
+        raise ValueError(f"online_stores ({n_online}) must be < num_stores ({num_stores})")
+    n_physical = num_stores - n_online
+
+    phys_keys = np.arange(1, n_physical + 1, dtype=np.int64)
+    online_keys = (_ONLINE_SK_BASE + np.arange(1, n_online + 1, dtype=np.int64)) if n_online > 0 else np.array([], dtype=np.int64)
+    store_key = np.concatenate([phys_keys, online_keys])
     df = pd.DataFrame({"StoreKey": store_key})
     sk = store_key.astype(np.int64)
 
-    # StoreNumber — human-readable alphanumeric key (STR-0001 … STR-9999)
-    df["StoreNumber"] = pd.array([f"STR-{k:04d}" for k in store_key], dtype="object")
+    # StoreNumber — STR-xxxx for physical, ONL-xxxx for online
+    store_numbers = np.empty(num_stores, dtype=object)
+    store_numbers[:n_physical] = [f"STR-{k:04d}" for k in phys_keys]
+    if n_online > 0:
+        store_numbers[n_physical:] = [f"ONL-{i:04d}" for i in range(1, n_online + 1)]
+    df["StoreNumber"] = pd.array(store_numbers, dtype="object")
 
-    df["StoreType"] = rng.choice(_STORE_TYPES, size=num_stores, p=_STORE_TYPES_P)
+    # StoreType — physical stores sampled (excl. Online), online stores set directly
+    _phys_mask = _STORE_TYPES != "Online"
+    _phys_types = _STORE_TYPES[_phys_mask]
+    _phys_p = _STORE_TYPES_P[_phys_mask]
+    _phys_p = _phys_p / _phys_p.sum()  # renormalize after removing Online
+    store_type_arr = np.empty(num_stores, dtype=object)
+    store_type_arr[:n_physical] = rng.choice(_phys_types, size=n_physical, p=_phys_p)
+    if n_online > 0:
+        store_type_arr[n_physical:] = "Online"
+    df["StoreType"] = store_type_arr
     df["StoreFormat"] = _build_store_format(rng, df["StoreType"])
     df["OwnershipType"] = _build_ownership_type(rng, df["StoreType"])
     df["RevenueClass"] = rng.choice(_REVENUE_CLASSES, size=num_stores, p=_REVENUE_CLASSES_P)
@@ -593,14 +619,23 @@ def generate_store_table(
         ds_start = pd.to_datetime(dataset_start).normalize()
         ds_end = pd.to_datetime(dataset_end).normalize()
         st_arr = df["StoreType"].astype(str).to_numpy()
-        non_online = st_arr != "Online"
-        n_eligible = int(non_online.sum())
-        n_close = max(1, int(round(n_eligible * float(close_share))))
-        # Randomly select which eligible stores close
-        eligible_idx = np.where(non_online)[0]
-        close_idx = rng.choice(eligible_idx, size=min(n_close, n_eligible), replace=False)
-        # Of the remaining non-online, ~5% are Renovating
-        remaining_idx = np.setdiff1d(eligible_idx, close_idx)
+
+        # Physical store closures
+        phys_idx = np.where(st_arr != "Online")[0]
+        n_phys_eligible = len(phys_idx)
+        n_phys_close = max(1, int(round(n_phys_eligible * float(close_share)))) if n_phys_eligible > 0 else 0
+        phys_close_idx = rng.choice(phys_idx, size=min(n_phys_close, n_phys_eligible), replace=False) if n_phys_close > 0 else np.array([], dtype=np.intp)
+
+        # Online store closures
+        online_idx = np.where(st_arr == "Online")[0]
+        n_online_eligible = len(online_idx)
+        n_online_close = max(1, int(round(n_online_eligible * float(online_close_share)))) if n_online_eligible > 0 else 0
+        online_close_idx = rng.choice(online_idx, size=min(n_online_close, n_online_eligible), replace=False) if n_online_close > 0 else np.array([], dtype=np.intp)
+
+        close_idx = np.concatenate([phys_close_idx, online_close_idx]).astype(np.intp)
+
+        # Of the remaining physical stores, ~5% are Renovating
+        remaining_idx = np.setdiff1d(phys_idx, phys_close_idx)
         n_reno = max(0, int(round(len(remaining_idx) * 0.05)))
         reno_idx = rng.choice(remaining_idx, size=min(n_reno, len(remaining_idx)), replace=False) if n_reno > 0 else np.array([], dtype=np.intp)
         status_arr = np.full(num_stores, "Open", dtype=object)
@@ -814,6 +849,10 @@ def generate_store_table(
         square_footage=df["SquareFootage"],
         emp_cfg=as_dict(employee_count_cfg),
     )
+    # Online stores: exactly 1 employee (the online sales representative)
+    _online_ec_mask = df["StoreType"].to_numpy() == "Online"
+    if _online_ec_mask.any():
+        df.loc[_online_ec_mask, "EmployeeCount"] = 1
 
     # Phone — format varies by country via ISO/currency code
     gk_arr  = df["GeographyKey"].to_numpy(dtype=np.int64)
@@ -978,7 +1017,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     emp_cfg  = as_dict(store_cfg.employee_count)
 
     version_cfg = dict(store_cfg)
-    version_cfg["schema_version"] = 3
+    version_cfg["schema_version"] = 4
     version_cfg["_geography_sig"] = _geography_signature(geo_keys)
 
     if not should_regenerate("stores", version_cfg, out_path):
@@ -1013,6 +1052,8 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     closing_cfg = as_dict(store_cfg.closing) if hasattr(store_cfg, "closing") and store_cfg.closing is not None else {}
     closing_enabled = closing_cfg.get("enabled", True)
     close_share = float_or(closing_cfg.get("close_share"), 0.10)
+    online_stores_count = int_or(store_cfg.online_stores, 0)
+    online_close_share_val = float_or(store_cfg.online_close_share, 0.10)
 
     with stage("Generating Stores"):
         df = generate_store_table(
@@ -1036,6 +1077,8 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             dataset_end=ds_end,
             close_share=close_share,
             closing_enabled=closing_enabled,
+            online_stores=online_stores_count,
+            online_close_share=online_close_share_val,
         )
 
         write_parquet_with_date32(

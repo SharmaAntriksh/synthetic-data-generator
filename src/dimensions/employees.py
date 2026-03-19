@@ -30,6 +30,9 @@ from src.defaults import (
     EMPLOYEE_PART_TIME_FTE_VALUES,
     EMPLOYEE_TERMINATION_REASON_LABELS,
     EMPLOYEE_TERMINATION_REASON_PROBS,
+    ONLINE_STORE_KEY_BASE,
+    ONLINE_EMP_KEY_BASE,
+    ONLINE_SALES_REP_ROLE,
 )
 
 # EmployeeKey encoding scheme (shared with employee_store_assignments)
@@ -268,19 +271,23 @@ def _enrich_employee_hr_columns(
         df.loc[term_mask, "TerminationReason"] = reasons
 
     # SalesPersonFlag
-    df["SalesPersonFlag"] = title.isin(["Sales Associate"]).astype(np.int8)
+    df["SalesPersonFlag"] = title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE]).astype(np.int8)
 
     # DepartmentName
     dept = np.where(
         title.isin(["Sales Associate", "Store Manager"]),
         "Sales",
         np.where(
-            title.isin(["Cashier"]),
-            "Store Operations",
+            title.isin([ONLINE_SALES_REP_ROLE]),
+            "Online Sales",
             np.where(
-                title.isin(["Stock Associate"]),
-                "Inventory",
-                np.where(title.isin(["Fulfillment Associate"]), "Fulfillment", "Corporate"),
+                title.isin(["Cashier"]),
+                "Store Operations",
+                np.where(
+                    title.isin(["Stock Associate"]),
+                    "Inventory",
+                    np.where(title.isin(["Fulfillment Associate"]), "Fulfillment", "Corporate"),
+                ),
             ),
         ),
     )
@@ -675,37 +682,43 @@ def generate_employee_dimension(
     corporate_df = pd.DataFrame(rows)
 
     # ---------------------------------------------------------------
-    # Store managers — vectorized
+    # Store managers — vectorized (physical stores only)
     # ---------------------------------------------------------------
     sk_arr = stores["StoreKey"].to_numpy(dtype=np.int32)
     did_arr = stores["DistrictId"].to_numpy(dtype=np.int16)
     rid_arr = stores["RegionId"].to_numpy(dtype=np.int16)
     gk_arr = stores["GeographyKey"].to_numpy(dtype=np.int32)
 
+    _is_online_store = sk_arr > ONLINE_STORE_KEY_BASE
+    _is_physical_store = ~_is_online_store
+
     mgr_parent_keys = np.array(
         [_district_mgr_key(int(d)) for d in did_arr], dtype=np.int32,
     )
 
+    # Physical store managers only — online stores have no manager
+    _phys_idx = np.where(_is_physical_store)[0]
     mgr_df = pd.DataFrame({
-        "EmployeeKey": (STORE_MGR_KEY_BASE + sk_arr).astype(np.int64),
-        "ParentEmployeeKey": mgr_parent_keys,
+        "EmployeeKey": (STORE_MGR_KEY_BASE + sk_arr[_phys_idx]).astype(np.int64),
+        "ParentEmployeeKey": mgr_parent_keys[_phys_idx],
         "EmployeeName": "",
         "Title": "Store Manager",
         "OrgLevel": np.int16(5),
         "OrgUnitType": "Store",
-        "RegionId": rid_arr,
-        "DistrictId": did_arr,
-        "StoreKey": sk_arr,
-        "GeographyKey": gk_arr,
+        "RegionId": rid_arr[_phys_idx],
+        "DistrictId": did_arr[_phys_idx],
+        "StoreKey": sk_arr[_phys_idx],
+        "GeographyKey": gk_arr[_phys_idx],
     })
 
     # ---------------------------------------------------------------
-    # Staff counts
+    # Staff counts (physical stores only — online stores get 0 staff)
     # ---------------------------------------------------------------
-    if max_staff_per_store <= 0:
-        staff_counts = np.zeros(n_stores, dtype=np.int64)
+    n_physical = int(_is_physical_store.sum())
+    if max_staff_per_store <= 0 or n_physical == 0:
+        staff_counts = np.zeros(n_physical, dtype=np.int64)
     elif use_store_employee_count:
-        emp_counts = stores["EmployeeCount"].fillna(0).astype(np.int64).to_numpy()
+        emp_counts = stores.loc[_is_physical_store, "EmployeeCount"].fillna(0).astype(np.int64).to_numpy()
         base = np.maximum(0, emp_counts - 1)
         scaled = np.rint(base.astype(np.float64) * staff_scale).astype(np.int64)
         staff_counts = np.clip(scaled, 0, max_staff_per_store).astype(np.int64)
@@ -716,20 +729,24 @@ def generate_employee_dimension(
     else:
         staff_counts = rng.integers(
             min_staff_per_store, max_staff_per_store + 1,
-            size=n_stores, dtype=np.int64,
+            size=n_physical, dtype=np.int64,
         )
 
     # ---------------------------------------------------------------
-    # Staff rows — vectorized via np.repeat
+    # Staff rows — vectorized via np.repeat (physical stores only)
     # ---------------------------------------------------------------
+    _phys_sk = sk_arr[_phys_idx]
+    _phys_did = did_arr[_phys_idx]
+    _phys_rid = rid_arr[_phys_idx]
+    _phys_gk = gk_arr[_phys_idx]
     total_staff = int(staff_counts.sum())
 
     if total_staff > 0:
-        store_indices = np.repeat(np.arange(n_stores), staff_counts)
-        staff_sk = sk_arr[store_indices]
-        staff_did = did_arr[store_indices]
-        staff_rid = rid_arr[store_indices]
-        staff_gk = gk_arr[store_indices]
+        store_indices = np.repeat(np.arange(n_physical), staff_counts)
+        staff_sk = _phys_sk[store_indices]
+        staff_did = _phys_did[store_indices]
+        staff_rid = _phys_rid[store_indices]
+        staff_gk = _phys_gk[store_indices]
 
         # Per-employee index within each store (1-based)
         # Uses cumsum trick: start with 1s, subtract (prev_count) at each
@@ -765,7 +782,7 @@ def generate_employee_dimension(
             # Build mask of positions that should be primary sales role
             ps_mask = np.zeros(total_staff, dtype=bool)
             pos = 0
-            for i in range(n_stores):
+            for i in range(n_physical):
                 sc = int(staff_counts[i])
                 kk = int(k_per_store[i])
                 if kk > 0:
@@ -790,7 +807,29 @@ def generate_employee_dimension(
             columns=corporate_df.columns,
         ).iloc[:0]
 
-    df = pd.concat([corporate_df, mgr_df, staff_df], ignore_index=True)
+    # ---------------------------------------------------------------
+    # Online employees — exactly 1 per online store
+    # ---------------------------------------------------------------
+    _online_idx = np.where(_is_online_store)[0]
+    if _online_idx.size > 0:
+        _onl_sk = sk_arr[_online_idx]
+        _onl_ek = (ONLINE_EMP_KEY_BASE + _onl_sk).astype(np.int64)
+        online_df = pd.DataFrame({
+            "EmployeeKey": _onl_ek,
+            "ParentEmployeeKey": mgr_parent_keys[_online_idx],
+            "EmployeeName": "",
+            "Title": ONLINE_SALES_REP_ROLE,
+            "OrgLevel": np.int16(5),
+            "OrgUnitType": "Store",
+            "RegionId": rid_arr[_online_idx],
+            "DistrictId": did_arr[_online_idx],
+            "StoreKey": _onl_sk,
+            "GeographyKey": gk_arr[_online_idx],
+        })
+    else:
+        online_df = pd.DataFrame(columns=corporate_df.columns).iloc[:0]
+
+    df = pd.concat([corporate_df, mgr_df, staff_df, online_df], ignore_index=True)
 
     # ------------------------------------------------------------------
     # EmploymentType & FTE — determined at hire based on role
@@ -901,6 +940,30 @@ def generate_employee_dimension(
     ).astype(np.int8)
 
     # ------------------------------------------------------------------
+    # Online employees: fix hire dates and clear terminations
+    # Online employees are hired when their store opens (or dataset start)
+    # and never terminate unless the store closes.
+    # ------------------------------------------------------------------
+    _onl_ek = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
+    _onl_mask = _onl_ek >= ONLINE_EMP_KEY_BASE
+    if _onl_mask.any():
+        _onl_sk = (_onl_ek[_onl_mask] - ONLINE_EMP_KEY_BASE).astype(np.int32).to_numpy()
+        # HireDate = max(store opening, dataset start) — vectorized
+        _onl_hires = np.array([
+            max(
+                pd.to_datetime(
+                    store_opening_dates.get(int(sk), global_start)
+                    if store_opening_dates else global_start
+                ).normalize(),
+                global_start,
+            )
+            for sk in _onl_sk
+        ], dtype="datetime64[ns]")
+        df.loc[_onl_mask, "HireDate"] = _onl_hires
+        df.loc[_onl_mask, "TerminationDate"] = pd.NaT
+        df.loc[_onl_mask, "IsActive"] = np.int8(1)
+
+    # ------------------------------------------------------------------
     # SA natural attrition: tenure chains with replacements
     # ------------------------------------------------------------------
     df = _generate_attrition_replacements(
@@ -924,12 +987,28 @@ def generate_employee_dimension(
     if store_closing_dates:
         from src.defaults import STORE_CLOSE_TRANSFER_SHARE_BY_REASON
 
-        ek_all_np = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
+        ek_all_np = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64).to_numpy()
         sk_all_np = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
 
         for close_sk, close_date in store_closing_dates.items():
             close_date = pd.to_datetime(close_date).normalize()
             if close_date < global_start or close_date > global_end:
+                continue
+
+            # Online store employees: terminate on last operational day, no stagger
+            if int(close_sk) > ONLINE_STORE_KEY_BASE:
+                store_mask = sk_all_np == int(close_sk)
+                already_terminated = df["TerminationDate"].notna() & (df["TerminationDate"] <= close_date)
+                eligible = store_mask & ~already_terminated.to_numpy()
+                eligible_idx = np.where(eligible)[0]
+                last_op = (close_date - pd.Timedelta(days=1)).normalize()
+                for idx in eligible_idx:
+                    df.iat[idx, df.columns.get_loc("TerminationDate")] = last_op
+                    df.iat[idx, df.columns.get_loc("IsActive")] = np.int8(0)
+                    df.iat[idx, df.columns.get_loc("TransferStatus")] = "Terminated_StoreClose"
+                    df.iat[idx, df.columns.get_loc("OriginalStoreKey")] = int(close_sk)
+                    if "TerminationReason" in df.columns:
+                        df.iat[idx, df.columns.get_loc("TerminationReason")] = "Involuntary"
                 continue
 
             # Find store employees (managers + staff)
@@ -1083,14 +1162,18 @@ def generate_employee_dimension(
 
 def _count_employees_per_store(df: pd.DataFrame) -> dict[int, int]:
     """Count employees per store from EmployeeKey encoding."""
-    ek = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
+    ek = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64).to_numpy()
     store_keys = np.full(len(ek), -1, dtype=np.int32)
 
-    mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE)
-    store_keys[mgr_mask] = ek[mgr_mask] - STORE_MGR_KEY_BASE
+    # Online employees (50M+) — must check before staff (40M+)
+    online_mask = ek >= ONLINE_EMP_KEY_BASE
+    store_keys[online_mask] = (ek[online_mask] - ONLINE_EMP_KEY_BASE).astype(np.int32)
 
-    staff_mask = ek >= STAFF_KEY_BASE
-    store_keys[staff_mask] = (ek[staff_mask] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
+    mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE) & ~online_mask
+    store_keys[mgr_mask] = (ek[mgr_mask] - STORE_MGR_KEY_BASE).astype(np.int32)
+
+    staff_mask = (ek >= STAFF_KEY_BASE) & ~online_mask
+    store_keys[staff_mask] = ((ek[staff_mask] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT).astype(np.int32)
 
     valid = store_keys >= 0
     if not valid.any():
@@ -1175,7 +1258,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         )
 
     version_cfg = as_dict(emp_cfg)
-    version_cfg["schema_version"] = 7
+    version_cfg["schema_version"] = 8
     version_cfg["_stores_sig"] = _stores_signature(stores)
     version_cfg["_stores_cfg"] = as_dict(cfg.stores)
     version_cfg["_global_dates"] = {

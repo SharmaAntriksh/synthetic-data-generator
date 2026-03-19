@@ -7,9 +7,9 @@
 # ------------------------------------------------------------------
 scale:
   sales_rows: 1003285
-  products: 12517
-  customers: 52834
-  stores: 200
+  products: 2517
+  customers: 21834
+  stores: 100
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -20,8 +20,8 @@ defaults:
   random: false                    # true = ignore seeds, use OS entropy (non-deterministic)
   view_schema: "report"               # dbo = vw_ prefix (default), or dedicated schema (bi, report, etc.)
   dates:
-    start: "2021-01-01"
-    end: "2025-12-31"
+    start: "2021-03-01"
+    end: "2025-10-31"
 
 paths:
   geography: "./data/parquet_dims/geography.parquet"
@@ -79,7 +79,7 @@ products:
 
   scd2:
     enabled: true                     # enable SCD Type 2 price history tracking
-    revision_frequency: 12             # months between price revisions
+    revision_frequency: 8             # months between price revisions
     price_drift: 0.05                  # ~5% price change per revision
     max_versions: 4                    # max version rows per product
 
@@ -161,6 +161,8 @@ stores:
   ensure_iso_coverage: true
   district_size: 10
   districts_per_region: 8
+  online_stores: 10                    # explicit count (carved from scale.stores total)
+  online_close_share: 0.10             # fraction of online stores that close
 
   opening:
     start: "2018-01-01"
@@ -170,7 +172,7 @@ stores:
   # Store closure: controls which stores close during the dataset window
   closing:
     enabled: true
-    close_share: 0.10              # fraction of non-Online stores that close
+    close_share: 0.10              # fraction of physical stores that close
     transfer_share: 0.60           # fraction of employees transferred (rest terminated)
     notice_days: 30                # wind-down period before closure (staggered departures)
     prefer_same_district: true     # transferred employees go to same-district stores first
@@ -197,7 +199,7 @@ employees:
   # Values here are ignored; hierarchy is read from stores.parquet.
   use_store_employee_count: false
   min_staff_per_store: 2
-  max_staff_per_store: 4
+  max_staff_per_store: 6
 
   hr:
     email_domain: "contoso.com"
@@ -210,7 +212,7 @@ employees:
     movable_sales_per_store: 2
 
     mover_share: 0.20
-    pool_scope: all
+    pool_scope: district
     allow_store_revisit: true
 
     role_profiles:
@@ -232,7 +234,7 @@ dates:
     fiscal: true
 
     weekly_fiscal:
-      enabled: true
+      enabled: false
       first_day_of_week: 0
       weekly_type: "Last"
       quarter_week_type: "445"

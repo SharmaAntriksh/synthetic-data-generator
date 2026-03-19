@@ -1,5 +1,17 @@
+"""Employee Store Assignment bridge table generator.
+
+Produces a non-overlapping timeline of store assignments for each employee.
+Each employee's assignments form a contiguous sequence: home segments
+interleaved with away episodes, guaranteed non-overlapping by construction
+(single monotonic cursor per employee).
+
+Output columns:
+  EmployeeKey, StoreKey, StartDate, EndDate, FTE, RoleAtStore,
+  IsPrimary, TransferReason, AssignmentSequence, Status, MaxAssignments
+"""
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,6 +28,8 @@ from src.dimensions.employees import (
 from src.defaults import (
     EMPLOYEE_TRANSFER_REASON_LABELS,
     EMPLOYEE_TRANSFER_REASON_PROBS,
+    ONLINE_EMP_KEY_BASE,
+    ONLINE_STORE_KEY_BASE,
 )
 from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
@@ -31,9 +45,25 @@ from src.utils.config_helpers import (
 from src.utils.config_precedence import resolve_seed
 
 
-# -----------------------------------------------------------------------------
-# Config helpers
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Immutable slot for one contiguous assignment
+# ---------------------------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class TimelineSlot:
+    """One contiguous store assignment for an employee. Immutable."""
+    store_key: int
+    start_date: pd.Timestamp
+    end_date: pd.Timestamp
+    fte: float
+    role: str
+    is_primary: bool
+    transfer_reason: Optional[str]
+
+
+# ---------------------------------------------------------------------------
+# Config helpers  (kept from original)
+# ---------------------------------------------------------------------------
 
 def _store_assignments_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -47,9 +77,6 @@ def _store_assignments_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
     nested = dict(emp_cfg.store_assignments) if emp_cfg.store_assignments is not None else {}
     legacy = as_dict(cfg.employee_store_assignments)
 
-    # The dimensions runner injects internal keys (global_dates)
-    # into cfg["employee_store_assignments"]; exclude those when checking for
-    # actual user-supplied legacy config.
     _RUNNER_KEYS = {"global_dates"}
     user_legacy = {k: v for k, v in legacy.items() if k not in _RUNNER_KEYS}
     if user_legacy:
@@ -64,21 +91,23 @@ def _store_assignments_cfg(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _infer_home_store_key(employees: pd.DataFrame) -> pd.Series:
-    """
-    Derive the home StoreKey from the EmployeeKey encoding when the column
-    is not already present.
-    """
+    """Derive the home StoreKey from the EmployeeKey encoding."""
     if "StoreKey" in employees.columns:
         return employees["StoreKey"].astype("Int32")
 
-    ek = employees["EmployeeKey"].astype(np.int32)
+    ek = employees["EmployeeKey"].astype(np.int64)
     out = pd.Series([pd.NA] * len(employees), dtype="Int32")
 
-    mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE)
+    # Online employees (50M+) — check before staff (40M+) since range overlaps
+    online_mask = ek >= ONLINE_EMP_KEY_BASE
+    if online_mask.any():
+        out.loc[online_mask] = (ek.loc[online_mask] - ONLINE_EMP_KEY_BASE).astype("Int32")
+
+    mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE) & ~online_mask
     if mgr_mask.any():
         out.loc[mgr_mask] = (ek.loc[mgr_mask] - STORE_MGR_KEY_BASE).astype("Int32")
 
-    staff_mask = ek >= STAFF_KEY_BASE
+    staff_mask = (ek >= STAFF_KEY_BASE) & ~online_mask
     if staff_mask.any():
         out.loc[staff_mask] = (
             (ek.loc[staff_mask] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
@@ -88,7 +117,7 @@ def _infer_home_store_key(employees: pd.DataFrame) -> pd.Series:
 
 
 def _build_store_by_district(emp: pd.DataFrame) -> Dict[Any, List[int]]:
-    """``DistrictId → [StoreKey, ...]``"""
+    """``DistrictId -> [StoreKey, ...]``"""
     emp2 = emp[emp["DistrictId"].notna() & emp["HomeStoreKey"].notna()].copy()
     if emp2.empty:
         return {}
@@ -99,7 +128,7 @@ def _build_store_by_district(emp: pd.DataFrame) -> Dict[Any, List[int]]:
         src = mgrs
     else:
         warn(
-            "No Store Managers found when building district→store mapping; "
+            "No Store Managers found when building district->store mapping; "
             "falling back to all store-attached employees. "
             "District store pools may be inaccurate."
         )
@@ -115,21 +144,12 @@ def _build_store_by_district(emp: pd.DataFrame) -> Dict[Any, List[int]]:
     }
 
 
-# -----------------------------------------------------------------------------
-# Movement-profile helpers
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Movement-profile helpers  (kept from original)
+# ---------------------------------------------------------------------------
 
 def _normalize_profile_keys(prof: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Map shorthand config keys to the long-form keys consumed by the generator.
-
-    Shorthand → long-form:
-      mult             → role_multiplier
-      episodes: [a, b] → episodes_min, episodes_max
-      duration: [a, b] → duration_days_min, duration_days_max
-
-    Long-form keys take precedence when both are present.
-    """
+    """Map shorthand config keys to long-form keys."""
     out = dict(prof)
 
     if "mult" in out and "role_multiplier" not in out:
@@ -176,10 +196,7 @@ def _get_profile(
     max_non_sales_multiplier_frac: float,
     max_non_sales_episodes_frac: float,
 ) -> Dict[str, Any]:
-    """
-    Merge ``default_profile ← per_role_profile[role]``, then enforce
-    non-sales caps relative to the sales profile.
-    """
+    """Merge ``default_profile <- per_role_profile[role]``, enforce non-sales caps."""
     prof = dict(default_profile)
     prof.update(per_role_profile.get(role, {}))
 
@@ -198,9 +215,756 @@ def _get_profile(
     return prof
 
 
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Store operational window helpers  (kept from original)
+# ---------------------------------------------------------------------------
+
+def _store_operational_window_pd(
+    store: int,
+    ws: pd.Timestamp,
+    we: pd.Timestamp,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]],
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]],
+) -> Optional[Tuple[pd.Timestamp, pd.Timestamp]]:
+    """Return (start, end) of a store's operational window, or None."""
+    one_day = pd.Timedelta(days=1)
+    s_start = ws
+    s_end = we
+    if store_opening_dates and store in store_opening_dates:
+        od = pd.to_datetime(store_opening_dates[store]).normalize()
+        if od > s_start:
+            s_start = od
+    if store_closing_dates and store in store_closing_dates:
+        cd = pd.to_datetime(store_closing_dates[store]).normalize()
+        last_op = cd - one_day
+        if last_op < s_end:
+            s_end = last_op
+    if s_end < s_start:
+        return None
+    return s_start, s_end
+
+
+def _store_operational_window_np(
+    store: int,
+    ws: np.datetime64,
+    we: np.datetime64,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]],
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]],
+) -> Optional[Tuple[np.datetime64, np.datetime64]]:
+    """Return (start, end) as np.datetime64[D], or None."""
+    one_day = np.timedelta64(1, "D")
+    s_ws = ws
+    s_we = we
+    if store_opening_dates and store in store_opening_dates:
+        _od = np.datetime64(store_opening_dates[store], "D")
+        if _od > s_ws:
+            s_ws = _od
+    if store_closing_dates and store in store_closing_dates:
+        _cd = np.datetime64(store_closing_dates[store], "D") - one_day
+        if _cd < s_we:
+            s_we = _cd
+    if s_we < s_ws:
+        return None
+    return s_ws, s_we
+
+
+def _build_emp_date_lookup(
+    ek_arr: np.ndarray,
+    date_arr: np.ndarray,
+) -> Dict[int, pd.Timestamp]:
+    """Build {EmployeeKey: normalized Timestamp} from parallel arrays."""
+    out: Dict[int, pd.Timestamp] = {}
+    for i in range(len(ek_arr)):
+        d = date_arr[i]
+        if isinstance(d, (np.datetime64,)):
+            if np.isnat(d):
+                continue
+            out[int(ek_arr[i])] = pd.Timestamp(d).normalize()
+        else:
+            if pd.isna(d):
+                continue
+            out[int(ek_arr[i])] = pd.Timestamp(d).normalize()
+    return out
+
+
+def _merge_adjacent_intervals(starts, ends, tolerance):
+    """Merge overlapping/adjacent intervals.
+
+    Works with both numpy datetime64 and pandas Timestamp arrays/lists.
+    ``tolerance`` is one day in the caller's dtype (np.timedelta64 or pd.Timedelta).
+    Returns (merged_starts, merged_ends) as lists.
+    """
+    if len(starts) == 0:
+        return [], []
+    ms = [starts[0]]
+    me = [ends[0]]
+    for j in range(1, len(starts)):
+        if starts[j] <= me[-1] + tolerance:
+            me[-1] = max(me[-1], ends[j])
+        else:
+            ms.append(starts[j])
+            me.append(ends[j])
+    return ms, me
+
+
+# ---------------------------------------------------------------------------
+# Episode sampling  (extracted from original inner function — logic unchanged)
+# ---------------------------------------------------------------------------
+
+def _sample_non_overlapping_episodes(
+    rng: np.random.Generator,
+    start_min: pd.Timestamp,
+    end_max: pd.Timestamp,
+    other_stores: List[int],
+    k: int,
+    tgt_fte: float,
+    dmin: int,
+    dmax: int,
+    allow_store_revisit: bool,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]],
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]],
+) -> List[Tuple[pd.Timestamp, pd.Timestamp, int, float]]:
+    """Sample up to *k* non-overlapping away episodes within [start_min, end_max].
+
+    Returns sorted list of (start, end, store_key, fte) tuples, guaranteed
+    non-overlapping and within each destination store's operational window.
+    """
+    if k <= 0 or not other_stores:
+        return []
+
+    # Pick stores ensuring no two consecutive picks are the same
+    if not allow_store_revisit:
+        chosen = rng.choice(
+            other_stores, size=min(int(k), len(other_stores)), replace=False,
+        )
+    else:
+        chosen_list: List[int] = []
+        for _ in range(int(k)):
+            pool = (
+                [s for s in other_stores if s != chosen_list[-1]]
+                if chosen_list
+                else list(other_stores)
+            )
+            if not pool:
+                break
+            chosen_list.append(int(rng.choice(pool)))
+        chosen = np.array(chosen_list, dtype=np.int32)
+
+    one_day = pd.Timedelta(days=1)
+
+    # (start, dur, store, fte, store_end_limit)
+    raw: List[Tuple[pd.Timestamp, int, int, float, pd.Timestamp]] = []
+    for store in chosen:
+        ep_start_min = start_min
+        ep_end_max = end_max
+        _sk = int(store)
+        if store_opening_dates and _sk in store_opening_dates:
+            _sod = pd.to_datetime(store_opening_dates[_sk]).normalize()
+            if _sod > ep_start_min:
+                ep_start_min = _sod
+        if store_closing_dates and _sk in store_closing_dates:
+            # Last operational day = close_date - 1
+            _scd = (pd.to_datetime(store_closing_dates[_sk]).normalize() - one_day)
+            if _scd < ep_end_max:
+                ep_end_max = _scd
+        if ep_end_max < ep_start_min:
+            continue
+
+        dur = int(rng.integers(dmin, dmax + 1))
+        latest_start = (ep_end_max - pd.Timedelta(days=dur - 1)).normalize()
+        if latest_start < ep_start_min:
+            continue
+        s = rand_single_date(rng, ep_start_min, latest_start)
+        raw.append((s, dur, int(store), tgt_fte, ep_end_max))
+
+    if not raw:
+        return []
+
+    raw.sort(key=lambda x: x[0])
+    placed: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = []
+    last_end: Optional[pd.Timestamp] = None
+
+    for s, dur, store, sec_fte, store_limit in raw:
+        if last_end is not None and s <= last_end:
+            s = (last_end + one_day).normalize()
+        if s > end_max or s > store_limit:
+            continue
+        e = (s + pd.Timedelta(days=dur - 1)).normalize()
+        # Clamp to both global end and per-store operational limit
+        e = min(e, end_max, store_limit)
+        if e < s:
+            continue
+        placed.append((s, e, store, sec_fte))
+        last_end = e
+
+    # Merge consecutive same-store episodes
+    if len(placed) <= 1:
+        return placed
+
+    out: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = [placed[0]]
+    for s, e, store, sec_fte in placed[1:]:
+        prev_s, prev_e, prev_store, prev_fte = out[-1]
+        if store == prev_store:
+            out[-1] = (prev_s, e, prev_store, prev_fte)
+        else:
+            out.append((s, e, store, sec_fte))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Core: build one employee's complete timeline
+# ---------------------------------------------------------------------------
+
+MIN_HOME_GAP_DAYS = 3
+
+
+def _build_employee_timeline(
+    *,
+    rng: np.random.Generator,
+    home_store: int,
+    role: str,
+    fte: float,
+    effective_start: pd.Timestamp,
+    effective_end: pd.Timestamp,
+    candidate_stores: List[int],
+    episodes_min: int,
+    episodes_max: int,
+    duration_days_min: int,
+    duration_days_max: int,
+    allow_store_revisit: bool,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]],
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]],
+    is_forced_mover: bool = False,
+    transfer_info: Optional[Tuple[pd.Timestamp, int, pd.Timestamp]] = None,
+) -> List[TimelineSlot]:
+    """Build a complete non-overlapping assignment timeline for one employee.
+
+    Parameters
+    ----------
+    transfer_info : optional (close_date, dest_store, transfer_end)
+        If provided, the employee's home-store window is truncated at
+        close_date - 1, and a transfer assignment is appended at dest_store
+        from close_date to transfer_end.
+
+    Returns
+    -------
+    List of TimelineSlot, sorted by start_date, guaranteed non-overlapping.
+    """
+    slots: List[TimelineSlot] = []
+
+    # If transferred, truncate the home-store window before generating episodes
+    home_end = effective_end
+    if transfer_info is not None:
+        close_date, dest_store, transfer_end = transfer_info
+        home_end = min(effective_end, (close_date - pd.Timedelta(days=1)).normalize())
+
+    if home_end < effective_start:
+        # No room for any assignment at home store; just emit transfer if any
+        if transfer_info is not None:
+            close_date, dest_store, transfer_end = transfer_info
+            t_start = max(effective_start, close_date)
+            if t_start <= transfer_end:
+                slots.append(TimelineSlot(
+                    store_key=dest_store,
+                    start_date=t_start,
+                    end_date=transfer_end,
+                    fte=fte,
+                    role=role,
+                    is_primary=True,
+                    transfer_reason=None,
+                ))
+        return slots
+
+    # Sample away episodes within [effective_start, home_end]
+    episodes: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = []
+    if candidate_stores and episodes_max > 0:
+        k = (
+            int(rng.integers(episodes_min, episodes_max + 1))
+            if episodes_max >= episodes_min
+            else int(episodes_min)
+        )
+        if is_forced_mover and k < 1:
+            k = 1
+        if k > 0:
+            episodes = _sample_non_overlapping_episodes(
+                rng, effective_start, home_end, candidate_stores, k, fte,
+                duration_days_min, duration_days_max,
+                allow_store_revisit, store_opening_dates, store_closing_dates,
+            )
+
+    # Walk a monotonic cursor to interleave home and away segments
+    cursor = effective_start
+
+    for (ep_start, ep_end, ep_store, _ep_fte) in episodes:
+        ep_start = pd.to_datetime(ep_start).normalize()
+        ep_end = pd.to_datetime(ep_end).normalize()
+
+        before_end = (ep_start - pd.Timedelta(days=1)).normalize()
+        gap_days = (before_end - cursor).days + 1 if cursor <= before_end else 0
+
+        if gap_days >= MIN_HOME_GAP_DAYS:
+            # Emit home-store segment for the gap
+            slots.append(TimelineSlot(
+                store_key=home_store,
+                start_date=cursor,
+                end_date=before_end,
+                fte=fte,
+                role=role,
+                is_primary=True,
+                transfer_reason=None,
+            ))
+        elif gap_days > 0:
+            # Gap too short — absorb by extending away episode backward
+            ep_start = cursor
+
+        # Emit away episode
+        reason = str(rng.choice(
+            EMPLOYEE_TRANSFER_REASON_LABELS, p=EMPLOYEE_TRANSFER_REASON_PROBS,
+        ))
+        slots.append(TimelineSlot(
+            store_key=ep_store,
+            start_date=ep_start,
+            end_date=ep_end,
+            fte=fte,
+            role=role,
+            is_primary=False,
+            transfer_reason=reason,
+        ))
+        cursor = (ep_end + pd.Timedelta(days=1)).normalize()
+
+    # Final home segment after all episodes
+    if cursor <= home_end:
+        slots.append(TimelineSlot(
+            store_key=home_store,
+            start_date=cursor,
+            end_date=home_end,
+            fte=fte,
+            role=role,
+            is_primary=True,
+            transfer_reason=None,
+        ))
+
+    # Append transfer assignment if employee moved from closing store
+    if transfer_info is not None:
+        close_date, dest_store, transfer_end = transfer_info
+        t_start = close_date
+        # Cursor may have advanced past close_date if last away episode ended
+        # after the close date; clamp to the day after the last slot
+        if slots:
+            last_slot_end = slots[-1].end_date
+            candidate_start = (last_slot_end + pd.Timedelta(days=1)).normalize()
+            if candidate_start > t_start:
+                t_start = candidate_start
+        if t_start <= transfer_end:
+            slots.append(TimelineSlot(
+                store_key=dest_store,
+                start_date=t_start,
+                end_date=transfer_end,
+                fte=fte,
+                role=role,
+                is_primary=True,
+                transfer_reason=None,
+            ))
+
+    return slots
+
+
+# ---------------------------------------------------------------------------
+# Metadata derivation
+# ---------------------------------------------------------------------------
+
+def _derive_status(df: pd.DataFrame, window_end: pd.Timestamp) -> pd.Series:
+    """Derive Status: Active / Transferred / Completed.
+
+    - Active:      EndDate >= window_end (still ongoing at dataset boundary)
+    - Transferred: EndDate < window_end AND next assignment (by sequence) is
+                   at a *different* store
+    - Completed:   everything else (assignment ended, no cross-store transfer)
+    """
+    we = pd.to_datetime(window_end).normalize()
+    end_dates = pd.to_datetime(df["EndDate"]).dt.normalize()
+
+    is_active = end_dates >= we
+
+    # Shift StoreKey forward within each employee to detect store changes
+    next_store = df.groupby("EmployeeKey")["StoreKey"].shift(-1)
+    is_transferred = (~is_active) & (next_store.notna()) & (next_store != df["StoreKey"])
+
+    status = pd.Series("Completed", index=df.index, dtype="object")
+    status[is_active] = "Active"
+    status[is_transferred] = "Transferred"
+    return status
+
+
+# ---------------------------------------------------------------------------
+# Comprehensive validation
+# ---------------------------------------------------------------------------
+
+def _validate_assignments(
+    df: pd.DataFrame,
+    *,
+    ps_role: str,
+    all_stores: List[int],
+    window_start: pd.Timestamp,
+    window_end: pd.Timestamp,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]],
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]],
+    emp_hire: Dict[int, pd.Timestamp],
+    emp_term: Dict[int, pd.Timestamp],
+    coverage_mode: str = "warn",
+) -> None:
+    """Single comprehensive validation of all assignment invariants.
+
+    Checks:
+    1. No per-employee overlaps (across ALL stores)
+    2. Dates within hire/termination window
+    3. Dates within store open/close window
+    4. SA coverage per store (warn or raise)
+    """
+    if df.empty:
+        return
+
+    one_day = pd.Timedelta(days=1)
+
+    # --- Check 1: no per-employee overlaps across all stores ---
+    chk = df.sort_values(["EmployeeKey", "StartDate", "EndDate"]).copy()
+    chk_end = pd.to_datetime(chk["EndDate"]).dt.normalize()
+    chk_start = pd.to_datetime(chk["StartDate"]).dt.normalize()
+    prev_end = chk_end.groupby(chk["EmployeeKey"]).shift(1)
+    bad = (prev_end.notna()) & (chk_start <= prev_end)
+    if bool(bad.any()):
+        ex = chk.loc[bad, ["EmployeeKey", "StoreKey", "StartDate", "EndDate"]].head(10)
+        raise RuntimeError(
+            f"Overlapping assignments detected across stores (sample):\n{ex}"
+        )
+
+    # --- Check 2: dates within hire/termination window ---
+    violations: List[str] = []
+    for ek_val, grp in df.groupby("EmployeeKey"):
+        ek = int(ek_val)
+        hire_dt = emp_hire.get(ek)
+        term_dt = emp_term.get(ek)
+        first_start = pd.to_datetime(grp["StartDate"].iloc[0]).normalize()
+        last_end = pd.to_datetime(grp["EndDate"].iloc[-1]).normalize()
+        if hire_dt is not None and first_start < hire_dt - one_day:
+            violations.append(
+                f"EK={ek}: StartDate {first_start.date()} before HireDate {hire_dt.date()}"
+            )
+        if term_dt is not None and last_end > term_dt + one_day:
+            violations.append(
+                f"EK={ek}: EndDate {last_end.date()} after TerminationDate {term_dt.date()}"
+            )
+    if violations:
+        sample = "\n".join(violations[:10])
+        warn(f"Assignment date/employment window mismatches (sample):\n{sample}")
+
+    # --- Check 3: dates within store operational window ---
+    ws = pd.to_datetime(window_start).normalize()
+    we = pd.to_datetime(window_end).normalize()
+    store_violations: List[str] = []
+    for sk_val, grp in df.groupby("StoreKey"):
+        sk = int(sk_val)
+        win = _store_operational_window_pd(
+            sk, ws, we, store_opening_dates, store_closing_dates,
+        )
+        if win is None:
+            continue
+        s_start, s_end = win
+        grp_starts = pd.to_datetime(grp["StartDate"]).dt.normalize()
+        grp_ends = pd.to_datetime(grp["EndDate"]).dt.normalize()
+        early = grp_starts < s_start - one_day
+        late = grp_ends > s_end + one_day
+        if early.any() or late.any():
+            store_violations.append(f"StoreKey={sk}: assignments outside operational window")
+    if store_violations:
+        sample = "\n".join(store_violations[:10])
+        warn(f"Store operational window mismatches (sample):\n{sample}")
+
+    # --- Check 4: SA coverage per store ---
+    ws_np = np.datetime64(window_start, "D")
+    we_np = np.datetime64(window_end, "D")
+    one_day_np = np.timedelta64(1, "D")
+
+    df_cov = df[df["RoleAtStore"].astype(str) == ps_role].copy()
+    if df_cov.empty:
+        return
+
+    df_cov["StartDate"] = pd.to_datetime(df_cov["StartDate"]).dt.normalize()
+    df_cov["EndDate"] = pd.to_datetime(df_cov["EndDate"]).dt.normalize()
+
+    covered_stores = set(df_cov["StoreKey"].unique())
+    gaps: List[str] = []
+
+    # Check stores with no SA at all
+    for s in all_stores:
+        win = _store_operational_window_np(
+            s, ws_np, we_np, store_opening_dates, store_closing_dates,
+        )
+        if win is None:
+            continue
+        if s not in covered_stores:
+            gaps.append(f"StoreKey={s}: no '{ps_role}' assignments")
+
+    # Check coverage continuity per store
+    df_cov_sorted = df_cov.sort_values(["StoreKey", "StartDate", "EndDate"]).reset_index(drop=True)
+    sk_arr = df_cov_sorted["StoreKey"].to_numpy()
+    starts_arr = df_cov_sorted["StartDate"].to_numpy().astype("datetime64[D]")
+    ends_arr = df_cov_sorted["EndDate"].to_numpy().astype("datetime64[D]")
+
+    store_breaks = np.flatnonzero(np.r_[True, sk_arr[1:] != sk_arr[:-1]])
+    group_ends = np.r_[store_breaks[1:], len(sk_arr)]
+
+    for gs, ge in zip(store_breaks, group_ends):
+        store = int(sk_arr[gs])
+        win = _store_operational_window_np(
+            store, ws_np, we_np, store_opening_dates, store_closing_dates,
+        )
+        if win is None:
+            continue
+        store_ws, store_we = win
+
+        seg_starts = starts_arr[gs:ge]
+        seg_ends = ends_arr[gs:ge]
+
+        merged_s, merged_e = _merge_adjacent_intervals(seg_starts, seg_ends, one_day_np)
+
+        # Walk merged intervals to find gaps within [store_ws, store_we]
+        cursor = store_ws
+        for ms, me in zip(merged_s, merged_e):
+            if ms > cursor:
+                gap_end = min(ms - one_day_np, store_we)
+                if gap_end >= cursor:
+                    gaps.append(f"StoreKey={store} gap {cursor}..{gap_end}")
+                    break
+            cursor = me + one_day_np
+            if cursor > store_we:
+                break
+        else:
+            if cursor <= store_we:
+                gaps.append(f"StoreKey={store} gap {cursor}..{store_we}")
+
+    if gaps:
+        sample = "\n".join(gaps[:10])
+        msg = (
+            "EmployeeStoreAssignments coverage gaps detected "
+            f"(sales-eligible role '{ps_role}'). Sample:\n{sample}"
+        )
+        if coverage_mode == "raise":
+            raise RuntimeError(msg)
+        else:
+            warn(msg)
+
+
+# ---------------------------------------------------------------------------
+# Safe coverage gap fill
+# ---------------------------------------------------------------------------
+
+def _fill_coverage_gaps_safe(
+    df: pd.DataFrame,
+    *,
+    ps_role: str,
+    all_stores: List[int],
+    window_start: pd.Timestamp,
+    window_end: pd.Timestamp,
+    store_opening_dates: Optional[Dict[int, pd.Timestamp]],
+    store_closing_dates: Optional[Dict[int, pd.Timestamp]],
+    emp_hire: Optional[Dict[int, pd.Timestamp]] = None,
+    emp_term: Optional[Dict[int, pd.Timestamp]] = None,
+) -> pd.DataFrame:
+    """Fill SA coverage gaps by extending the nearest same-store SA assignment.
+
+    Safety rules:
+    - Only extend if the employee has NO other assignment at ANY store during
+      the gap period (no cross-store overlaps).
+    - Never extend past the employee's termination date.
+    - Never extend before the employee's hire date.
+
+    Returns the DataFrame with gap-filling rows appended (or extended).
+    """
+    if df.empty:
+        return df
+
+    one_day = pd.Timedelta(days=1)
+    ws = pd.to_datetime(window_start).normalize()
+    we = pd.to_datetime(window_end).normalize()
+
+    # Build per-employee full timeline lookup: {ek: [(start, end), ...]}
+    emp_timeline: Dict[int, List[Tuple[pd.Timestamp, pd.Timestamp]]] = {}
+    for ek_val, grp in df.groupby("EmployeeKey"):
+        intervals = list(zip(
+            pd.to_datetime(grp["StartDate"]).dt.normalize(),
+            pd.to_datetime(grp["EndDate"]).dt.normalize(),
+        ))
+        emp_timeline[int(ek_val)] = sorted(intervals, key=lambda x: x[0])
+
+    def _employee_free_during(ek: int, gap_start: pd.Timestamp, gap_end: pd.Timestamp) -> bool:
+        """Return True if employee has NO assignment overlapping [gap_start, gap_end]."""
+        for s, e in emp_timeline.get(ek, []):
+            if s <= gap_end and e >= gap_start:
+                return False
+        return True
+
+    def _clamp_to_employment(ek: int, start: pd.Timestamp, end: pd.Timestamp
+                             ) -> Optional[Tuple[pd.Timestamp, pd.Timestamp]]:
+        """Clamp [start, end] to employee's hire/term window. Return None if empty."""
+        s, e = start, end
+        if emp_hire and ek in emp_hire:
+            s = max(s, emp_hire[ek])
+        if emp_term and ek in emp_term:
+            e = min(e, emp_term[ek])
+        return (s, e) if e >= s else None
+
+    # Filter to SA assignments only
+    df_sa = df[df["RoleAtStore"].astype(str) == ps_role].copy()
+    df_sa["StartDate"] = pd.to_datetime(df_sa["StartDate"]).dt.normalize()
+    df_sa["EndDate"] = pd.to_datetime(df_sa["EndDate"]).dt.normalize()
+
+    new_rows: List[Dict[str, Any]] = []
+    extensions: Dict[int, pd.Timestamp] = {}  # df index -> new EndDate
+
+    def _make_gap_fill_row(
+        ek: int, store: int, start: pd.Timestamp, end: pd.Timestamp,
+        fte: float, role: str,
+    ) -> Dict[str, Any]:
+        return {
+            "EmployeeKey": ek, "StoreKey": store,
+            "StartDate": start, "EndDate": end,
+            "FTE": fte, "RoleAtStore": role,
+            "IsPrimary": True, "TransferReason": pd.NA,
+        }
+
+    for store in all_stores:
+        win = _store_operational_window_pd(
+            store, ws, we, store_opening_dates, store_closing_dates,
+        )
+        if win is None:
+            continue
+        store_ws, store_we = win
+
+        # Get SA assignments at this store sorted by start
+        store_sa = df_sa[df_sa["StoreKey"] == store].sort_values("StartDate")
+        if store_sa.empty:
+            continue
+
+        # Merge overlapping/adjacent intervals to find gaps
+        _ms, _me = _merge_adjacent_intervals(
+            store_sa["StartDate"].tolist(), store_sa["EndDate"].tolist(), one_day,
+        )
+        merged = list(zip(_ms, _me))
+
+        # Identify gaps within [store_ws, store_we]
+        gaps: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
+        cursor = store_ws
+        for ms, me in merged:
+            if ms > cursor:
+                gap_end = min(ms - one_day, store_we)
+                if gap_end >= cursor:
+                    gaps.append((cursor, gap_end))
+            cursor = me + one_day
+            if cursor > store_we:
+                break
+        if cursor <= store_we:
+            gaps.append((cursor, store_we))
+
+        if not gaps:
+            continue
+
+        # Try to fill each gap by extending nearest SA
+        for gap_start, gap_end in gaps:
+            filled = False
+
+            # Strategy 1: extend an existing adjacent SA assignment forward
+            # Find SA whose EndDate is just before the gap
+            sa_ends = store_sa["EndDate"]
+            before = store_sa[(sa_ends >= gap_start - one_day) & (sa_ends < gap_start)]
+            if not before.empty:
+                best_idx = before["EndDate"].idxmax()
+                best_row = df.loc[best_idx]
+                ek = int(best_row["EmployeeKey"])
+                clamped = _clamp_to_employment(ek, gap_start, gap_end)
+                if clamped is not None:
+                    c_start, c_end = clamped
+                    if _employee_free_during(ek, c_start, c_end):
+                        current_end = extensions.get(best_idx, pd.to_datetime(best_row["EndDate"]).normalize())
+                        new_end = max(current_end, c_end)
+                        extensions[best_idx] = new_end
+                        timeline = emp_timeline[ek]
+                        for ti, (ts, te) in enumerate(timeline):
+                            if te == current_end or te == pd.to_datetime(best_row["EndDate"]).normalize():
+                                timeline[ti] = (ts, new_end)
+                                break
+                        filled = c_end >= gap_end  # fully filled?
+
+            if filled:
+                continue
+
+            # Strategy 2: extend an SA whose StartDate is just after the gap backward
+            sa_starts = store_sa["StartDate"]
+            after = store_sa[(sa_starts <= gap_end + one_day) & (sa_starts > gap_end)]
+            if not after.empty:
+                best_idx = after["StartDate"].idxmin()
+                best_row = df.loc[best_idx]
+                ek = int(best_row["EmployeeKey"])
+                clamped = _clamp_to_employment(ek, gap_start, gap_end)
+                if clamped is not None:
+                    c_start, c_end = clamped
+                    if _employee_free_during(ek, c_start, c_end):
+                        new_rows.append(_make_gap_fill_row(
+                            ek, store, c_start, c_end,
+                            float(best_row["FTE"]), str(best_row["RoleAtStore"]),
+                        ))
+                        emp_timeline[ek].append((c_start, c_end))
+                        emp_timeline[ek].sort(key=lambda x: x[0])
+                        filled = c_start <= gap_start and c_end >= gap_end
+
+            if filled:
+                continue
+
+            # Strategy 3: pick ANY SA at this store who is free during the gap
+            for _, sa_row in store_sa.iterrows():
+                ek = int(sa_row["EmployeeKey"])
+                clamped = _clamp_to_employment(ek, gap_start, gap_end)
+                if clamped is None:
+                    continue
+                c_start, c_end = clamped
+                if _employee_free_during(ek, c_start, c_end):
+                    new_rows.append(_make_gap_fill_row(
+                        ek, store, c_start, c_end,
+                        float(sa_row["FTE"]), str(sa_row["RoleAtStore"]),
+                    ))
+                    emp_timeline[ek].append((c_start, c_end))
+                    emp_timeline[ek].sort(key=lambda x: x[0])
+                    filled = c_start <= gap_start and c_end >= gap_end
+                    break
+
+            if not filled:
+                warn(
+                    f"Cannot safely fill coverage gap at StoreKey={store} "
+                    f"{gap_start.date()}..{gap_end.date()} — no SA is free "
+                    f"during that period without creating cross-store overlaps"
+                )
+
+    # Apply forward extensions
+    if extensions:
+        for idx, new_end in extensions.items():
+            df.at[idx, "EndDate"] = new_end
+
+    # Append new gap-fill rows
+    if new_rows:
+        out_cols = [
+            "EmployeeKey", "StoreKey", "StartDate", "EndDate",
+            "FTE", "RoleAtStore", "IsPrimary", "TransferReason",
+        ]
+        fill_df = pd.DataFrame(new_rows, columns=out_cols)
+        df = pd.concat([df, fill_df], ignore_index=True)
+
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Public API
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def generate_employee_store_assignments(
     employees: pd.DataFrame,
@@ -224,21 +988,27 @@ def generate_employee_store_assignments(
     multi_store_share: Optional[float] = None,
     store_opening_dates: Optional[Dict[int, pd.Timestamp]] = None,
     store_closing_dates: Optional[Dict[int, pd.Timestamp]] = None,
+    # Transfer integration (new)
+    transfers_df: Optional[pd.DataFrame] = None,
+    stores_emp_count: Optional[Dict[int, int]] = None,
+    stores_district: Optional[Dict[int, Any]] = None,
+    prefer_same_district: bool = True,
 ) -> pd.DataFrame:
-    """
-    Exclusive (non-overlapping) store assignments per employee, with
-    role-weighted movement.
+    """Build non-overlapping store assignments for all employees.
 
-    Output columns:
-      EmployeeKey, StoreKey, StartDate, EndDate, FTE, RoleAtStore,
-      IsPrimary, AssignmentSequence
+    Timeline is constructed in a single pass per employee — no post-hoc
+    repair or gap-fill.  Transfers from closed stores are integrated
+    during construction.
     """
     out_cols = [
         "EmployeeKey", "StoreKey", "StartDate", "EndDate",
         "FTE", "RoleAtStore", "IsPrimary", "TransferReason",
     ]
     if not enabled:
-        return pd.DataFrame(columns=out_cols + ["AssignmentSequence"])
+        empty = pd.DataFrame(columns=out_cols + [
+            "AssignmentSequence", "Status", "MaxAssignments",
+        ])
+        return empty
 
     if multi_store_share is not None:
         warn(
@@ -262,7 +1032,9 @@ def generate_employee_store_assignments(
     # Store-attached only
     emp = emp[emp["HomeStoreKey"].notna()].copy()
     if emp.empty:
-        return pd.DataFrame(columns=out_cols + ["AssignmentSequence"])
+        return pd.DataFrame(columns=out_cols + [
+            "AssignmentSequence", "Status", "MaxAssignments",
+        ])
 
     hire = pd.to_datetime(emp["HireDate"]).dt.normalize()
     term = pd.to_datetime(emp["TerminationDate"]).dt.normalize()
@@ -275,7 +1047,6 @@ def generate_employee_store_assignments(
     term_filled = term.fillna(window_end)
     title_arr = emp["Title"].astype(str).to_numpy()
 
-    # FTE from employee dimension (determined at hire)
     if "FTE" in emp.columns:
         target_fte = emp["FTE"].astype(np.float64).to_numpy()
     else:
@@ -283,14 +1054,16 @@ def generate_employee_store_assignments(
 
     # Store pools
     store_by_district = _build_store_by_district(emp)
-    all_stores = sorted({int(x) for x in emp["HomeStoreKey"].dropna().astype(int).tolist()})
+    # Exclude online stores from the away-episode pool — only physical stores
+    all_stores = sorted({
+        int(x) for x in emp["HomeStoreKey"].dropna().astype(int).tolist()
+        if int(x) <= ONLINE_STORE_KEY_BASE
+    })
     scope = str_or(pool_scope, "district").lower()
 
     ps_role = str(primary_sales_role or "Sales Associate")
 
-    # -----------------------------------------------------------------
-    # Pre-extract all per-employee arrays (avoid .iloc inside the loop)
-    # -----------------------------------------------------------------
+    # Pre-extract per-employee arrays
     ek_arr = emp["EmployeeKey"].astype(np.int32).to_numpy()
     did_arr = emp["DistrictId"].to_numpy()
     home_arr = emp["HomeStoreKey"].fillna(-1).astype(np.int32).to_numpy()
@@ -298,6 +1071,82 @@ def generate_employee_store_assignments(
     hire_arr = hire.to_numpy()
     term_arr = term.to_numpy()
     term_filled_arr = term_filled.to_numpy()
+
+    # -----------------------------------------------------------------
+    # Build transfer destination map UPFRONT
+    # -----------------------------------------------------------------
+    # transfer_map: {EmployeeKey: (close_date, dest_store, transfer_end)}
+    transfer_map: Dict[int, Tuple[pd.Timestamp, int, pd.Timestamp]] = {}
+    if transfers_df is not None and not transfers_df.empty and stores_emp_count:
+        rng_t = np.random.default_rng(int(seed) ^ 0xDEAD_BEEF)
+        # Exclude online stores as transfer destinations
+        open_stores = sorted(sk for sk in stores_emp_count if sk <= ONLINE_STORE_KEY_BASE)
+        _hire_lookup = _build_emp_date_lookup(ek_arr, hire_arr)
+        _term_lookup = _build_emp_date_lookup(ek_arr, term_arr)
+
+        def _store_open_at(sk: int, dt: pd.Timestamp) -> bool:
+            if store_opening_dates and sk in store_opening_dates:
+                if dt < pd.to_datetime(store_opening_dates[sk]).normalize():
+                    return False
+            if store_closing_dates and sk in store_closing_dates:
+                if dt >= pd.to_datetime(store_closing_dates[sk]).normalize():
+                    return False
+            return True
+
+        for _, trow in transfers_df.iterrows():
+            ek = int(trow["EmployeeKey"])
+            orig_sk = int(trow["OriginalStoreKey"])
+            t_date = pd.to_datetime(trow["TransferDate"]).normalize()
+            did = trow.get("DistrictId")
+
+            # Pick destination store — must be open at the transfer date
+            if prefer_same_district and stores_district and pd.notna(did):
+                orig_district = stores_district.get(orig_sk, "")
+                same_dist = [
+                    sk for sk in open_stores
+                    if stores_district.get(sk, "") == orig_district
+                    and sk != orig_sk and _store_open_at(sk, t_date)
+                ]
+                candidates = same_dist if same_dist else [
+                    sk for sk in open_stores
+                    if sk != orig_sk and _store_open_at(sk, t_date)
+                ]
+            else:
+                candidates = [
+                    sk for sk in open_stores
+                    if sk != orig_sk and _store_open_at(sk, t_date)
+                ]
+
+            if not candidates:
+                candidates = [sk for sk in open_stores if sk != orig_sk]
+            if not candidates:
+                candidates = open_stores
+
+            weights = np.array(
+                [max(1, stores_emp_count.get(sk, 1)) for sk in candidates],
+                dtype=np.float64,
+            )
+            weights /= weights.sum()
+            dest_sk = int(rng_t.choice(candidates, p=weights))
+
+            # Clamp transfer start to HireDate
+            hire_date = _hire_lookup.get(ek)
+            if hire_date is not None and t_date < hire_date:
+                t_date = hire_date
+
+            # Clamp transfer end to employee's termination date
+            transfer_end = window_end
+            emp_term_dt = _term_lookup.get(ek)
+            if emp_term_dt is not None and emp_term_dt < transfer_end:
+                transfer_end = emp_term_dt
+
+            # Use the store's actual closing date (not the transfer date)
+            # so the SA stays at the home store until its last operational day.
+            actual_close = t_date
+            if store_closing_dates and orig_sk in store_closing_dates:
+                actual_close = pd.to_datetime(store_closing_dates[orig_sk]).normalize()
+
+            transfer_map[ek] = (actual_close, dest_sk, transfer_end)
 
     # -----------------------------------------------------------------
     # Coverage anchors + explicit mover pool
@@ -314,8 +1163,7 @@ def generate_employee_store_assignments(
 
         n_movable = max(0, int(movable_sales_per_store))
 
-        # Determine which stores are active during the dataset window
-        _active_stores = set(all_stores)
+        _active_stores = {int(s) for s in all_stores if int(s) <= ONLINE_STORE_KEY_BASE}
         if store_closing_dates:
             for sk, cd in store_closing_dates.items():
                 _effective_open = window_start
@@ -326,10 +1174,6 @@ def generate_employee_store_assignments(
                 if pd.to_datetime(cd).normalize() < _effective_open:
                     _active_stores.discard(int(sk))
 
-        # Build anchor/mover sets per store.  An SA can safely become a
-        # mover if the remaining anchors at the store fully cover the
-        # mover's tenure (so the store is never left unstaffed during
-        # away episodes).  Short-tenure SAs (< 1 year) stay anchors.
         _MIN_TENURE_FOR_TRANSFER_DAYS = 365
         ws_np = np.datetime64(window_start, "ns")
         we_np = np.datetime64(window_end, "ns")
@@ -340,8 +1184,6 @@ def generate_employee_store_assignments(
             target_start: np.int64,
             target_end: np.int64,
         ) -> bool:
-            """Check merged anchor intervals fully cover [target_start, target_end]."""
-            # Filter to anchors overlapping the target window
             mask = (anch_ends >= target_start) & (anch_starts <= target_end)
             if not np.any(mask):
                 return False
@@ -373,7 +1215,6 @@ def generate_employee_store_assignments(
             cand_hire_ns = np.asarray(hire_arr[cand_pos], dtype="datetime64[ns]")
             cand_term_ns = np.asarray(term_arr[cand_pos], dtype="datetime64[ns]")
 
-            # Effective tenure per SA (clamped to data window)
             eff_start = np.maximum(cand_hire_ns, ws_np)
             eff_end = np.where(
                 np.isnat(cand_term_ns), we_np,
@@ -381,17 +1222,14 @@ def generate_employee_store_assignments(
             )
             tenure_days = (eff_end - eff_start) / np.timedelta64(1, "D")
 
-            # Start with everyone as anchor
             store_anchor_set: set[int] = set(cand_ek.astype(int))
             store_mover_set: set[int] = set()
 
-            # Try to convert long-tenure SAs to movers (longest first)
             order = np.argsort(-tenure_days)
             for idx in order:
                 if tenure_days[idx] < _MIN_TENURE_FOR_TRANSFER_DAYS:
                     continue
                 ek_val = int(cand_ek[idx])
-                # Build arrays of remaining anchors (excluding this SA)
                 other_mask = np.array(
                     [int(cand_ek[j]) in store_anchor_set and j != idx
                      for j in range(len(cand_ek))],
@@ -441,10 +1279,6 @@ def generate_employee_store_assignments(
     base = float(np.clip(float_or(mover_share, 0.03), 0.0, 1.0))
     pt_mult = float(max(1.0, float_or(part_time_multiplier, 1.0)))
 
-    fmin = float(max(0.0, float_or(secondary_fte_min, 0.10)))
-    fmax = float(max(fmin, float_or(secondary_fte_max, 0.40)))
-
-    # Clip these once (they are constant for the entire run)
     clamped_mult_frac = float(np.clip(max_non_sales_multiplier_frac, 0.0, 1.0))
     clamped_ep_frac = float(np.clip(max_non_sales_episodes_frac, 0.0, 1.0))
 
@@ -456,216 +1290,21 @@ def generate_employee_store_assignments(
         pool = store_by_district.get(did, [])
         return [int(s) for s in pool if int(s) != home_store]
 
-    def _sample_non_overlapping_episodes(
-        start_min: pd.Timestamp,
-        end_max: pd.Timestamp,
-        other_stores: List[int],
-        k: int,
-        tgt_fte: float,
-        dmin: int,
-        dmax: int,
-    ) -> List[Tuple[pd.Timestamp, pd.Timestamp, int, float]]:
-        if k <= 0 or not other_stores:
-            return []
-
-        # Pick stores ensuring no two consecutive picks are the same.
-        # When allow_store_revisit is False, numpy handles uniqueness;
-        # otherwise we re-roll consecutive duplicates so that each
-        # transfer is to a genuinely different location.
-        if not allow_store_revisit:
-            chosen = rng.choice(
-                other_stores, size=min(int(k), len(other_stores)), replace=False,
-            )
-        else:
-            chosen_list: List[int] = []
-            for _ in range(int(k)):
-                pool = (
-                    [s for s in other_stores if s != chosen_list[-1]]
-                    if chosen_list
-                    else list(other_stores)
-                )
-                if not pool:
-                    break
-                chosen_list.append(int(rng.choice(pool)))
-            chosen = np.array(chosen_list, dtype=np.int32)
-
-        raw: List[Tuple[pd.Timestamp, int, int, float]] = []
-        for store in chosen:
-            # Clamp episode window to the target store's open/close dates
-            ep_start_min = start_min
-            ep_end_max = end_max
-            _sk = int(store)
-            if store_opening_dates and _sk in store_opening_dates:
-                _sod = pd.to_datetime(store_opening_dates[_sk]).normalize()
-                if _sod > ep_start_min:
-                    ep_start_min = _sod
-            if store_closing_dates and _sk in store_closing_dates:
-                _scd = pd.to_datetime(store_closing_dates[_sk]).normalize()
-                if _scd < ep_end_max:
-                    ep_end_max = _scd
-            if ep_end_max < ep_start_min:
-                continue  # store not active during employee's window
-
-            dur = int(rng.integers(dmin, dmax + 1))
-            latest_start = (ep_end_max - pd.Timedelta(days=dur - 1)).normalize()
-            if latest_start < ep_start_min:
-                continue
-            s = rand_single_date(rng, ep_start_min, latest_start)
-            raw.append((s, dur, int(store), tgt_fte))
-
-        if not raw:
-            return []
-
-        raw.sort(key=lambda x: x[0])
-        placed: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = []
-        last_end: Optional[pd.Timestamp] = None
-
-        for s, dur, store, sec_fte in raw:
-            if last_end is not None and s <= last_end:
-                s = (last_end + pd.Timedelta(days=1)).normalize()
-            if s > end_max:
-                continue
-            e = (s + pd.Timedelta(days=dur - 1)).normalize()
-            if e > end_max:
-                e = end_max
-            if e < s:
-                continue
-            placed.append((s, e, store, sec_fte))
-            last_end = e
-
-        # Safety net: merge consecutive same-store episodes that can
-        # still arise after date-sorting reorders the picks.
-        if len(placed) <= 1:
-            return placed
-
-        out: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = [placed[0]]
-        for s, e, store, sec_fte in placed[1:]:
-            prev_s, prev_e, prev_store, prev_fte = out[-1]
-            if store == prev_store:
-                # Extend the previous episode to cover this one
-                out[-1] = (prev_s, e, prev_store, prev_fte)
-            else:
-                out.append((s, e, store, sec_fte))
-
-        return out
-
-    # -----------------------------------------------------------------
-    # Emit assignment rows
-    # -----------------------------------------------------------------
-    batch_dfs: List[pd.DataFrame] = []
-    mover_rows: List[Dict[str, Any]] = []
-
-    def _emit_mover(
-        ek: int, role: str, store_key: int,
-        seg_start: pd.Timestamp, seg_end: Any,
-        is_primary: bool, fte_val: float,
-        transfer_reason: Any = pd.NA,
-    ) -> None:
-        mover_rows.append(dict(
-            EmployeeKey=int(ek),
-            StoreKey=int(store_key),
-            StartDate=pd.to_datetime(seg_start).normalize(),
-            EndDate=(pd.to_datetime(seg_end).normalize() if pd.notna(seg_end) else pd.NaT),
-            FTE=float(fte_val),
-            RoleAtStore=str(role),
-            IsPrimary=bool(is_primary),
-            TransferReason=transfer_reason,
-        ))
-
-    # -----------------------------------------------------------------
-    # Per-employee store opening/closing dates (for clamping assignment windows)
-    # -----------------------------------------------------------------
-    _store_open_ns = None
-    _store_close_ns = None
-    if store_opening_dates:
-        _store_open_ns = np.array([
-            np.datetime64(store_opening_dates.get(int(sk), window_start), "ns")
-            for sk in home_arr
-        ], dtype="datetime64[ns]")
-    if store_closing_dates:
-        _store_close_ns = np.array([
-            np.datetime64(store_closing_dates.get(int(sk), window_end), "ns")
-            for sk in home_arr
-        ], dtype="datetime64[ns]")
-
-    # -----------------------------------------------------------------
-    # Vectorized: anchors get tenure-bounded rows (chained for attrition)
-    # -----------------------------------------------------------------
-    if bool(ensure_store_sales_coverage) and anchor_keys:
-        anchor_mask = np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int32))
-        anc_idx = np.where(anchor_mask)[0]
-        if anc_idx.size > 0:
-            # Start = max(hire_date, window_start, store_open)
-            anc_start = np.maximum(
-                np.asarray(hire_arr[anc_idx], dtype="datetime64[ns]"),
-                np.datetime64(window_start, "ns"),
-            )
-            if _store_open_ns is not None:
-                anc_start = np.maximum(anc_start, _store_open_ns[anc_idx])
-
-            # End = min(term_date or window_end, window_end, store_close)
-            anc_end = np.asarray(term_filled_arr[anc_idx], dtype="datetime64[ns]")
-            anc_end = np.minimum(anc_end, np.datetime64(window_end, "ns"))
-            if _store_close_ns is not None:
-                anc_end = np.minimum(anc_end, _store_close_ns[anc_idx])
-
-            # Filter out anchors whose effective window is invalid
-            anc_valid = anc_end >= anc_start
-            if not np.all(anc_valid):
-                anc_idx = anc_idx[anc_valid]
-                anc_start = anc_start[anc_valid]
-                anc_end = anc_end[anc_valid]
-            if anc_idx.size > 0:
-                batch_dfs.append(pd.DataFrame({
-                    "EmployeeKey": ek_arr[anc_idx],
-                    "StoreKey": home_arr[anc_idx],
-                    "StartDate": anc_start,
-                    "EndDate": anc_end,
-                    "FTE": target_fte[anc_idx],
-                    "RoleAtStore": ps_role,
-                    "IsPrimary": True,
-                    "TransferReason": pd.NA,
-                }))
-
-    # -----------------------------------------------------------------
-    # Vectorized: pre-compute per-employee validity and movement
-    # -----------------------------------------------------------------
+    # Build per-role profile cache
+    _role_cache: Dict[str, Dict[str, Any]] = {}
     hire_ns = np.asarray(hire_arr, dtype="datetime64[ns]")
     term_ns = np.asarray(term_arr, dtype="datetime64[ns]")
     term_filled_ns = np.asarray(term_filled_arr, dtype="datetime64[ns]")
 
     valid = ~np.isnat(hire_ns) & ~np.isnat(term_filled_ns) & (term_filled_ns >= hire_ns)
-
-    # Exclude anchors from further processing
-    if bool(ensure_store_sales_coverage) and anchor_keys:
-        valid &= ~np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int32))
-
-    ws_np = np.datetime64(window_start, "ns")
-    we_np = np.datetime64(window_end, "ns")
-    gen_start_all = np.maximum(hire_ns, ws_np)
-    plan_end_all = np.minimum(term_filled_ns, we_np)
-
-    # Clamp assignment start to store opening, end to store closing
-    if _store_open_ns is not None:
-        gen_start_all = np.maximum(gen_start_all, _store_open_ns)
-    if _store_close_ns is not None:
-        plan_end_all = np.minimum(plan_end_all, _store_close_ns)
-
-    valid &= (plan_end_all >= gen_start_all) & (gen_start_all <= we_np)
-
-    open_ended_all = np.isnat(term_ns) | (term_ns > we_np)
-    end_date_all = np.where(open_ended_all, we_np, np.minimum(term_ns, we_np))
-    if _store_close_ns is not None:
-        end_date_all = np.minimum(end_date_all, _store_close_ns)
-
-    # Build per-role profile lookup (few unique roles, so dict lookup is fine)
-    _role_cache: Dict[str, Dict[str, Any]] = {}
     unique_roles = set(role_arr[valid])
     for r in unique_roles:
         if r == "Store Manager":
-            _role_cache[r] = {"role_multiplier": 0.0, "episodes_min": 0,
-                              "episodes_max": 0, "duration_days_min": 30,
-                              "duration_days_max": 180}
+            _role_cache[r] = {
+                "role_multiplier": 0.0, "episodes_min": 0,
+                "episodes_max": 0, "duration_days_min": 30,
+                "duration_days_max": 180,
+            }
         else:
             prof = _get_profile(
                 r,
@@ -690,7 +1329,7 @@ def generate_employee_store_assignments(
                 ),
             }
 
-    # Vectorized per-employee movement probability
+    # Vectorized movement probability
     role_mult_arr = np.array(
         [_role_cache.get(r, {"role_multiplier": 1.0})["role_multiplier"] for r in role_arr],
         dtype=np.float64,
@@ -710,46 +1349,149 @@ def generate_employee_store_assignments(
     else:
         forced_mover = np.zeros(len(emp), dtype=bool)
 
-    will_move = valid & (emax_arr > 0) & (forced_mover | (move_draws < p_move_all))
+    # -----------------------------------------------------------------
+    # Per-employee store opening/closing dates (for clamping)
+    # -----------------------------------------------------------------
+    _store_open_ns = None
+    _store_close_ns = None
+    if store_opening_dates:
+        _store_open_ns = np.array([
+            np.datetime64(store_opening_dates.get(int(sk), window_start), "ns")
+            for sk in home_arr
+        ], dtype="datetime64[ns]")
+    if store_closing_dates:
+        # Last operational day = closing_date - 1 day (only for stores that actually close)
+        _one_day_ns = np.timedelta64(1, "D")
+        _far_future = np.datetime64("2262-04-11", "ns")
+        _store_close_ns = np.array([
+            np.datetime64(store_closing_dates[int(sk)], "ns") - _one_day_ns
+            if int(sk) in store_closing_dates
+            else _far_future
+            for sk in home_arr
+        ], dtype="datetime64[ns]")
+
+    # Compute effective start/end for all employees
+    ws_np = np.datetime64(window_start, "ns")
+    we_np = np.datetime64(window_end, "ns")
+    gen_start_all = np.maximum(hire_ns, ws_np)
+    plan_end_all = np.minimum(term_filled_ns, we_np)
+
+    if _store_open_ns is not None:
+        gen_start_all = np.maximum(gen_start_all, _store_open_ns)
+    if _store_close_ns is not None:
+        plan_end_all = np.minimum(plan_end_all, _store_close_ns)
+
+    valid &= (plan_end_all >= gen_start_all) & (gen_start_all <= we_np)
+
+    # Exclude anchors and online employees from mover classification
+    _online_emp_mask = ek_arr >= ONLINE_EMP_KEY_BASE
+    if bool(ensure_store_sales_coverage) and anchor_keys:
+        valid_for_move = valid & ~np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int32))
+    else:
+        valid_for_move = valid.copy()
+    valid_for_move &= ~_online_emp_mask  # online employees never move
+
+    will_move = valid_for_move & (emax_arr > 0) & (forced_mover | (move_draws < p_move_all))
     non_mover = valid & ~will_move
+    # Anchors and online employees are non-movers
+    if bool(ensure_store_sales_coverage) and anchor_keys:
+        anchor_mask = np.isin(ek_arr, np.array(sorted(anchor_keys), dtype=np.int32))
+        non_mover |= (valid & anchor_mask)
+        will_move &= ~anchor_mask
+    non_mover |= (valid & _online_emp_mask)
+
+    open_ended_all = np.isnat(term_ns) | (term_ns > we_np)
+    end_date_all = np.where(open_ended_all, we_np, np.minimum(term_ns, we_np))
+    if _store_close_ns is not None:
+        end_date_all = np.minimum(end_date_all, _store_close_ns)
 
     # -----------------------------------------------------------------
-    # Vectorized: batch-emit all non-movers as single-assignment rows
+    # Phase 2: Build timelines
     # -----------------------------------------------------------------
-    nm_idx = np.where(non_mover)[0]
-    if nm_idx.size > 0:
-        nm_start = gen_start_all[nm_idx]
-        nm_end = end_date_all[nm_idx]
+    batch_dfs: List[pd.DataFrame] = []
+    all_slots: List[Dict[str, Any]] = []
+
+    # --- Batch: non-movers (single assignment, no loop) ---
+    # Separate non-movers into: those with transfers and those without
+    nm_idx_all = np.where(non_mover)[0]
+    nm_transferred = []
+    nm_simple = []
+    for i in nm_idx_all:
+        ek = int(ek_arr[i])
+        if ek in transfer_map:
+            nm_transferred.append(i)
+        else:
+            nm_simple.append(i)
+
+    nm_simple = np.array(nm_simple, dtype=np.intp) if nm_simple else np.array([], dtype=np.intp)
+
+    if nm_simple.size > 0:
+        nm_start = gen_start_all[nm_simple]
+        nm_end = end_date_all[nm_simple]
         ok = nm_end >= nm_start
-        nm_idx = nm_idx[ok]
-        if nm_idx.size > 0:
+        nm_simple = nm_simple[ok]
+        if nm_simple.size > 0:
             batch_dfs.append(pd.DataFrame({
-                "EmployeeKey": ek_arr[nm_idx],
-                "StoreKey": home_arr[nm_idx],
-                "StartDate": gen_start_all[nm_idx],
-                "EndDate": end_date_all[nm_idx],
-                "FTE": target_fte[nm_idx],
-                "RoleAtStore": role_arr[nm_idx],
+                "EmployeeKey": ek_arr[nm_simple],
+                "StoreKey": home_arr[nm_simple],
+                "StartDate": gen_start_all[nm_simple],
+                "EndDate": end_date_all[nm_simple],
+                "FTE": target_fte[nm_simple],
+                "RoleAtStore": role_arr[nm_simple],
                 "IsPrimary": True,
                 "TransferReason": pd.NA,
             }))
 
-    # -----------------------------------------------------------------
-    # Loop only over movers (small fraction of employees)
-    # -----------------------------------------------------------------
+    # --- Non-movers with transfers: build per-employee timeline ---
+    for i in nm_transferred:
+        ek = int(ek_arr[i])
+        home_store = int(home_arr[i])
+        role = str(role_arr[i])
+        fte = float(target_fte[i])
+        eff_start = pd.Timestamp(gen_start_all[i])
+        eff_end = pd.Timestamp(end_date_all[i])
+
+        t_info = transfer_map.get(ek)
+        slots = _build_employee_timeline(
+            rng=rng,
+            home_store=home_store,
+            role=role,
+            fte=fte,
+            effective_start=eff_start,
+            effective_end=eff_end,
+            candidate_stores=[],
+            episodes_min=0,
+            episodes_max=0,
+            duration_days_min=30,
+            duration_days_max=180,
+            allow_store_revisit=allow_store_revisit,
+            store_opening_dates=store_opening_dates,
+            store_closing_dates=store_closing_dates,
+            transfer_info=t_info,
+        )
+        for sl in slots:
+            all_slots.append({
+                "EmployeeKey": ek,
+                "StoreKey": sl.store_key,
+                "StartDate": sl.start_date,
+                "EndDate": sl.end_date,
+                "FTE": sl.fte,
+                "RoleAtStore": sl.role,
+                "IsPrimary": sl.is_primary,
+                "TransferReason": sl.transfer_reason if sl.transfer_reason else pd.NA,
+            })
+
+    # --- Loop: movers ---
     mover_indices = np.where(will_move)[0]
     for i in mover_indices:
         ek = int(ek_arr[i])
         did = did_arr[i]
         home_store = int(home_arr[i])
         role = str(role_arr[i])
-        tgt = float(target_fte[i])
+        fte = float(target_fte[i])
 
-        emp_term = term_arr[i]
-
-        gen_start = pd.Timestamp(gen_start_all[i])
-        plan_end = pd.Timestamp(plan_end_all[i])
-        open_ended = bool(open_ended_all[i])
+        eff_start = pd.Timestamp(gen_start_all[i])
+        eff_end = pd.Timestamp(end_date_all[i])
 
         rp_cached = _role_cache.get(role, {})
         e_min = int(rp_cached.get("episodes_min", 0))
@@ -757,70 +1499,52 @@ def generate_employee_store_assignments(
         dmin = int(rp_cached.get("duration_days_min", 30))
         dmax = int(rp_cached.get("duration_days_max", 180))
 
-        is_mover = bool(forced_mover[i])
-
-        episodes: List[Tuple[pd.Timestamp, pd.Timestamp, int, float]] = []
+        is_fm = bool(forced_mover[i])
         other = _candidate_stores(did, home_store)
-        if other and e_max > 0:
-            k = (
-                int(rng.integers(e_min, e_max + 1))
-                if e_max >= e_min
-                else int(e_min)
-            )
-            if is_mover and k < 1:
-                k = 1
-            if k > 0:
-                episodes = _sample_non_overlapping_episodes(
-                    gen_start, plan_end, other, k, tgt, dmin, dmax,
-                )
+        t_info = transfer_map.get(ek)
 
-        cur = pd.to_datetime(gen_start).normalize()
-
-        MIN_HOME_GAP_DAYS = 3
-
-        for (s, e, store, _sec_fte) in episodes:
-            s = pd.to_datetime(s).normalize()
-            e = pd.to_datetime(e).normalize()
-
-            before_end = (s - pd.Timedelta(days=1)).normalize()
-            gap_days = (before_end - cur).days + 1 if cur <= before_end else 0
-
-            if gap_days >= MIN_HOME_GAP_DAYS:
-                # Emit a home-store segment for the gap
-                _emit_mover(ek, role, home_store, cur, before_end, True, tgt)
-            elif gap_days > 0:
-                # Gap too short for a realistic home stint;
-                # extend the away episode backwards to absorb it.
-                s = cur
-
-            # Away episode: employee FTE, random transfer reason
-            _reason = str(rng.choice(
-                EMPLOYEE_TRANSFER_REASON_LABELS, p=EMPLOYEE_TRANSFER_REASON_PROBS,
-            ))
-            _emit_mover(ek, role, store, s, e, False, tgt, transfer_reason=_reason)
-            cur = (e + pd.Timedelta(days=1)).normalize()
-
-        # Final home segment
-        if cur <= plan_end:
-            if open_ended:
-                _emit_mover(ek, role, home_store, cur, window_end, True, tgt)
-            else:
-                final_end = pd.to_datetime(emp_term).normalize()
-                if final_end > window_end:
-                    final_end = window_end
-                if final_end >= cur:
-                    _emit_mover(ek, role, home_store, cur, final_end, True, tgt)
+        slots = _build_employee_timeline(
+            rng=rng,
+            home_store=home_store,
+            role=role,
+            fte=fte,
+            effective_start=eff_start,
+            effective_end=eff_end,
+            candidate_stores=other,
+            episodes_min=e_min,
+            episodes_max=e_max,
+            duration_days_min=dmin,
+            duration_days_max=dmax,
+            allow_store_revisit=allow_store_revisit,
+            store_opening_dates=store_opening_dates,
+            store_closing_dates=store_closing_dates,
+            is_forced_mover=is_fm,
+            transfer_info=t_info,
+        )
+        for sl in slots:
+            all_slots.append({
+                "EmployeeKey": ek,
+                "StoreKey": sl.store_key,
+                "StartDate": sl.start_date,
+                "EndDate": sl.end_date,
+                "FTE": sl.fte,
+                "RoleAtStore": sl.role,
+                "IsPrimary": sl.is_primary,
+                "TransferReason": sl.transfer_reason if sl.transfer_reason else pd.NA,
+            })
 
     # -----------------------------------------------------------------
-    # Assemble output from batched DataFrames + mover rows
+    # Assemble output
     # -----------------------------------------------------------------
     parts = list(batch_dfs)
-    if mover_rows:
-        parts.append(pd.DataFrame(mover_rows, columns=out_cols))
+    if all_slots:
+        parts.append(pd.DataFrame(all_slots, columns=out_cols))
     out = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=out_cols)
 
     if out.empty:
         out["AssignmentSequence"] = pd.Series(dtype=np.int32)
+        out["Status"] = pd.Series(dtype="object")
+        out["MaxAssignments"] = pd.Series(dtype=np.int32)
         return out
 
     out["EmployeeKey"] = out["EmployeeKey"].astype(np.int32)
@@ -828,354 +1552,65 @@ def generate_employee_store_assignments(
     out["FTE"] = out["FTE"].astype(np.float64)
     out["IsPrimary"] = out["IsPrimary"].astype(bool)
     out["RoleAtStore"] = out["RoleAtStore"].astype(str)
-
-    # Close any open-ended segments at the dataset window end
+    out["StartDate"] = pd.to_datetime(out["StartDate"]).dt.normalize()
     out["EndDate"] = pd.to_datetime(out["EndDate"]).dt.normalize()
     out["EndDate"] = out["EndDate"].fillna(window_end)
 
-    # Non-overlap validation
-    FAR_FUTURE = pd.Timestamp("2262-04-11")
-    chk = out.sort_values(["EmployeeKey", "StartDate", "EndDate"]).copy()
-    chk_end = pd.to_datetime(chk["EndDate"]).fillna(FAR_FUTURE)
-    chk_start = pd.to_datetime(chk["StartDate"])
-    prev_end = chk_end.groupby(chk["EmployeeKey"]).shift(1)
-    bad = (prev_end.notna()) & (chk_start <= prev_end)
-    if bool(bad.any()):
-        ex = chk.loc[bad, ["EmployeeKey", "StoreKey", "StartDate", "EndDate"]].head(10)
-        raise RuntimeError(f"Overlapping assignments detected (sample):\n{ex}")
+    # -----------------------------------------------------------------
+    # Fill SA coverage gaps (safe — only extends when no cross-store overlap)
+    # -----------------------------------------------------------------
+    _emp_hire_lookup = _build_emp_date_lookup(ek_arr, hire_ns)
+    _emp_term_lookup = _build_emp_date_lookup(ek_arr, term_ns)
 
-    out = out.sort_values(["EmployeeKey", "StartDate", "EndDate"]).reset_index(drop=True)
-    out["AssignmentSequence"] = out.groupby("EmployeeKey").cumcount().astype(np.int32) + 1
-
-    if bool(ensure_store_sales_coverage):
-        _emp_hire_lookup = _build_emp_date_lookup(ek_arr, hire_ns)
-        _emp_term_lookup = _build_emp_date_lookup(ek_arr, term_ns)
-        out = _fill_coverage_gaps(
-            out, ps_role, all_stores, window_start, window_end,
+    if ensure_store_sales_coverage:
+        out = _fill_coverage_gaps_safe(
+            out,
+            ps_role=ps_role,
+            all_stores=all_stores,
+            window_start=window_start,
+            window_end=window_end,
             store_opening_dates=store_opening_dates,
             store_closing_dates=store_closing_dates,
             emp_hire=_emp_hire_lookup,
             emp_term=_emp_term_lookup,
         )
-        _validate_store_coverage(
-            out, ps_role, all_stores, window_start, window_end,
-            store_opening_dates=store_opening_dates,
-            store_closing_dates=store_closing_dates,
-        )
+        # Re-normalize after gap-fill additions
+        out["EmployeeKey"] = out["EmployeeKey"].astype(np.int32)
+        out["StoreKey"] = out["StoreKey"].astype(np.int32)
+        out["StartDate"] = pd.to_datetime(out["StartDate"]).dt.normalize()
+        out["EndDate"] = pd.to_datetime(out["EndDate"]).dt.normalize()
+
+    # Sort and assign sequence
+    out = out.sort_values(["EmployeeKey", "StartDate", "EndDate"]).reset_index(drop=True)
+    out["AssignmentSequence"] = out.groupby("EmployeeKey").cumcount().astype(np.int32) + 1
+
+    # Derive Status and MaxAssignments
+    out["Status"] = _derive_status(out, window_end)
+    max_asgn = out.groupby("EmployeeKey")["AssignmentSequence"].transform("max").astype(np.int32)
+    out["MaxAssignments"] = max_asgn
+
+    # -----------------------------------------------------------------
+    # Final validation
+    # -----------------------------------------------------------------
+    _validate_assignments(
+        out,
+        ps_role=ps_role,
+        all_stores=all_stores,
+        window_start=window_start,
+        window_end=window_end,
+        store_opening_dates=store_opening_dates,
+        store_closing_dates=store_closing_dates,
+        emp_hire=_emp_hire_lookup,
+        emp_term=_emp_term_lookup,
+        coverage_mode="warn",
+    )
 
     return out
 
 
-def _build_emp_date_lookup(
-    ek_arr: np.ndarray,
-    date_arr: np.ndarray,
-) -> Dict[int, pd.Timestamp]:
-    """Build {EmployeeKey: normalized Timestamp} from parallel numpy arrays,
-    skipping NaT entries.  Normalizes once so callers never need to."""
-    out: Dict[int, pd.Timestamp] = {}
-    for i in range(len(ek_arr)):
-        d = date_arr[i]
-        if isinstance(d, (np.datetime64,)):
-            if np.isnat(d):
-                continue
-            out[int(ek_arr[i])] = pd.Timestamp(d).normalize()
-        else:
-            if pd.isna(d):
-                continue
-            out[int(ek_arr[i])] = pd.Timestamp(d).normalize()
-    return out
-
-
-def _store_operational_window_pd(
-    store: int,
-    ws: pd.Timestamp,
-    we: pd.Timestamp,
-    store_opening_dates: Optional[Dict[int, pd.Timestamp]],
-    store_closing_dates: Optional[Dict[int, pd.Timestamp]],
-) -> Optional[Tuple[pd.Timestamp, pd.Timestamp]]:
-    """Return (start, end) of a store's operational window as pd.Timestamps,
-    or None if the store is not active within [ws, we]."""
-    one_day = pd.Timedelta(days=1)
-    s_start = ws
-    s_end = we
-    if store_opening_dates and store in store_opening_dates:
-        od = pd.to_datetime(store_opening_dates[store]).normalize()
-        if od > s_start:
-            s_start = od
-    if store_closing_dates and store in store_closing_dates:
-        cd = pd.to_datetime(store_closing_dates[store]).normalize()
-        last_op = cd - one_day
-        if last_op < s_end:
-            s_end = last_op
-    if s_end < s_start:
-        return None
-    return s_start, s_end
-
-
-def _store_operational_window_np(
-    store: int,
-    ws: np.datetime64,
-    we: np.datetime64,
-    store_opening_dates: Optional[Dict[int, pd.Timestamp]],
-    store_closing_dates: Optional[Dict[int, pd.Timestamp]],
-) -> Optional[Tuple[np.datetime64, np.datetime64]]:
-    """Return (start, end) of a store's operational window as np.datetime64[D],
-    or None if the store is not active within [ws, we]."""
-    one_day = np.timedelta64(1, "D")
-    s_ws = ws
-    s_we = we
-    if store_opening_dates and store in store_opening_dates:
-        _od = np.datetime64(store_opening_dates[store], "D")
-        if _od > s_ws:
-            s_ws = _od
-    if store_closing_dates and store in store_closing_dates:
-        _cd = np.datetime64(store_closing_dates[store], "D") - one_day
-        if _cd < s_we:
-            s_we = _cd
-    if s_we < s_ws:
-        return None
-    return s_ws, s_we
-
-
-def _fill_coverage_gaps(
-    df: pd.DataFrame,
-    ps_role: str,
-    all_stores: List[int],
-    window_start: pd.Timestamp,
-    window_end: pd.Timestamp,
-    store_opening_dates: Optional[Dict[int, pd.Timestamp]] = None,
-    store_closing_dates: Optional[Dict[int, pd.Timestamp]] = None,
-    emp_hire: Optional[Dict[int, pd.Timestamp]] = None,
-    emp_term: Optional[Dict[int, pd.Timestamp]] = None,
-) -> pd.DataFrame:
-    """
-    Safety-net repair: scan each store's SA coverage and extend assignment
-    dates to fill any gaps.  Extensions are clamped to each employee's
-    HireDate/TerminationDate so we never create assignments outside the
-    employment window.
-    """
-    ws = pd.to_datetime(window_start).normalize()
-    we = pd.to_datetime(window_end).normalize()
-    _hire = emp_hire or {}
-    _term = emp_term or {}
-    repairs = 0
-
-    for store in all_stores:
-        win = _store_operational_window_pd(
-            store, ws, we, store_opening_dates, store_closing_dates,
-        )
-        if win is None:
-            continue
-        s_start, s_end = win
-
-        # Find SA assignments at this store
-        sa_mask = (
-            (df["StoreKey"] == store)
-            & (df["RoleAtStore"].astype(str) == ps_role)
-        )
-        if not sa_mask.any():
-            continue
-
-        sa_idx = df.loc[sa_mask].sort_values("StartDate").index
-        starts = pd.to_datetime(df.loc[sa_idx, "StartDate"]).dt.normalize()
-        ends = pd.to_datetime(df.loc[sa_idx, "EndDate"]).dt.normalize()
-
-        one_day = pd.Timedelta(days=1)
-
-        # Leading gap: extend first SA's StartDate back, clamped to HireDate
-        if starts.iloc[0] > s_start:
-            ek = int(df.at[sa_idx[0], "EmployeeKey"])
-            hire_dt = _hire.get(ek)
-            target = s_start
-            if hire_dt is not None:
-                target = max(target, hire_dt)
-            if target < starts.iloc[0]:
-                df.at[sa_idx[0], "StartDate"] = target
-                repairs += 1
-
-        # Trailing gap: extend last SA's EndDate, clamped to TerminationDate
-        if ends.iloc[-1] < s_end:
-            ek = int(df.at[sa_idx[-1], "EmployeeKey"])
-            term_dt = _term.get(ek)
-            target = s_end
-            if term_dt is not None:
-                target = min(target, term_dt)
-            if target > ends.iloc[-1]:
-                df.at[sa_idx[-1], "EndDate"] = target
-                repairs += 1
-
-        # Intermediate gaps: extend preceding SA's EndDate, clamped to their
-        # TerminationDate.  If that doesn't close the gap, try extending the
-        # next SA's StartDate back to its HireDate.
-        for k in range(len(sa_idx) - 1):
-            cur_end = pd.to_datetime(df.at[sa_idx[k], "EndDate"]).normalize()
-            nxt_start = pd.to_datetime(df.at[sa_idx[k + 1], "StartDate"]).normalize()
-            if cur_end + one_day >= nxt_start:
-                continue  # no gap
-
-            # Try extending current SA forward
-            ek_cur = int(df.at[sa_idx[k], "EmployeeKey"])
-            term_cur = _term.get(ek_cur)
-            extend_to = nxt_start - one_day
-            if term_cur is not None:
-                extend_to = min(extend_to, term_cur)
-            if extend_to > cur_end:
-                df.at[sa_idx[k], "EndDate"] = extend_to
-                repairs += 1
-
-            # If gap remains, try pulling next SA backward
-            new_gap_start = extend_to + one_day
-            if new_gap_start < nxt_start:
-                ek_nxt = int(df.at[sa_idx[k + 1], "EmployeeKey"])
-                hire_nxt = _hire.get(ek_nxt)
-                pull_to = new_gap_start
-                if hire_nxt is not None:
-                    pull_to = max(pull_to, hire_nxt)
-                if pull_to < nxt_start:
-                    df.at[sa_idx[k + 1], "StartDate"] = pull_to
-                    repairs += 1
-
-    # Post-repair: trim any same-employee-same-store overlaps created by
-    # gap-fill extensions.  If two assignments for the same employee at
-    # the same store overlap, trim the earlier one's EndDate to the day
-    # before the later one's StartDate.
-    overlap_fixes = 0
-    for (ek, sk), grp in df.groupby(["EmployeeKey", "StoreKey"]):
-        if len(grp) < 2:
-            continue
-        grp_sorted = grp.sort_values("StartDate")
-        idxs = grp_sorted.index.tolist()
-        for i in range(len(idxs) - 1):
-            cur_end = pd.to_datetime(df.at[idxs[i], "EndDate"]).normalize()
-            nxt_start = pd.to_datetime(df.at[idxs[i + 1], "StartDate"]).normalize()
-            if cur_end >= nxt_start:
-                df.at[idxs[i], "EndDate"] = nxt_start - one_day
-                overlap_fixes += 1
-
-    total_fixes = repairs + overlap_fixes
-    if total_fixes > 0:
-        parts = []
-        if repairs > 0:
-            parts.append(f"extended {repairs} SA assignment(s) to fill gaps")
-        if overlap_fixes > 0:
-            parts.append(f"trimmed {overlap_fixes} overlap(s)")
-        info("Coverage repair: " + ", ".join(parts))
-
-    return df
-
-
-def _validate_store_coverage(
-    out: pd.DataFrame,
-    ps_role: str,
-    all_stores: List[int],
-    window_start: pd.Timestamp,
-    window_end: pd.Timestamp,
-    store_opening_dates: Optional[Dict[int, pd.Timestamp]] = None,
-    store_closing_dates: Optional[Dict[int, pd.Timestamp]] = None,
-) -> None:
-    """Raise if any store has a coverage gap for the sales-eligible role."""
-    ws = np.datetime64(window_start, "D")
-    we = np.datetime64(window_end, "D")
-    one_day = np.timedelta64(1, "D")
-
-    active_stores = [
-        s for s in all_stores
-        if _store_operational_window_np(s, ws, we, store_opening_dates, store_closing_dates) is not None
-    ]
-
-    df_cov = out[out["RoleAtStore"].astype(str) == ps_role].copy()
-
-    if df_cov.empty:
-        if active_stores:
-            sample = "\n".join(
-                f"StoreKey={s}: no '{ps_role}' assignments" for s in active_stores[:10]
-            )
-            raise RuntimeError(
-                "EmployeeStoreAssignments coverage gaps detected (sales-eligible role). "
-                "Sample:\n" + sample
-            )
-        return
-
-    df_cov["StartDate"] = pd.to_datetime(df_cov["StartDate"]).dt.normalize()
-    df_cov["EndDate"] = pd.to_datetime(df_cov["EndDate"]).dt.normalize()
-
-    covered = set(df_cov["StoreKey"].unique())
-    gaps: list[str] = [
-        f"StoreKey={s}: no '{ps_role}' assignments"
-        for s in active_stores if s not in covered
-    ]
-
-    # Sort once, then walk through pre-grouped segments
-    df_cov = df_cov.sort_values(["StoreKey", "StartDate", "EndDate"]).reset_index(drop=True)
-    sk = df_cov["StoreKey"].to_numpy()
-    starts = df_cov["StartDate"].to_numpy().astype("datetime64[D]")
-    ends = df_cov["EndDate"].to_numpy().astype("datetime64[D]")
-
-    store_breaks = np.flatnonzero(np.r_[True, sk[1:] != sk[:-1]])
-    group_ends = np.r_[store_breaks[1:], len(sk)]
-
-    for gs, ge in zip(store_breaks, group_ends):
-        store = int(sk[gs])
-        seg_s = starts[gs:ge]
-        seg_e = ends[gs:ge]
-
-        win = _store_operational_window_np(
-            store, ws, we, store_opening_dates, store_closing_dates,
-        )
-        if win is None:
-            continue
-        store_ws, store_we = win
-
-        # Merge overlapping/adjacent, then check coverage
-        cur_ms, cur_me = seg_s[0], seg_e[0]
-        cur = store_ws
-        gap_found = False
-        for j in range(1, ge - gs):
-            if seg_s[j] <= cur_me + one_day:
-                cur_me = max(cur_me, seg_e[j])
-            else:
-                # Flush merged segment
-                if cur_me < cur:
-                    pass
-                elif cur_ms > cur:
-                    gap_end = min(cur_ms - one_day, store_we)
-                    if gap_end >= cur:
-                        gaps.append(
-                            f"StoreKey={store} gap {cur}..{gap_end}"
-                        )
-                    gap_found = True
-                    break
-                else:
-                    cur = cur_me + one_day
-                    if cur > store_we:
-                        gap_found = True  # fully covered
-                        break
-                cur_ms, cur_me = seg_s[j], seg_e[j]
-
-        if not gap_found:
-            # Check final merged segment
-            if cur_me >= cur and cur_ms <= cur:
-                cur = cur_me + one_day
-            elif cur_ms > cur:
-                gap_end = min(cur_ms - one_day, store_we)
-                if gap_end >= cur:
-                    gaps.append(f"StoreKey={store} gap {cur}..{gap_end}")
-                continue
-
-            if cur <= store_we:
-                gaps.append(f"StoreKey={store} gap {cur}..{store_we}")
-
-    if gaps:
-        sample = "\n".join(gaps[:10])
-        raise RuntimeError(
-            "EmployeeStoreAssignments coverage gaps detected (sales-eligible role). "
-            "Sample:\n" + sample
-        )
-
-
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Pipeline entrypoint
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     cfg = cfg or {}
@@ -1203,7 +1638,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
     )
 
     version_cfg = dict(a_cfg)
-    version_cfg["schema_version"] = 10
+    version_cfg["schema_version"] = 12  # bumped for online store key pattern
     version_cfg["_stores_cfg"] = dict(cfg.stores)
     version_cfg["_rows_employees"] = int(len(employees))
     if "EmployeeKey" in employees.columns and len(employees) > 0:
@@ -1228,7 +1663,7 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
     role_profiles = as_dict(a_cfg.get("role_profiles"))
 
-    # Read store opening/closing dates for assignment window clamping
+    # Read store opening/closing dates
     stores_path = parquet_folder / "stores.parquet"
     store_opening_dates: Optional[Dict[int, pd.Timestamp]] = None
     store_closing_dates: Optional[Dict[int, pd.Timestamp]] = None
@@ -1250,13 +1685,13 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
                     int(sk): ts for sk, ts in zip(_sk_arr, _cd) if pd.notna(ts)
                 }
 
-    # Read employee transfers sidecar (generated by employees.py)
+    # Read employee transfers sidecar
     transfers_path = parquet_folder / "employee_transfers.parquet"
     transfers_df: Optional[pd.DataFrame] = None
     if transfers_path.exists():
         transfers_df = pd.read_parquet(transfers_path)
 
-    # Read store employee counts for capacity-weighted destination selection
+    # Read store info for transfer destination selection
     stores_emp_count: Optional[Dict[int, int]] = None
     stores_district: Optional[Dict[int, Any]] = None
     if stores_path.exists():
@@ -1269,14 +1704,12 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
             _ec = _st_info["EmployeeCount"].fillna(0).astype(int).to_numpy()
             _sd = _st_info["StoreDistrict"].astype(str).to_numpy()
             _ss = _st_info["Status"].astype(str).to_numpy()
-            # Open and Renovating stores are eligible destinations
             _eligible = (_ss == "Open") | (_ss == "Renovating")
             stores_emp_count = {int(k): int(c) for k, c, o in zip(_sk, _ec, _eligible) if o}
             stores_district = {int(k): str(d) for k, d in zip(_sk, _sd)}
         except (KeyError, ValueError):
             pass
 
-    # Resolve closing config for prefer_same_district
     _closing_cfg = as_dict(cfg.stores.closing) if hasattr(cfg.stores, "closing") and cfg.stores.closing is not None else {}
     _prefer_same_district = bool(_closing_cfg.get("prefer_same_district", True))
 
@@ -1310,162 +1743,47 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
             ),
             store_opening_dates=store_opening_dates,
             store_closing_dates=store_closing_dates,
+            # Transfer integration — all handled inside generate now
+            transfers_df=transfers_df,
+            stores_emp_count=stores_emp_count,
+            stores_district=stores_district,
+            prefer_same_district=_prefer_same_district,
         )
 
-        # ---------------------------------------------------------------
-        # Append transfer assignments for employees from closed stores
-        # ---------------------------------------------------------------
-        if transfers_df is not None and not transfers_df.empty and stores_emp_count:
-            rng_t = np.random.default_rng(int(seed) ^ 0xDEAD_BEEF)
-            transfer_rows: list[dict] = []
-            open_stores = sorted(stores_emp_count.keys())
-
-            _ps_role = str_or(a_cfg.get("primary_sales_role"), "Sales Associate")
-
-            # Build HireDate lookup for clamping transfer StartDate
-            _hire_lookup: dict[int, pd.Timestamp] = {}
-            for _, erow in employees.iterrows():
-                _hire_lookup[int(erow["EmployeeKey"])] = pd.to_datetime(erow["HireDate"])
-
-            # Track EmployeeKey -> dest_sk for updating employees.parquet
-            _transfer_dest: dict[int, int] = {}
-
-            for _, trow in transfers_df.iterrows():
-                ek = int(trow["EmployeeKey"])
-                orig_sk = int(trow["OriginalStoreKey"])
-                t_date = pd.to_datetime(trow["TransferDate"]).normalize()
-                role = str(trow["Title"])
-                did = trow.get("DistrictId")
-
-                # Trim existing assignments for this employee at the old store
-                trim_end = (t_date - pd.Timedelta(days=1)).normalize()
-                mask = (df["EmployeeKey"] == ek) & (df["StoreKey"] == orig_sk)
+        # Update employees.parquet StoreKey for transferred employees
+        _td = _transfer_dest_from_df(df, transfers_df)
+        if _td:
+            emp_full = pd.read_parquet(employees_path)
+            updated = 0
+            for ek, dest in _td.items():
+                mask = emp_full["EmployeeKey"] == ek
                 if mask.any():
-                    idx = df.index[mask]
-                    for i in idx:
-                        end = pd.to_datetime(df.at[i, "EndDate"])
-                        if pd.isna(end) or end >= t_date:
-                            df.at[i, "EndDate"] = trim_end
+                    emp_full.loc[mask, "StoreKey"] = np.int32(dest)
+                    updated += 1
+            if updated > 0:
+                emp_full.to_parquet(employees_path, index=False)
+                info(f"Updated StoreKey for {updated} transferred employees in employees.parquet")
 
-                # Pick destination store: prefer same district, weight by capacity
-                if _prefer_same_district and stores_district and pd.notna(did):
-                    orig_district = stores_district.get(orig_sk, "")
-                    same_dist = [
-                        sk for sk in open_stores
-                        if stores_district.get(sk, "") == orig_district and sk != orig_sk
-                    ]
-                    candidates = same_dist if same_dist else [sk for sk in open_stores if sk != orig_sk]
-                else:
-                    candidates = [sk for sk in open_stores if sk != orig_sk]
+                if stores_path.exists():
+                    sk_col = emp_full["StoreKey"].dropna()
+                    sk_col = sk_col[sk_col > 0].astype(np.int32)
+                    actual_counts = sk_col.value_counts().to_dict()
 
-                if not candidates:
-                    candidates = open_stores
+                    stores_full = pd.read_parquet(stores_path)
+                    stores_full["EmployeeCount"] = stores_full["StoreKey"].map(
+                        lambda sk: actual_counts.get(int(sk), 0)
+                    ).astype(np.int64)
 
-                # Weight by employee count (larger stores absorb more)
-                weights = np.array(
-                    [max(1, stores_emp_count.get(sk, 1)) for sk in candidates],
-                    dtype=np.float64,
-                )
-                weights /= weights.sum()
-                dest_sk = int(rng_t.choice(candidates, p=weights))
+                    write_parquet_with_date32(
+                        stores_full, stores_path,
+                        date_cols=["OpeningDate", "ClosingDate"],
+                        cast_all_datetime=False,
+                        compression="snappy", compression_level=None,
+                        force_date32=True,
+                    )
+                    info("Re-synced stores.parquet EmployeeCount after transfers")
 
-                # Create transfer assignment with ramp-up period
-                ramp_days = int_or(_closing_cfg.get("ramp_days"), 30)
-                ramp_start_factor = float_or(_closing_cfg.get("ramp_start_factor"), 0.50)
-                ramp_end = (t_date + pd.Timedelta(days=ramp_days)).normalize()
-
-                # Look up employee's FTE from the employees data
-                _emp_fte = float(trow.get("FTE", 1.0)) if "FTE" in trow.index else 1.0
-
-                # Clamp StartDate to HireDate (transfer can't start before hire)
-                hire_date = _hire_lookup.get(ek)
-                if hire_date is not None and t_date < hire_date:
-                    t_date = hire_date
-
-                _transfer_dest[ek] = dest_sk
-
-                transfer_rows.append({
-                    "EmployeeKey": np.int32(ek),
-                    "StoreKey": np.int32(dest_sk),
-                    "StartDate": t_date,
-                    "EndDate": global_end,
-                    "FTE": _emp_fte,
-                    "RoleAtStore": role,
-                    "IsPrimary": True,
-                    "TransferReason": pd.NA,
-                })
-
-            if transfer_rows:
-                out_cols = ["EmployeeKey", "StoreKey", "StartDate", "EndDate", "FTE", "RoleAtStore", "IsPrimary", "TransferReason"]
-                t_df = pd.DataFrame(transfer_rows, columns=out_cols)
-                df = pd.concat([df, t_df], ignore_index=True)
-                info(f"Added {len(transfer_rows)} transfer assignments from closed stores")
-
-            # Update employees.parquet: set StoreKey to destination for transferred employees
-            if _transfer_dest:
-                emp_full = pd.read_parquet(employees_path)
-                updated = 0
-                for ek, dest in _transfer_dest.items():
-                    mask = emp_full["EmployeeKey"] == ek
-                    if mask.any():
-                        emp_full.loc[mask, "StoreKey"] = np.int32(dest)
-                        updated += 1
-                if updated > 0:
-                    emp_full.to_parquet(employees_path, index=False)
-                    info(f"Updated StoreKey for {updated} transferred employees in employees.parquet")
-
-                    # Re-sync stores.parquet EmployeeCount after transfers
-                    # Use actual StoreKey column (not EmployeeKey encoding)
-                    stores_path = parquet_folder / "stores.parquet"
-                    if stores_path.exists():
-                        sk_col = emp_full["StoreKey"].dropna()
-                        sk_col = sk_col[sk_col > 0].astype(np.int32)
-                        actual_counts = sk_col.value_counts().to_dict()
-
-                        stores_full = pd.read_parquet(stores_path)
-                        stores_full["EmployeeCount"] = stores_full["StoreKey"].map(
-                            lambda sk: actual_counts.get(int(sk), 0)
-                        ).astype(np.int64)
-
-                        from src.dimensions.employees import write_parquet_with_date32
-                        write_parquet_with_date32(
-                            stores_full, stores_path,
-                            date_cols=["OpeningDate", "ClosingDate"],
-                            cast_all_datetime=False,
-                            compression="snappy", compression_level=None,
-                            force_date32=True,
-                        )
-                        info("Re-synced stores.parquet EmployeeCount after transfers")
-
-            # ---------------------------------------------------------------
-            # Post-transfer coverage repair: comprehensive gap-fill for all
-            # stores (not just closing ones).  Extends SA assignments to
-            # cover any gaps caused by transfer staggering, attrition chain
-            # timing, or closing-date boundary mismatches.
-            # ---------------------------------------------------------------
-            _all_stores_for_repair = sorted({
-                int(sk) for sk in df["StoreKey"].unique()
-            })
-            # Build hire/term lookups from employees for clamping
-            _ek_vals = employees["EmployeeKey"].astype(np.int32).to_numpy()
-            _eh_np = pd.to_datetime(employees["HireDate"], errors="coerce").to_numpy()
-            _et_np = pd.to_datetime(employees["TerminationDate"], errors="coerce").to_numpy()
-            _emp_hire_l = _build_emp_date_lookup(_ek_vals, _eh_np)
-            _emp_term_l = _build_emp_date_lookup(_ek_vals, _et_np)
-            df = _fill_coverage_gaps(
-                df, _ps_role, _all_stores_for_repair,
-                global_start, global_end,
-                store_opening_dates=store_opening_dates,
-                store_closing_dates=store_closing_dates,
-                emp_hire=_emp_hire_l,
-                emp_term=_emp_term_l,
-            )
-
-            # Re-sort and recompute AssignmentSequence
-            df = df.sort_values(["EmployeeKey", "StartDate", "EndDate"]).reset_index(drop=True)
-            df["AssignmentSequence"] = df.groupby("EmployeeKey").cumcount().astype(np.int32) + 1
-
-        # Remove transfers sidecar so it doesn't get copied to final output
+        # Remove transfers sidecar
         if transfers_path.exists():
             transfers_path.unlink()
 
@@ -1485,3 +1803,28 @@ def run_employee_store_assignments(cfg: Dict[str, Any], parquet_folder: Path) ->
 
     save_version("employee_store_assignments", version_cfg, out_path)
     info(f"Employee Store Assignments written: {out_path.name}")
+
+
+def _transfer_dest_from_df(
+    df: pd.DataFrame,
+    transfers_df: Optional[pd.DataFrame],
+) -> Dict[int, int]:
+    """Extract {EmployeeKey: destination StoreKey} for transferred employees.
+
+    Uses the last assignment per transferred employee as the destination.
+    """
+    if transfers_df is None or transfers_df.empty:
+        return {}
+
+    transferred_eks = set(transfers_df["EmployeeKey"].astype(int).tolist())
+    if not transferred_eks:
+        return {}
+
+    sub = df[df["EmployeeKey"].isin(transferred_eks)].copy()
+    if sub.empty:
+        return {}
+
+    # Last assignment per employee (highest AssignmentSequence)
+    sub = sub.sort_values(["EmployeeKey", "AssignmentSequence"])
+    last = sub.groupby("EmployeeKey").last()
+    return {int(ek): int(sk) for ek, sk in zip(last.index, last["StoreKey"].values)}

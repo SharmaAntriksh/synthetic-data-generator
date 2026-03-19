@@ -104,6 +104,11 @@ STORE_DEFAULT_OWNERSHIP: tuple[list[str], list[float]] = (
 STORE_REVENUE_CLASSES = np.array(["A", "B", "C"], dtype=object)
 STORE_REVENUE_CLASSES_P = np.array([0.20, 0.60, 0.20], dtype=float)
 
+# Online store key ranges — easily distinguishable from physical stores
+ONLINE_STORE_KEY_BASE: int = 900       # Online StoreKeys: 901, 902, ...
+ONLINE_EMP_KEY_BASE: int = 50_000_000  # Online EmployeeKeys: 50_000_901, 50_000_902, ...
+ONLINE_SALES_REP_ROLE: str = "Online Sales Representative"
+
 # Transfer share by CloseReason — higher for planned closures, lower for performance
 STORE_CLOSE_TRANSFER_SHARE_BY_REASON: Dict[str, float] = {
     "Lease Ended": 0.80,
@@ -169,6 +174,7 @@ EMPLOYEE_PART_TIME_RATE_BY_ROLE: Dict[str, float] = {
     "Customer Support": 0.10,
     "Fulfillment Associate": 0.10,
     "Store Manager": 0.0,
+    "Online Sales Representative": 0.0,
 }
 
 # FTE values for part-time employees (chosen at hire)

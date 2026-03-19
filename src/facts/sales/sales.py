@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from src.defaults import ONLINE_SALES_REP_ROLE
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
 from src.utils.logging_utils import debug, done, info, skip, work
 from src.utils.shared_arrays import SharedArrayGroup
@@ -1173,7 +1174,7 @@ def generate_sales_fact(
     salesperson_roles = _cfg_get(cfg, ["sales", "salesperson_roles"], default=None)
     if not (isinstance(salesperson_roles, list) and salesperson_roles):
         primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")
-        salesperson_roles = [str(primary)]
+        salesperson_roles = [str(primary), ONLINE_SALES_REP_ROLE]
 
     emp_assign_df = load_parquet_df(
         emp_assign_path,

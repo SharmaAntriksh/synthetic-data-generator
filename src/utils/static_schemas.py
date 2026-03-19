@@ -621,6 +621,8 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("IsPrimary", BIT(not_null=False)),
         ("TransferReason", VARCHAR(30, not_null=False)),
         ("AssignmentSequence", INT_NN),
+        ("Status", VARCHAR(20, not_null=True)),
+        ("MaxAssignments", INT_NN),
     ),
     "Suppliers": (
         ("SupplierKey", INT_NN),
