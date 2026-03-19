@@ -9,7 +9,7 @@ scale:
   sales_rows: 1003285
   products: 2517
   customers: 21834
-  stores: 50
+  stores: 40
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -73,7 +73,7 @@ products:
   value_scale: 1                      # multiplier on all base prices
   price_range: [10, 3000]             # [min, max] ListPrice
   margin_range: [0.20, 0.35]          # [min, max] cost margin pct
-  
+
   brand_normalize: false               # pull brand prices toward global median
   brand_normalize_alpha: 0.35         # brands keep 65% of price identity
 
@@ -158,31 +158,31 @@ promotions:
 # STORES
 # ------------------------------------------------------------------
 stores:
-  online_stores: 10                    # online store count (carved from scale.stores total)
-  online_close_share: 0.10             # fraction of online stores that close
+  online_stores: 5                    # online store count (carved from scale.stores total)
+  online_close_share: 0.20             # fraction of online stores that close
   closing:
     enabled: true
-    close_share: 0.10                  # fraction of physical stores that close
+    close_share: 0.20                  # fraction of physical stores that close
 
 # ------------------------------------------------------------------
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:
-  min_staff_per_store: 1
-  max_staff_per_store: 3
+  min_staff_per_store: 2
+  max_staff_per_store: 6
   hr:
     email_domain: "contoso.com"
 
   store_assignments:
-    mover_share: 0.20
+    transfer_rate: 0.80
+    max_transfers: 5
     pool_scope: district
-    allow_store_revisit: true
 
     role_profiles:
-      default:                 { mult: 0.25, episodes: [0, 1], duration: [60, 180]  }
-      Sales Associate:         { mult: 2.50, episodes: [1, 2], duration: [60, 240]  }
-      Cashier:                 { mult: 1.10, episodes: [0, 2], duration: [14, 120]  }
-      Fulfillment Associate:   { mult: 0.40, episodes: [0, 1], duration: [45, 180]  }
+      default:                 { mult: 0.0 }
+      Sales Associate:         { mult: 2.50 }
+      Cashier:                 { mult: 0.0 }
+      Fulfillment Associate:   { mult: 0.0 }
 
 # ------------------------------------------------------------------
 # DATES (Dimension)
@@ -227,7 +227,7 @@ budget:
   weights:     { local: 0.60, category: 0.30, global: 0.10 }
   default_backcast_growth: 0.05
   return_rate_cap: 0.30
-  
+
 # ------------------------------------------------------------------
 # INVENTORY SNAPSHOT
 # ------------------------------------------------------------------

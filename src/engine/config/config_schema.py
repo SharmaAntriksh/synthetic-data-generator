@@ -279,23 +279,18 @@ class HRConfig(_Base):
 
 
 class RoleProfileConfig(_Base):
-    role_multiplier: float = 1.0
-    episodes_min: int = 0
-    episodes_max: int = 1
-    duration_days_min: int = 60
-    duration_days_max: int = 180
+    mult: float = 1.0
 
 
 class StoreAssignmentsConfig(_Base):
     enabled: bool = True
-    ensure_store_sales_coverage: bool = True
-    min_primary_sales_per_store: int = 1
-    primary_sales_role: str = "Sales Associate"
-    movable_sales_per_store: int = 2
-    mover_share: float = 0.20
+    transfer_rate: float = 0.15
+    max_transfers: int = 3
     pool_scope: str = "district"
-    allow_store_revisit: bool = True
     role_profiles: Optional[Dict[str, Any]] = None
+    # Used by employee generator (not ESA) to guarantee min SAs per store
+    primary_sales_role: str = "Sales Associate"
+    min_primary_sales_per_store: int = 1
 
 
 class EmployeesConfig(_Base):

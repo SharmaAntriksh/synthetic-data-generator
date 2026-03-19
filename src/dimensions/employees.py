@@ -1338,9 +1338,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     with stage("Generating Employees"):
         sa_cfg = emp_cfg.store_assignments
-        primary_sales_role = str(sa_cfg.primary_sales_role or "Sales Associate")
-        min_primary_sales_per_store = sa_cfg.min_primary_sales_per_store
-        ensure_store_sales_coverage = sa_cfg.ensure_store_sales_coverage
+        primary_sales_role = str(getattr(sa_cfg, "primary_sales_role", None) or "Sales Associate")
+        min_primary_sales_per_store = getattr(sa_cfg, "min_primary_sales_per_store", 1)
 
         # Resolve store closing config for employee fate
         closing_cfg = as_dict(cfg.stores.closing) if hasattr(cfg.stores, "closing") and cfg.stores.closing is not None else {}
