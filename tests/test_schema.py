@@ -129,7 +129,7 @@ class TestAppConfigFromYAML:
 class TestModelsConfigFromYAML:
     def test_validates_models_yaml(self, raw_models):
         m = ModelsConfig.from_raw_dict(raw_models)
-        assert m.models.quantity.base_poisson_lambda == 1.7
+        assert m.models.quantity.base_poisson_lambda == 2.1
         assert m.models.quantity.min_qty == 1
 
     def test_macro_demand(self, raw_models):
@@ -139,7 +139,7 @@ class TestModelsConfigFromYAML:
 
     def test_pricing_inflation(self, raw_models):
         m = ModelsConfig.from_raw_dict(raw_models)
-        assert m.models.pricing.inflation.annual_rate == 0.05
+        assert m.models.pricing.inflation.annual_rate == 0.02
         assert m.models.pricing.inflation.volatility_seed == 123
 
     def test_pricing_markdown(self, raw_models):
@@ -160,7 +160,7 @@ class TestModelsConfigFromYAML:
         m = ModelsConfig.from_raw_dict(raw_models)
         bp = m.models.brand_popularity
         assert bp.enabled is True
-        assert bp.winner_boost == 2.5
+        assert bp.winner_boost == 1.4
 
     def test_returns_reasons(self, raw_models):
         m = ModelsConfig.from_raw_dict(raw_models)

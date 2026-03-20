@@ -15,14 +15,20 @@
 models:
 
   macro_demand:
-    year_level_factors:
-      mode: "once"  # once | repeat - 2021 onwards, from end of list repeat will start from the beginning
-      values: [1.0, 1.12, 1.18, 1.35, 1.5, 1.7, 1.95, 2.2]
+    yearly_growth: 0.08             # 8% smooth compound growth per year
+    row_share_of_growth: 1.0        # all growth via rows (profile default was 0.5)
+    shock_probability: 0.0          # no random demand shocks (profile default was 0.03)
+    year_level_factors:             # multiplied on top — use to shape dips/peaks per year
+      mode: "once"
+      # 1.0 = follow baseline, <1.0 = dip, >1.0 = extra peak
+      values: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    seasonality_amplitude: 0.08     # ~8% seasonal swing within each year
+    noise_std: 0.02                 # minimal month-to-month noise
   # ================================================================
   # QUANTITY — items per order (basket size)
   # ================================================================
   quantity:
-    base_poisson_lambda: 1.7
+    base_poisson_lambda: 2.1
     min_qty: 1
     max_qty: 8
 
@@ -40,7 +46,7 @@ models:
       - 1.06    # Nov
       - 1.05    # Dec
 
-    noise_sigma: 0.12
+    noise_sigma: 0.03
 
 
   # ================================================================
@@ -48,9 +54,9 @@ models:
   # ================================================================
   pricing:
     inflation:
-      annual_rate: 0.05
-      month_volatility_sigma: 0.012
-      factor_clip: [1.00, 1.30]
+      annual_rate: 0.02
+      month_volatility_sigma: 0.003
+      factor_clip: [1.00, 1.10]
       volatility_seed: 123
 
     markdown:
@@ -106,7 +112,7 @@ models:
   brand_popularity:
     enabled: true
     seed: 123
-    winner_boost: 2.5
+    winner_boost: 1.4
 
 
   # ================================================================

@@ -671,11 +671,11 @@ def generate_employee_dimension(
     )
     is_part_time = rng.random(n_all) < pt_prob
     df["EmploymentType"] = np.where(is_part_time, "Part-Time", "Full-Time").astype(object)
-    df["FTE"] = np.where(
-        is_part_time,
-        rng.choice(EMPLOYEE_PART_TIME_FTE_VALUES, size=n_all),
-        1.0,
-    ).astype(np.float64)
+    n_pt = int(is_part_time.sum())
+    fte = np.ones(n_all, dtype=np.float64)
+    if n_pt > 0:
+        fte[is_part_time] = rng.choice(EMPLOYEE_PART_TIME_FTE_VALUES, size=n_pt)
+    df["FTE"] = fte
 
     # ------------------------------------------------------------------
     # Dates — with Sales Associate full-window guarantee

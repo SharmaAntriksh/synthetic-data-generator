@@ -7,26 +7,9 @@ import numpy as np
 import pandas as pd
 
 from src.utils.config_helpers import as_dict as _as_dict, int_or as _int_or, bool_or as _bool_or
+from src.utils.config_precedence import resolve_seed
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
-
-
-# ---------------------------------------------------------
-# Internals
-# ---------------------------------------------------------
-
-def _pick_seed(cfg: Dict[str, Any], sup_cfg: Dict[str, Any], fallback: int = 42) -> int:
-    """
-    Seed precedence (robust to nulls):
-      suppliers.override.seed -> suppliers.seed -> defaults.seed -> fallback
-    """
-    override = _as_dict(getattr(sup_cfg, "override", None))
-    seed = override.get("seed")
-    if seed is None:
-        seed = getattr(sup_cfg, "seed", None)
-    if seed is None:
-        seed = getattr(getattr(cfg, "defaults", None), "seed", None)
-    return _int_or(seed, fallback)
 
 
 def _signature(df: pd.DataFrame) -> Dict[str, Any]:
@@ -181,7 +164,7 @@ def run_suppliers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     # Resolve deterministic params up-front
     num_suppliers = _int_or(sup_cfg.get("num_suppliers"), 250)
     start_key = _int_or(sup_cfg.get("start_key"), 1)
-    seed = _pick_seed(cfg, sup_cfg, fallback=42)
+    seed = resolve_seed(cfg, sup_cfg, fallback=42)
     include_country = _bool_or(sup_cfg.get("include_country"), True)
     include_reliability = _bool_or(sup_cfg.get("include_reliability"), True)
     countries = sup_cfg.get("countries") if isinstance(sup_cfg.get("countries"), list) else None

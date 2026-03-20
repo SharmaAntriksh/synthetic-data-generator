@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pyarrow.parquet as pq
 
+from src.defaults import SALES_CHANNEL_CORE_KEYS
+
 
 # ------------------------------------------------------------
 # Profile codes (internal only)
@@ -248,8 +250,8 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
         channel_hour_lut = cache[2] if cache is not None else None
     elif "SalesChannelKey" in schema_types:
         if cache is None:
-            # last-resort fallback: match your default lookup keys
-            keys = np.array([1, 2, 3, 4, 5], dtype=np.int16)
+            # last-resort fallback: match core channel keys from defaults
+            keys = SALES_CHANNEL_CORE_KEYS
             p = np.full(keys.shape[0], 1.0 / keys.shape[0], dtype=np.float64)
         else:
             keys, p, channel_hour_lut = cache

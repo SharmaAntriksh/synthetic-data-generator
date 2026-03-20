@@ -6,6 +6,7 @@ from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
 from src.integrations.fx_yahoo import build_or_update_fx
 from src.defaults import CURRENCY_BASE
+from src.exceptions import ConfigError
 
 
 # ---------------------------------------------------------
@@ -66,8 +67,14 @@ def run_exchange_rates(cfg, parquet_folder: Path):
 
     # Resolve effective FX date window
     start_str, end_str = resolve_fx_dates(fx_cfg, global_defaults)
-    start = pd.to_datetime(start_str, errors="raise").date()
-    end = pd.to_datetime(end_str, errors="raise").date()
+    def _parse_fx_date(label: str, value) -> "datetime.date":
+        try:
+            return pd.to_datetime(value, errors="raise").date()
+        except (ValueError, TypeError) as exc:
+            raise ConfigError(f"exchange_rates: invalid {label} date '{value}'") from exc
+
+    start = _parse_fx_date("start", start_str)
+    end = _parse_fx_date("end", end_str)
 
     currencies = fx_cfg.currencies
     base = fx_cfg.base_currency

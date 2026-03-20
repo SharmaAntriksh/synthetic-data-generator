@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.tools.sql.generate_bulk_insert_sql import generate_dims_and_facts_bulk_insert_scripts
 from src.tools.sql.generate_create_table_scripts import generate_all_create_tables
+from src.tools.sql.sql_helpers import sql_escape_literal
 from src.utils.logging_utils import stage, skip, done
 
 
@@ -157,8 +158,9 @@ def copy_views_sql(*, sql_root: Path, view_schema: str = "dbo") -> None:
 
     # Create the custom schema if needed
     if use_custom_schema:
-        chunks.append(f"\nIF SCHEMA_ID('{view_schema}') IS NULL\n")
-        chunks.append(f"    EXEC('CREATE SCHEMA [{view_schema}] AUTHORIZATION [dbo];');\n")
+        safe_schema = sql_escape_literal(view_schema)
+        chunks.append(f"\nIF SCHEMA_ID('{safe_schema}') IS NULL\n")
+        chunks.append(f"    EXEC('CREATE SCHEMA [{safe_schema}] AUTHORIZATION [dbo];');\n")
         chunks.append("GO\n")
 
     for p in parts:

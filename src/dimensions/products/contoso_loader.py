@@ -1,6 +1,8 @@
 import pandas as pd
 from pathlib import Path
 
+from src.utils.logging_utils import warn
+
 
 def load_contoso_products(output_folder: Path):
     """
@@ -53,9 +55,18 @@ def load_contoso_products(output_folder: Path):
     df["ListPrice"] = pd.to_numeric(df["ListPrice"], errors="coerce").astype("float64")
     df["UnitCost"] = pd.to_numeric(df["UnitCost"], errors="coerce").astype("float64")
 
+    # Warn about NaN prices from coercion (don't silently swallow bad data)
+    nan_lp = df["ListPrice"].isna().sum()
+    nan_uc = df["UnitCost"].isna().sum()
+    if nan_lp or nan_uc:
+        warn(
+            f"Contoso products: coerced {nan_lp} ListPrice and {nan_uc} UnitCost "
+            f"values to NaN; these will be clipped to 0.0"
+        )
+
     # Basic sanity
-    df["ListPrice"] = df["ListPrice"].clip(lower=0.0)
-    df["UnitCost"] = df["UnitCost"].clip(lower=0.0)
+    df["ListPrice"] = df["ListPrice"].fillna(0.0).clip(lower=0.0)
+    df["UnitCost"] = df["UnitCost"].fillna(0.0).clip(lower=0.0)
     df["UnitCost"] = df[["UnitCost", "ListPrice"]].min(axis=1)
 
     return df

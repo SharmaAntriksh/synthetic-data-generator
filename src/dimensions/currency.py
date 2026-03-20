@@ -6,7 +6,7 @@ from typing import Dict, List
 
 import pandas as pd
 
-from src.utils.logging_utils import info, skip, stage
+from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 
@@ -17,6 +17,15 @@ from src.defaults import CURRENCY_NAME_MAP
 # ---------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------
+
+def _currency_name(code: str) -> str:
+    """Look up currency name, warn if unknown."""
+    name = CURRENCY_NAME_MAP.get(code)
+    if name is None:
+        warn(f"No currency name mapping for '{code}'; using code as name")
+        return code
+    return name
+
 
 def _require_section(cfg: Dict, name: str) -> Dict:
     if not isinstance(cfg, Mapping):
@@ -83,7 +92,7 @@ def build_dim_currency(currencies: List[str]) -> pd.DataFrame:
         {
             "CurrencyKey": pd.RangeIndex(start=1, stop=len(currencies) + 1, step=1, name=None).astype("int64"),
             "ToCurrency": currencies,
-            "CurrencyName": [CURRENCY_NAME_MAP.get(c, c) for c in currencies],
+            "CurrencyName": [_currency_name(c) for c in currencies],
         }
     )
     return df

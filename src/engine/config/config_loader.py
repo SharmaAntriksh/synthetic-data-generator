@@ -25,7 +25,7 @@ __all__ = [
     "load_config",
     "load_config_file",
     "load_config_typed",
-    "apply_acquisition_tuning",
+    "apply_acquisition_tuning",  # deprecated, no-op
     "normalize_defaults",
     "get_global_dates",
     "normalize_sales_config",

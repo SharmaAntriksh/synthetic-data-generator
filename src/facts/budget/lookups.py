@@ -117,9 +117,3 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
         "budget_channel_is_digital": is_digital,
         "budget_channel_is_physical": is_physical,
     }
-
-
-# TODO: vectorize the for-loops above using numpy advanced indexing
-# for production — the iterrows() is fine for ~1K stores / ~2K products
-# but could be replaced with:
-#   store_to_country[store_geo["StoreKey"].to_numpy()] = encoded_country_ids

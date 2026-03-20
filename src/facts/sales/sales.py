@@ -371,40 +371,17 @@ def build_weighted_date_pool(start: str, end: str, seed: int = 42) -> Tuple[np.n
     if n <= 0:
         raise ValueError("Date range produced an empty pool")
 
-    years = _as_np(dates.year)
-    months = _as_np(dates.month)
     weekdays = _as_np(dates.weekday)
-    doy = _as_np(dates.dayofyear)
 
-    # Year growth (vectorized)
-    _, inv = np.unique(years, return_inverse=True)
-    growth = 1.08
-    yw = np.power(growth, inv).astype(np.float64)
-
-    # Month seasonality (index 1..12)
-    month_w = np.ones(13, dtype=np.float64)
-    month_w[1:] = np.array([0.82, 0.92, 1.03, 0.98, 1.07, 1.12, 1.18, 1.10, 0.96, 1.22, 1.48, 1.33], dtype=np.float64)
-    mw = month_w[months]
-
-    # Weekday effect (0=Mon..6=Sun)
+    # Weekday effect (0=Mon..6=Sun) — within-month date distribution only.
+    # Year growth, monthly seasonality, promotional spikes, and one-off trends
+    # are controlled by macro_demand settings in models.yaml.
     weekday_w = np.array([0.86, 0.91, 1.00, 1.12, 1.19, 1.08, 0.78], dtype=np.float64)
     wdw = weekday_w[weekdays]
 
-    # Promotional spikes (day-of-year windows)
-    spike = np.ones(n, dtype=np.float64)
-    for s, e, f in ((140, 170, 1.28), (240, 260, 1.35), (310, 350, 1.72)):
-        spike[(doy >= s) & (doy <= e)] *= f
+    noise = rng.uniform(0.98, 1.02, size=n).astype(np.float64)
 
-    # One-off trends (explicit windows)
-    ot = np.ones(n, dtype=np.float64)
-    for a, b, f in (("2021-06-01", "2021-10-31", 0.70), ("2023-02-01", "2023-08-31", 1.40)):
-        mask = (dates >= a) & (dates <= b)
-        if bool(np.any(mask)):
-            ot[_bool_mask(mask)] *= f
-
-    noise = rng.uniform(0.95, 1.05, size=n).astype(np.float64)
-
-    weights = yw * mw * wdw * spike * ot * noise
+    weights = wdw * noise
 
     # Random blackout days (scalar blackout rate)
     blackout_rate = rng.uniform(0.10, 0.18)

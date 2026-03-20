@@ -244,7 +244,20 @@ def _wishlist_worker_task(args: Tuple) -> Dict[str, Any]:
     global_row_start = int(offsets[0])  # how many rows precede this chunk
     out_wkey = np.arange(global_row_start + 1, global_row_start + total_rows + 1, dtype=np.int64)
     out_pkey = prod_keys[out_prod_idx]
-    out_price = prod_prices[out_prod_idx]
+
+    # Resolve prices: SCD2 version lookup if available, otherwise current ListPrice
+    _scd2_starts_raw = product_data.get("scd2_starts")
+    _scd2_prices_raw = product_data.get("scd2_prices")
+    if _scd2_starts_raw is not None and _scd2_prices_raw is not None:
+        from src.facts.wishlists.runner import resolve_scd2_prices
+        _scd2_starts = np.asarray(_scd2_starts_raw, dtype=np.int64)
+        _scd2_prices = np.asarray(_scd2_prices_raw, dtype=np.float64)
+        out_price = resolve_scd2_prices(
+            out_prod_idx, out_date_ns, _scd2_starts, _scd2_prices,
+        )
+    else:
+        out_price = prod_prices[out_prod_idx]
+
     out_dates_dt = out_date_ns.view("datetime64[ns]").astype("datetime64[ms]")
 
     # --- Write chunk parquet ---

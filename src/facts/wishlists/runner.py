@@ -29,6 +29,9 @@ from src.facts.wishlists.accumulator import WishlistAccumulator
 from src.utils.logging_utils import info, skip
 from src.defaults import WISHLIST_PARALLEL_THRESHOLD
 
+import logging as _logging
+_log = _logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -306,6 +309,7 @@ def _write_bridge(
     g_start: pd.Timestamp,
     g_end: pd.Timestamp,
     out_path: Path,
+    scd2_lookup: Optional[Tuple[np.ndarray, np.ndarray]] = None,
 ) -> int:
     rng = np.random.default_rng(c.seed)
     schema = _bridge_schema()
@@ -526,7 +530,12 @@ def _write_bridge(
     # ------------------------------------------------------------------
     out_wkey = np.arange(1, total_rows + 1, dtype=np.int64)
     out_pkey = prod_keys[out_prod_idx]
-    out_price = prod_prices[out_prod_idx]
+    if scd2_lookup is not None:
+        out_price = resolve_scd2_prices(
+            out_prod_idx, out_date_ns, scd2_lookup[0], scd2_lookup[1],
+        )
+    else:
+        out_price = prod_prices[out_prod_idx]
     out_dates_dt = out_date_ns.view("datetime64[ns]").astype("datetime64[ms]")
 
     writer = pq.ParquetWriter(str(out_path), schema)
@@ -552,6 +561,110 @@ def _write_bridge(
 
 
 # ---------------------------------------------------------------------------
+# SCD2 product price resolution
+# ---------------------------------------------------------------------------
+
+def _build_scd2_price_lookup(
+    all_products_df: pd.DataFrame,
+    prod_keys_current: np.ndarray,
+    prod_prices_current: np.ndarray,
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Build SCD2 version lookup tables for wishlist price resolution.
+
+    Args:
+        all_products_df: full products DataFrame (all versions, not filtered to IsCurrent)
+        prod_keys_current: ProductKey array for IsCurrent=1 products
+        prod_prices_current: ListPrice array for IsCurrent=1 products
+
+    Returns (starts, prices) or None if SCD2 is not active:
+      - starts: shape (n_products, max_ver) int64 — EffectiveStartDate as epoch days
+      - prices: shape (n_products, max_ver) float64 — ListPrice per version slot
+    """
+    if "EffectiveStartDate" not in all_products_df.columns:
+        return None
+
+    all_df = all_products_df[["ProductKey", "ListPrice", "EffectiveStartDate"]].copy()
+
+    n_unique = all_df["ProductKey"].nunique()
+    if len(all_df) <= n_unique:
+        return None  # no SCD2 versions, all products have single row
+
+    all_df["eff_start_days"] = (
+        pd.to_datetime(all_df["EffectiveStartDate"])
+        .values.astype("datetime64[D]")
+        .astype(np.int64)
+    )
+
+    n_products = len(prod_keys_current)
+
+    # Map ProductKey → product index (0..n_products-1)
+    max_key = max(int(prod_keys_current.max()), int(all_df["ProductKey"].max())) + 1
+    key_lookup = np.full(max_key, -1, dtype=np.int32)
+    key_lookup[prod_keys_current] = np.arange(n_products, dtype=np.int32)
+
+    pkey_arr = all_df["ProductKey"].to_numpy()
+    pidx = key_lookup[pkey_arr]
+    mask = pidx >= 0
+    pidx = pidx[mask]
+    eff_start = all_df["eff_start_days"].to_numpy()[mask]
+    lprice = all_df["ListPrice"].to_numpy(dtype=np.float64)[mask]
+
+    # Sort by (product_index, eff_start)
+    order = np.lexsort((eff_start, pidx))
+    pidx = pidx[order]
+    eff_start = eff_start[order]
+    lprice = lprice[order]
+
+    # Compute per-product version slot indices
+    group_starts = np.concatenate([[0], np.where(pidx[1:] != pidx[:-1])[0] + 1])
+    slot = np.arange(len(pidx), dtype=np.int32)
+    slot -= np.repeat(group_starts, np.diff(np.append(group_starts, len(pidx))))
+
+    max_ver = int(slot.max()) + 1 if len(slot) > 0 else 1
+
+    # Initialize with current-version defaults
+    starts = np.full((n_products, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
+    prices = np.tile(prod_prices_current[:, np.newaxis], (1, max_ver))
+
+    # Scatter historical versions
+    valid = slot < max_ver
+    pi = pidx[valid]
+    si = slot[valid]
+    starts[pi, si] = eff_start[valid]
+    prices[pi, si] = lprice[valid]
+
+    # First version covers all time before second version
+    starts[pi, 0] = 0
+
+    _log.debug("Wishlist SCD2 price lookup: %d products, %d max versions", n_products, max_ver)
+    return starts, prices
+
+
+def resolve_scd2_prices(
+    prod_idx: np.ndarray,
+    date_ns: np.ndarray,
+    scd2_starts: np.ndarray,
+    scd2_prices: np.ndarray,
+) -> np.ndarray:
+    """Resolve product prices using SCD2 version lookup based on date.
+
+    Args:
+        prod_idx: product indices (into current-product arrays)
+        date_ns: dates as int64 nanoseconds
+        scd2_starts: (n_products, max_ver) epoch-day boundaries
+        scd2_prices: (n_products, max_ver) ListPrice per version
+
+    Returns:
+        float64 array of resolved prices
+    """
+    epoch_days = date_ns // (24 * 3600 * 10**9)  # ns → days
+    p_starts = scd2_starts[prod_idx]  # (n, max_ver)
+    ver_idx = np.sum(p_starts <= epoch_days[:, np.newaxis], axis=1) - 1
+    ver_idx = np.clip(ver_idx, 0, scd2_starts.shape[1] - 1)
+    return scd2_prices[prod_idx, ver_idx]
+
+
+# ---------------------------------------------------------------------------
 # Parallel path helpers
 # ---------------------------------------------------------------------------
 
@@ -560,6 +673,7 @@ def _build_product_data_dict(
     prod_prices: np.ndarray,
     prod_subcat: np.ndarray,
     product_weights: np.ndarray,
+    scd2_lookup: Optional[Tuple[np.ndarray, np.ndarray]] = None,
 ) -> Dict[str, Any]:
     """Serialize product arrays + CDFs into a picklable dict for workers."""
     n_products = len(prod_keys)
@@ -618,6 +732,8 @@ def _build_product_data_dict(
         "subcat_cdf_starts": subcat_cdf_starts_list,
         "subcat_cdf_ends": subcat_cdf_ends_list,
         "cdf_data": cdf_data_list,
+        "scd2_starts": scd2_lookup[0].tolist() if scd2_lookup is not None else None,
+        "scd2_prices": scd2_lookup[1].tolist() if scd2_lookup is not None else None,
     }
 
 
@@ -719,6 +835,7 @@ def _run_parallel(
     g_end: pd.Timestamp,
     out_path: Path,
     workers: Optional[int] = None,
+    scd2_lookup: Optional[Tuple[np.ndarray, np.ndarray]] = None,
 ) -> int:
     """Parallel wishlist generation: distribute customers across worker pool."""
     from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
@@ -762,7 +879,7 @@ def _run_parallel(
          f"({n_participants:,} participants, ~{total_rows:,} rows)")
 
     # Build shared product data dict (sent to all workers via pickling)
-    product_data = _build_product_data_dict(prod_keys, prod_prices, prod_subcat, product_weights)
+    product_data = _build_product_data_dict(prod_keys, prod_prices, prod_subcat, product_weights, scd2_lookup)
 
     # Build prod_key_to_idx for purchased_pairs partitioning
     prod_key_to_idx = pd.Series(np.arange(n_products), index=prod_keys)
@@ -867,15 +984,25 @@ def run_wishlist_pipeline(
         customers = customers.drop(columns=["IsCurrent"])
     _prod_cols = ["ProductKey", "ListPrice", "SubcategoryKey", "Brand"]
     _prod_schema_names = set(pq.read_schema(str(products_fp)).names) if hasattr(pq, "read_schema") else set()
+    _has_scd2 = "EffectiveStartDate" in _prod_schema_names
+    if _has_scd2:
+        _prod_cols.append("EffectiveStartDate")
     if "IsCurrent" in _prod_schema_names:
         _prod_cols.append("IsCurrent")
-    products = pd.read_parquet(products_fp, columns=_prod_cols)
-    if "IsCurrent" in products.columns:
-        products = products[products["IsCurrent"] == 1].copy()
-        products = products.drop(columns=["IsCurrent"])
+    all_products = pd.read_parquet(products_fp, columns=_prod_cols)
+    if "IsCurrent" in all_products.columns:
+        products = all_products[all_products["IsCurrent"] == 1].copy()
+        products = products.drop(columns=["IsCurrent", "EffectiveStartDate"] if _has_scd2 else ["IsCurrent"])
+    else:
+        products = all_products
 
     product_weights = _build_product_weights(products, parquet_dims)
     purchased_pairs = accumulator.finalize()
+
+    # Build SCD2 price lookup (None if SCD2 not active)
+    prod_keys_arr = products["ProductKey"].to_numpy().astype(np.int64)
+    prod_prices_arr = products["ListPrice"].to_numpy().astype(np.float64)
+    scd2_lookup = _build_scd2_price_lookup(all_products, prod_keys_arr, prod_prices_arr)
 
     wishlists_dir = fact_out / "customer_wishlists"
     wishlists_dir.mkdir(parents=True, exist_ok=True)
@@ -906,6 +1033,7 @@ def run_wishlist_pipeline(
             g_end=g_end,
             out_path=pq_path,
             workers=_workers,
+            scd2_lookup=scd2_lookup,
         )
     else:
         n_rows = _write_bridge(
@@ -917,6 +1045,7 @@ def run_wishlist_pipeline(
             g_start=g_start,
             g_end=g_end,
             out_path=pq_path,
+            scd2_lookup=scd2_lookup,
         )
 
     # Format-specific post-processing

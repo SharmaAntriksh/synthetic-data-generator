@@ -423,8 +423,9 @@ def _load_inflation_cfg():
     hi = max(hi, lo)
 
     vol_seed = int(infl.get("volatility_seed", 123))
+    apply_with_scd2 = bool(infl.get("apply_with_scd2", True))
 
-    return annual_rate, month_sigma, lo, hi, vol_seed
+    return annual_rate, month_sigma, lo, hi, vol_seed, apply_with_scd2
 
 
 # ===============================================================
@@ -529,7 +530,7 @@ def build_prices(rng, order_dates, qty, price):
     """
     _ = qty
 
-    annual_rate, month_sigma, clip_lo, clip_hi, vol_seed = (
+    annual_rate, month_sigma, clip_lo, clip_hi, vol_seed, apply_with_scd2 = (
         _load_inflation_cfg())
 
     order_dates = np.asarray(order_dates)
@@ -538,11 +539,18 @@ def build_prices(rng, order_dates, qty, price):
         return price
 
     # ---- 1. Compute per-row inflation factor ----
-    # When product SCD2 is active, versioned prices already include historical
-    # price drift — skip inflation to avoid double-counting.
+    # SCD2 provides discrete product-level price revisions (e.g., new version
+    # every 8 months).  Runtime inflation provides smooth macro-level drift.
+    # These are independent forces:
+    #   - SCD2 = product repricing events (micro)
+    #   - Inflation = economy-wide price drift (macro)
+    # When apply_with_scd2=true (default), both apply.
+    # When apply_with_scd2=false, inflation is skipped if SCD2 is active
+    # (legacy behaviour).
     _product_scd2_active = bool(getattr(State, "product_scd2_active", False))
+    _skip_inflation = _product_scd2_active and not apply_with_scd2
 
-    if _product_scd2_active:
+    if _skip_inflation:
         factor = np.ones(n, dtype=np.float64)
     else:
         order_month_i = order_dates.astype("datetime64[M]").astype("int64")

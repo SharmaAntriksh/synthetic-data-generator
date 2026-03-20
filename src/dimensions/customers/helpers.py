@@ -148,7 +148,11 @@ def acquisition_weights(T: int, curve: str, params: Dict) -> np.ndarray:
     wsum = float(w.sum())
     if not np.isfinite(wsum) or wsum <= 0:
         raise ValueError("Invalid acquisition weights; check acquisition parameters")
-    return w / wsum
+    w = w / wsum
+    # Clamp last element so cumsum-based CDFs end at exactly 1.0
+    # (guards against floating-point rounding; see CLAUDE.md gotcha #16)
+    w[-1] = max(w[-1], 1.0 - w[:-1].sum())
+    return w
 
 
 def simulate_end_month(

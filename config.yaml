@@ -20,8 +20,8 @@ defaults:
   random: false                    # true = ignore seeds, use OS entropy (non-deterministic)
   view_schema: "report"               # dbo = vw_ prefix (default), or dedicated schema (bi, report, etc.)
   dates:
-    start: "2021-03-01"
-    end: "2025-10-31"
+    start: "2021-01-01"
+    end: "2025-12-31"
 
 paths:
   geography: "./data/parquet_dims/geography.parquet"

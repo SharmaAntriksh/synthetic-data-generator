@@ -407,7 +407,12 @@ def _resolve_input_path(p: str) -> Path:
         if parent.name == "src":
             src_dir = parent
             break
-    repo_root = src_dir.parent if src_dir is not None else here.parents[3]  # fallback
+    if src_dir is not None:
+        repo_root = src_dir.parent
+    elif len(here.parents) > 3:
+        repo_root = here.parents[3]
+    else:
+        repo_root = here.parent
 
     return (repo_root / raw).resolve()
 

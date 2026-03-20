@@ -743,6 +743,7 @@ class InflationConfig(_Base):
     month_volatility_sigma: float = 0.012
     factor_clip: List[float] = [1.00, 1.30]
     volatility_seed: int = 123
+    apply_with_scd2: bool = True
 
 
 class MarkdownLadderEntry(_Base):
