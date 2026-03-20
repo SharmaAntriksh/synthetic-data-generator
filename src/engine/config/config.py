@@ -225,7 +225,7 @@ def _load_and_normalize(
     cfg = _expand_merge_block(cfg)
     cfg = _expand_partition_by(cfg)
     cfg = _expand_region_mix(cfg)
-    cfg = _expand_role_profiles(cfg)
+    cfg = _strip_deprecated_keys(cfg)
     cfg = _fold_facts_enabled(cfg)
 
     # Normalize consolidated paths into per-section path keys
@@ -417,58 +417,17 @@ def _expand_region_mix(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return cfg
 
 
-def _expand_role_profiles(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Expand compact ``role_profiles`` entries into the verbose format.
-
-    Compact format::
-
-        role_profiles:
-          default: { mult: 0.25, episodes: [0, 1], duration: [60, 180] }
-
-    Expands each entry to::
-
-        default:
-          role_multiplier: 0.25
-          episodes_min: 0
-          episodes_max: 1
-          duration_days_min: 60
-          duration_days_max: 180
-
-    Already-verbose entries (containing ``role_multiplier``) are left untouched.
-    """
+def _strip_deprecated_keys(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove config keys that were removed in the static-model simplification."""
+    # StoreClosingConfig: transfer_share, notice_days, prefer_same_district, ramp_days, ramp_start_factor
+    closing = cfg.get("stores", {}).get("closing") if isinstance(cfg.get("stores"), Mapping) else None
+    if isinstance(closing, Mapping):
+        for k in ("transfer_share", "notice_days", "prefer_same_district", "ramp_days", "ramp_start_factor"):
+            closing.pop(k, None)
+    # EmployeesConfig: termination_rate
     emp = cfg.get("employees")
-    if not isinstance(emp, Mapping):
-        return cfg
-    assigns = emp.get("store_assignments")
-    if not isinstance(assigns, Mapping):
-        return cfg
-    profiles = assigns.get("role_profiles")
-    if not isinstance(profiles, Mapping):
-        return cfg
-
-    for role, prof in profiles.items():
-        if not isinstance(prof, Mapping):
-            continue
-        if "role_multiplier" in prof:
-            continue
-
-        expanded: Dict[str, Any] = {}
-
-        if "mult" in prof:
-            expanded["role_multiplier"] = float(prof["mult"])
-
-        ep = prof.get("episodes")
-        if isinstance(ep, (list, tuple)) and len(ep) >= 2:
-            expanded["episodes_min"] = int(ep[0])
-            expanded["episodes_max"] = int(ep[1])
-
-        dur = prof.get("duration")
-        if isinstance(dur, (list, tuple)) and len(dur) >= 2:
-            expanded["duration_days_min"] = int(dur[0])
-            expanded["duration_days_max"] = int(dur[1])
-
-        profiles[role] = expanded
-
+    if isinstance(emp, Mapping):
+        emp.pop("termination_rate", None)
     return cfg
 
 

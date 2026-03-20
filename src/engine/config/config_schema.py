@@ -278,16 +278,7 @@ class HRConfig(_Base):
     email_domain: str = "contoso.com"
 
 
-class RoleProfileConfig(_Base):
-    mult: float = 1.0
-
-
 class StoreAssignmentsConfig(_Base):
-    enabled: bool = True
-    transfer_rate: float = 0.15
-    max_transfers: int = 3
-    pool_scope: str = "district"
-    role_profiles: Optional[Dict[str, Any]] = None
     # Used by employee generator (not ESA) to guarantee min SAs per store
     primary_sales_role: str = "Sales Associate"
     min_primary_sales_per_store: int = 1
@@ -297,7 +288,6 @@ class EmployeesConfig(_Base):
     use_store_employee_count: bool = False
     min_staff_per_store: int = 2
     max_staff_per_store: int = 6
-    termination_rate: float = 0.08
     staff_scale: float = 0.25
     district_size: int = 10
     districts_per_region: int = 8
@@ -532,11 +522,6 @@ class AssortmentConfig(_Base):
 class StoreClosingConfig(_Base):
     enabled: bool = True
     close_share: float = 0.10
-    transfer_share: float = 0.60
-    notice_days: int = 30
-    prefer_same_district: bool = True
-    ramp_days: int = 30
-    ramp_start_factor: float = 0.50
 
 
 class StoresConfig(_Base):

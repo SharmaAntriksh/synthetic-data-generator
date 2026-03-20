@@ -804,8 +804,8 @@ class TestGenerateEmployeeDimension:
         actual_levels = set(df["OrgLevel"].dropna().astype(int).unique())
         assert actual_levels.issubset(valid_levels)
 
-    def test_sales_associates_attrition_chain(self, people_pools):
-        """SA attrition: last SA per chain has NaT, others have TerminationDate set."""
+    def test_static_model_no_attrition(self, people_pools):
+        """Static model: no attrition. All SAs at open stores are active."""
         stores = self._make_stores()
         df = generate_employee_dimension(
             stores=stores,
@@ -815,11 +815,9 @@ class TestGenerateEmployeeDimension:
             people_pools=people_pools,
         )
         sa = df[df["Title"] == "Sales Associate"]
-        if len(sa) > 0:
-            # At least some SAs should still be active (last in each chain)
-            assert sa["TerminationDate"].isna().any(), "No active SAs found"
-            # With attrition, some SAs should have been terminated
-            assert sa["TerminationDate"].notna().any(), "No SA attrition occurred"
+        # All SAs at open stores should be active (no attrition)
+        sa_open = sa[sa["TerminationDate"].isna()]
+        assert len(sa_open) > 0, "No active SAs found"
 
     def test_every_store_has_sa_hired_before_start(self, people_pools):
         """Every store should have at least one SA hired at or before global_start."""

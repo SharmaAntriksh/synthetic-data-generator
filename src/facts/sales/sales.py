@@ -1184,7 +1184,6 @@ def generate_sales_fact(
             "StartDate",
             "EndDate",
             "FTE",
-            "IsPrimary",
             "RoleAtStore",
         ],
     )

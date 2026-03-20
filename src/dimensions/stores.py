@@ -24,7 +24,6 @@ from src.utils.config_helpers import (
     region_from_iso_code,
 )
 from src.utils.config_precedence import resolve_seed
-from src.defaults import STORE_CLOSE_TRANSFER_SHARE_BY_REASON as _TRANSFER_SHARE_BY_REASON
 from src.defaults import (
     STORE_TYPES as _STORE_TYPES,
     STORE_STATUS as _STORE_STATUS,
@@ -615,21 +614,26 @@ def generate_store_table(
     # When closing is enabled with a dataset window, we pick exactly
     # close_share fraction of non-Online stores to close during the window.
     # The rest are Open (with a small Renovating fraction).
+    st_arr = df["StoreType"].astype(str).to_numpy()
+    phys_idx = np.where(st_arr != "Online")[0]
     if closing_enabled and dataset_start and dataset_end:
-        ds_start = pd.to_datetime(dataset_start).normalize()
-        ds_end = pd.to_datetime(dataset_end).normalize()
-        st_arr = df["StoreType"].astype(str).to_numpy()
-
         # Physical store closures
-        phys_idx = np.where(st_arr != "Online")[0]
         n_phys_eligible = len(phys_idx)
-        n_phys_close = max(1, int(round(n_phys_eligible * float(close_share)))) if n_phys_eligible > 0 else 0
+        n_phys_close = (
+            max(1, int(round(n_phys_eligible * float(close_share))))
+            if n_phys_eligible > 0 and close_share > 0.0
+            else 0
+        )
         phys_close_idx = rng.choice(phys_idx, size=min(n_phys_close, n_phys_eligible), replace=False) if n_phys_close > 0 else np.array([], dtype=np.intp)
 
         # Online store closures
         online_idx = np.where(st_arr == "Online")[0]
         n_online_eligible = len(online_idx)
-        n_online_close = max(1, int(round(n_online_eligible * float(online_close_share)))) if n_online_eligible > 0 else 0
+        n_online_close = (
+            max(1, int(round(n_online_eligible * float(online_close_share))))
+            if n_online_eligible > 0 and online_close_share > 0.0
+            else 0
+        )
         online_close_idx = rng.choice(online_idx, size=min(n_online_close, n_online_eligible), replace=False) if n_online_close > 0 else np.array([], dtype=np.intp)
 
         close_idx = np.concatenate([phys_close_idx, online_close_idx]).astype(np.intp)
@@ -643,7 +647,16 @@ def generate_store_table(
         if reno_idx.size > 0:
             status_arr[reno_idx] = "Renovating"
         df["Status"] = status_arr
+    elif not closing_enabled:
+        # Closing disabled: all Open, ~5% physical stores Renovating
+        n_reno = max(0, int(round(len(phys_idx) * 0.05)))
+        status_arr = np.full(num_stores, "Open", dtype=object)
+        if n_reno > 0:
+            reno_idx = rng.choice(phys_idx, size=min(n_reno, len(phys_idx)), replace=False)
+            status_arr[reno_idx] = "Renovating"
+        df["Status"] = status_arr
     else:
+        # closing_enabled but no dataset window — probabilistic fallback
         df["Status"] = rng.choice(_STORE_STATUS, size=num_stores, p=_STORE_STATUS_P)
 
     df["GeographyKey"] = _sample_geography_keys(
@@ -757,6 +770,18 @@ def generate_store_table(
     open_start_d = _as_date64d(opening_start)
     open_end_d   = _as_date64d(opening_end)
     close_end_d  = _as_date64d(closing_end)
+
+    # All stores must open before the data window starts — stores that open
+    # after global_start would have no employees or sales for their pre-open period.
+    if dataset_start:
+        ds_start_d = _as_date64d(dataset_start)
+        one_day = np.timedelta64(1, "D")
+        if open_end_d >= ds_start_d:
+            warn(
+                f"opening_end ({opening_end}) >= dataset_start ({dataset_start}); "
+                f"clamping all store opening dates to before {dataset_start}."
+            )
+            open_end_d = ds_start_d - one_day
 
     # Validate date ordering
     if open_end_d < open_start_d:
@@ -1017,7 +1042,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     emp_cfg  = as_dict(store_cfg.employee_count)
 
     version_cfg = dict(store_cfg)
-    version_cfg["schema_version"] = 4
+    version_cfg["schema_version"] = 5  # v5: static model, all stores open before global_start
     version_cfg["_geography_sig"] = _geography_signature(geo_keys)
 
     if not should_regenerate("stores", version_cfg, out_path):

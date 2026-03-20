@@ -11,7 +11,6 @@ from src.engine.config.config import (
     _expand_merge_block,
     _expand_partition_by,
     _expand_region_mix,
-    _expand_role_profiles,
     _expand_products_pricing,
     _fold_facts_enabled,
     _parse_date,
@@ -386,35 +385,6 @@ class TestExpandRegionMix:
 
         assert result["customers"]["pct_us"] == 50.0
         assert result["customers"]["pct_eu"] == 50.0
-
-
-# ===================================================================
-# _expand_role_profiles
-# ===================================================================
-
-class TestExpandRoleProfiles:
-    def test_compact_to_verbose(self):
-        cfg = {"employees": {"store_assignments": {"role_profiles": {
-            "default": {"mult": 0.25, "episodes": [0, 1], "duration": [60, 180]},
-        }}}}
-
-        result = _expand_role_profiles(cfg)
-        prof = result["employees"]["store_assignments"]["role_profiles"]["default"]
-
-        assert prof["role_multiplier"] == 0.25
-        assert prof["episodes_min"] == 0
-        assert prof["episodes_max"] == 1
-        assert prof["duration_days_min"] == 60
-        assert prof["duration_days_max"] == 180
-
-    def test_verbose_format_untouched(self):
-        cfg = {"employees": {"store_assignments": {"role_profiles": {
-            "default": {"role_multiplier": 0.5},
-        }}}}
-
-        result = _expand_role_profiles(cfg)
-
-        assert result["employees"]["store_assignments"]["role_profiles"]["default"]["role_multiplier"] == 0.5
 
 
 # ===================================================================

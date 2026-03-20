@@ -53,13 +53,6 @@ assert abs(float(_STAFF_TITLES_P.sum()) - 1.0) < 1e-9, (
 )
 
 
-# ---------------------------------------------------------
-# SA natural attrition constants (no config knobs)
-# ---------------------------------------------------------
-_SA_ANNUAL_ATTRITION_RATE: float = 0.12    # 12 % annual voluntary turnover
-_SA_MIN_TENURE_DAYS: int = 180             # minimum days before an SA can leave
-_SA_MAX_TENURE_DAYS: int = 2555            # ~7-year cap
-_SA_REPLACEMENT_LEAD_DAYS: int = 14        # new hire overlaps departing employee
 
 
 # ---------------------------------------------------------
@@ -252,23 +245,25 @@ def _enrich_employee_hr_columns(
         base_vac + rng.normal(0, 10, size=n), 0, 240,
     ).round(0).astype(np.int16)
 
-    # CurrentFlag / Status
-    df["CurrentFlag"] = df["IsActive"].astype(np.int8)
+    # Status
     df["Status"] = np.where(
         df["IsActive"].astype(int) == 1, "Active", "Terminated",
     ).astype(object)
 
     # TerminationReason (only for terminated employees)
+    # Preserve values already set by attrition ("Voluntary") or closures ("Involuntary")
     term_mask = df["TerminationDate"].notna() & (df["IsActive"].astype(int) == 0)
-    n_term = int(term_mask.sum())
-    df["TerminationReason"] = pd.array([pd.NA] * len(df), dtype="object")
-    if n_term > 0:
+    if "TerminationReason" not in df.columns:
+        df["TerminationReason"] = pd.array([pd.NA] * len(df), dtype="object")
+    needs_reason = term_mask & df["TerminationReason"].isna()
+    n_needs = int(needs_reason.sum())
+    if n_needs > 0:
         reasons = rng.choice(
             EMPLOYEE_TERMINATION_REASON_LABELS,
-            size=n_term,
+            size=n_needs,
             p=EMPLOYEE_TERMINATION_REASON_PROBS,
         )
-        df.loc[term_mask, "TerminationReason"] = reasons
+        df.loc[needs_reason, "TerminationReason"] = reasons
 
     # SalesPersonFlag
     df["SalesPersonFlag"] = title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE]).astype(np.int8)
@@ -324,7 +319,6 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
     _to_int("OrgLevel", np.int16)
     _to_int("SalesPersonFlag", np.int8)
     _to_int("SalariedFlag", np.int8)
-    _to_int("CurrentFlag", np.int8)
     _to_int("IsActive", np.int8)
     _to_int("RegionId", np.int16)
     _to_int("DistrictId", np.int16)
@@ -335,166 +329,6 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ---------------------------------------------------------
-# SA attrition chain generator
-# ---------------------------------------------------------
-
-def _generate_attrition_replacements(
-    df: pd.DataFrame,
-    *,
-    rng: np.random.Generator,
-    global_start: pd.Timestamp,
-    global_end: pd.Timestamp,
-    primary_sales_role: str = "Sales Associate",
-    store_closing_dates: dict[int, pd.Timestamp] | None = None,
-) -> pd.DataFrame:
-    """
-    For each Sales Associate, simulate a tenure chain: the original SA
-    serves for a random tenure drawn from an exponential distribution,
-    then departs and is replaced by a new hire (with a
-    ``_SA_REPLACEMENT_LEAD_DAYS`` overlap).  The chain continues until
-    the last SA's tenure reaches ``global_end``.
-
-    Returns *df* with original SA rows mutated (TerminationDate set)
-    plus appended replacement rows.
-    """
-    ps_role = str(primary_sales_role or "Sales Associate")
-    ek_col = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
-    sa_mask = (ek_col >= STAFF_KEY_BASE) & (df["Title"].astype(str) == ps_role)
-    sa_idx = np.where(sa_mask.to_numpy())[0]
-
-    if sa_idx.size == 0:
-        return df
-
-    # Mean tenure in days from annual attrition rate
-    mean_tenure = 365.0 / _SA_ANNUAL_ATTRITION_RATE
-
-    # Track highest within-store seq per store for key allocation
-    # Current keys: STAFF_KEY_BASE + store * STAFF_KEY_STORE_MULT + seq
-    # Vectorised store_max_seq extraction
-    _ek_vals = ek_col.to_numpy()
-    _staff_mask = _ek_vals >= STAFF_KEY_BASE
-    _staff_keys = _ek_vals[_staff_mask]
-    _sk_arr = (_staff_keys - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
-    _seq_arr = (_staff_keys - STAFF_KEY_BASE) % STAFF_KEY_STORE_MULT
-    store_max_seq: dict[int, int] = {}
-    _uniq_sk = np.unique(_sk_arr)
-    for sk_val in _uniq_sk:
-        sk_mask = _sk_arr == sk_val
-        store_max_seq[int(sk_val)] = int(_seq_arr[sk_mask].max())
-
-    replacement_rows: list[dict] = []
-    term_date_col = df.columns.get_loc("TerminationDate")
-    is_active_col = df.columns.get_loc("IsActive")
-
-    # Per-store RNG spawn for determinism regardless of iteration order
-    store_keys_sorted = sorted(set(
-        ((_ek_vals[sa_idx] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT).astype(int).tolist()
-    ))
-    store_rng_map: dict[int, np.random.Generator] = {}
-    spawned = rng.spawn(len(store_keys_sorted))
-    for sk, child_rng in zip(store_keys_sorted, spawned):
-        store_rng_map[sk] = child_rng
-
-    for i in sa_idx:
-        ek_val = int(ek_col.iloc[i])
-        store_key = int((ek_val - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT)
-        hire_date = pd.to_datetime(df.iat[i, df.columns.get_loc("HireDate")]).normalize()
-        store_rng = store_rng_map[store_key]
-
-        # Determine the effective end for this store (global_end or closing date)
-        store_end = global_end
-        if store_closing_dates and store_key in store_closing_dates:
-            cd = pd.to_datetime(store_closing_dates[store_key]).normalize()
-            if global_start <= cd <= global_end:
-                store_end = cd
-
-        # Draw tenure for original SA
-        tenure_days = int(np.clip(
-            store_rng.exponential(mean_tenure),
-            _SA_MIN_TENURE_DAYS,
-            _SA_MAX_TENURE_DAYS,
-        ))
-        departure = (hire_date + pd.Timedelta(days=tenure_days)).normalize()
-
-        if departure >= store_end:
-            continue  # this SA lasts the whole window — no attrition
-
-        # Set termination on original SA
-        df.iat[i, term_date_col] = departure
-        df.iat[i, is_active_col] = np.int8(0)
-        # Attrition departures are voluntary by default
-        if "TerminationReason" in df.columns:
-            df.iat[i, df.columns.get_loc("TerminationReason")] = "Voluntary"
-
-        # Build replacement chain
-        current_departure = departure
-        # Carry forward columns from the original SA row
-        template = df.iloc[i].to_dict()
-
-        while current_departure < store_end:
-            next_seq = store_max_seq.get(store_key, 0) + 1
-            if next_seq >= STAFF_KEY_STORE_MULT:
-                raise OverflowError(
-                    f"Store {store_key}: replacement employee key overflow "
-                    f"(seq={next_seq} >= {STAFF_KEY_STORE_MULT}). "
-                    f"Too many attrition replacements for this store."
-                )
-            store_max_seq[store_key] = next_seq
-
-            new_ek = STAFF_KEY_BASE + store_key * STAFF_KEY_STORE_MULT + next_seq
-            new_hire = (current_departure - pd.Timedelta(days=_SA_REPLACEMENT_LEAD_DAYS)).normalize()
-            # Clamp hire date to not be before global_start - 5y (consistent with general logic)
-            earliest_hire = global_start - pd.Timedelta(days=365 * 5)
-            if new_hire < earliest_hire:
-                new_hire = earliest_hire
-
-            # Draw tenure for replacement
-            rep_tenure = int(np.clip(
-                store_rng.exponential(mean_tenure),
-                _SA_MIN_TENURE_DAYS,
-                _SA_MAX_TENURE_DAYS,
-            ))
-            rep_departure = (new_hire + pd.Timedelta(days=rep_tenure)).normalize()
-
-            # Determine if this is the last in chain
-            is_last = rep_departure >= store_end
-
-            row = dict(template)
-            row["EmployeeKey"] = np.int64(new_ek)
-            row["ParentEmployeeKey"] = template["ParentEmployeeKey"]
-            row["EmployeeName"] = ""  # will be assigned by name generator
-            row["HireDate"] = new_hire
-            row["TerminationDate"] = pd.NaT if is_last else rep_departure
-            row["IsActive"] = np.int8(1) if is_last else np.int8(0)
-            row["TerminationReason"] = pd.NA if is_last else "Voluntary"
-            # Draw fresh EmploymentType/FTE for replacement
-            _pt_rate = EMPLOYEE_PART_TIME_RATE_BY_ROLE.get(
-                str(template.get("Title", "")), 0.10,
-            )
-            _is_pt = bool(store_rng.random() < _pt_rate)
-            row["EmploymentType"] = "Part-Time" if _is_pt else "Full-Time"
-            row["FTE"] = float(store_rng.choice(EMPLOYEE_PART_TIME_FTE_VALUES)) if _is_pt else 1.0
-
-            replacement_rows.append(row)
-            current_departure = rep_departure
-
-            if is_last:
-                break
-
-    if not replacement_rows:
-        return df
-
-    rep_df = pd.DataFrame(replacement_rows)
-    df = pd.concat([df, rep_df], ignore_index=True)
-    info(f"SA attrition: generated {len(replacement_rows)} replacement employees")
-    return df
-
-
-# ---------------------------------------------------------
-# Generator
-# ---------------------------------------------------------
-
 def generate_employee_dimension(
     *,
     stores: pd.DataFrame,
@@ -504,7 +338,6 @@ def generate_employee_dimension(
     district_size: int = 10,
     districts_per_region: int = 8,
     max_staff_per_store: int = 5,
-    termination_rate: float = 0.08,
     use_store_employee_count: bool = False,
     min_staff_per_store: int = 3,
     staff_scale: float = 0.25,
@@ -516,9 +349,6 @@ def generate_employee_dimension(
     store_manager_names: dict[int, str] | None = None,
     store_opening_dates: dict[int, pd.Timestamp] | None = None,
     store_closing_dates: dict[int, pd.Timestamp] | None = None,
-    store_close_reasons: dict[int, str] | None = None,
-    transfer_share: float = 0.60,
-    notice_days: int = 30,
 ) -> pd.DataFrame:
     """
     Build a parent-child employee hierarchy with stable keys.
@@ -549,7 +379,6 @@ def generate_employee_dimension(
     else:
         min_staff_per_store = 0
     staff_scale = float(np.clip(float_or(staff_scale, 0.25), 0.0, 1.0))
-    termination_rate = float(np.clip(float_or(termination_rate, 0.08), 0.0, 1.0))
     rng = np.random.default_rng(int(seed))
 
     n_stores = len(stores)
@@ -860,8 +689,9 @@ def generate_employee_dimension(
 
     # Hire dates: SAs hired before their store opens (or dataset start);
     # everyone else random within the general window.
+    # Static model: all employees hired before global_start
     hire_start_general = global_start - pd.Timedelta(days=365 * 5)
-    hire_dates = rand_dates_between(rng, hire_start_general, global_end, n)
+    hire_dates = rand_dates_between(rng, hire_start_general, global_start, n)
 
     n_sa = int(sa_mask_np.sum())
     if n_sa > 0:
@@ -911,191 +741,26 @@ def generate_employee_dimension(
 
     df["HireDate"] = hire_dates
 
-    # Terminations: SAs skip probabilistic termination (attrition handles them);
-    # others probabilistic (reduced for senior levels)
-    base_p = termination_rate
-    level = df["OrgLevel"].astype(np.int16).to_numpy()
-    p = np.where(level <= 4, base_p * 0.25, base_p)
-    p[sa_mask_np] = 0.0
-    term_mask = rng.random(n) < p
-
-    term_dates = pd.Series([pd.NaT] * n, dtype="datetime64[ns]")
-    idx = np.where(term_mask)[0]
-    if idx.size > 0:
-        hire_i = pd.to_datetime(df.loc[idx, "HireDate"]).dt.normalize()
-        max_days = (pd.to_datetime(global_end).normalize() - hire_i).dt.days.to_numpy()
-        max_days = np.clip(max_days, 0, None)
-        # Enforce minimum 30-day tenure to avoid zero-day terminations
-        min_tenure_days = 30
-        offs = np.clip(
-            (rng.random(idx.size) * (max_days + 1)).astype(np.int64),
-            np.minimum(min_tenure_days, max_days),
-            max_days,
-        )
-        term_dates.iloc[idx] = (hire_i + pd.to_timedelta(offs, unit="D")).to_numpy(dtype="datetime64[ns]")
-
-    df["TerminationDate"] = term_dates
-    df["IsActive"] = (
-        df["TerminationDate"].isna() | (df["TerminationDate"] > global_end)
-    ).astype(np.int8)
-
     # ------------------------------------------------------------------
-    # Online employees: fix hire dates and clear terminations
-    # Online employees are hired when their store opens (or dataset start)
-    # and never terminate unless the store closes.
+    # Static model: all employees active for the full window.
+    # No random termination. No attrition. Store closures terminate.
     # ------------------------------------------------------------------
-    _onl_ek = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64)
-    _onl_mask = _onl_ek >= ONLINE_EMP_KEY_BASE
-    if _onl_mask.any():
-        _onl_sk = (_onl_ek[_onl_mask] - ONLINE_EMP_KEY_BASE).astype(np.int32).to_numpy()
-        # HireDate = max(store opening, dataset start) — vectorized
-        _onl_hires = np.array([
-            max(
-                pd.to_datetime(
-                    store_opening_dates.get(int(sk), global_start)
-                    if store_opening_dates else global_start
-                ).normalize(),
-                global_start,
-            )
-            for sk in _onl_sk
-        ], dtype="datetime64[ns]")
-        df.loc[_onl_mask, "HireDate"] = _onl_hires
-        df.loc[_onl_mask, "TerminationDate"] = pd.NaT
-        df.loc[_onl_mask, "IsActive"] = np.int8(1)
+    df["TerminationDate"] = pd.NaT
+    df["IsActive"] = np.int8(1)
+    df["TerminationReason"] = pd.array([pd.NA] * n, dtype="object")
 
-    # ------------------------------------------------------------------
-    # SA natural attrition: tenure chains with replacements
-    # ------------------------------------------------------------------
-    df = _generate_attrition_replacements(
-        df,
-        rng=np.random.default_rng(int(seed) ^ 0xA7721710),
-        global_start=global_start,
-        global_end=global_end,
-        primary_sales_role=ps_role_str,
-        store_closing_dates=store_closing_dates,
-    )
-    n = len(df)  # update after attrition may have added rows
-
-    # ------------------------------------------------------------------
-    # Store-closure: terminate or mark for transfer
-    # ------------------------------------------------------------------
-    # TransferStatus: None = normal, "Transferred" = relocating, "Terminated_StoreClose" = let go
-    df["TransferStatus"] = None
-    df["TransferDate"] = pd.NaT
-    df["OriginalStoreKey"] = pd.array([pd.NA] * n, dtype="Int32")
-
+    # Store closures: terminate all employees at the closing store (vectorized)
     if store_closing_dates:
-        from src.defaults import STORE_CLOSE_TRANSFER_SHARE_BY_REASON
-
-        ek_all_np = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64).to_numpy()
         sk_all_np = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int32).to_numpy()
-
         for close_sk, close_date in store_closing_dates.items():
             close_date = pd.to_datetime(close_date).normalize()
             if close_date < global_start or close_date > global_end:
                 continue
-
-            # Online store employees: terminate on last operational day, no stagger
-            if int(close_sk) > ONLINE_STORE_KEY_BASE:
-                store_mask = sk_all_np == int(close_sk)
-                already_terminated = df["TerminationDate"].notna() & (df["TerminationDate"] <= close_date)
-                eligible = store_mask & ~already_terminated.to_numpy()
-                eligible_idx = np.where(eligible)[0]
-                last_op = (close_date - pd.Timedelta(days=1)).normalize()
-                for idx in eligible_idx:
-                    df.iat[idx, df.columns.get_loc("TerminationDate")] = last_op
-                    df.iat[idx, df.columns.get_loc("IsActive")] = np.int8(0)
-                    df.iat[idx, df.columns.get_loc("TransferStatus")] = "Terminated_StoreClose"
-                    df.iat[idx, df.columns.get_loc("OriginalStoreKey")] = int(close_sk)
-                    if "TerminationReason" in df.columns:
-                        df.iat[idx, df.columns.get_loc("TerminationReason")] = "Involuntary"
-                continue
-
-            # Find store employees (managers + staff)
-            store_mask = sk_all_np == int(close_sk)
-            # Skip already-terminated employees
-            already_terminated = df["TerminationDate"].notna() & (df["TerminationDate"] <= close_date)
-            eligible = store_mask & ~already_terminated.to_numpy()
-            eligible_idx = np.where(eligible)[0]
-
-            if eligible_idx.size == 0:
-                continue
-
-            # Determine per-store transfer share (varies by close reason)
-            reason = (store_close_reasons or {}).get(int(close_sk), "")
-            effective_share = STORE_CLOSE_TRANSFER_SHARE_BY_REASON.get(reason, transfer_share)
-
-            # Decide who transfers vs who gets terminated
-            n_eligible = len(eligible_idx)
-            n_transfer = max(0, int(round(n_eligible * effective_share)))
-
-            # Sales Associates always transfer (never terminated)
-            titles_eligible = df.iloc[eligible_idx]["Title"].astype(str).to_numpy()
-            sa_mask_eligible = titles_eligible == ps_role_str
-            sa_idx = eligible_idx[sa_mask_eligible]
-            non_sa_idx = eligible_idx[~sa_mask_eligible]
-
-            # All SAs transfer; fill remaining transfer slots from non-SAs
-            n_transfer_non_sa = max(0, n_transfer - len(sa_idx))
-            if n_transfer_non_sa > 0 and len(non_sa_idx) > 0:
-                transfer_non_sa = rng.choice(
-                    non_sa_idx,
-                    size=min(n_transfer_non_sa, len(non_sa_idx)),
-                    replace=False,
-                )
-            else:
-                transfer_non_sa = np.array([], dtype=np.intp)
-
-            all_transfer_idx = np.concatenate([sa_idx, transfer_non_sa]).astype(np.intp)
-            all_terminate_idx = np.setdiff1d(eligible_idx, all_transfer_idx)
-
-            # Staggered transfer: spread over notice period
-            # Non-SAs transfer first, SAs transfer last (ensures sales coverage until closing)
-            if all_transfer_idx.size > 0:
-                # Split into non-SA and SA groups, sort each by EmployeeKey
-                titles_transfer = df.iloc[all_transfer_idx]["Title"].astype(str).to_numpy()
-                is_sa = titles_transfer == ps_role_str
-                non_sa_transfer = all_transfer_idx[~is_sa]
-                sa_transfer = all_transfer_idx[is_sa]
-                # Sort each group by EmployeeKey for determinism
-                non_sa_transfer = non_sa_transfer[np.argsort(ek_all_np[non_sa_transfer])]
-                sa_transfer = sa_transfer[np.argsort(ek_all_np[sa_transfer])]
-                # Non-SAs go first, SAs go last — last SA leaves on closing date
-                sorted_transfer = np.concatenate([non_sa_transfer, sa_transfer])
-
-                n_t = len(sorted_transfer)
-                # Spread transfer dates from (close_date - notice_days) to close_date
-                notice_start = close_date - pd.Timedelta(days=max(1, notice_days))
-                offsets = np.linspace(0, notice_days, n_t, dtype=np.int64)
-                for j, idx in enumerate(sorted_transfer):
-                    t_date = (notice_start + pd.Timedelta(days=int(offsets[j]))).normalize()
-                    df.iat[idx, df.columns.get_loc("TransferStatus")] = "Transferred"
-                    df.iat[idx, df.columns.get_loc("TransferDate")] = t_date
-                    df.iat[idx, df.columns.get_loc("OriginalStoreKey")] = int(close_sk)
-
-            # Staggered termination: spread over notice period too
-            if all_terminate_idx.size > 0:
-                n_term = len(all_terminate_idx)
-                notice_start = close_date - pd.Timedelta(days=max(1, notice_days))
-                term_offsets = rng.integers(0, notice_days + 1, size=n_term)
-                hire_col_loc = df.columns.get_loc("HireDate")
-                term_col_loc = df.columns.get_loc("TerminationDate")
-                active_col_loc = df.columns.get_loc("IsActive")
-                xfer_col_loc = df.columns.get_loc("TransferStatus")
-                orig_col_loc = df.columns.get_loc("OriginalStoreKey")
-                reason_col_loc = df.columns.get_loc("TerminationReason") if "TerminationReason" in df.columns else None
-                for j, idx in enumerate(all_terminate_idx):
-                    t_date = (notice_start + pd.Timedelta(days=int(term_offsets[j]))).normalize()
-                    # Clamp: TerminationDate must not precede HireDate
-                    emp_hire = pd.to_datetime(df.iat[idx, hire_col_loc]).normalize()
-                    if t_date < emp_hire:
-                        t_date = emp_hire
-                    df.iat[idx, term_col_loc] = t_date
-                    df.iat[idx, active_col_loc] = np.int8(0)
-                    df.iat[idx, xfer_col_loc] = "Terminated_StoreClose"
-                    df.iat[idx, orig_col_loc] = int(close_sk)
-                    if reason_col_loc is not None:
-                        df.iat[idx, reason_col_loc] = "Involuntary"
+            last_day = (close_date - pd.Timedelta(days=1)).normalize()
+            mask = sk_all_np == int(close_sk)
+            df.loc[mask, "TerminationDate"] = last_day
+            df.loc[mask, "IsActive"] = np.int8(0)
+            df.loc[mask, "TerminationReason"] = "Store Closure"
 
     # Names
     _apply_deterministic_names(
@@ -1160,69 +825,6 @@ def generate_employee_dimension(
 # EmployeeCount sync — update stores.parquet after generation
 # ---------------------------------------------------------
 
-def _count_employees_per_store(df: pd.DataFrame) -> dict[int, int]:
-    """Count employees per store from EmployeeKey encoding."""
-    ek = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int64).to_numpy()
-    store_keys = np.full(len(ek), -1, dtype=np.int32)
-
-    # Online employees (50M+) — must check before staff (40M+)
-    online_mask = ek >= ONLINE_EMP_KEY_BASE
-    store_keys[online_mask] = (ek[online_mask] - ONLINE_EMP_KEY_BASE).astype(np.int32)
-
-    mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE) & ~online_mask
-    store_keys[mgr_mask] = (ek[mgr_mask] - STORE_MGR_KEY_BASE).astype(np.int32)
-
-    staff_mask = (ek >= STAFF_KEY_BASE) & ~online_mask
-    store_keys[staff_mask] = ((ek[staff_mask] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT).astype(np.int32)
-
-    valid = store_keys >= 0
-    if not valid.any():
-        return {}
-    unique, counts = np.unique(store_keys[valid], return_counts=True)
-    return dict(zip(unique.astype(int).tolist(), counts.astype(int).tolist()))
-
-
-def _sync_stores_employee_count(emp_df: pd.DataFrame, stores_path: Path) -> None:
-    """Update stores.parquet EmployeeCount with actual employee counts."""
-    import re as _re
-
-    actual = _count_employees_per_store(emp_df)
-    if not actual:
-        return
-
-    stores_full = pd.read_parquet(stores_path)
-    new_counts = stores_full["StoreKey"].map(
-        lambda sk: actual.get(int(sk), 0)
-    ).astype(np.int64)
-
-    if stores_full["EmployeeCount"].astype(np.int64).equals(new_counts):
-        return  # already accurate
-
-    stores_full["EmployeeCount"] = new_counts
-
-    # Patch "headcount <N>" in StoreDescription to match actual counts
-    if "StoreDescription" in stores_full.columns:
-        desc = stores_full["StoreDescription"].astype(str).to_numpy(dtype=object)
-        sk_arr = stores_full["StoreKey"].to_numpy()
-        headcount_map = {int(sk): str(cnt) for sk, cnt in actual.items()}
-        for i in range(len(stores_full)):
-            sk_val = int(sk_arr[i])
-            cnt = headcount_map.get(sk_val, "0")
-            desc[i] = _re.sub(r"(headcount )\d+", rf"\g<1>{cnt}", str(desc[i]))
-        stores_full["StoreDescription"] = desc
-
-    write_parquet_with_date32(
-        stores_full,
-        stores_path,
-        date_cols=["OpeningDate", "ClosingDate"],
-        cast_all_datetime=False,
-        compression="snappy",
-        compression_level=None,
-        force_date32=True,
-    )
-    info("Updated stores.parquet EmployeeCount with actual employee counts.")
-
-
 # ---------------------------------------------------------
 # Pipeline entrypoint
 # ---------------------------------------------------------
@@ -1258,7 +860,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         )
 
     version_cfg = as_dict(emp_cfg)
-    version_cfg["schema_version"] = 8
+    version_cfg["schema_version"] = 9  # v9: static model, no attrition, no transfers
     version_cfg["_stores_sig"] = _stores_signature(stores)
     version_cfg["_stores_cfg"] = as_dict(cfg.stores)
     version_cfg["_global_dates"] = {
@@ -1320,31 +922,20 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         }
         stores = stores.drop(columns=["OpeningDate"], errors="ignore")
 
-    # Build StoreKey → ClosingDate and CloseReason mappings for store-closure logic
+    # Build StoreKey → ClosingDate mapping for store-closure termination
     store_closing_dates: dict[int, pd.Timestamp] | None = None
-    store_close_reasons: dict[int, str] | None = None
     if "ClosingDate" in stores.columns:
         _cd = pd.to_datetime(stores["ClosingDate"], errors="coerce").dt.normalize()
         _sk_cd = stores["StoreKey"].astype(np.int32).to_numpy()
         store_closing_dates = {
             int(sk): ts for sk, ts in zip(_sk_cd, _cd) if pd.notna(ts)
         }
-        if "CloseReason" in stores.columns:
-            _cr = stores["CloseReason"].astype(str).to_numpy()
-            store_close_reasons = {
-                int(sk): str(cr) for sk, cr, cd in zip(_sk_cd, _cr, _cd) if pd.notna(cd)
-            }
         stores = stores.drop(columns=["ClosingDate", "CloseReason"], errors="ignore")
 
     with stage("Generating Employees"):
         sa_cfg = emp_cfg.store_assignments
         primary_sales_role = str(getattr(sa_cfg, "primary_sales_role", None) or "Sales Associate")
         min_primary_sales_per_store = getattr(sa_cfg, "min_primary_sales_per_store", 1)
-
-        # Resolve store closing config for employee fate
-        closing_cfg = as_dict(cfg.stores.closing) if hasattr(cfg.stores, "closing") and cfg.stores.closing is not None else {}
-        _transfer_share = float_or(closing_cfg.get("transfer_share"), 0.60)
-        _notice_days = int_or(closing_cfg.get("notice_days"), 30)
 
         df = generate_employee_dimension(
             stores=stores,
@@ -1354,7 +945,6 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             district_size=emp_cfg.district_size,
             districts_per_region=emp_cfg.districts_per_region,
             max_staff_per_store=emp_cfg.max_staff_per_store,
-            termination_rate=emp_cfg.termination_rate,
             use_store_employee_count=emp_cfg.use_store_employee_count,
             min_staff_per_store=emp_cfg.min_staff_per_store,
             staff_scale=emp_cfg.staff_scale,
@@ -1366,9 +956,6 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             store_manager_names=store_manager_names,
             store_opening_dates=store_opening_dates,
             store_closing_dates=store_closing_dates,
-            store_close_reasons=store_close_reasons,
-            transfer_share=_transfer_share,
-            notice_days=_notice_days,
         )
 
         hr_cfg = emp_cfg.hr
@@ -1383,30 +970,6 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
         df = _finalize_employee_integer_cols(df)
 
-        # Write employee_transfers sidecar for the assignment generator
-        transfers = df[df["TransferStatus"] == "Transferred"][
-            ["EmployeeKey", "OriginalStoreKey", "TransferDate", "Title", "DistrictId", "FTE"]
-        ].copy()
-        transfers_path = parquet_folder / "employee_transfers.parquet"
-        if not transfers.empty:
-            transfers["EmployeeKey"] = transfers["EmployeeKey"].astype(np.int32)
-            transfers["OriginalStoreKey"] = transfers["OriginalStoreKey"].astype(np.int32)
-            write_parquet_with_date32(
-                transfers,
-                transfers_path,
-                date_cols=["TransferDate"],
-                cast_all_datetime=False,
-                compression="snappy",
-                compression_level=None,
-                force_date32=True,
-            )
-            info(f"Employee transfers written: {transfers_path.name} ({len(transfers)} employees)")
-        elif transfers_path.exists():
-            transfers_path.unlink()
-
-        # Drop internal transfer columns before writing main employees parquet
-        df = df.drop(columns=["TransferStatus", "TransferDate", "OriginalStoreKey"], errors="ignore")
-
         # Reorder columns to match the static schema (CREATE TABLE column order).
         _SCHEMA_ORDER = [
             "EmployeeKey", "ParentEmployeeKey", "EmployeeName", "Title",
@@ -1418,7 +981,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             "BirthDate", "MaritalStatus", "EmailAddress", "Phone",
             "EmergencyContactName", "EmergencyContactPhone",
             "SalariedFlag", "PayFrequency", "BaseRate", "VacationHours",
-            "CurrentFlag", "Status",
+            "Status",
             "SalesPersonFlag", "DepartmentName",
         ]
         df = df[_SCHEMA_ORDER]
@@ -1439,6 +1002,3 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     save_version("employees", version_cfg, out_path)
     info(f"Employees dimension written: {out_path.name}")
-
-    # --- Sync stores.parquet EmployeeCount with actual generated counts ---
-    _sync_stores_employee_count(df, stores_path)

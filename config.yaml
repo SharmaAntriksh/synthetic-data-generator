@@ -9,7 +9,7 @@ scale:
   sales_rows: 1003285
   products: 2517
   customers: 21834
-  stores: 40
+  stores: 20
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -169,20 +169,9 @@ stores:
 # ------------------------------------------------------------------
 employees:
   min_staff_per_store: 2
-  max_staff_per_store: 6
+  max_staff_per_store: 4
   hr:
     email_domain: "contoso.com"
-
-  store_assignments:
-    transfer_rate: 0.80
-    max_transfers: 5
-    pool_scope: district
-
-    role_profiles:
-      default:                 { mult: 0.0 }
-      Sales Associate:         { mult: 2.50 }
-      Cashier:                 { mult: 0.0 }
-      Fulfillment Associate:   { mult: 0.0 }
 
 # ------------------------------------------------------------------
 # DATES (Dimension)
