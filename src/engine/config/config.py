@@ -167,7 +167,6 @@ def load_config_file(path: str | Path) -> dict:
 
     This applies only very safe, non-default-dependent transforms:
       - tuning → models mapping (if present)
-      - customer_segments normalization (if present)
     """
     return _load_and_normalize(
         path=path,
