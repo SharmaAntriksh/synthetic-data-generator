@@ -777,7 +777,7 @@ def generate_store_table(
         ds_start_d = _as_date64d(dataset_start)
         one_day = np.timedelta64(1, "D")
         if open_end_d >= ds_start_d:
-            warn(
+            debug(
                 f"opening_end ({opening_end}) >= dataset_start ({dataset_start}); "
                 f"clamping all store opening dates to before {dataset_start}."
             )

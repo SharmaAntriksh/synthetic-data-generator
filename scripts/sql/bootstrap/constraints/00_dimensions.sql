@@ -844,60 +844,80 @@ BEGIN
         ADD CONSTRAINT CK_Plans_Discount
             CHECK ([Discount] >= 0 AND [Discount] < 1);
 
-    IF COL_LENGTH(N'dbo.Plans', N'MonthlyPrice') IS NOT NULL
+    IF COL_LENGTH(N'dbo.Plans', N'BaseMonthlyPrice') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_Plans_MonthlyPrice'
+        WHERE name = N'CK_Plans_BaseMonthlyPrice'
           AND parent_object_id = OBJECT_ID(N'dbo.Plans')
     )
         ALTER TABLE dbo.Plans
-        ADD CONSTRAINT CK_Plans_MonthlyPrice
-            CHECK ([MonthlyPrice] >= 0);
+        ADD CONSTRAINT CK_Plans_BaseMonthlyPrice
+            CHECK ([BaseMonthlyPrice] >= 0);
+
+    IF COL_LENGTH(N'dbo.Plans', N'CycleMonths') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_Plans_CycleMonths'
+          AND parent_object_id = OBJECT_ID(N'dbo.Plans')
+    )
+        ALTER TABLE dbo.Plans
+        ADD CONSTRAINT CK_Plans_CycleMonths
+            CHECK ([CycleMonths] IN (1, 3, 6, 12));
 END;
 GO
 
--- CustomerSubscriptions: CHECK constraints
+-- CustomerSubscriptions (billing-period fact): CHECK constraints
 IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
 BEGIN
-    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'Status') IS NOT NULL
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'PeriodPrice') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSubscriptions_Status'
+        WHERE name = N'CK_CustomerSubscriptions_PeriodPrice'
           AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
     )
         ALTER TABLE dbo.CustomerSubscriptions
-        ADD CONSTRAINT CK_CustomerSubscriptions_Status
-            CHECK ([Status] IN ('Active', 'Cancelled', 'Expired'));
+        ADD CONSTRAINT CK_CustomerSubscriptions_PeriodPrice
+            CHECK ([PeriodPrice] >= 0);
 
-    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'AutoRenew') IS NOT NULL
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'BillingCycleNumber') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSubscriptions_AutoRenew'
+        WHERE name = N'CK_CustomerSubscriptions_BillingCycleNumber'
           AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
     )
         ALTER TABLE dbo.CustomerSubscriptions
-        ADD CONSTRAINT CK_CustomerSubscriptions_AutoRenew
-            CHECK ([AutoRenew] IN (0, 1));
+        ADD CONSTRAINT CK_CustomerSubscriptions_BillingCycleNumber
+            CHECK ([BillingCycleNumber] >= 1);
 
-    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'MonthlyPrice') IS NOT NULL
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'IsFirstPeriod') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSubscriptions_MonthlyPrice'
+        WHERE name = N'CK_CustomerSubscriptions_IsFirstPeriod'
           AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
     )
         ALTER TABLE dbo.CustomerSubscriptions
-        ADD CONSTRAINT CK_CustomerSubscriptions_MonthlyPrice
-            CHECK ([MonthlyPrice] >= 0);
+        ADD CONSTRAINT CK_CustomerSubscriptions_IsFirstPeriod
+            CHECK ([IsFirstPeriod] IN (0, 1));
 
-    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'LoyaltyDiscount') IS NOT NULL
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'IsChurnPeriod') IS NOT NULL
     AND NOT EXISTS (
         SELECT 1 FROM sys.check_constraints
-        WHERE name = N'CK_CustomerSubscriptions_LoyaltyDiscount'
+        WHERE name = N'CK_CustomerSubscriptions_IsChurnPeriod'
           AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
     )
         ALTER TABLE dbo.CustomerSubscriptions
-        ADD CONSTRAINT CK_CustomerSubscriptions_LoyaltyDiscount
-            CHECK ([LoyaltyDiscount] >= 0 AND [LoyaltyDiscount] <= 1);
+        ADD CONSTRAINT CK_CustomerSubscriptions_IsChurnPeriod
+            CHECK ([IsChurnPeriod] IN (0, 1));
+
+    IF COL_LENGTH(N'dbo.CustomerSubscriptions', N'IsTrialPeriod') IS NOT NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE name = N'CK_CustomerSubscriptions_IsTrialPeriod'
+          AND parent_object_id = OBJECT_ID(N'dbo.CustomerSubscriptions')
+    )
+        ALTER TABLE dbo.CustomerSubscriptions
+        ADD CONSTRAINT CK_CustomerSubscriptions_IsTrialPeriod
+            CHECK ([IsTrialPeriod] IN (0, 1));
 END;
 GO
 

@@ -1,30 +1,33 @@
 from __future__ import annotations
 
 """
-Subscriptions (DimPlans + CustomerSubscriptions bridge)
+Subscriptions (DimPlans + CustomerSubscriptions billing-period fact)
 
 Writes:
-  - plans.parquet          (subscription plan dimension)
-  - customer_subscriptions.parquet  (many-to-many bridge)
+  - plans.parquet                   (subscription plan dimension)
+  - customer_subscriptions.parquet  (billing-period subscription fact)
 
-Bridge is written in parallel for large datasets (>200K eligible customers)
-using a chunk-per-worker pattern.  Each worker generates rows IN MEMORY for
-its customer slice, writes a chunk parquet, and returns its row count.
-The main process merges chunks and reassigns SubscriptionKey sequentially.
+The fact table has one row per subscription per billing period, enabling
+revenue tracking, churn analysis, and cohort retention.
+
+Written in parallel for large datasets (>200K eligible customers)
+using a chunk-per-worker pattern.  Each worker generates period rows
+IN MEMORY for its customer slice, writes a chunk parquet, and returns
+its row count.  The main process merges chunks into the final parquet.
 
 For small datasets (<=200K eligible customers) the original single-process
 streaming writer is used as a fallback.
 
 Schema:
-  DimPlans (14 cols):
-    PlanKey, PlanName, PlanType, Category, BillingCycle, MonthlyPrice,
-    Discount, CyclePrice, AnnualPrice, Tier, MaxUsers, HasFreeTrial,
-    LaunchDate, IsActiveFlag
+  DimPlans (15 cols):
+    PlanKey, PlanName, PlanType, Category, BillingCycle, CycleMonths,
+    BaseMonthlyPrice, Discount, CyclePrice, AnnualPrice, Tier, MaxUsers,
+    HasFreeTrial, LaunchDate, IsActiveFlag
 
-  CustomerSubscriptions (11 cols):
-    SubscriptionKey, CustomerKey, PlanKey, SubscribedDate, CancelledDate,
-    Status, MonthlyPrice, AutoRenew, TrialEndDate, PaymentMethod,
-    LoyaltyDiscount
+  CustomerSubscriptions (10 cols, billing-period fact):
+    SubscriptionKey, CustomerKey, PlanKey,
+    PeriodStartDate, PeriodEndDate, PeriodPrice,
+    IsFirstPeriod, IsChurnPeriod, IsTrialPeriod, BillingCycleNumber
 
 Config (optional)
 subscriptions:
@@ -45,9 +48,11 @@ Power BI:
   Customers (1) ──< CustomerSubscriptions >── (1) DimPlans
 """
 
+import calendar
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import date
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -88,47 +93,57 @@ _CATEGORY_MAP = {
     "Education":     "Productivity",
     "News & Media":  "Information",
     "Music":         "Entertainment",
+    "Productivity":  "Productivity",
 }
 
-# Base plan definitions: (PlanName, PlanType, MonthlyPrice, Tier, MaxUsers, HasFreeTrial, LaunchDate)
-# Each base plan is expanded into one row per billing cycle it supports.
-_BASE_PLANS: List[Tuple[str, str, float, str, int, int, str]] = [
-    ("Basic Streaming",   "Streaming",     9.99, "Basic",    1, 1, "2021-01-15"),
-    ("Premium Streaming", "Streaming",    19.99, "Premium",  4, 1, "2021-03-01"),
-    ("Family Streaming",  "Streaming",    14.99, "Standard", 6, 0, "2021-06-01"),
-    ("Fitness",           "Fitness",      29.99, "Standard", 1, 1, "2021-02-01"),
-    ("Fitness Premium",   "Fitness",      49.99, "Premium",  2, 1, "2022-01-10"),
-    ("Cloud 100GB",       "Cloud Storage", 2.99, "Basic",    1, 1, "2021-01-15"),
-    ("Cloud 1TB",         "Cloud Storage", 9.99, "Standard", 5, 0, "2021-04-01"),
-    ("Cloud Unlimited",   "Cloud Storage",14.99, "Premium", 10, 0, "2021-09-15"),
-    ("Gaming Pass",       "Gaming",       14.99, "Standard", 1, 1, "2021-05-01"),
-    ("Gaming Ultimate",   "Gaming",       19.99, "Premium",  1, 1, "2022-03-01"),
-    ("News Digital",      "News & Media",  4.99, "Basic",    1, 1, "2021-01-15"),
-    ("News All-Access",   "News & Media", 12.99, "Premium",  5, 0, "2021-07-01"),
-    ("Learn",             "Education",    19.99, "Standard", 1, 1, "2021-08-15"),
-    ("Learn Teams",       "Education",    14.99, "Premium", 10, 0, "2022-02-01"),
-    ("Music",             "Music",        10.99, "Standard", 1, 1, "2021-03-15"),
-    ("Music Family",      "Music",        16.99, "Premium",  6, 0, "2021-11-01"),
+# Base plan definitions: (PlanName, PlanType, BaseMonthlyPrice, Tier, MaxUsers, HasFreeTrial, LaunchDayOffset)
+# LaunchDayOffset = days after global start date when the plan launches.
+# Each base plan is a distinct product — customers pick across types, not within.
+_BASE_PLANS: List[Tuple[str, str, float, str, int, int, int]] = [
+    # Streaming — Netflix
+    ("Netflix",                 "Streaming",      15.49, "Standard", 2, 1,   0),
+    ("Netflix Premium",         "Streaming",      22.99, "Premium",  4, 1,   0),
+    # Music — Spotify
+    ("Spotify",                 "Music",          10.99, "Standard", 1, 1,  30),
+    ("Spotify Family",          "Music",          16.99, "Premium",  6, 0, 120),
+    # Cloud storage — Dropbox
+    ("Dropbox Plus",            "Cloud Storage",  11.99, "Standard", 1, 1,   0),
+    ("Dropbox Business",        "Cloud Storage",  20.00, "Premium",  5, 0,  90),
+    # Fitness — Peloton
+    ("Peloton",                 "Fitness",        12.99, "Standard", 1, 1,  15),
+    ("Peloton All-Access",      "Fitness",        44.00, "Premium",  2, 1, 300),
+    # Gaming — Xbox Game Pass
+    ("Xbox Game Pass",          "Gaming",         10.99, "Standard", 1, 1,  60),
+    ("Xbox Game Pass Ultimate", "Gaming",         19.99, "Premium",  1, 1, 365),
+    # News & media — NYT
+    ("NYT Digital",             "News & Media",    5.00, "Basic",    1, 1,   0),
+    ("NYT All Access",          "News & Media",   12.50, "Premium",  5, 0, 180),
+    # Education — Coursera / LinkedIn Learning
+    ("Coursera Plus",           "Education",      59.00, "Standard", 1, 1, 150),
+    ("LinkedIn Learning",       "Education",      29.99, "Premium", 10, 0, 365),
+    # Productivity — Microsoft 365
+    ("Microsoft 365",           "Productivity",    6.99, "Standard", 1, 0,  45),
+    ("Microsoft 365 Business",  "Productivity",   12.50, "Premium", 25, 0, 210),
 ]
 
-# Which billing cycles each base plan supports (index into _BASE_PLANS)
+# Which billing cycles each base plan supports
 _PLAN_CYCLES: Dict[str, List[str]] = {
-    "Basic Streaming":   ["Monthly"],
-    "Premium Streaming": ["Monthly", "Quarterly", "Annual"],
-    "Family Streaming":  ["Annual"],
-    "Fitness":           ["Monthly", "Quarterly"],
-    "Fitness Premium":   ["Monthly", "Half-Yearly", "Annual"],
-    "Cloud 100GB":       ["Monthly"],
-    "Cloud 1TB":         ["Monthly", "Quarterly"],
-    "Cloud Unlimited":   ["Annual"],
-    "Gaming Pass":       ["Monthly", "Quarterly"],
-    "Gaming Ultimate":   ["Monthly", "Annual"],
-    "News Digital":      ["Monthly"],
-    "News All-Access":   ["Annual"],
-    "Learn":             ["Monthly", "Half-Yearly"],
-    "Learn Teams":       ["Annual"],
-    "Music":             ["Monthly", "Quarterly"],
-    "Music Family":      ["Half-Yearly", "Annual"],
+    "Netflix":                 ["Monthly", "Annual"],
+    "Netflix Premium":         ["Monthly", "Quarterly", "Annual"],
+    "Spotify":                 ["Monthly", "Quarterly"],
+    "Spotify Family":          ["Monthly", "Annual"],
+    "Dropbox Plus":            ["Monthly"],
+    "Dropbox Business":        ["Monthly", "Quarterly", "Annual"],
+    "Peloton":                 ["Monthly", "Quarterly"],
+    "Peloton All-Access":      ["Monthly", "Half-Yearly", "Annual"],
+    "Xbox Game Pass":          ["Monthly", "Quarterly"],
+    "Xbox Game Pass Ultimate": ["Monthly", "Annual"],
+    "NYT Digital":             ["Monthly"],
+    "NYT All Access":          ["Monthly", "Annual"],
+    "Coursera Plus":           ["Monthly", "Half-Yearly"],
+    "LinkedIn Learning":       ["Annual"],
+    "Microsoft 365":           ["Monthly", "Annual"],
+    "Microsoft 365 Business":  ["Monthly", "Quarterly", "Annual"],
 }
 
 
@@ -136,8 +151,9 @@ def _expand_catalog() -> List[Tuple]:
     """
     Expand base plans × billing cycles into the full catalog.
     Returns list of:
-      (PlanName, PlanType, Category, BillingCycle, MonthlyPrice, Discount,
-       CyclePrice, AnnualPrice, Tier, MaxUsers, HasFreeTrial, LaunchDate)
+      (PlanName, PlanType, Category, BillingCycle, CycleMonths,
+       BaseMonthlyPrice, Discount, CyclePrice, AnnualPrice,
+       Tier, MaxUsers, HasFreeTrial, LaunchDayOffset)
     """
     rows = []
     for name, ptype, mprice, tier, maxu, trial, launch in _BASE_PLANS:
@@ -148,7 +164,7 @@ def _expand_catalog() -> List[Tuple]:
             cycle_price = round(mprice * months * (1 - discount), 2)
             annual_price = round(mprice * 12 * (1 - discount), 2)
             rows.append((
-                name, ptype, category, cycle, mprice, discount,
+                name, ptype, category, cycle, months, mprice, discount,
                 cycle_price, annual_price, tier, maxu, trial, launch,
             ))
     return rows
@@ -158,12 +174,13 @@ PLANS_CATALOG = _expand_catalog()
 
 _PLAN_TYPE_WEIGHT = {
     "Streaming": 4.0,
-    "Fitness": 1.5,
+    "Music": 3.5,
     "Cloud Storage": 3.0,
     "Gaming": 2.5,
     "News & Media": 2.0,
+    "Fitness": 1.5,
     "Education": 1.5,
-    "Music": 3.0,
+    "Productivity": 2.5,
 }
 
 PAYMENT_METHODS = ["Credit Card", "Debit Card", "PayPal", "Bank Transfer"]
@@ -179,6 +196,27 @@ CANCELLATION_REASONS = [
 ]
 
 _NS_PER_DAY: int = 86_400_000_000_000
+
+
+def _ns_to_year_month(ns: int) -> Tuple[int, int]:
+    """Convert nanosecond timestamp to (year, month) tuple."""
+    dt = pd.Timestamp(ns, unit="ns")
+    return dt.year, dt.month
+
+
+def _months_between(y1: int, m1: int, y2: int, m2: int) -> int:
+    """Number of months from (y1,m1) to (y2,m2) inclusive."""
+    return (y2 - y1) * 12 + (m2 - m1) + 1
+
+
+def _month_start_date(year: int, month: int) -> date:
+    """Return date object for the 1st of the given month."""
+    return date(year, month, 1)
+
+
+def _month_end_date(year: int, month: int) -> date:
+    """Return date object for the last day of the given month."""
+    return date(year, month, calendar.monthrange(year, month)[1])
 
 
 # ---------------------------------------------------------------------------
@@ -249,36 +287,73 @@ def _parse_global_dates(cfg: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
 # Builders
 # ---------------------------------------------------------------------------
 
-def build_dim_plans() -> pd.DataFrame:
-    """Build the subscription plans dimension table (14 columns)."""
+def build_dim_plans(g_start: pd.Timestamp) -> pd.DataFrame:
+    """Build the subscription plans dimension table (15 columns).
+
+    LaunchDate for each plan is computed as g_start + LaunchDayOffset.
+    """
     k = len(PLANS_CATALOG)
+    launch_dates = pd.to_datetime([
+        g_start + pd.Timedelta(days=int(r[12])) for r in PLANS_CATALOG
+    ])
     return pd.DataFrame({
-        "PlanKey":       np.arange(1, k + 1, dtype=np.int64),
-        "PlanName":      [r[0] for r in PLANS_CATALOG],
-        "PlanType":      [r[1] for r in PLANS_CATALOG],
-        "Category":      [r[2] for r in PLANS_CATALOG],
-        "BillingCycle":  [r[3] for r in PLANS_CATALOG],
-        "MonthlyPrice":  pd.array([r[4] for r in PLANS_CATALOG], dtype="Float64"),
-        "Discount":      pd.array([r[5] for r in PLANS_CATALOG], dtype="Float64"),
-        "CyclePrice":    pd.array([r[6] for r in PLANS_CATALOG], dtype="Float64"),
-        "AnnualPrice":   pd.array([r[7] for r in PLANS_CATALOG], dtype="Float64"),
-        "Tier":          [r[8] for r in PLANS_CATALOG],
-        "MaxUsers":      np.array([r[9] for r in PLANS_CATALOG], dtype=np.int32),
-        "HasFreeTrial":  np.array([r[10] for r in PLANS_CATALOG], dtype=np.int8),
-        "LaunchDate":    pd.to_datetime([r[11] for r in PLANS_CATALOG]),
-        "IsActiveFlag":  np.ones(k, dtype=np.int8),
+        "PlanKey":          np.arange(1, k + 1, dtype=np.int64),
+        "PlanName":         [r[0] for r in PLANS_CATALOG],
+        "PlanType":         [r[1] for r in PLANS_CATALOG],
+        "Category":         [r[2] for r in PLANS_CATALOG],
+        "BillingCycle":     [r[3] for r in PLANS_CATALOG],
+        "CycleMonths":      np.array([r[4] for r in PLANS_CATALOG], dtype=np.int32),
+        "BaseMonthlyPrice": pd.array([r[5] for r in PLANS_CATALOG], dtype="Float64"),
+        "Discount":         pd.array([r[6] for r in PLANS_CATALOG], dtype="Float64"),
+        "CyclePrice":       pd.array([r[7] for r in PLANS_CATALOG], dtype="Float64"),
+        "AnnualPrice":      pd.array([r[8] for r in PLANS_CATALOG], dtype="Float64"),
+        "Tier":             [r[9] for r in PLANS_CATALOG],
+        "MaxUsers":         np.array([r[10] for r in PLANS_CATALOG], dtype=np.int32),
+        "HasFreeTrial":     np.array([r[11] for r in PLANS_CATALOG], dtype=np.int8),
+        "LaunchDate":       launch_dates,
+        "IsActiveFlag":     np.ones(k, dtype=np.int8),
     })
 
 
-def _compute_plan_weights(plan_types: np.ndarray) -> np.ndarray:
-    """Map plan types to normalised probability weights."""
-    weights = np.ones(len(plan_types), dtype=np.float64)
-    for ptype, w in _PLAN_TYPE_WEIGHT.items():
-        weights[plan_types == ptype] = w
-    total = weights.sum()
-    if total > 0:
-        weights /= total
-    return weights
+def _build_type_groups(plan_types: np.ndarray) -> Tuple[np.ndarray, List[np.ndarray], np.ndarray]:
+    """Pre-compute per-type plan indices and type-level weights.
+
+    Returns:
+        unique_types  – array of distinct PlanType strings
+        type_members  – list of arrays, each holding plan indices for that type
+        type_weights  – normalised probability for picking each type
+    """
+    unique_types = np.unique(plan_types)
+    type_members: List[np.ndarray] = []
+    type_weights = np.empty(len(unique_types), dtype=np.float64)
+    for i, t in enumerate(unique_types):
+        members = np.where(plan_types == t)[0]
+        type_members.append(members)
+        type_weights[i] = _PLAN_TYPE_WEIGHT.get(t, 1.0)
+    type_weights /= type_weights.sum()
+    return unique_types, type_members, type_weights
+
+
+def _choose_plans_diverse(
+    rng: np.random.Generator,
+    n_subs: int,
+    unique_types: np.ndarray,
+    type_members: List[np.ndarray],
+    type_weights: np.ndarray,
+) -> np.ndarray:
+    """Pick n_subs plans from distinct PlanTypes.
+
+    First selects n_subs unique types (weighted), then picks one plan
+    uniformly from each selected type.
+    """
+    n_types = len(unique_types)
+    n_subs = min(n_subs, n_types)
+    chosen_type_idx = rng.choice(n_types, size=n_subs, replace=False, p=type_weights)
+    plan_idx = np.empty(n_subs, dtype=np.intp)
+    for i, ti in enumerate(chosen_type_idx):
+        members = type_members[ti]
+        plan_idx[i] = members[rng.integers(len(members))]
+    return plan_idx
 
 
 def _compute_customer_windows(
@@ -328,20 +403,113 @@ def _bridge_schema() -> pa.Schema:
         pa.field("SubscriptionKey", pa.int64()),
         pa.field("CustomerKey", pa.int64()),
         pa.field("PlanKey", pa.int32()),
-        pa.field("SubscribedDate", pa.timestamp("ns")),
-        pa.field("CancelledDate", pa.timestamp("ns")),
-        pa.field("Status", pa.utf8()),
-        pa.field("MonthlyPrice", pa.float64()),
-        pa.field("AutoRenew", pa.int8()),
-        pa.field("TrialEndDate", pa.timestamp("ns")),
-        pa.field("PaymentMethod", pa.utf8()),
-        pa.field("LoyaltyDiscount", pa.float64()),
+        pa.field("PeriodStartDate", pa.date32()),
+        pa.field("PeriodEndDate", pa.date32()),
+        pa.field("PeriodPrice", pa.float64()),
+        pa.field("IsFirstPeriod", pa.int8()),
+        pa.field("IsChurnPeriod", pa.int8()),
+        pa.field("IsTrialPeriod", pa.int8()),
+        pa.field("BillingCycleNumber", pa.int32()),
     ])
 
 
 # ---------------------------------------------------------------------------
 # Bridge writer (streaming) -- serial path for small datasets
 # ---------------------------------------------------------------------------
+
+def _advance_months(y: int, m: int, n: int) -> Tuple[int, int]:
+    """Advance (year, month) by n months."""
+    m += n
+    while m > 12:
+        m -= 12
+        y += 1
+    return y, m
+
+
+def _expand_subscription_periods(
+    sub_key: int,
+    ck: int,
+    pk: int,
+    sub_ns: int,
+    cancel_ns: Optional[int],
+    trial_end_ns: Optional[int],
+    cycle_months: int,
+    cycle_price: float,
+    g_end_ns: int,
+) -> Tuple[
+    List[int], List[int], List[int],
+    List[date], List[date], List[float],
+    List[int], List[int], List[int], List[int],
+]:
+    """
+    Expand a single subscription into billing-period rows.
+
+    One row per billing cycle (monthly plans → 1 month, quarterly → 3 months, etc.).
+    Returns parallel lists for each column (to be appended to buffers).
+    """
+    sub_y, sub_m = _ns_to_year_month(sub_ns)
+    end_ref = cancel_ns if cancel_ns is not None else g_end_ns
+    end_y, end_m = _ns_to_year_month(end_ref)
+    n_months = _months_between(sub_y, sub_m, end_y, end_m)
+    if n_months <= 0:
+        n_months = 1
+
+    # Trial end month (if applicable)
+    trial_y, trial_m = (0, 0)
+    if trial_end_ns is not None:
+        trial_y, trial_m = _ns_to_year_month(trial_end_ns)
+
+    sk_list: List[int] = []
+    ck_list: List[int] = []
+    pk_list: List[int] = []
+    ps_list: List[date] = []       # PeriodStartDate
+    pe_list: List[date] = []       # PeriodEndDate
+    price_list: List[float] = []   # PeriodPrice
+    first_list: List[int] = []
+    churn_list: List[int] = []
+    trial_list: List[int] = []
+    cycle_list: List[int] = []     # BillingCycleNumber
+
+    y, m = sub_y, sub_m
+    period_idx = 0
+    month_offset = 0
+    while month_offset < n_months:
+        # Period end: advance by cycle_months (clamped to subscription end)
+        end_y_p, end_m_p = _advance_months(y, m, cycle_months - 1)
+
+        is_first = 1 if period_idx == 0 else 0
+        remaining = n_months - month_offset
+        is_last_period = remaining <= cycle_months
+        is_churn = 1 if (is_last_period and cancel_ns is not None) else 0
+        is_trial = 0
+        if trial_end_ns is not None:
+            if (y < trial_y) or (y == trial_y and m <= trial_m):
+                is_trial = 1
+
+        period_price = 0.0 if is_trial else cycle_price
+
+        sk_list.append(sub_key)
+        ck_list.append(ck)
+        pk_list.append(pk)
+        ps_list.append(_month_start_date(y, m))
+        pe_list.append(_month_end_date(end_y_p, end_m_p))
+        price_list.append(period_price)
+        first_list.append(is_first)
+        churn_list.append(is_churn)
+        trial_list.append(is_trial)
+        cycle_list.append(period_idx + 1)
+
+        # Advance by cycle_months
+        y, m = _advance_months(y, m, cycle_months)
+        month_offset += cycle_months
+        period_idx += 1
+
+    return (
+        sk_list, ck_list, pk_list,
+        ps_list, pe_list, price_list,
+        first_list, churn_list, trial_list, cycle_list,
+    )
+
 
 def _write_bridge_streaming(
     customers: pd.DataFrame,
@@ -352,7 +520,7 @@ def _write_bridge_streaming(
     out_bridge: Path,
 ) -> int:
     """
-    Stream-write customer_subscriptions bridge to parquet.
+    Stream-write customer_subscriptions billing-period fact to parquet.
     Returns number of rows written.
     """
     if "CustomerKey" not in customers.columns:
@@ -360,14 +528,9 @@ def _write_bridge_streaming(
 
     plan_keys = dim_plans["PlanKey"].astype(np.int32).to_numpy()
     plan_types = dim_plans["PlanType"].astype(str).to_numpy()
-    plan_monthly = dim_plans["MonthlyPrice"].to_numpy(dtype=np.float64, na_value=0.0)
-    plan_cycles = dim_plans["BillingCycle"].astype(str).to_numpy()
-    # Pre-compute cycle months as array for direct indexing (avoids dict lookup per sub)
-    plan_cycle_months = np.array(
-        [_CYCLE_MONTHS.get(c, 1) for c in plan_cycles], dtype=np.int32
-    )
-    n_plans = len(plan_keys)
-    w = _compute_plan_weights(plan_types)
+    plan_cycle_prices = dim_plans["CyclePrice"].to_numpy(dtype=np.float64, na_value=0.0)
+    plan_cycle_months = dim_plans["CycleMonths"].astype(np.int32).to_numpy()
+    unique_types, type_members, type_weights = _build_type_groups(plan_types)
 
     cust_keys, cust_start_ns, cust_end_ns = _compute_customer_windows(
         customers, g_start, g_end,
@@ -375,16 +538,14 @@ def _write_bridge_streaming(
 
     g_end_ns = np.int64(g_end.value)
     write_chunk_rows = max(c.write_chunk_rows, 10_000)
-    max_subs = min(c.max_subscriptions, n_plans)
+    max_subs = min(c.max_subscriptions, len(unique_types))
 
     rng = np.random.default_rng(c.seed)
     schema = _bridge_schema()
 
-    # Determine which customers participate
     n_cust = len(cust_keys)
     participate_mask = rng.random(n_cust) < c.participation_rate
 
-    # Pre-filter: eligible customers (participating + sufficient span)
     _part_idx = np.where(participate_mask)[0]
     _spans = np.maximum(0, (cust_end_ns[_part_idx] - cust_start_ns[_part_idx]) // _NS_PER_DAY)
     _ok = _spans >= 30
@@ -395,51 +556,58 @@ def _write_bridge_streaming(
     eligible_span = _spans[_ok]
     n_eligible = len(eligible_idx)
 
-    # Pre-allocate buffers
-    buf_cap = write_chunk_rows + max_subs + 10
-    buf_sk = np.empty(buf_cap, dtype=np.int64)     # SubscriptionKey
-    buf_ck = np.empty(buf_cap, dtype=np.int64)     # CustomerKey
-    buf_pk = np.empty(buf_cap, dtype=np.int32)     # PlanKey
-    buf_sub_date = np.empty(buf_cap, dtype=np.int64)  # SubscribedDate ns
-    buf_cancel = np.empty(buf_cap, dtype="object")    # CancelledDate (nullable)
-    buf_status = np.empty(buf_cap, dtype="object")    # Status string
-    buf_price = np.empty(buf_cap, dtype=np.float64)   # MonthlyPrice
-    buf_renew = np.empty(buf_cap, dtype=np.int8)      # AutoRenew
-    buf_trial = np.empty(buf_cap, dtype="object")      # TrialEndDate (nullable)
-    buf_payment = np.empty(buf_cap, dtype="object")    # PaymentMethod
-    buf_loyalty = np.empty(buf_cap, dtype=np.float64)  # LoyaltyDiscount
+    # Accumulators for billing-period rows
+    all_sk: List[int] = []
+    all_ck: List[int] = []
+    all_pk: List[int] = []
+    all_ps: List[date] = []
+    all_pe: List[date] = []
+    all_price: List[float] = []
+    all_first: List[int] = []
+    all_churn: List[int] = []
+    all_trial: List[int] = []
+    all_cycle: List[int] = []
 
     total_rows = 0
-    pos = 0
     next_sub_key = 1
 
-    def flush(writer: pq.ParquetWriter, n: int) -> None:
-        nonlocal total_rows, pos
+    def flush(writer: pq.ParquetWriter) -> None:
+        nonlocal total_rows
+        nonlocal all_sk, all_ck, all_pk
+        nonlocal all_ps, all_pe, all_price
+        nonlocal all_first, all_churn, all_trial, all_cycle
+        n = len(all_sk)
         if n == 0:
             return
 
-        # Convert nullable object buffers to lists for PyArrow
-        cancel_ns_list = buf_cancel[:n].tolist()
-        trial_ns_list = buf_trial[:n].tolist()
-
         arrays: List[pa.Array] = [
-            pa.array(buf_sk[:n], type=pa.int64()),
-            pa.array(buf_ck[:n], type=pa.int64()),
-            pa.array(buf_pk[:n], type=pa.int32()),
-            pa.array(buf_sub_date[:n].copy(), type=pa.timestamp("ns")),
-            pa.array(cancel_ns_list, type=pa.timestamp("ns")),
-            pa.array(buf_status[:n].tolist(), type=pa.utf8()),
-            pa.array(buf_price[:n], type=pa.float64()),
-            pa.array(buf_renew[:n], type=pa.int8()),
-            pa.array(trial_ns_list, type=pa.timestamp("ns")),
-            pa.array(buf_payment[:n].tolist(), type=pa.utf8()),
-            pa.array(buf_loyalty[:n], type=pa.float64()),
+            pa.array(all_sk, type=pa.int64()),
+            pa.array(all_ck, type=pa.int64()),
+            pa.array(all_pk, type=pa.int32()),
+            pa.array(all_ps, type=pa.date32()),
+            pa.array(all_pe, type=pa.date32()),
+            pa.array(all_price, type=pa.float64()),
+            pa.array(all_first, type=pa.int8()),
+            pa.array(all_churn, type=pa.int8()),
+            pa.array(all_trial, type=pa.int8()),
+            pa.array(all_cycle, type=pa.int32()),
         ]
 
         table = pa.Table.from_arrays(arrays, schema=schema)
         writer.write_table(table)
         total_rows += n
-        pos = 0
+
+        # Reset accumulators
+        all_sk = []
+        all_ck = []
+        all_pk = []
+        all_ps = []
+        all_pe = []
+        all_price = []
+        all_first = []
+        all_churn = []
+        all_trial = []
+        all_cycle = []
 
     out_bridge.parent.mkdir(parents=True, exist_ok=True)
     if out_bridge.exists():
@@ -452,87 +620,77 @@ def _write_bridge_streaming(
             hi_ns = int(eligible_hi[i])
             span_days = int(eligible_span[i])
 
-            # How many subscriptions for this customer
             n_subs = max(1, int(rng.poisson(c.avg_subscriptions)))
             n_subs = min(n_subs, max_subs)
 
-            # Choose plans (allow repeat for re-subscriptions)
-            chosen_idx = rng.choice(n_plans, size=n_subs, replace=True, p=w)
-
-            # Generate subscription start dates spread across customer window
+            chosen_idx = _choose_plans_diverse(
+                rng, n_subs, unique_types, type_members, type_weights,
+            )
+            n_subs = len(chosen_idx)  # may be clamped to n_types
             sub_offsets = np.sort(rng.integers(0, max(span_days - 30, 1), size=n_subs))
 
             for s in range(n_subs):
                 pidx = chosen_idx[s]
                 pk = int(plan_keys[pidx])
 
-                # Subscribed date
                 sub_ns = lo_ns + int(sub_offsets[s]) * _NS_PER_DAY
 
-                # Duration based on billing cycle
                 cycle_months = int(plan_cycle_months[pidx])
-                # Number of renewal periods the customer stays
-                n_periods = max(1, int(rng.geometric(0.3)))  # geometric: most stay 1-3 periods
+                n_periods = max(1, int(rng.geometric(0.3)))
                 base_duration_days = cycle_months * 30 * n_periods
 
-                price = float(plan_monthly[pidx])
+                cprice = float(plan_cycle_prices[pidx])
 
-                # Trial?
                 has_trial = rng.random() < c.trial_rate
                 if has_trial:
-                    trial_end_ns = sub_ns + 14 * _NS_PER_DAY  # 14-day trial
+                    trial_end_ns = sub_ns + 14 * _NS_PER_DAY
                 else:
                     trial_end_ns = None
 
-                # Churned?
                 is_churned = rng.random() < c.churn_rate
                 end_ns = sub_ns + int(base_duration_days) * _NS_PER_DAY
 
                 if is_churned and end_ns <= hi_ns:
                     cancel_ns = end_ns
-                    status = "Cancelled"
-                    auto_renew = 0
-                elif end_ns > g_end_ns:
-                    cancel_ns = None
-                    status = "Active"
-                    auto_renew = 1
                 else:
                     cancel_ns = None
-                    status = "Expired"
-                    auto_renew = 0
 
-                # Loyalty discount based on cumulative tenure
-                tenure_days = (int(cancel_ns if cancel_ns else g_end_ns) - sub_ns) // _NS_PER_DAY
-                if tenure_days >= 730:       # 24+ months
-                    loyalty_disc = 0.10
-                elif tenure_days >= 365:     # 12-24 months
-                    loyalty_disc = 0.05
-                else:
-                    loyalty_disc = 0.00
+                # RNG consumption for payment method (maintain stream compatibility)
+                rng.choice(len(PAYMENT_METHODS), p=_PAYMENT_WEIGHTS)
 
-                # Payment method
-                pm_idx = rng.choice(len(PAYMENT_METHODS), p=_PAYMENT_WEIGHTS)
-                payment = PAYMENT_METHODS[pm_idx]
+                # Expand into billing-period rows
+                (
+                    sk, ck_l, pk_l, ps, pe, pr,
+                    first, churn, trial, cyc,
+                ) = _expand_subscription_periods(
+                    sub_key=next_sub_key,
+                    ck=ck,
+                    pk=pk,
+                    sub_ns=sub_ns,
+                    cancel_ns=cancel_ns,
+                    trial_end_ns=trial_end_ns,
+                    cycle_months=cycle_months,
+                    cycle_price=cprice,
+                    g_end_ns=int(g_end_ns),
+                )
 
-                buf_sk[pos] = next_sub_key
-                buf_ck[pos] = ck
-                buf_pk[pos] = pk
-                buf_sub_date[pos] = sub_ns
-                buf_cancel[pos] = cancel_ns
-                buf_status[pos] = status
-                buf_price[pos] = round(price * (1 - loyalty_disc), 2)
-                buf_renew[pos] = auto_renew
-                buf_trial[pos] = trial_end_ns
-                buf_payment[pos] = payment
-                buf_loyalty[pos] = loyalty_disc
+                all_sk.extend(sk)
+                all_ck.extend(ck_l)
+                all_pk.extend(pk_l)
+                all_ps.extend(ps)
+                all_pe.extend(pe)
+                all_price.extend(pr)
+                all_first.extend(first)
+                all_churn.extend(churn)
+                all_trial.extend(trial)
+                all_cycle.extend(cyc)
 
                 next_sub_key += 1
-                pos += 1
 
-                if pos >= write_chunk_rows:
-                    flush(writer, pos)
+                if len(all_sk) >= write_chunk_rows:
+                    flush(writer)
 
-        flush(writer, pos)
+        flush(writer)
 
     return total_rows
 
@@ -545,47 +703,23 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
     """
     Worker entry point (must be top-level for Windows spawn pickling).
 
-    Generates subscription rows IN MEMORY for a slice of eligible customers,
-    writes a chunk parquet to disk, and returns its row count.
+    Generates billing-period subscription fact rows IN MEMORY for a slice
+    of eligible customers, writes a chunk parquet to disk, and returns its
+    row count.
 
     SubscriptionKey values written here are LOCAL (1-based within chunk).
-    The main process reassigns keys sequentially after merge.
-
-    Args (tuple positional):
-        chunk_idx          int   -- chunk sequence number
-        seed               int   -- base seed; worker derives its own via SeedSequence
-        n_chunks           int   -- total number of chunks (for SeedSequence spawn)
-        eligible_ck        ndarray int64  -- CustomerKey for this chunk
-        eligible_lo        ndarray int64  -- window start ns
-        eligible_hi        ndarray int64  -- window end ns
-        eligible_span      ndarray int64  -- span in days
-        plan_keys          ndarray int32
-        plan_monthly       ndarray float64
-        plan_cycle_months  ndarray int32
-        plan_weights       ndarray float64  -- normalised plan selection weights
-        n_plans            int
-        g_end_ns           int64
-        max_subs           int
-        avg_subscriptions  float
-        churn_rate         float
-        trial_rate         float
-        payment_weights    ndarray float64
-        out_chunk_path     str   -- full path to write chunk parquet
-
-    Returns:
-        dict with chunk_idx and rows
     """
     (
         chunk_idx, seed, n_chunks,
         eligible_ck, eligible_lo, eligible_hi, eligible_span,
-        plan_keys, plan_monthly, plan_cycle_months, plan_weights,
-        n_plans, g_end_ns, max_subs,
+        plan_keys, plan_cycle_prices, plan_cycle_months,
+        unique_types, type_members, type_weights,
+        g_end_ns, max_subs,
         avg_subscriptions, churn_rate, trial_rate,
         payment_weights,
         out_chunk_path,
     ) = args
 
-    # Each worker gets its own independent RNG stream
     ss = np.random.SeedSequence(seed)
     child_seeds = ss.spawn(n_chunks)
     rng = np.random.default_rng(child_seeds[chunk_idx])
@@ -593,23 +727,19 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
     n_eligible = len(eligible_ck)
     schema = _bridge_schema()
 
-    # Estimate capacity: n_eligible * max_subs rows at most
-    cap = max(n_eligible * max_subs + 10, 100)
+    # Accumulators for billing-period rows
+    all_sk: List[int] = []
+    all_ck: List[int] = []
+    all_pk: List[int] = []
+    all_ps: List[date] = []
+    all_pe: List[date] = []
+    all_price: List[float] = []
+    all_first: List[int] = []
+    all_churn: List[int] = []
+    all_trial: List[int] = []
+    all_cycle: List[int] = []
 
-    arr_sk = np.empty(cap, dtype=np.int64)
-    arr_ck = np.empty(cap, dtype=np.int64)
-    arr_pk = np.empty(cap, dtype=np.int32)
-    arr_sub_date = np.empty(cap, dtype=np.int64)
-    arr_cancel: List[Optional[int]] = []
-    arr_status: List[str] = []
-    arr_price = np.empty(cap, dtype=np.float64)
-    arr_renew = np.empty(cap, dtype=np.int8)
-    arr_trial: List[Optional[int]] = []
-    arr_payment: List[str] = []
-    arr_loyalty = np.empty(cap, dtype=np.float64)
-
-    pos = 0
-    local_key = 1  # local key, reassigned by main process after merge
+    local_sub_key = 1
 
     for i in range(n_eligible):
         ck = int(eligible_ck[i])
@@ -620,7 +750,10 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
         n_subs = max(1, int(rng.poisson(avg_subscriptions)))
         n_subs = min(n_subs, max_subs)
 
-        chosen_idx = rng.choice(n_plans, size=n_subs, replace=True, p=plan_weights)
+        chosen_idx = _choose_plans_diverse(
+            rng, n_subs, unique_types, type_members, type_weights,
+        )
+        n_subs = len(chosen_idx)
         sub_offsets = np.sort(rng.integers(0, max(span_days - 30, 1), size=n_subs))
 
         for s in range(n_subs):
@@ -633,7 +766,7 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
             n_periods = max(1, int(rng.geometric(0.3)))
             base_duration_days = cycle_months * 30 * n_periods
 
-            price = float(plan_monthly[pidx])
+            cprice = float(plan_cycle_prices[pidx])
 
             has_trial = rng.random() < trial_rate
             trial_end_ns: Optional[int] = int(sub_ns + 14 * _NS_PER_DAY) if has_trial else None
@@ -643,57 +776,41 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
 
             if is_churned and end_ns <= hi_ns:
                 cancel_ns: Optional[int] = int(end_ns)
-                status = "Cancelled"
-                auto_renew = np.int8(0)
-            elif end_ns > g_end_ns:
-                cancel_ns = None
-                status = "Active"
-                auto_renew = np.int8(1)
             else:
                 cancel_ns = None
-                status = "Expired"
-                auto_renew = np.int8(0)
 
-            ref_ns = cancel_ns if cancel_ns is not None else g_end_ns
-            tenure_days = (int(ref_ns) - sub_ns) // _NS_PER_DAY
-            if tenure_days >= 730:
-                loyalty_disc = 0.10
-            elif tenure_days >= 365:
-                loyalty_disc = 0.05
-            else:
-                loyalty_disc = 0.00
+            # Consume RNG for payment method (maintain stream compatibility)
+            rng.choice(len(PAYMENT_METHODS), p=payment_weights)
 
-            pm_idx = int(rng.choice(len(PAYMENT_METHODS), p=payment_weights))
-            payment = PAYMENT_METHODS[pm_idx]
+            (
+                sk, ck_l, pk_l, ps, pe, pr,
+                first, churn, trial, cyc,
+            ) = _expand_subscription_periods(
+                sub_key=local_sub_key,
+                ck=ck,
+                pk=pk,
+                sub_ns=sub_ns,
+                cancel_ns=cancel_ns,
+                trial_end_ns=trial_end_ns,
+                cycle_months=cycle_months,
+                cycle_price=cprice,
+                g_end_ns=int(g_end_ns),
+            )
 
-            if pos >= cap:
-                # Grow buffers (shouldn't happen often given the estimate)
-                new_cap = cap * 2
-                arr_sk = _grow(arr_sk, new_cap)
-                arr_ck = _grow(arr_ck, new_cap)
-                arr_pk = _grow(arr_pk, new_cap)
-                arr_sub_date = _grow(arr_sub_date, new_cap)
-                arr_price = _grow(arr_price, new_cap)
-                arr_renew = _grow(arr_renew, new_cap)
-                arr_loyalty = _grow(arr_loyalty, new_cap)
-                cap = new_cap
+            all_sk.extend(sk)
+            all_ck.extend(ck_l)
+            all_pk.extend(pk_l)
+            all_ps.extend(ps)
+            all_pe.extend(pe)
+            all_price.extend(pr)
+            all_first.extend(first)
+            all_churn.extend(churn)
+            all_trial.extend(trial)
+            all_cycle.extend(cyc)
 
-            arr_sk[pos] = local_key
-            arr_ck[pos] = ck
-            arr_pk[pos] = pk
-            arr_sub_date[pos] = sub_ns
-            arr_cancel.append(cancel_ns)
-            arr_status.append(status)
-            arr_price[pos] = round(price * (1 - loyalty_disc), 2)
-            arr_renew[pos] = auto_renew
-            arr_trial.append(trial_end_ns)
-            arr_payment.append(payment)
-            arr_loyalty[pos] = loyalty_disc
+            local_sub_key += 1
 
-            local_key += 1
-            pos += 1
-
-    n_rows = pos
+    n_rows = len(all_sk)
 
     if n_rows > 0:
         out_path = Path(out_chunk_path)
@@ -701,17 +818,16 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
 
         table = pa.Table.from_arrays(
             [
-                pa.array(arr_sk[:n_rows], type=pa.int64()),
-                pa.array(arr_ck[:n_rows], type=pa.int64()),
-                pa.array(arr_pk[:n_rows], type=pa.int32()),
-                pa.array(arr_sub_date[:n_rows].copy(), type=pa.timestamp("ns")),
-                pa.array(arr_cancel, type=pa.timestamp("ns")),
-                pa.array(arr_status, type=pa.utf8()),
-                pa.array(arr_price[:n_rows], type=pa.float64()),
-                pa.array(arr_renew[:n_rows], type=pa.int8()),
-                pa.array(arr_trial, type=pa.timestamp("ns")),
-                pa.array(arr_payment, type=pa.utf8()),
-                pa.array(arr_loyalty[:n_rows], type=pa.float64()),
+                pa.array(all_sk, type=pa.int64()),
+                pa.array(all_ck, type=pa.int64()),
+                pa.array(all_pk, type=pa.int32()),
+                pa.array(all_ps, type=pa.date32()),
+                pa.array(all_pe, type=pa.date32()),
+                pa.array(all_price, type=pa.float64()),
+                pa.array(all_first, type=pa.int8()),
+                pa.array(all_churn, type=pa.int8()),
+                pa.array(all_trial, type=pa.int8()),
+                pa.array(all_cycle, type=pa.int32()),
             ],
             schema=schema,
         )
@@ -724,12 +840,6 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
 
     return {"chunk_idx": chunk_idx, "rows": n_rows}
 
-
-def _grow(arr: np.ndarray, new_cap: int) -> np.ndarray:
-    """Return a new array with size new_cap, copying existing data."""
-    new_arr = np.empty(new_cap, dtype=arr.dtype)
-    new_arr[: len(arr)] = arr
-    return new_arr
 
 
 # ---------------------------------------------------------------------------
@@ -749,7 +859,7 @@ def _write_bridge_parallel(
     Parallel bridge writer for large datasets.
 
     Pre-filters eligible customers, splits into chunks, dispatches to worker
-    pool, merges chunk parquets, reassigns SubscriptionKey, writes final file.
+    pool, merges chunk parquets into final file.
     Returns total rows written.
     """
     from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
@@ -760,20 +870,16 @@ def _write_bridge_parallel(
     # --- Plan data (read-only, passed to every worker) ---
     plan_keys = dim_plans["PlanKey"].astype(np.int32).to_numpy()
     plan_types = dim_plans["PlanType"].astype(str).to_numpy()
-    plan_monthly = dim_plans["MonthlyPrice"].to_numpy(dtype=np.float64, na_value=0.0)
-    plan_cycles = dim_plans["BillingCycle"].astype(str).to_numpy()
-    plan_cycle_months = np.array(
-        [_CYCLE_MONTHS.get(cyc, 1) for cyc in plan_cycles], dtype=np.int32
-    )
-    n_plans = len(plan_keys)
-    plan_weights = _compute_plan_weights(plan_types)
+    plan_cycle_prices = dim_plans["CyclePrice"].to_numpy(dtype=np.float64, na_value=0.0)
+    plan_cycle_months = dim_plans["CycleMonths"].astype(np.int32).to_numpy()
+    unique_types, type_members, type_weights = _build_type_groups(plan_types)
 
     # --- Customer windows ---
     cust_keys, cust_start_ns, cust_end_ns = _compute_customer_windows(
         customers, g_start, g_end
     )
     g_end_ns = np.int64(g_end.value)
-    max_subs = min(c.max_subscriptions, n_plans)
+    max_subs = min(c.max_subscriptions, len(unique_types))
 
     # --- Eligibility filter (same RNG as serial path for consistency) ---
     n_cust = len(cust_keys)
@@ -826,10 +932,11 @@ def _write_bridge_parallel(
             eligible_hi[indices],
             eligible_span[indices],
             plan_keys,
-            plan_monthly,
+            plan_cycle_prices,
             plan_cycle_months,
-            plan_weights,
-            n_plans,
+            unique_types,
+            type_members,
+            type_weights,
             int(g_end_ns),
             max_subs,
             c.avg_subscriptions,
@@ -883,7 +990,7 @@ def _merge_subscription_chunks(
     delete_chunks: bool = True,
 ) -> int:
     """
-    Read chunk parquets in order, reassign SubscriptionKey 1..N, write final parquet.
+    Read chunk parquets in order, write final merged parquet.
     Returns total rows written.
     """
     schema = _bridge_schema()
@@ -899,7 +1006,6 @@ def _merge_subscription_chunks(
         out_bridge.unlink()
 
     total_rows = 0
-    next_key = np.int64(1)
 
     with pq.ParquetWriter(out_bridge, schema=schema, compression="snappy") as writer:
         for chunk_path in chunk_files:
@@ -908,18 +1014,7 @@ def _merge_subscription_chunks(
             if n == 0:
                 continue
 
-            # Reassign SubscriptionKey to be globally sequential
-            new_keys = pa.array(
-                np.arange(next_key, next_key + n, dtype=np.int64),
-                type=pa.int64(),
-            )
-            tbl = tbl.set_column(
-                tbl.schema.get_field_index("SubscriptionKey"),
-                "SubscriptionKey",
-                new_keys,
-            )
             writer.write_table(tbl)
-            next_key = np.int64(next_key + n)
             total_rows += n
 
             if delete_chunks:
@@ -959,7 +1054,7 @@ def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
     from src.utils.config_helpers import as_dict
     st = os.stat(customers_fp)
     version_cfg = as_dict(cfg.subscriptions)
-    version_cfg["_schema_version"] = 2
+    version_cfg["_schema_version"] = 4
     version_cfg["_upstream_customers_sig"] = {
         "path": str(customers_fp),
         "size": int(st.st_size),
@@ -974,15 +1069,16 @@ def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
         skip("Subscriptions up-to-date")
         return {"_regenerated": False, "reason": "version"}
 
+    g_start, g_end = _parse_global_dates(cfg)
+
     with stage("Generating Subscriptions"):
-        dim = build_dim_plans()
+        dim = build_dim_plans(g_start)
         dim.to_parquet(out_dim, index=False)
         info(f"Plans written: {out_dim.name} ({len(dim):,} rows)")
 
         n_rows = 0
         if c.generate_bridge:
             customers = pd.read_parquet(customers_fp)
-            g_start, g_end = _parse_global_dates(cfg)
 
             # Estimate eligible customers to decide serial vs parallel path
             n_cust = len(customers)
