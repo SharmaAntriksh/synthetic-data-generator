@@ -232,6 +232,7 @@ class SubscriptionsCfg:
     max_subscriptions: int = 5
     churn_rate: float = 0.25
     trial_rate: float = 0.30
+    trial_conversion_rate: float = 0.85
     seed: int = 700
     write_chunk_rows: int = 250_000
 
@@ -247,6 +248,7 @@ def _read_cfg(cfg: Any) -> SubscriptionsCfg:
         max_subscriptions=int(sc.max_subscriptions),
         churn_rate=float(sc.churn_rate),
         trial_rate=float(sc.trial_rate),
+        trial_conversion_rate=float(sc.trial_conversion_rate),
         seed=seed,
         write_chunk_rows=int(sc.write_chunk_rows),
     )
@@ -636,13 +638,17 @@ def _write_bridge_streaming(
                 has_trial = rng.random() < c.trial_rate
                 if has_trial:
                     trial_end_ns = sub_ns + 14 * _NS_PER_DAY
+                    converts = rng.random() < c.trial_conversion_rate
                 else:
                     trial_end_ns = None
+                    converts = True
 
                 is_churned = rng.random() < c.churn_rate
                 end_ns = sub_ns + int(base_duration_days) * _NS_PER_DAY
 
-                if is_churned and end_ns <= hi_ns:
+                if not converts:
+                    cancel_ns = sub_ns
+                elif is_churned and end_ns <= hi_ns:
                     cancel_ns = end_ns
                 else:
                     cancel_ns = None
@@ -707,7 +713,7 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
         plan_keys, plan_cycle_prices, plan_cycle_months,
         unique_types, type_members, type_weights,
         g_end_ns, max_subs,
-        avg_subscriptions, churn_rate, trial_rate,
+        avg_subscriptions, churn_rate, trial_rate, trial_conversion_rate,
         payment_weights,
         out_chunk_path,
     ) = args
@@ -762,12 +768,15 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
 
             has_trial = rng.random() < trial_rate
             trial_end_ns: Optional[int] = int(sub_ns + 14 * _NS_PER_DAY) if has_trial else None
+            converts = rng.random() < trial_conversion_rate if has_trial else True
 
             is_churned = rng.random() < churn_rate
             end_ns = sub_ns + int(base_duration_days) * _NS_PER_DAY
 
-            if is_churned and end_ns <= hi_ns:
-                cancel_ns: Optional[int] = int(end_ns)
+            if not converts:
+                cancel_ns: Optional[int] = int(sub_ns)
+            elif is_churned and end_ns <= hi_ns:
+                cancel_ns = int(end_ns)
             else:
                 cancel_ns = None
 
@@ -934,6 +943,7 @@ def _write_bridge_parallel(
             c.avg_subscriptions,
             c.churn_rate,
             c.trial_rate,
+            c.trial_conversion_rate,
             _PAYMENT_WEIGHTS,
             chunk_path,
         ))

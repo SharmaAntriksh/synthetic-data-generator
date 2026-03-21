@@ -588,6 +588,7 @@ class SubscriptionsConfig(_Base):
     max_subscriptions: int = 5
     churn_rate: float = 0.25
     trial_rate: float = 0.30
+    trial_conversion_rate: float = 0.85
     seed: Optional[int] = 700
     write_chunk_rows: int = 250_000
     # Injected by dimensions_runner

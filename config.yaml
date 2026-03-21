@@ -140,6 +140,7 @@ subscriptions:
   max_subscriptions: 5
   churn_rate: 0.25                  # fraction that cancel before expiry
   trial_rate: 0.30                  # fraction that start with a trial
+  trial_conversion_rate: 0.85       # fraction of trial users that convert to paid
 
   seed: 700
 
