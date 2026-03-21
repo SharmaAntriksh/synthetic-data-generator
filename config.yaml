@@ -50,8 +50,8 @@ sales:
   quality_report: false                  # generate HTML data quality report after packaging
 
   advanced:
-    chunk_size: 500000
-    workers: 6                        # null = auto-detect
+    chunk_size: 1_000_000
+    workers: 8                        # null = auto-detect
     row_group_size: 1_000_000
     compression: "snappy"
     write_pyarrow: true

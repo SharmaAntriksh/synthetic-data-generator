@@ -130,7 +130,7 @@ FROM EmployeeStoreAssignments a
 JOIN EmployeeStoreAssignments b
   ON  b.EmployeeKey = a.EmployeeKey
  AND b.StoreKey     = a.StoreKey
- AND b.AssignmentSequence > a.AssignmentSequence
+ AND b.StartDate    > a.StartDate
 WHERE a.EndDate IS NOT NULL
   AND b.StartDate <= a.EndDate;
 -- EXPECTED: zero rows
@@ -283,7 +283,7 @@ FROM EmployeeStoreAssignments a
 JOIN EmployeeStoreAssignments b
   ON  b.EmployeeKey = a.EmployeeKey
  AND b.StoreKey     = a.StoreKey
- AND b.AssignmentSequence > a.AssignmentSequence
+ AND b.StartDate    > a.StartDate
 WHERE a.EndDate IS NOT NULL
   AND b.StartDate <= a.EndDate
 

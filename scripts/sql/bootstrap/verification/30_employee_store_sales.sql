@@ -83,7 +83,7 @@ BEGIN
     JOIN dbo.EmployeeStoreAssignments b
       ON  b.EmployeeKey = a.EmployeeKey
      AND b.StoreKey     = a.StoreKey
-     AND b.AssignmentSequence > a.AssignmentSequence
+     AND b.StartDate    > a.StartDate
     WHERE a.EndDate IS NOT NULL AND b.StartDate <= a.EndDate;
     INSERT INTO #R VALUES ('DateSanity', 'No overlapping same-store assignments',
         'An employee should not have overlapping date windows at the same store',

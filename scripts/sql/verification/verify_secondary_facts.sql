@@ -235,7 +235,7 @@ FROM (
 
 
 -- ############################################################################
--- SUBSCRIPTIONS
+-- SUBSCRIPTIONS (billing-period fact)
 -- ############################################################################
 
 -- ============================================================================
@@ -258,7 +258,7 @@ SELECT
     MIN(SubCount)                                                   AS MinSubs,
     MAX(SubCount)                                                   AS MaxSubs
 FROM (
-    SELECT CustomerKey, COUNT(*) AS SubCount
+    SELECT CustomerKey, COUNT(DISTINCT SubscriptionKey) AS SubCount
     FROM CustomerSubscriptions
     GROUP BY CustomerKey
 ) x;
@@ -271,30 +271,48 @@ LEFT JOIN Plans p ON p.PlanKey = s.PlanKey
 WHERE p.PlanKey IS NULL;
 -- EXPECTED: zero rows
 
--- 5d. Status distribution
-SELECT
-    Status,
-    COUNT(*)                                                        AS Cnt,
-    CAST(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () AS DECIMAL(5,1)) AS Pct
+-- 5d. Every subscription should have exactly one IsFirstPeriod = 1
+SELECT SubscriptionKey, SUM(CAST(IsFirstPeriod AS INT)) AS FirstPeriodCount
 FROM CustomerSubscriptions
-GROUP BY Status
-ORDER BY Cnt DESC;
--- EXPECTED: mix of Active, Cancelled, Expired, Trial
+GROUP BY SubscriptionKey
+HAVING SUM(CAST(IsFirstPeriod AS INT)) <> 1;
+-- EXPECTED: zero rows
 
--- 5e. Churn rate (cancelled / total)
+-- 5e. Trial periods should have PeriodPrice = 0
+SELECT COUNT(*) AS TrialWithNonZeroPrice
+FROM CustomerSubscriptions
+WHERE IsTrialPeriod = 1 AND PeriodPrice <> 0;
+-- EXPECTED: zero
+
+-- 5f. Churn rate (subscriptions with a churn period / total subscriptions)
 SELECT
-    COUNT(*)                                                        AS TotalSubs,
-    SUM(CASE WHEN Status = 'Cancelled' THEN 1 ELSE 0 END)          AS Cancelled,
-    CAST(SUM(CASE WHEN Status = 'Cancelled' THEN 1 ELSE 0 END) * 100.0
-         / NULLIF(COUNT(*), 0) AS DECIMAL(5,1))                    AS ChurnPct
+    COUNT(DISTINCT SubscriptionKey)                                 AS TotalSubs,
+    COUNT(DISTINCT CASE WHEN IsChurnPeriod = 1 THEN SubscriptionKey END) AS ChurnedSubs,
+    CAST(COUNT(DISTINCT CASE WHEN IsChurnPeriod = 1 THEN SubscriptionKey END) * 100.0
+         / NULLIF(COUNT(DISTINCT SubscriptionKey), 0) AS DECIMAL(5,1)) AS ChurnPct
 FROM CustomerSubscriptions;
 -- EXPECTED: ~25% (governed by subscriptions.churn_rate)
 
--- 5f. EndDate >= StartDate
-SELECT SubscriptionKey, SubscribedDate, CancelledDate
+-- 5g. PeriodEndDate >= PeriodStartDate
+SELECT SubscriptionKey, PeriodStartDate, PeriodEndDate
 FROM CustomerSubscriptions
-WHERE CancelledDate IS NOT NULL AND CancelledDate < SubscribedDate;
+WHERE PeriodEndDate < PeriodStartDate;
 -- EXPECTED: zero rows
+
+-- 5h. BillingCycleNumber contiguity (max should equal count per subscription)
+SELECT SubscriptionKey, COUNT(*) AS Periods, MAX(BillingCycleNumber) AS MaxCycle
+FROM CustomerSubscriptions
+GROUP BY SubscriptionKey
+HAVING MAX(BillingCycleNumber) <> COUNT(*);
+-- EXPECTED: zero rows
+
+-- 5i. PeriodPrice should match plan CyclePrice for non-trial periods
+SELECT COUNT(*) AS PriceMismatches
+FROM CustomerSubscriptions s
+JOIN Plans p ON p.PlanKey = s.PlanKey
+WHERE s.IsTrialPeriod = 0
+  AND ABS(s.PeriodPrice - p.CyclePrice) > 0.01;
+-- EXPECTED: zero
 
 
 -- ############################################################################
@@ -353,7 +371,14 @@ WHERE p.PlanKey IS NULL
 
 UNION ALL
 
-SELECT 'Subscriptions: EndDate >= StartDate',
-    'Subscription cannot be cancelled before it started; FAIL = date inversion',
+SELECT 'Subscriptions: PeriodEndDate >= PeriodStartDate',
+    'Billing period end cannot precede period start; FAIL = date inversion',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM CustomerSubscriptions WHERE SubscribedDate IS NOT NULL AND CancelledDate < SubscribedDate;
+FROM CustomerSubscriptions WHERE PeriodEndDate < PeriodStartDate
+
+UNION ALL
+
+SELECT 'Subscriptions: trial periods have zero price',
+    'IsTrialPeriod=1 rows must have PeriodPrice=0; FAIL = trial charged non-zero',
+    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+FROM CustomerSubscriptions WHERE IsTrialPeriod = 1 AND PeriodPrice <> 0;

@@ -182,12 +182,12 @@ WHERE d.[Day] = 1
 -- 7. Subscription & Complaint Temporal Coverage
 -- ============================================================================
 
--- 7a. Subscription start dates span the full range
+-- 7a. Subscription billing periods span the full range
 SELECT
-    MIN(SubscribedDate) AS EarliestSub,
-    MAX(SubscribedDate) AS LatestSub,
-    MIN(CancelledDate)  AS EarliestEnd,
-    MAX(CancelledDate)  AS LatestEnd
+    MIN(PeriodStartDate) AS EarliestPeriod,
+    MAX(PeriodStartDate) AS LatestPeriod,
+    MIN(PeriodEndDate)   AS EarliestEnd,
+    MAX(PeriodEndDate)   AS LatestEnd
 FROM CustomerSubscriptions;
 -- EXPECTED: spans configured date range
 

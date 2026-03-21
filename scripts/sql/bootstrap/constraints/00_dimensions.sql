@@ -765,9 +765,10 @@ BEGIN
 END;
 GO
 
--- CustomerSubscriptions: PK on SubscriptionKey
+-- CustomerSubscriptions: PK on (SubscriptionKey, BillingCycleNumber)
 IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.CustomerSubscriptions', N'SubscriptionKey') IS NOT NULL
+AND COL_LENGTH(N'dbo.CustomerSubscriptions', N'BillingCycleNumber') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.key_constraints
@@ -777,7 +778,7 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.CustomerSubscriptions
     ADD CONSTRAINT PK_CustomerSubscriptions
-        PRIMARY KEY NONCLUSTERED ([SubscriptionKey]);
+        PRIMARY KEY NONCLUSTERED ([SubscriptionKey], [BillingCycleNumber]);
 END;
 GO
 

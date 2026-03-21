@@ -454,11 +454,6 @@ def _expand_subscription_periods(
     if n_months <= 0:
         n_months = 1
 
-    # Trial end month (if applicable)
-    trial_y, trial_m = (0, 0)
-    if trial_end_ns is not None:
-        trial_y, trial_m = _ns_to_year_month(trial_end_ns)
-
     sk_list: List[int] = []
     ck_list: List[int] = []
     pk_list: List[int] = []
@@ -481,10 +476,7 @@ def _expand_subscription_periods(
         remaining = n_months - month_offset
         is_last_period = remaining <= cycle_months
         is_churn = 1 if (is_last_period and cancel_ns is not None) else 0
-        is_trial = 0
-        if trial_end_ns is not None:
-            if (y < trial_y) or (y == trial_y and m <= trial_m):
-                is_trial = 1
+        is_trial = 1 if (trial_end_ns is not None and period_idx == 0) else 0
 
         period_price = 0.0 if is_trial else cycle_price
 

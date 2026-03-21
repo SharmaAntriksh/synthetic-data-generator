@@ -134,7 +134,7 @@ BEGIN
     END
 
     -- ================================================================
-    -- SUBSCRIPTIONS
+    -- SUBSCRIPTIONS (billing-period fact)
     -- ================================================================
     IF OBJECT_ID(N'dbo.CustomerSubscriptions', N'U') IS NOT NULL
     BEGIN
@@ -149,19 +149,29 @@ BEGIN
 
         DECLARE @sub_date_inv INT;
         SELECT @sub_date_inv = COUNT(*) FROM dbo.CustomerSubscriptions
-        WHERE SubscribedDate IS NOT NULL AND CancelledDate < SubscribedDate;
-        INSERT INTO #R VALUES ('Subscriptions', 'CancelledDate >= SubscribedDate',
-            'Subscription cannot be cancelled before it started',
+        WHERE PeriodEndDate < PeriodStartDate;
+        INSERT INTO #R VALUES ('Subscriptions', 'PeriodEndDate >= PeriodStartDate',
+            'Billing period end cannot precede period start',
             CASE WHEN @sub_date_inv = 0 THEN 'PASS' ELSE 'FAIL' END,
             CAST(@sub_date_inv AS VARCHAR) + ' inversions');
 
-        DECLARE @churn_pct DECIMAL(5,1);
-        SELECT @churn_pct = ISNULL(
-            SUM(CASE WHEN Status = 'Cancelled' THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0)
-        FROM dbo.CustomerSubscriptions;
-        INSERT INTO #R VALUES ('Subscriptions', 'Churn rate',
-            'Percentage of subscriptions cancelled', 'INFO',
-            CAST(@churn_pct AS VARCHAR) + '% churned');
+        DECLARE @first_period_check INT;
+        SELECT @first_period_check = COUNT(*) FROM (
+            SELECT SubscriptionKey FROM dbo.CustomerSubscriptions
+            GROUP BY SubscriptionKey HAVING SUM(CAST(IsFirstPeriod AS INT)) <> 1
+        ) x;
+        INSERT INTO #R VALUES ('Subscriptions', 'Exactly one first period per subscription',
+            'Each SubscriptionKey must have exactly one row with IsFirstPeriod=1',
+            CASE WHEN @first_period_check = 0 THEN 'PASS' ELSE 'FAIL' END,
+            CAST(@first_period_check AS VARCHAR) + ' violations');
+
+        DECLARE @trial_price_check INT;
+        SELECT @trial_price_check = COUNT(*) FROM dbo.CustomerSubscriptions
+        WHERE IsTrialPeriod = 1 AND PeriodPrice <> 0;
+        INSERT INTO #R VALUES ('Subscriptions', 'Trial periods have zero price',
+            'IsTrialPeriod=1 rows must have PeriodPrice=0',
+            CASE WHEN @trial_price_check = 0 THEN 'PASS' ELSE 'FAIL' END,
+            CAST(@trial_price_check AS VARCHAR) + ' non-zero trial prices');
     END
 
     SELECT Category, [Check], Description, Result, ActualValue FROM #R;
