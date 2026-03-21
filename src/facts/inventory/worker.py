@@ -35,6 +35,18 @@ _INVENTORY_CSV_INT_COLS = (
 )
 
 
+def _cast_snapshot_date(table: pa.Table) -> pa.Table:
+    """Cast SnapshotDate to date32 so Power Query reads Date, not DateTime."""
+    sd = table.column("SnapshotDate")
+    if not pa.types.is_date32(sd.type):
+        table = table.set_column(
+            table.schema.get_field_index("SnapshotDate"),
+            pa.field("SnapshotDate", pa.date32()),
+            sd.cast(pa.date32()),
+        )
+    return table
+
+
 def _inventory_worker_task(args: Tuple) -> Dict[str, Any]:
     """
     Worker entry point (must be top-level for Windows spawn pickling).
@@ -90,6 +102,9 @@ def _inventory_worker_task(args: Tuple) -> Dict[str, Any]:
         # Always write parquet (used as dataset, and fast)
         pq_path = output_base + ".parquet"
         table = pa.Table.from_pandas(snapshots, preserve_index=False)
+        # Cast SnapshotDate to date32 so Power Query reads Date, not
+        # DateTime (matching Sales behaviour).
+        table = _cast_snapshot_date(table)
         pq.write_table(
             table,
             pq_path,

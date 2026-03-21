@@ -6,10 +6,10 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1003285
+  sales_rows: 1083285
   products: 2517
-  customers: 21834
-  stores: 20
+  customers: 49834
+  stores: 100
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -78,7 +78,7 @@ products:
   brand_normalize_alpha: 0.35         # brands keep 65% of price identity
 
   scd2:
-    enabled: true                     # enable SCD Type 2 price history tracking
+    enabled: false                     # enable SCD Type 2 price history tracking
     revision_frequency: 8             # months between price revisions
     price_drift: 0.05                  # ~5% price change per revision
     max_versions: 4                    # max version rows per product
@@ -97,7 +97,7 @@ customers:
   first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
 
   scd2:
-    enabled: true                    # enable SCD Type 2 history tracking
+    enabled: false                    # enable SCD Type 2 history tracking
     change_rate: 0.15                # fraction of customers with life event changes
     max_versions: 4                  # max version rows per customer
 
@@ -168,8 +168,8 @@ stores:
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:
-  min_staff_per_store: 2
-  max_staff_per_store: 4
+  min_staff_per_store: 4
+  max_staff_per_store: 10
   hr:
     email_domain: "contoso.com"
 

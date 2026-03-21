@@ -31,7 +31,7 @@ from src.facts.shared.writers import write_fact_table
 
 from .accumulator import InventoryAccumulator
 from .engine import load_inventory_config, compute_inventory_snapshots, InventoryConfig, _load_product_attrs
-from .worker import _inventory_worker_task
+from .worker import _inventory_worker_task, _cast_snapshot_date
 from src.defaults import INVENTORY_PARALLEL_THRESHOLD as _PARALLEL_THRESHOLD
 
 
@@ -324,10 +324,6 @@ def _add_year_month_to_table(table: pa.Table) -> pa.Table:
     import pyarrow.compute as pc
 
     dates = table.column("SnapshotDate")
-    # Cast to date32 if timestamp
-    if pa.types.is_timestamp(dates.type):
-        dates = pc.cast(dates, pa.date32())
-
     year = pc.year(dates).cast(pa.int16())
     month = pc.month(dates).cast(pa.int8())
 
@@ -509,6 +505,7 @@ def _write_inventory(
     if file_format == "deltaparquet":
         # Inventory-specific: partition by Year/Month for Delta Lake
         table = pa.Table.from_pandas(df, preserve_index=False)
+        table = _cast_snapshot_date(table)
         delta_dir = out_dir.parent / name
         delta_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -532,8 +529,14 @@ def _write_inventory(
         )
         return
 
-    write_fact_table(df, out_dir, name, file_format,
-                     csv_prep_fn=_prepare_inventory_csv)
+    if file_format == "csv":
+        write_fact_table(df, out_dir, name, file_format,
+                         csv_prep_fn=_prepare_inventory_csv)
+    else:
+        table = pa.Table.from_pandas(df, preserve_index=False)
+        table = _cast_snapshot_date(table)
+        write_fact_table(table, out_dir, name, file_format,
+                         csv_prep_fn=_prepare_inventory_csv)
 
 
 _INVENTORY_CSV_COLUMNS = [
