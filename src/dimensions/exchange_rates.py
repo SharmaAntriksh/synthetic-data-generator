@@ -3,6 +3,7 @@ import pandas as pd
 from pathlib import Path
 
 from src.utils.logging_utils import info, skip, stage
+from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 from src.integrations.fx_yahoo import build_or_update_fx
 from src.defaults import CURRENCY_BASE
@@ -140,7 +141,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
 
     # Write output + version stamp
     parquet_folder.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out_path, index=False)
+    write_parquet_with_date32(df, out_path, date_cols=["Date"])
 
     save_version("exchange_rates", minimal_cfg, out_path)
     info(f"Exchange Rates dimension written: {out_path.name}")

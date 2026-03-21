@@ -12,6 +12,8 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pandas as pd
 
+from src.utils.output_utils import write_parquet_with_date32
+
 
 def customer_chunk_worker(args: Tuple) -> Dict[str, Any]:
     """Generate all demographic + profile columns for a chunk of customers.
@@ -56,8 +58,8 @@ def customer_chunk_worker(args: Tuple) -> Dict[str, Any]:
     # Workers generate keys 1..chunk_n; orchestrator remaps after concat
 
     # Write chunk DataFrames to disk (avoid large IPC serialization)
-    customers_df.to_parquet(f"{output_base}_customers.parquet", index=False)
-    profile_df.to_parquet(f"{output_base}_profile.parquet", index=False)
+    write_parquet_with_date32(customers_df, f"{output_base}_customers.parquet", cast_all_datetime=True)
+    write_parquet_with_date32(profile_df, f"{output_base}_profile.parquet", cast_all_datetime=True)
 
     # Return arrays needed for household assignment (Phase 3)
     return {
@@ -99,5 +101,5 @@ def scd2_chunk_worker(args: Tuple) -> Dict[str, Any]:
         geo_lookup=geo_lookup_dict,
     )
 
-    expanded_df.to_parquet(output_path, index=False)
+    write_parquet_with_date32(expanded_df, output_path, cast_all_datetime=True)
     return {"chunk_idx": chunk_idx, "rows": len(expanded_df)}

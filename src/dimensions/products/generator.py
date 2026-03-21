@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils import info, skip, warn
+from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 
 from src.utils.config_precedence import resolve_dates
@@ -470,8 +471,8 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         profile_df = profile_df[ordered + extra]
 
     profile_path = output_folder / "product_profile.parquet"
-    products_df.to_parquet(parquet_path, index=False)
-    profile_df.to_parquet(profile_path, index=False)
+    write_parquet_with_date32(products_df, parquet_path, cast_all_datetime=True)
+    write_parquet_with_date32(profile_df, profile_path, cast_all_datetime=True)
 
     save_version("products", version_key, parquet_path)
     return products_df, profile_df, True

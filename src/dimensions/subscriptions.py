@@ -65,6 +65,7 @@ import pyarrow.parquet as pq
 
 from src.utils.config_precedence import resolve_seed
 from src.utils.logging_utils import info, skip, stage
+from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 from src.defaults import SUBSCRIPTION_PARALLEL_THRESHOLD
 
@@ -1075,7 +1076,7 @@ def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
 
     with stage("Generating Subscriptions"):
         dim = build_dim_plans(g_start)
-        dim.to_parquet(out_dim, index=False)
+        write_parquet_with_date32(dim, out_dim, date_cols=["LaunchDate"])
         info(f"Plans written: {out_dim.name} ({len(dim):,} rows)")
 
         n_rows = 0

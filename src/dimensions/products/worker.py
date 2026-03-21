@@ -11,6 +11,8 @@ from typing import Any, Dict, Tuple
 
 import pandas as pd
 
+from src.utils.output_utils import write_parquet_with_date32
+
 
 def product_enrich_chunk_worker(args: Tuple) -> Dict[str, Any]:
     """Enrich a chunk of products with hash-seeded attributes.
@@ -39,7 +41,7 @@ def product_enrich_chunk_worker(args: Tuple) -> Dict[str, Any]:
         _skip_post_merge=True,
     )
 
-    enriched.to_parquet(output_path_str, index=False)
+    write_parquet_with_date32(enriched, output_path_str, cast_all_datetime=True)
 
     return {
         "chunk_idx": chunk_idx,

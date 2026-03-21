@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils import info, skip, stage
+from src.utils.output_utils import write_parquet_with_date32
 from src.utils.config_precedence import resolve_seed
 from src.defaults import SCD2_END_OF_TIME
 from src.versioning import should_regenerate, save_version
@@ -1293,8 +1294,8 @@ def run_customers(cfg: Dict, parquet_folder: Path):
             customers_df, profile_df, org_profile_df, _active = generate_synthetic_customers(
                 cfg, parquet_folder,
             )
-        customers_df.to_parquet(out_path, index=False)
-        profile_df.to_parquet(profile_out_path, index=False)
+        write_parquet_with_date32(customers_df, out_path, cast_all_datetime=True)
+        write_parquet_with_date32(profile_df, profile_out_path, cast_all_datetime=True)
 
         n_ind = int((customers_df["CustomerType"] == "Individual").sum())
         n_org = int((customers_df["CustomerType"] == "Organization").sum())
@@ -1302,7 +1303,7 @@ def run_customers(cfg: Dict, parquet_folder: Path):
         info(f"Customer Profile: {len(profile_df):,} rows")
 
         if not org_profile_df.empty:
-            org_profile_df.to_parquet(org_profile_out_path, index=False)
+            write_parquet_with_date32(org_profile_df, org_profile_out_path, cast_all_datetime=True)
             info(f"Organization Profile: {len(org_profile_df):,} rows")
 
     save_version("customers", version_cfg, out_path)

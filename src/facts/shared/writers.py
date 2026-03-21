@@ -49,6 +49,18 @@ def write_fact_table(
         table = pa.Table.from_pandas(df_or_table, preserve_index=False)
         n_rows = len(df_or_table)
 
+    # Cast any timestamp columns to date32 (Power BI / Power Query friendly)
+    new_fields = []
+    needs_cast = False
+    for f in table.schema:
+        if pa.types.is_timestamp(f.type) or pa.types.is_date64(f.type):
+            new_fields.append(pa.field(f.name, pa.date32()))
+            needs_cast = True
+        else:
+            new_fields.append(f)
+    if needs_cast:
+        table = table.cast(pa.schema(new_fields), safe=False)
+
     if file_format == "deltaparquet":
         delta_dir = out_dir.parent / name
         delta_dir.mkdir(parents=True, exist_ok=True)
