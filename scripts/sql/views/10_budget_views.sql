@@ -18,10 +18,10 @@ GO
 
 -- BudgetYearly
 IF OBJECT_ID(N'dbo.BudgetYearly', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Budget] AS SELECT * FROM [dbo].[BudgetYearly];');
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_BudgetYearly] AS SELECT * FROM [dbo].[BudgetYearly];');
 GO
 
 -- BudgetMonthly
 IF OBJECT_ID(N'dbo.BudgetMonthly', N'U') IS NOT NULL
-    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Budget_Monthly] AS SELECT * FROM [dbo].[BudgetMonthly];');
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_BudgetMonthly] AS SELECT * FROM [dbo].[BudgetMonthly];');
 GO

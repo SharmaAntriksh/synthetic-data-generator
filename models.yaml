@@ -30,7 +30,7 @@ models:
   quantity:
     base_poisson_lambda: 2.1
     min_qty: 1
-    max_qty: 8
+    max_qty: 4
 
     monthly_factors:
       - 0.99    # Jan

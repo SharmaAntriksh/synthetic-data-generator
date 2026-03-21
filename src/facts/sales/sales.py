@@ -478,6 +478,9 @@ def _merge_fact_csv_chunks(
 
     Output files keep the existing chunk_prefix naming convention
     (e.g. ``sales_chunk0000.csv``, ``sales_return_chunk0000.csv``).
+
+    Writes to a temporary directory first, then moves files into out_dir
+    to avoid overwriting source chunks that share the same filename.
     """
     if not csv_chunks:
         return
@@ -485,7 +488,11 @@ def _merge_fact_csv_chunks(
     with open(csv_chunks[0], "r", encoding="utf-8") as f:
         header = f.readline()
 
-    out_files: list[Path] = []
+    # Write to a temp directory so we never clobber source chunks.
+    import tempfile
+    tmp_dir = Path(tempfile.mkdtemp(dir=out_dir, prefix=".merge_"))
+
+    tmp_files: list[Path] = []
     out_f = None
     rows_in_current = 0
     file_idx = 0
@@ -494,8 +501,8 @@ def _merge_fact_csv_chunks(
         nonlocal out_f, rows_in_current, file_idx
         if out_f is not None:
             out_f.close()
-        path = out_dir / f"{chunk_prefix}{file_idx:04d}.csv"
-        out_files.append(path)
+        path = tmp_dir / f"{chunk_prefix}{file_idx:04d}.csv"
+        tmp_files.append(path)
         out_f = open(path, "w", newline="", encoding="utf-8")
         out_f.write(header)
         rows_in_current = 0
@@ -513,15 +520,25 @@ def _merge_fact_csv_chunks(
     if out_f is not None:
         out_f.close()
 
-    if delete_chunks:
-        # Only delete originals that aren't also output files
-        out_set = set(out_files)
-        for f in csv_chunks:
-            if f not in out_set:
-                try:
-                    f.unlink()
-                except OSError:
-                    pass
+    # Remove original chunks
+    for f in csv_chunks:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+    # Move merged files from temp into out_dir
+    out_files: list[Path] = []
+    for tmp_f in tmp_files:
+        dest = out_dir / tmp_f.name
+        tmp_f.replace(dest)
+        out_files.append(dest)
+
+    # Clean up temp directory
+    try:
+        tmp_dir.rmdir()
+    except OSError:
+        pass
 
 
 # =====================================================================

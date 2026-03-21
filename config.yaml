@@ -8,8 +8,8 @@
 scale:
   sales_rows: 1083285
   products: 2517
-  customers: 49834
-  stores: 100
+  customers: 21834
+  stores: 40
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
