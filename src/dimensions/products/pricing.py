@@ -28,10 +28,10 @@ DEFAULT_COST_BANDS = [(100.0, 2.50), (500.0, 5.0), (2000.0, 10.0), (10000.0, 25.
 DEFAULT_PRICE_ENDING = 0.99
 
 
-def _stretch_to_range(series: pd.Series, target_min: float, target_max: float, qlo: float, qhi: float) -> pd.Series:
+def _rescale_to_range(series: pd.Series, target_min: float, target_max: float) -> pd.Series:
     """
-    Map quantiles [qlo, qhi] linearly onto [target_min, target_max].
-    Then caller can clip to hard bounds.
+    Proportional min-max rescale: map [base_min, base_max] → [target_min, target_max].
+    Preserves relative ordering and spacing between products.
     """
     arr = series.to_numpy(dtype="float64", copy=True)
     finite = np.isfinite(arr)
@@ -39,18 +39,14 @@ def _stretch_to_range(series: pd.Series, target_min: float, target_max: float, q
         return series
 
     x = arr[finite]
-    qlo = float(np.clip(qlo, 0.0, 0.49))
-    qhi = float(np.clip(qhi, 0.51, 1.0))
+    base_min = float(x.min())
+    base_max = float(x.max())
 
-    lo = float(np.quantile(x, qlo))
-    hi = float(np.quantile(x, qhi))
-
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo + 1e-12:
+    if base_max <= base_min + 1e-12:
         arr[finite] = (target_min + target_max) / 2.0
         return pd.Series(arr, index=series.index)
 
-    scaled = (arr - lo) / (hi - lo)
-    arr = target_min + scaled * (target_max - target_min)
+    arr[finite] = target_min + (x - base_min) / (base_max - base_min) * (target_max - target_min)
     return pd.Series(arr, index=series.index)
 
 
@@ -393,14 +389,13 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
 
     base_cfg = pricing_cfg.get("base", {}) or {}
     cost_cfg = pricing_cfg.get("cost", {}) or {}
-    jitter_cfg = pricing_cfg.get("jitter", {}) or {}
 
     appearance_cfg = pricing_cfg.get("appearance", None)
     if not isinstance(appearance_cfg, Mapping):
         appearance_cfg = base_cfg.get("appearance", {}) or {}
 
     # ----------------------------
-    # Base price: scale / (optional) stretch / clamp
+    # Base price: scale / (optional) rescale / clamp
     # ----------------------------
     value_scale = _to_float(base_cfg.get("value_scale"), 1.0)
     if value_scale is None or value_scale <= 0:
@@ -409,16 +404,14 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     min_price = _to_float(base_cfg.get("min_unit_price"), None)
     max_price = _to_float(base_cfg.get("max_unit_price"), None)
 
-    stretch = _to_bool(base_cfg.get("stretch_to_range"), False)
-    qlo = _to_float(base_cfg.get("stretch_low_quantile"), 0.01)
-    qhi = _to_float(base_cfg.get("stretch_high_quantile"), 0.99)
+    rescale = _to_bool(base_cfg.get("rescale_to_range"), False)
 
     out["ListPrice"] = out["ListPrice"] * float(value_scale)
 
-    if stretch and (min_price is not None) and (max_price is not None):
+    if rescale and (min_price is not None) and (max_price is not None):
         if float(max_price) <= float(min_price):
-            raise ValueError("products.pricing.base.max_unit_price must be > min_unit_price when stretching")
-        out["ListPrice"] = _stretch_to_range(out["ListPrice"], float(min_price), float(max_price), float(qlo), float(qhi))
+            raise ValueError("products.pricing.base.max_unit_price must be > min_unit_price when rescaling")
+        out["ListPrice"] = _rescale_to_range(out["ListPrice"], float(min_price), float(max_price))
 
     if min_price is not None:
         out["ListPrice"] = out["ListPrice"].clip(lower=float(min_price))
@@ -438,15 +431,6 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
         max_price=max_price,
     )
     _sanitize_unit_price(out, min_price, max_price)
-
-    # ----------------------------
-    # Price jitter
-    # ----------------------------
-    price_pct = float(jitter_cfg.get("price_pct", 0.0) or 0.0)
-    if price_pct > 0:
-        mult = rng.uniform(1.0 - price_pct, 1.0 + price_pct, size=len(out))
-        out["ListPrice"] = out["ListPrice"].to_numpy(dtype="float64") * mult
-        _sanitize_unit_price(out, min_price, max_price)
 
     # ----------------------------
     # Appearance: snap ListPrice
@@ -492,7 +476,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
         m = _sample_margin(rng, len(out), float(min_margin), float(max_margin))
         out["UnitCost"] = out["ListPrice"].to_numpy(dtype=np.float64, copy=False) * (1.0 - m)
     else:
-        # Keep-but-scale: cost tracks ListPrice changes (scale/stretch/brand/snap/jitter)
+        # Keep-but-scale: cost tracks ListPrice changes (scale/rescale/brand/snap)
         new_up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
         out["UnitCost"] = _scale_unit_cost_keep_mode(
             rng=rng,
@@ -502,14 +486,6 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
             min_margin=min_margin,
             max_margin=max_margin,
         )
-
-    # ----------------------------
-    # Cost jitter (optional)
-    # ----------------------------
-    cost_pct = float(jitter_cfg.get("cost_pct", 0.0) or 0.0)
-    if cost_pct > 0:
-        mult = rng.uniform(1.0 - cost_pct, 1.0 + cost_pct, size=len(out))
-        out["UnitCost"] = out["UnitCost"].to_numpy(dtype="float64") * mult
 
     # Never round NaNs -> 0; fill first
     _sanitize_unit_cost_from_price(out, rng=rng, min_margin=min_margin, max_margin=max_margin)

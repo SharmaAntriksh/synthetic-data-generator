@@ -554,16 +554,13 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
             "value_scale": value_scale,
             "min_unit_price": min_price,
             "max_unit_price": max_price,
-            "stretch_to_range": True,
-            "stretch_low_quantile": 0.01,
-            "stretch_high_quantile": 0.99,
+            "rescale_to_range": True,
         },
         "cost": {
             "mode": "margin",
             "min_margin_pct": min_margin,
             "max_margin_pct": max_margin,
         },
-        "jitter": {"price_pct": 0.0, "cost_pct": 0.0},
         "brand_normalization": {
             "enabled": brand_norm,
             "brand_col": "Brand",
