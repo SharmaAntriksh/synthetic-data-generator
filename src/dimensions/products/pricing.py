@@ -359,14 +359,7 @@ def _scale_unit_cost_keep_mode(
 
 
 def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None = None) -> pd.DataFrame:
-    """
-    Finalize Products.ListPrice and Products.UnitCost based on config.
-
-    Changes vs old behavior:
-      - In keep mode, UnitCost is scaled by the ListPrice transformation ratio, so it stays consistent.
-      - Prevent NaN/inf from turning into 0.00 via rounding.
-      - Correctly assign rounding steps from bands.
-    """
+    """Finalize Products.ListPrice and Products.UnitCost based on config."""
     if not pricing_cfg:
         return df
 

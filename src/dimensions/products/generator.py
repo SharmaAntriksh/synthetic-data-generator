@@ -179,8 +179,10 @@ def _generate_scd2_versions(
             ["ProductID", "ProductKey"],
         ]
         pid_to_new_pk = base_current.set_index("ProductID")["ProductKey"]
+        remapped = result["BaseProductKey"].map(pid_to_new_pk)
+        # Fallback to original value if mapping is incomplete (e.g. no-variant products)
         result["BaseProductKey"] = (
-            result["BaseProductKey"].map(pid_to_new_pk).astype("int64")
+            remapped.fillna(result["BaseProductKey"]).astype("int64")
         )
 
     n_with_history = int((n_versions > 1).sum())
@@ -397,7 +399,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     # After SCD2 drift, prices diverge naturally per variant.
     if "BaseProductKey" in df.columns and "VariantIndex" in df.columns:
         vi = df["VariantIndex"].to_numpy()
-        if vi.max() > 0:
+        if len(vi) > 0 and vi.max() > 0:
             base_rows = df.loc[vi == 0].set_index("ProductKey")[["ListPrice", "UnitCost"]]
             bpk = df["BaseProductKey"]
             df["ListPrice"] = bpk.map(base_rows["ListPrice"]).fillna(df["ListPrice"])
@@ -489,6 +491,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         "StockTypeCode", "StockType",
         "UnitCost", "ListPrice",
         "BaseProductKey", "VariantIndex",
+        "Source",
     ]
 
     core_cols = [c for c in _PRODUCTS_CORE_COLS if c in df.columns]

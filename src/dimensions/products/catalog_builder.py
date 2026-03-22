@@ -1,0 +1,695 @@
+"""
+One-time script to expand the base product catalog with synthetic products.
+
+Adds 8 new retail categories (Clothing, Food, Health, Furniture, Sports,
+Office, Garden, Automotive) with ~41 subcategories and ~2,000 new products
+to the existing Contoso base parquets.
+
+Adds a 'Source' column to all three tables: 'Contoso' for originals,
+'Synthetic' for new rows.
+
+Usage:
+    python scripts/expand_product_catalog.py
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+
+DATA_DIR = Path("data/contoso_products")
+
+# -----------------------------------------------------------------------
+# New categories (keys 9–16)
+# -----------------------------------------------------------------------
+NEW_CATEGORIES = [
+    (9,  "Clothing & Apparel",      "09"),
+    (10, "Food & Beverage",         "10"),
+    (11, "Health & Beauty",         "11"),
+    (12, "Home & Furniture",        "12"),
+    (13, "Sports & Outdoors",       "13"),
+    (14, "Office & Stationery",     "14"),
+    (15, "Garden & Outdoor Living", "15"),
+    (16, "Automotive",              "16"),
+]
+
+# -----------------------------------------------------------------------
+# New subcategories (keys 49–89)
+# -----------------------------------------------------------------------
+NEW_SUBCATEGORIES = [
+    # (SubcategoryKey, SubcategoryLabel, Subcategory, CategoryKey)
+    (49, "0901", "T-Shirts & Tops",         9),
+    (50, "0902", "Pants & Jeans",           9),
+    (51, "0903", "Jackets & Coats",         9),
+    (52, "0904", "Dresses & Skirts",        9),
+    (53, "0905", "Activewear",              9),
+    (54, "0906", "Footwear",                9),
+    (55, "0907", "Fashion Accessories",     9),
+
+    (56, "1001", "Snacks & Confectionery",  10),
+    (57, "1002", "Beverages",               10),
+    (58, "1003", "Coffee & Tea",            10),
+    (59, "1004", "Canned & Packaged Goods", 10),
+    (60, "1005", "Condiments & Sauces",     10),
+    (61, "1006", "Frozen Foods",            10),
+
+    (62, "1101", "Skincare",                11),
+    (63, "1102", "Haircare",                11),
+    (64, "1103", "Vitamins & Supplements",  11),
+    (65, "1104", "Fragrances",              11),
+    (66, "1105", "Oral Care",               11),
+
+    (67, "1201", "Living Room Furniture",   12),
+    (68, "1202", "Bedroom Furniture",       12),
+    (69, "1203", "Office Furniture",        12),
+    (70, "1204", "Rugs & Carpets",          12),
+    (71, "1205", "Home Décor",              12),
+
+    (72, "1301", "Fitness Equipment",       13),
+    (73, "1302", "Camping & Hiking",        13),
+    (74, "1303", "Cycling",                 13),
+    (75, "1304", "Water Sports",            13),
+    (76, "1305", "Team Sports",             13),
+
+    (77, "1401", "Paper & Notebooks",       14),
+    (78, "1402", "Writing Instruments",     14),
+    (79, "1403", "Desk Organizers",         14),
+    (80, "1404", "Bags & Cases",            14),
+
+    (81, "1501", "Power Tools",             15),
+    (82, "1502", "Hand Tools",              15),
+    (83, "1503", "Outdoor Furniture",       15),
+    (84, "1504", "Grills & BBQ",            15),
+    (85, "1505", "Garden Care",             15),
+
+    (86, "1601", "Car Care & Cleaning",     16),
+    (87, "1602", "Interior Accessories",    16),
+    (88, "1603", "Car Electronics",         16),
+    (89, "1604", "Tires & Parts",           16),
+]
+
+# -----------------------------------------------------------------------
+# Brands per category — real-world names for realistic analytics data
+# -----------------------------------------------------------------------
+BRANDS_CLOTHING = ["Nike", "Adidas", "Levi's", "Under Armour", "Patagonia", "H&M", "Gap", "Puma"]
+BRANDS_FOOD = ["Nestlé", "Heinz", "Kellogg's", "Del Monte", "Starbucks", "Pepsi"]
+BRANDS_HEALTH = ["Neutrogena", "Dove", "L'Oréal", "Nivea", "Colgate", "Burt's Bees"]
+BRANDS_FURNITURE = ["IKEA", "Ashley Home", "West Elm", "Pottery Barn"]
+BRANDS_SPORTS = ["Columbia", "The North Face", "Callaway", "Wilson", "Speedo"]
+BRANDS_OFFICE = ["3M", "Moleskine", "Samsonite", "JanSport"]
+BRANDS_GARDEN = ["DeWalt", "Black+Decker", "Weber", "Husqvarna", "Craftsman"]
+BRANDS_AUTO = ["Meguiar's", "Armor All", "Michelin", "Bosch", "Garmin"]
+
+# -----------------------------------------------------------------------
+# Product templates per subcategory
+#
+# Each template: (name_pattern, brand_pool, colors, classes,
+#                 price_min, price_max, stock_type_weights)
+#
+# name_pattern uses {brand}, {color}, {spec} placeholders.
+# specs are subcategory-specific product line variations.
+# -----------------------------------------------------------------------
+TEMPLATES: dict[int, dict] = {
+    # --- Clothing & Apparel (cat 9) ---
+    49: {  # T-Shirts & Tops
+        "specs": ["Classic Crew Tee", "V-Neck Tee", "Long Sleeve Henley",
+                  "Polo Shirt", "Performance Tee", "Graphic Tee",
+                  "Slim Fit Tee", "Oversized Tee"],
+        "colors": ["Black", "White", "Grey", "Blue", "Red", "Green"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (12, 65),
+        "brands": BRANDS_CLOTHING,
+    },
+    50: {  # Pants & Jeans
+        "specs": ["Straight Fit Jeans", "Slim Fit Jeans", "Relaxed Chinos",
+                  "Cargo Pants", "Jogger Pants", "Dress Trousers",
+                  "Athletic Pants"],
+        "colors": ["Black", "Blue", "Grey", "Brown"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (25, 120),
+        "brands": BRANDS_CLOTHING,
+    },
+    51: {  # Jackets & Coats
+        "specs": ["Puffer Jacket", "Rain Jacket", "Denim Jacket",
+                  "Fleece Zip-Up", "Wool Overcoat", "Windbreaker",
+                  "Parka"],
+        "colors": ["Black", "Grey", "Blue", "Green", "Brown"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (45, 350),
+        "brands": BRANDS_CLOTHING,
+    },
+    52: {  # Dresses & Skirts
+        "specs": ["A-Line Dress", "Wrap Dress", "Midi Skirt",
+                  "Maxi Dress", "Pencil Skirt", "Shift Dress"],
+        "colors": ["Black", "White", "Red", "Blue", "Pink"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (30, 180),
+        "brands": BRANDS_CLOTHING,
+    },
+    53: {  # Activewear
+        "specs": ["Running Shorts", "Compression Leggings", "Sports Bra",
+                  "Training Tank", "Track Jacket", "Yoga Pants",
+                  "Moisture-Wicking Tee"],
+        "colors": ["Black", "Grey", "Blue", "Pink", "Green"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (18, 95),
+        "brands": BRANDS_CLOTHING,
+    },
+    54: {  # Footwear
+        "specs": ["Running Shoe", "Casual Sneaker", "Hiking Boot",
+                  "Leather Oxford", "Slip-On Loafer", "Sandal",
+                  "Trail Runner", "Canvas Shoe"],
+        "colors": ["Black", "White", "Brown", "Grey", "Blue"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (30, 250),
+        "brands": BRANDS_CLOTHING,
+    },
+    55: {  # Fashion Accessories
+        "specs": ["Leather Belt", "Canvas Belt", "Knit Scarf",
+                  "Wool Beanie", "Aviator Sunglasses", "Crossbody Bag",
+                  "Wrist Watch", "Silk Tie"],
+        "colors": ["Black", "Brown", "Grey", "Blue", "Red"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (10, 150),
+        "brands": BRANDS_CLOTHING,
+    },
+
+    # --- Food & Beverage (cat 10) ---
+    56: {  # Snacks & Confectionery
+        "specs": ["Mixed Nuts 200g", "Granola Bar 6pk", "Dark Chocolate Bar 100g",
+                  "Potato Chips 150g", "Trail Mix 250g", "Rice Crackers 120g",
+                  "Protein Bar 12pk", "Dried Fruit Mix 180g"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (2, 18),
+        "brands": BRANDS_FOOD,
+    },
+    57: {  # Beverages
+        "specs": ["Sparkling Water 12pk", "Orange Juice 1L", "Energy Drink 4pk",
+                  "Coconut Water 6pk", "Iced Tea 12pk", "Mineral Water 6pk",
+                  "Lemonade 2L", "Sports Drink 8pk"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (3, 22),
+        "brands": BRANDS_FOOD,
+    },
+    58: {  # Coffee & Tea
+        "specs": ["Whole Bean Coffee 500g", "Ground Coffee 250g", "Coffee Pods 24pk",
+                  "Green Tea 50 bags", "Earl Grey 40 bags", "Espresso Beans 1kg",
+                  "Herbal Tea Sampler", "Cold Brew Concentrate 1L"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (5, 45),
+        "brands": BRANDS_FOOD,
+    },
+    59: {  # Canned & Packaged Goods
+        "specs": ["Diced Tomatoes 400g", "Chickpeas 400g", "Coconut Milk 400ml",
+                  "Tuna in Olive Oil 185g", "Black Beans 400g", "Pasta Sauce 500g",
+                  "Chicken Broth 1L", "Corn Kernels 340g"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (1, 8),
+        "brands": BRANDS_FOOD,
+    },
+    60: {  # Condiments & Sauces
+        "specs": ["Ketchup 500ml", "Mustard 250g", "Hot Sauce 150ml",
+                  "Soy Sauce 500ml", "Olive Oil 750ml", "Balsamic Vinegar 250ml",
+                  "Mayonnaise 400g", "BBQ Sauce 350ml"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (2, 15),
+        "brands": BRANDS_FOOD,
+    },
+    61: {  # Frozen Foods
+        "specs": ["Frozen Pizza 400g", "Ice Cream 1L", "Frozen Vegetables 500g",
+                  "Fish Fillets 4pk", "Frozen Berries 500g", "Chicken Nuggets 1kg",
+                  "Frozen Dumplings 600g"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (3, 18),
+        "brands": BRANDS_FOOD,
+    },
+
+    # --- Health & Beauty (cat 11) ---
+    62: {  # Skincare
+        "specs": ["Daily Moisturizer 50ml", "Sunscreen SPF50 100ml",
+                  "Night Cream 50ml", "Facial Cleanser 200ml",
+                  "Eye Cream 15ml", "Serum Vitamin C 30ml",
+                  "Exfoliating Scrub 100ml", "Hydrating Mask 5pk"],
+        "colors": ["N/A"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (8, 120),
+        "brands": BRANDS_HEALTH,
+    },
+    63: {  # Haircare
+        "specs": ["Shampoo 400ml", "Conditioner 400ml", "Hair Oil 100ml",
+                  "Styling Gel 250ml", "Dry Shampoo 200ml",
+                  "Heat Protectant Spray 150ml", "Hair Mask 200ml"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (5, 45),
+        "brands": BRANDS_HEALTH,
+    },
+    64: {  # Vitamins & Supplements
+        "specs": ["Multivitamin 60ct", "Vitamin D3 90ct", "Omega-3 Fish Oil 120ct",
+                  "Probiotic 30ct", "Vitamin C 1000mg 100ct", "Iron 60ct",
+                  "Magnesium 90ct", "Zinc 100ct"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (8, 40),
+        "brands": BRANDS_HEALTH,
+    },
+    65: {  # Fragrances
+        "specs": ["Eau de Toilette 50ml", "Eau de Parfum 100ml",
+                  "Body Mist 250ml", "Cologne 75ml",
+                  "Perfume Gift Set", "Travel Spray 10ml"],
+        "colors": ["N/A"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (15, 200),
+        "brands": BRANDS_HEALTH,
+    },
+    66: {  # Oral Care
+        "specs": ["Electric Toothbrush", "Toothpaste 150ml", "Mouthwash 500ml",
+                  "Dental Floss 50m", "Whitening Strips 14ct",
+                  "Replacement Brush Heads 4pk"],
+        "colors": ["White", "Blue", "Black"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (3, 80),
+        "brands": BRANDS_HEALTH,
+    },
+
+    # --- Home & Furniture (cat 12) ---
+    67: {  # Living Room Furniture
+        "specs": ["3-Seater Sofa", "2-Seater Loveseat", "Recliner Chair",
+                  "Coffee Table", "TV Stand", "Bookshelf",
+                  "Side Table", "Ottoman"],
+        "colors": ["Black", "Grey", "Brown", "White", "Blue"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (80, 2500),
+        "brands": BRANDS_FURNITURE,
+    },
+    68: {  # Bedroom Furniture
+        "specs": ["Queen Bed Frame", "King Bed Frame", "Nightstand",
+                  "Dresser 6-Drawer", "Wardrobe", "Mattress Queen",
+                  "Mattress King", "Vanity Table"],
+        "colors": ["Black", "White", "Brown", "Grey"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (100, 2800),
+        "brands": BRANDS_FURNITURE,
+    },
+    69: {  # Office Furniture
+        "specs": ["Executive Desk", "Standing Desk", "Ergonomic Chair",
+                  "Filing Cabinet", "Bookcase", "Monitor Arm",
+                  "Desk Lamp LED"],
+        "colors": ["Black", "White", "Grey", "Brown"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (40, 1200),
+        "brands": BRANDS_FURNITURE,
+    },
+    70: {  # Rugs & Carpets
+        "specs": ["Area Rug 5x7", "Area Rug 8x10", "Runner Rug 2x8",
+                  "Shag Rug 4x6", "Outdoor Rug 6x9", "Door Mat"],
+        "colors": ["Grey", "Blue", "Brown", "Red", "Green"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (20, 500),
+        "brands": BRANDS_FURNITURE,
+    },
+    71: {  # Home Décor
+        "specs": ["Wall Art Canvas", "Throw Pillow Set", "Table Lamp",
+                  "Floor Lamp", "Decorative Vase", "Wall Mirror",
+                  "Photo Frame Set", "Candle Set 3pk"],
+        "colors": ["Black", "White", "Gold", "Silver", "Blue"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (10, 200),
+        "brands": BRANDS_FURNITURE,
+    },
+
+    # --- Sports & Outdoors (cat 13) ---
+    72: {  # Fitness Equipment
+        "specs": ["Adjustable Dumbbell Set", "Yoga Mat", "Resistance Bands Set",
+                  "Jump Rope", "Pull-Up Bar", "Kettlebell 20lb",
+                  "Exercise Ball 65cm", "Foam Roller"],
+        "colors": ["Black", "Blue", "Grey", "Red"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (10, 350),
+        "brands": BRANDS_SPORTS,
+    },
+    73: {  # Camping & Hiking
+        "specs": ["2-Person Tent", "Sleeping Bag 20F", "Hiking Backpack 40L",
+                  "Camping Stove", "Headlamp 300lm", "Trekking Poles",
+                  "Water Filter", "Camp Chair"],
+        "colors": ["Green", "Black", "Blue", "Orange"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (15, 400),
+        "brands": BRANDS_SPORTS,
+    },
+    74: {  # Cycling
+        "specs": ["Road Bike Helmet", "Bike Lock U-Style", "Cycling Gloves",
+                  "Bike Pump Floor", "Water Bottle Cage", "Rear Bike Light",
+                  "Saddle Bag", "Cycling Jersey"],
+        "colors": ["Black", "White", "Red", "Yellow"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (8, 180),
+        "brands": BRANDS_SPORTS,
+    },
+    75: {  # Water Sports
+        "specs": ["Swim Goggles", "Snorkel Set", "Life Jacket Adult",
+                  "Dry Bag 20L", "Paddleboard Paddle", "Rash Guard",
+                  "Beach Towel XL"],
+        "colors": ["Black", "Blue", "Red", "Yellow"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (10, 200),
+        "brands": BRANDS_SPORTS,
+    },
+    76: {  # Team Sports
+        "specs": ["Soccer Ball Size 5", "Basketball Official", "Football",
+                  "Baseball Glove", "Tennis Racket", "Volleyball Net",
+                  "Shin Guards", "Sports Bag"],
+        "colors": ["White", "Black", "Orange", "Yellow"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (8, 250),
+        "brands": BRANDS_SPORTS,
+    },
+
+    # --- Office & Stationery (cat 14) ---
+    77: {  # Paper & Notebooks
+        "specs": ["Copy Paper 500 sheets", "Legal Pad 3pk", "Spiral Notebook A4",
+                  "Sticky Notes 12pk", "Index Cards 200ct", "Graph Paper Pad",
+                  "Composition Book 3pk"],
+        "colors": ["White", "Yellow"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (2, 25),
+        "brands": BRANDS_OFFICE,
+    },
+    78: {  # Writing Instruments
+        "specs": ["Ballpoint Pen 12pk", "Gel Pen Set 8pk", "Mechanical Pencil 4pk",
+                  "Highlighter Set 6pk", "Permanent Marker 10pk",
+                  "Fountain Pen", "Whiteboard Marker 4pk"],
+        "colors": ["Black", "Blue", "Red"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (2, 35),
+        "brands": BRANDS_OFFICE,
+    },
+    79: {  # Desk Organizers
+        "specs": ["Desktop File Sorter", "Pen Holder Cup", "Desk Tray 3-Tier",
+                  "Cable Management Box", "Monitor Stand Riser",
+                  "Drawer Organizer Set"],
+        "colors": ["Black", "White", "Grey"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (8, 60),
+        "brands": BRANDS_OFFICE,
+    },
+    80: {  # Bags & Cases
+        "specs": ["Laptop Sleeve 15in", "Messenger Bag", "Rolling Briefcase",
+                  "Backpack 25L", "Document Portfolio", "Tablet Case 10in"],
+        "colors": ["Black", "Grey", "Brown", "Blue"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (15, 180),
+        "brands": BRANDS_OFFICE,
+    },
+
+    # --- Garden & Outdoor Living (cat 15) ---
+    81: {  # Power Tools
+        "specs": ["Cordless Drill 20V", "Circular Saw 7in", "Impact Driver 20V",
+                  "Reciprocating Saw", "Angle Grinder 4.5in", "Jigsaw",
+                  "Orbital Sander"],
+        "colors": ["Yellow", "Red", "Blue", "Black"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (30, 350),
+        "brands": BRANDS_GARDEN,
+    },
+    82: {  # Hand Tools
+        "specs": ["Hammer 16oz", "Screwdriver Set 10pc", "Tape Measure 25ft",
+                  "Pliers Set 3pc", "Wrench Set 8pc", "Utility Knife",
+                  "Level 24in", "Socket Set 40pc"],
+        "colors": ["Red", "Yellow", "Black", "Blue"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (5, 80),
+        "brands": BRANDS_GARDEN,
+    },
+    83: {  # Outdoor Furniture
+        "specs": ["Patio Dining Set 5pc", "Adirondack Chair", "Patio Umbrella 9ft",
+                  "Outdoor Bench", "Hammock with Stand", "Lounge Chair"],
+        "colors": ["Brown", "White", "Grey", "Green"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (50, 800),
+        "brands": BRANDS_GARDEN,
+    },
+    84: {  # Grills & BBQ
+        "specs": ["Gas Grill 3-Burner", "Charcoal Grill 22in", "Portable Grill",
+                  "Smoker Vertical", "Grill Tool Set 18pc", "Grill Cover"],
+        "colors": ["Black", "Silver", "Red"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (20, 600),
+        "brands": BRANDS_GARDEN,
+    },
+    85: {  # Garden Care
+        "specs": ["Garden Hose 50ft", "Pruning Shears", "Lawn Mower Electric",
+                  "Leaf Blower Cordless", "Sprinkler System", "Wheelbarrow",
+                  "Garden Gloves 3pk"],
+        "colors": ["Green", "Black", "Yellow", "Orange"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (8, 400),
+        "brands": BRANDS_GARDEN,
+    },
+
+    # --- Automotive (cat 16) ---
+    86: {  # Car Care & Cleaning
+        "specs": ["Car Wash Soap 1L", "Tire Shine Spray", "Interior Cleaner 500ml",
+                  "Microfiber Cloth 6pk", "Car Wax 400g", "Glass Cleaner 500ml",
+                  "Detailing Kit"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (5, 50),
+        "brands": BRANDS_AUTO,
+    },
+    87: {  # Interior Accessories
+        "specs": ["Seat Covers Universal", "Floor Mats 4pc", "Steering Wheel Cover",
+                  "Sun Shade Windshield", "Phone Mount Magnetic",
+                  "Trunk Organizer", "Air Freshener 3pk"],
+        "colors": ["Black", "Grey", "Brown"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (5, 80),
+        "brands": BRANDS_AUTO,
+    },
+    88: {  # Car Electronics
+        "specs": ["Dash Cam 1080p", "Bluetooth FM Transmitter", "USB Car Charger",
+                  "Tire Pressure Monitor", "Jump Starter Portable",
+                  "LED Headlight Bulbs 2pk"],
+        "colors": ["Black"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (10, 200),
+        "brands": BRANDS_AUTO,
+    },
+    89: {  # Tires & Parts
+        "specs": ["All-Season Tire 205/55R16", "All-Season Tire 225/65R17",
+                  "Wiper Blades 2pk", "Oil Filter", "Air Filter",
+                  "Brake Pads Front", "Battery 12V"],
+        "colors": ["Black"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (8, 250),
+        "brands": BRANDS_AUTO,
+    },
+}
+
+# Pre-built lookup: SubcategoryKey → SubcategoryLabel
+_SUBCAT_KEY_TO_LABEL = {sk: sl for sk, sl, _, _ in NEW_SUBCATEGORIES}
+
+
+# -----------------------------------------------------------------------
+# Stock type assignment based on price position within subcategory
+# -----------------------------------------------------------------------
+def _assign_stock_type(prices: np.ndarray) -> tuple[list[str], list[str]]:
+    """Assign StockType/StockTypeCode based on price tercile within group."""
+    n = len(prices)
+    if n == 0:
+        return [], []
+
+    ranks = prices.argsort().argsort()  # rank by price
+    tercile = (ranks * 3) // n  # 0=low, 1=mid, 2=high
+
+    codes = np.where(tercile == 2, "1", np.where(tercile == 1, "2", "3"))
+    types = np.where(tercile == 2, "High", np.where(tercile == 1, "Mid", "Low"))
+    return types.tolist(), codes.tolist()
+
+
+def _generate_products_for_subcategory(
+    subcat_key: int,
+    template: dict,
+    rng: np.random.Generator,
+    start_key: int,
+) -> tuple[pd.DataFrame, int]:
+    """Generate product rows for one subcategory from its template."""
+    specs = template["specs"]
+    colors = template["colors"]
+    classes = template["classes"]
+    brands = template["brands"]
+    price_min, price_max = template["price_range"]
+
+    rows = []
+    pk = start_key
+
+    subcat_label = _SUBCAT_KEY_TO_LABEL[subcat_key]
+
+    for spec in specs:
+        # Multiple brands carry the same product type (like real retail).
+        # Pick at least 2 brands, up to all of them.
+        n_brands = rng.integers(max(2, len(brands) // 2), len(brands) + 1)
+        chosen_brands = rng.choice(brands, size=n_brands, replace=False).tolist()
+
+        for brand in chosen_brands:
+            # Each brand-spec combo comes in a subset of colors
+            n_colors = rng.integers(1, len(colors) + 1)
+            chosen_colors = rng.choice(colors, size=n_colors, replace=False).tolist()
+
+            cls = classes[rng.integers(0, len(classes))]
+
+            # Base price per brand-spec (shared across colors)
+            class_factor = {"Economy": 0.6, "Regular": 1.0, "Deluxe": 1.5}.get(cls, 1.0)
+            mid_price = (price_min + price_max) / 2.0
+            base = rng.uniform(price_min, mid_price) * class_factor
+            base = float(np.clip(base, price_min, price_max))
+
+            cost_ratio = rng.uniform(0.40, 0.75)
+            unit_cost = round(base * cost_ratio, 2)
+            unit_price = round(base, 2)
+
+            for color in chosen_colors:
+                if color == "N/A":
+                    name = f"{brand} {spec}"
+                else:
+                    name = f"{brand} {spec} {color}"
+
+                code = f"{subcat_label}{str(pk).zfill(4)[-4:]}"
+
+                rows.append({
+                    "ProductKey": pk,
+                    "ProductCode": code,
+                    "ProductName": name,
+                    "ProductDescription": f"{brand} {spec}",
+                    "ProductSubcategoryKey": subcat_key,
+                    "Brand": brand,
+                    "Class": cls,
+                    "Color": color,
+                    "UnitCost": unit_cost,
+                    "UnitPrice": unit_price,
+                })
+                pk += 1
+
+    df = pd.DataFrame(rows)
+
+    # Assign stock type based on price position
+    if len(df) > 0:
+        prices = df["UnitPrice"].to_numpy(dtype=np.float64)
+        stock_types, stock_codes = _assign_stock_type(prices)
+        df["StockType"] = stock_types
+        df["StockTypeCode"] = stock_codes
+
+    return df, pk
+
+
+def main():
+    rng = np.random.default_rng(42)
+
+    # --- Load existing data (keep only Contoso originals) ---
+    cats = pd.read_parquet(DATA_DIR / "product_category.parquet")
+    subs = pd.read_parquet(DATA_DIR / "product_subcategory.parquet")
+    prods = pd.read_parquet(DATA_DIR / "products.parquet")
+
+    # Strip any previously generated synthetic rows so the script is idempotent.
+    # Source column only lives on products (not category/subcategory).
+    if "Source" in prods.columns:
+        prods = prods[prods["Source"] == "Contoso"].copy()
+    else:
+        prods["Source"] = "Contoso"
+
+    # For category/subcategory, use key ranges to identify originals
+    cats = cats[cats["CategoryKey"] <= 8].copy()
+    subs = subs[subs["SubcategoryKey"] <= 48].copy()
+    # Drop Source column if it leaked in from a previous run
+    for tbl in (cats, subs):
+        if "Source" in tbl.columns:
+            tbl.drop(columns=["Source"], inplace=True)
+
+    print(f"Contoso base: {len(cats)} categories, {len(subs)} subcategories, {len(prods)} products")
+
+    # --- Generate new categories ---
+    new_cat_rows = []
+    for key, name, label in NEW_CATEGORIES:
+        new_cat_rows.append({
+            "CategoryKey": key,
+            "Category": name,
+            "CategoryLabel": label,
+        })
+    new_cats = pd.DataFrame(new_cat_rows)
+
+    # --- Generate new subcategories ---
+    new_sub_rows = []
+    for key, label, name, cat_key in NEW_SUBCATEGORIES:
+        new_sub_rows.append({
+            "SubcategoryKey": key,
+            "SubcategoryLabel": label,
+            "Subcategory": name,
+            "CategoryKey": cat_key,
+        })
+    new_subs = pd.DataFrame(new_sub_rows)
+
+    # --- Generate new products ---
+    start_key = int(prods["ProductKey"].max()) + 1
+    all_new_products = []
+
+    for subcat_key, template in TEMPLATES.items():
+        df, start_key = _generate_products_for_subcategory(
+            subcat_key, template, rng, start_key,
+        )
+        all_new_products.append(df)
+
+    new_prods = pd.concat(all_new_products, ignore_index=True)
+    new_prods["Source"] = "Synthetic"
+
+    # --- Merge ---
+    final_cats = pd.concat([cats, new_cats], ignore_index=True)
+    final_subs = pd.concat([subs, new_subs], ignore_index=True)
+    final_prods = pd.concat([prods, new_prods], ignore_index=True)
+
+    # Ensure consistent dtypes
+    final_cats["CategoryKey"] = final_cats["CategoryKey"].astype("int64")
+    final_subs["SubcategoryKey"] = final_subs["SubcategoryKey"].astype("int64")
+    final_subs["CategoryKey"] = final_subs["CategoryKey"].astype("int64")
+    final_prods["ProductKey"] = final_prods["ProductKey"].astype("int64")
+    final_prods["ProductSubcategoryKey"] = final_prods["ProductSubcategoryKey"].astype("int64")
+
+    # --- Write ---
+    final_cats.to_parquet(DATA_DIR / "product_category.parquet", index=False)
+    final_subs.to_parquet(DATA_DIR / "product_subcategory.parquet", index=False)
+    final_prods.to_parquet(DATA_DIR / "products.parquet", index=False)
+
+    n_new = len(new_prods)
+    n_total = len(final_prods)
+    n_new_subs = len(new_subs)
+    n_new_cats = len(new_cats)
+
+    print(f"\nAdded: {n_new_cats} categories, {n_new_subs} subcategories, {n_new} products")
+    print(f"Total: {len(final_cats)} categories, {len(final_subs)} subcategories, {n_total} products")
+
+    # Summary by new category
+    merged = new_prods.merge(
+        new_subs[["SubcategoryKey", "Subcategory", "CategoryKey"]],
+        left_on="ProductSubcategoryKey", right_on="SubcategoryKey", how="left",
+    ).merge(
+        new_cats[["CategoryKey", "Category"]],
+        on="CategoryKey", how="left",
+    )
+    summary = merged.groupby(["Category", "Subcategory"]).agg(
+        Count=("ProductKey", "count"),
+        MinPrice=("UnitPrice", "min"),
+        MaxPrice=("UnitPrice", "max"),
+    ).reset_index()
+    print(f"\nNew products by subcategory:")
+    print(summary.to_string(index=False))
+
+
+if __name__ == "__main__":
+    main()
