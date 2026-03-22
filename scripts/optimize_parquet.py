@@ -228,7 +228,8 @@ def optimize_file(
             if total_rows > row_group_size:
                 pct_done = rows_written * 100 // total_rows
                 elapsed = time.perf_counter() - t_file_start
-                print(f"\r    {label}: {rows_written:,}/{total_rows:,} rows ({pct_done}%) {elapsed:.0f}s", end="", flush=True)
+                elapsed = time.perf_counter() - t_file_start
+                print(f"\r    {rows_written:,}/{total_rows:,} rows ({pct_done}%) {elapsed:.0f}s", end="", flush=True)
 
         if chunk.num_rows > 0:
             buffer = chunk
@@ -290,6 +291,7 @@ def optimize_dataset(
 
     _MIN_SIZE = 2 * 1024 * 1024  # skip files under 2 MB (not worth the effort)
     skipped = 0
+    no_savings = []
 
     for p in parquet_files:
         rel = p.relative_to(dataset_dir)
@@ -310,7 +312,11 @@ def optimize_dataset(
                 row_group_size=row_group_size,
                 label=file_label,
             )
-            tmp.replace(p)
+            if new < orig:
+                tmp.replace(p)
+            else:
+                tmp.unlink(missing_ok=True)
+                new = orig
         else:
             optimized_dir = dataset_dir / "optimized"
             out_path = optimized_dir / rel
@@ -322,17 +328,33 @@ def optimize_dataset(
                 row_group_size=row_group_size,
                 label=file_label,
             )
+            if new >= orig:
+                out_path.unlink(missing_ok=True)
+                new = orig
+
+        # Clear progress line if file was large enough to show progress
+        if meta.num_rows > row_group_size:
+            print("\r" + " " * 100 + "\r", end="", flush=True)
 
         total_original += orig
         total_new += new
         pct = (1 - new / orig) * 100 if orig > 0 else 0
         time_str = f"{file_elapsed:.1f}s" if file_elapsed >= 1.0 else ""
-        print(f"\r  {str(rel):55s} {orig/1e6:7.1f} MB -> {new/1e6:7.1f} MB  ({pct:5.1f}% smaller)  {meta.num_rows:>12,} rows  {time_str}")
+
+        folder = rel.parts[0] if len(rel.parts) > 1 else ""
+        fname = rel.name
+
+        if pct <= 0:
+            no_savings.append(str(rel))
+        else:
+            print(f"  {folder:12s} {fname:42s} {orig/1e6:7.1f} MB -> {new/1e6:7.1f} MB ({pct:4.1f}% smaller) {meta.num_rows:>12,} rows  {time_str}")
 
     elapsed = time.perf_counter() - t_start
     pct_total = (1 - total_new / total_original) * 100 if total_original > 0 else 0
+    if no_savings:
+        print(f"\nSkipped {len(no_savings)} file(s) with no savings: {', '.join(no_savings)}")
     if skipped:
-        print(f"\nSkipped {skipped} file(s) under {_MIN_SIZE // (1024 * 1024)} MB")
+        print(f"Skipped {skipped} file(s) under {_MIN_SIZE // (1024 * 1024)} MB")
     print(f"Total: {total_original/1e6:.1f} MB -> {total_new/1e6:.1f} MB ({pct_total:.1f}% smaller) in {elapsed:.1f}s")
 
     if not in_place:
