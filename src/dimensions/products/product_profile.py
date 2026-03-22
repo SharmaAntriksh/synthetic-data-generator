@@ -116,6 +116,55 @@ _SUBCATEGORY_ARCHETYPES: dict[str, dict] = {
     "Lamps":                {"mat": ["Glass", "Aluminum", "Plastic"],        "mw": [0.40, 0.35, 0.25], "wt": (0.50, 5.0), "sz": "sm", "sty": ["Modern", "Classic", "Minimalist", "Vintage"],  "ln": ["Home", "Classic", "Studio"]},
     "Air Conditioners":     {"mat": ["Steel", "Plastic"],                    "mw": [0.65, 0.35], "wt": (15.0, 50.0),  "sz": "lg", "sty": ["Modern", "Classic"],                               "ln": ["Home", "Essentials"], "season": "Summer"},
     "Fans":                 {"mat": ["Plastic", "Steel"],                    "mw": [0.55, 0.45], "wt": (2.0, 8.0),    "sz": "md", "sty": ["Modern", "Classic"],                               "ln": ["Home", "Essentials"], "season": "Summer"},
+    # ---- Clothing & Apparel (Category 9) ----
+    "T-Shirts & Tops":      {"mat": ["Cotton", "Polyester", "Linen"],        "mw": [0.50, 0.35, 0.15], "wt": (0.10, 0.30),  "sz": "xs", "sty": ["Casual", "Modern", "Classic"],                      "ln": ["Core", "Essentials", "Active"]},
+    "Pants & Jeans":         {"mat": ["Cotton", "Polyester", "Denim"],        "mw": [0.40, 0.25, 0.35], "wt": (0.30, 0.80),  "sz": "sm", "sty": ["Casual", "Classic", "Modern"],                      "ln": ["Core", "Essentials"]},
+    "Jackets & Coats":       {"mat": ["Polyester", "Nylon", "Cotton"],        "mw": [0.40, 0.35, 0.25], "wt": (0.50, 2.00),  "sz": "sm", "sty": ["Modern", "Classic", "Sport"],                       "ln": ["Core", "Pro", "Active"], "season": "Winter"},
+    "Dresses & Skirts":      {"mat": ["Cotton", "Polyester", "Silk"],         "mw": [0.40, 0.40, 0.20], "wt": (0.15, 0.60),  "sz": "xs", "sty": ["Classic", "Modern", "Casual"],                      "ln": ["Core", "Essentials"]},
+    "Activewear":            {"mat": ["Polyester", "Nylon", "Spandex"],       "mw": [0.45, 0.35, 0.20], "wt": (0.10, 0.50),  "sz": "xs", "sty": ["Sport", "Modern", "Casual"],                        "ln": ["Active", "Core", "Pro"]},
+    "Footwear":              {"mat": ["Leather", "Rubber", "Synthetic"],      "mw": [0.40, 0.35, 0.25], "wt": (0.30, 1.50),  "sz": "sm", "sty": ["Casual", "Sport", "Classic"],                       "ln": ["Core", "Active", "Pro"]},
+    "Fashion Accessories":   {"mat": ["Leather", "Cotton", "Polyester"],      "mw": [0.40, 0.35, 0.25], "wt": (0.05, 0.50),  "sz": "xs", "sty": ["Classic", "Modern", "Casual"],                      "ln": ["Core", "Essentials"]},
+    # ---- Food & Beverage (Category 10) ----
+    "Snacks & Confectionery": {"mat": ["Cardboard", "Plastic"],               "mw": [0.55, 0.45], "wt": (0.05, 0.50),  "sz": "xs", "sty": ["Classic", "Casual"],                                    "ln": ["Core", "Essentials"]},
+    "Beverages":             {"mat": ["Plastic", "Glass", "Aluminum"],        "mw": [0.40, 0.35, 0.25], "wt": (0.30, 5.00),  "sz": "sm", "sty": ["Classic", "Modern"],                               "ln": ["Core", "Essentials"]},
+    "Coffee & Tea":          {"mat": ["Cardboard", "Plastic", "Foil"],        "mw": [0.40, 0.35, 0.25], "wt": (0.10, 1.00),  "sz": "xs", "sty": ["Classic", "Modern", "Premium"],                    "ln": ["Core", "Essentials", "Pro"]},
+    "Canned & Packaged Goods": {"mat": ["Steel", "Cardboard", "Glass"],       "mw": [0.45, 0.30, 0.25], "wt": (0.15, 1.00),  "sz": "xs", "sty": ["Classic"],                                        "ln": ["Core", "Essentials"]},
+    "Condiments & Sauces":   {"mat": ["Glass", "Plastic"],                    "mw": [0.55, 0.45], "wt": (0.15, 0.80),  "sz": "xs", "sty": ["Classic"],                                              "ln": ["Core", "Essentials"]},
+    "Frozen Foods":          {"mat": ["Cardboard", "Plastic"],                "mw": [0.50, 0.50], "wt": (0.20, 1.50),  "sz": "xs", "sty": ["Classic", "Casual"],                                    "ln": ["Core", "Essentials"]},
+    # ---- Health & Beauty (Category 11) ----
+    "Skincare":              {"mat": ["Plastic", "Glass"],                    "mw": [0.55, 0.45], "wt": (0.02, 0.25),  "sz": "xs", "sty": ["Modern", "Premium", "Minimalist"],                      "ln": ["Core", "Pro", "Essentials"]},
+    "Haircare":              {"mat": ["Plastic"],                             "mw": [1.0],        "wt": (0.10, 0.50),  "sz": "xs", "sty": ["Modern", "Classic"],                                     "ln": ["Core", "Essentials", "Pro"]},
+    "Vitamins & Supplements": {"mat": ["Plastic"],                            "mw": [1.0],        "wt": (0.05, 0.30),  "sz": "xs", "sty": ["Classic", "Modern"],                                     "ln": ["Core", "Essentials"]},
+    "Fragrances":            {"mat": ["Glass", "Aluminum"],                   "mw": [0.65, 0.35], "wt": (0.03, 0.20),  "sz": "xs", "sty": ["Premium", "Modern", "Classic"],                         "ln": ["Core", "Pro", "Elite"]},
+    "Oral Care":             {"mat": ["Plastic"],                             "mw": [1.0],        "wt": (0.05, 0.30),  "sz": "xs", "sty": ["Modern", "Classic"],                                     "ln": ["Core", "Essentials"]},
+    # ---- Home & Furniture (Category 12) ----
+    "Living Room Furniture": {"mat": ["Wood", "Fabric", "Steel"],             "mw": [0.45, 0.35, 0.20], "wt": (5.0, 80.0),   "sz": "xl", "sty": ["Modern", "Classic", "Minimalist"],                 "ln": ["Home", "Classic", "Studio"]},
+    "Bedroom Furniture":     {"mat": ["Wood", "Fabric", "Steel"],             "mw": [0.50, 0.30, 0.20], "wt": (10.0, 100.0), "sz": "xl", "sty": ["Modern", "Classic"],                               "ln": ["Home", "Classic"]},
+    "Office Furniture":      {"mat": ["Steel", "Wood", "Plastic"],            "mw": [0.40, 0.35, 0.25], "wt": (5.0, 40.0),   "sz": "lg", "sty": ["Modern", "Classic", "Minimalist"],                 "ln": ["Core", "Pro"]},
+    "Rugs & Carpets":        {"mat": ["Wool", "Cotton", "Polyester"],         "mw": [0.35, 0.35, 0.30], "wt": (1.0, 15.0),   "sz": "lg", "sty": ["Classic", "Modern", "Vintage"],                    "ln": ["Home", "Classic", "Studio"]},
+    "Home Décor":            {"mat": ["Ceramic", "Glass", "Wood"],            "mw": [0.40, 0.30, 0.30], "wt": (0.10, 5.0),   "sz": "sm", "sty": ["Modern", "Classic", "Minimalist", "Vintage"],      "ln": ["Home", "Classic", "Studio"]},
+    # ---- Sports & Outdoors (Category 13) ----
+    "Fitness Equipment":     {"mat": ["Steel", "Rubber", "Plastic"],          "mw": [0.50, 0.30, 0.20], "wt": (0.50, 50.0),  "sz": "md", "sty": ["Sport", "Modern"],                                 "ln": ["Active", "Pro", "Core"]},
+    "Camping & Hiking":      {"mat": ["Nylon", "Polyester", "Aluminum"],      "mw": [0.40, 0.35, 0.25], "wt": (0.20, 5.0),   "sz": "sm", "sty": ["Sport", "Classic"],                                "ln": ["Active", "Core", "Pro"], "season": "Summer"},
+    "Cycling":               {"mat": ["Aluminum", "Steel", "Rubber"],         "mw": [0.40, 0.35, 0.25], "wt": (0.10, 15.0),  "sz": "md", "sty": ["Sport", "Modern"],                                 "ln": ["Active", "Pro", "Core"]},
+    "Water Sports":          {"mat": ["Nylon", "Rubber", "Plastic"],          "mw": [0.40, 0.35, 0.25], "wt": (0.20, 5.0),   "sz": "sm", "sty": ["Sport", "Modern"],                                 "ln": ["Active", "Core"], "season": "Summer"},
+    "Team Sports":           {"mat": ["Leather", "Rubber", "Polyester"],      "mw": [0.35, 0.35, 0.30], "wt": (0.10, 2.0),   "sz": "sm", "sty": ["Sport", "Classic"],                                "ln": ["Active", "Core"]},
+    # ---- Office & Stationery (Category 14) ----
+    "Paper & Notebooks":     {"mat": ["Paper", "Cardboard"],                  "mw": [0.70, 0.30], "wt": (0.05, 0.50),  "sz": "xs", "sty": ["Classic", "Modern"],                                    "ln": ["Core", "Essentials"]},
+    "Writing Instruments":   {"mat": ["Plastic", "Aluminum"],                 "mw": [0.60, 0.40], "wt": (0.01, 0.10),  "sz": "xs", "sty": ["Classic", "Modern", "Premium"],                         "ln": ["Core", "Essentials", "Pro"]},
+    "Desk Organizers":       {"mat": ["Plastic", "Steel", "Wood"],            "mw": [0.45, 0.30, 0.25], "wt": (0.10, 2.0),   "sz": "sm", "sty": ["Modern", "Classic", "Minimalist"],                 "ln": ["Core", "Essentials"]},
+    "Bags & Cases":          {"mat": ["Nylon", "Polyester", "Leather"],       "mw": [0.40, 0.35, 0.25], "wt": (0.30, 3.0),   "sz": "sm", "sty": ["Modern", "Classic", "Casual"],                     "ln": ["Core", "Pro"]},
+    # ---- Garden & Outdoor Living (Category 15) ----
+    "Power Tools":           {"mat": ["Steel", "Plastic"],                    "mw": [0.55, 0.45], "wt": (1.0, 10.0),   "sz": "sm", "sty": ["Modern", "Classic"],                                    "ln": ["Core", "Pro"]},
+    "Hand Tools":            {"mat": ["Steel", "Rubber", "Wood"],             "mw": [0.50, 0.25, 0.25], "wt": (0.10, 2.0),   "sz": "xs", "sty": ["Classic"],                                        "ln": ["Core", "Essentials"]},
+    "Outdoor Furniture":     {"mat": ["Aluminum", "Wood", "Polyester"],       "mw": [0.40, 0.35, 0.25], "wt": (3.0, 30.0),   "sz": "lg", "sty": ["Modern", "Classic"],                               "ln": ["Home", "Classic"], "season": "Summer"},
+    "Grills & BBQ":          {"mat": ["Steel", "Cast Iron", "Aluminum"],      "mw": [0.50, 0.30, 0.20], "wt": (5.0, 50.0),   "sz": "lg", "sty": ["Classic", "Modern"],                               "ln": ["Home", "Pro"], "season": "Summer"},
+    "Garden Care":           {"mat": ["Plastic", "Steel"],                    "mw": [0.55, 0.45], "wt": (0.20, 5.0),   "sz": "sm", "sty": ["Classic"],                                              "ln": ["Home", "Essentials"], "season": "Summer"},
+    # ---- Automotive (Category 16) ----
+    "Car Care & Cleaning":   {"mat": ["Plastic"],                             "mw": [1.0],        "wt": (0.20, 2.0),   "sz": "xs", "sty": ["Classic", "Modern"],                                     "ln": ["Core", "Essentials"]},
+    "Interior Accessories":  {"mat": ["Plastic", "Rubber", "Leather"],        "mw": [0.40, 0.35, 0.25], "wt": (0.10, 2.0),   "sz": "xs", "sty": ["Classic", "Modern"],                               "ln": ["Core", "Essentials"]},
+    "Car Electronics":       {"mat": ["Plastic", "Aluminum"],                 "mw": [0.60, 0.40], "wt": (0.10, 1.5),   "sz": "xs", "sty": ["Modern", "Sport"],                                      "ln": ["Core", "Pro"]},
+    "Tires & Parts":         {"mat": ["Rubber", "Steel"],                     "mw": [0.60, 0.40], "wt": (5.0, 15.0),   "sz": "md", "sty": ["Classic"],                                              "ln": ["Core", "Essentials"]},
 }
 
 _DEFAULT_ARCHETYPE: dict = {
