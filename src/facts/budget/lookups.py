@@ -32,7 +32,7 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
     try:
         import pyarrow.parquet as pq
         _store_schema = set(pq.read_schema(str(parquet_dims / "stores.parquet")).names)
-    except Exception:
+    except (OSError, ValueError):
         pass
     if "IsCurrent" in _store_schema:
         _store_cols.append("IsCurrent")
@@ -60,7 +60,7 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
     try:
         import pyarrow.parquet as pq
         _prod_schema = set(pq.read_schema(str(parquet_dims / "products.parquet")).names)
-    except Exception:
+    except (OSError, ValueError):
         _prod_schema = set()
     if "IsCurrent" in _prod_schema:
         _prod_cols.append("IsCurrent")

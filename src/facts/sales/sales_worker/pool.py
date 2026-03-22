@@ -194,7 +194,7 @@ def iter_imap_unordered(
             yield from _iter_with_timeout(pool, tasks, task_fn, spec)
         else:
             yield from _iter_fast(pool, tasks, task_fn, spec)
-    except Exception:
+    except Exception:  # intentionally broad — pool must terminate on any failure
         _terminated = True
         pool.terminate()
         pool.join()

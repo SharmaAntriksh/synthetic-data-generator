@@ -119,14 +119,14 @@ def _read_table_uncached(path: Path, columns: Optional[List[str]] = None) -> Opt
     if path.is_file() and path.suffix == ".parquet":
         try:
             return pd.read_parquet(path, columns=columns)
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError):
             return None
 
     # CSV: could be a single file or a directory of chunks
     if path.is_file() and path.suffix == ".csv":
         try:
             return pd.read_csv(path, usecols=columns)
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError):
             return None
 
     if path.is_dir():
@@ -140,7 +140,7 @@ def _read_table_uncached(path: Path, columns: Optional[List[str]] = None) -> Opt
                     available = [c for c in columns if c in df.columns]
                     df = df[available]
                 return df
-            except Exception:
+            except (OSError, ValueError, KeyError, TypeError):
                 return None
 
         # CSV chunk directory
@@ -149,7 +149,7 @@ def _read_table_uncached(path: Path, columns: Optional[List[str]] = None) -> Opt
             try:
                 frames = [pd.read_csv(f, usecols=columns) for f in csvs]
                 return pd.concat(frames, ignore_index=True)
-            except Exception:
+            except (OSError, ValueError, KeyError, TypeError):
                 return None
 
         # Parquet files in directory
@@ -158,7 +158,7 @@ def _read_table_uncached(path: Path, columns: Optional[List[str]] = None) -> Opt
             try:
                 frames = [pd.read_parquet(f, columns=columns) for f in pqs]
                 return pd.concat(frames, ignore_index=True)
-            except Exception:
+            except (OSError, ValueError, KeyError, TypeError):
                 return None
 
     return None
@@ -171,7 +171,7 @@ def _row_count_fast(path: Path) -> Optional[int]:
             import pyarrow.parquet as pq
             meta = pq.read_metadata(str(path))
             return meta.num_rows
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError):
             pass
 
     if path.is_dir():
@@ -190,7 +190,7 @@ def _row_count_fast(path: Path) -> Optional[int]:
                         if fp.exists():
                             total += pq.read_metadata(str(fp)).num_rows
                     return total
-            except Exception:
+            except (OSError, ValueError, KeyError, TypeError):
                 pass
 
         # Directory of parquet files — sum metadata
@@ -199,7 +199,7 @@ def _row_count_fast(path: Path) -> Optional[int]:
             try:
                 import pyarrow.parquet as pq
                 return sum(pq.read_metadata(str(f)).num_rows for f in pqs)
-            except Exception:
+            except (OSError, ValueError, KeyError, TypeError):
                 pass
 
         # CSV — count lines (cheaper than full parse)
@@ -212,14 +212,14 @@ def _row_count_fast(path: Path) -> Optional[int]:
                     with open(f, "rb") as fh:
                         total += sum(chunk.count(b"\n") for chunk in iter(lambda: fh.read(1 << 20), b"")) - 1
                 return max(total, 0)
-            except Exception:
+            except (OSError, ValueError, KeyError, TypeError):
                 pass
 
     if path.is_file() and path.suffix == ".csv":
         try:
             with open(path, "rb") as fh:
                 return max(sum(chunk.count(b"\n") for chunk in iter(lambda: fh.read(1 << 20), b"")) - 1, 0)
-        except Exception:
+        except (OSError, ValueError, KeyError, TypeError):
             pass
 
     return None
@@ -321,7 +321,7 @@ def _check_referential_integrity(
                 arr = table.column(column)
                 arr = _pc_ri.drop_null(arr)
                 return _pc_ri.unique(arr).to_numpy(zero_copy_only=False)
-            except Exception:
+            except (OSError, ValueError, KeyError, TypeError):
                 pass
 
         if _use_pyarrow and path.is_dir():
@@ -336,7 +336,7 @@ def _check_referential_integrity(
                     combined = _pa_ri.concat_arrays([a.combine_chunks() for a in arrays])
                     combined = _pc_ri.drop_null(combined)
                     return _pc_ri.unique(combined).to_numpy(zero_copy_only=False)
-                except Exception:
+                except (OSError, ValueError, KeyError, TypeError):
                     pass
 
         # Fallback: pandas via cache (handles CSV dirs, delta, single files)
@@ -465,7 +465,7 @@ def _check_referential_integrity(
                                         _dmax = rg_max
                             if _dmin is not None:
                                 return pd.Timestamp(_dmin), pd.Timestamp(_dmax)
-                    except Exception:
+                    except (OSError, ValueError, KeyError, TypeError):
                         pass
 
                 if _use_pyarrow and path.is_dir():

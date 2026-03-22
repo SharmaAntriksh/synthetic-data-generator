@@ -67,7 +67,7 @@ def _extract_tables_from_create_sql(sql_file: "Path") -> list[str]:
     """
     try:
         txt = sql_file.read_text(encoding="utf-8", errors="ignore")
-    except Exception:
+    except OSError:
         return []
 
     out: list[str] = []
@@ -135,7 +135,7 @@ def _print_table_counts(cursor: "pyodbc.Cursor", *, tables: list[str], title: st
             schema = _find_table_schema(cursor, t)
             n = _fast_rowcount(cursor, schema, t)
             print(f"  - {schema}.{t}: {n:,}")
-        except Exception as exc:
+        except (ValueError, KeyError, OSError) as exc:
             print(f"  - {t}: [SKIP] {exc}")
 
 
@@ -162,7 +162,7 @@ def _print_cci_summary(cursor: "pyodbc.Cursor", *, tables: list[str]) -> None:
             schema = _find_table_schema(cursor, t)
             c = _cci_count(cursor, schema, t)
             print(f"  - {schema}.{t}: CCI={c}")
-        except Exception as exc:
+        except (ValueError, KeyError, OSError) as exc:
             print(f"  - {t}: [SKIP] {exc}")
 
 
@@ -173,7 +173,7 @@ def _short_path(p: Path, *, base: Path | None = None) -> str:
     try:
         if base is not None:
             return p.resolve().relative_to(base.resolve()).as_posix()
-    except Exception:
+    except (ValueError, TypeError):
         pass
     return p.name
 
@@ -335,7 +335,7 @@ def _execute_cci_with_progress(cursor, sql_file: Path, fact_tables: list[str]) -
             c = _cci_count(cursor, schema, t)
             if c > 0:
                 _log("WORK", f"    {t}")
-        except Exception:
+        except (ValueError, KeyError, OSError):
             pass
 
 
@@ -499,7 +499,7 @@ def _try_disable_query_timeout(conn) -> None:
     try:
         # 0 commonly means "no timeout" for ODBC query timeout.
         conn.timeout = 0
-    except Exception:
+    except (AttributeError, OSError):
         pass
 
 
@@ -827,7 +827,7 @@ def import_sql_server(
                         schema = _find_table_schema(cursor, t)
                         n = _fast_rowcount(cursor, schema, t)
                         dim_total += n
-                    except Exception:
+                    except (ValueError, KeyError, OSError):
                         pass
                 fact_total = 0
                 for t in fact_tables:
@@ -835,11 +835,11 @@ def import_sql_server(
                         schema = _find_table_schema(cursor, t)
                         n = _fast_rowcount(cursor, schema, t)
                         fact_total += n
-                    except Exception:
+                    except (ValueError, KeyError, OSError):
                         pass
                 _log("INFO", f"    Dimensions: {len(dim_tables)} tables, {dim_total:,} rows")
                 _log("INFO", f"    Facts: {len(fact_tables)} tables, {fact_total:,} rows")
-            except Exception as _exc:
+            except (ValueError, KeyError, OSError) as _exc:
                 _log("WARN", f"  Row count verification skipped: {_exc}")
 
             conn.commit()

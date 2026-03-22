@@ -61,7 +61,7 @@ def _normalize_end_month(end_month_arr, n_customers: int) -> np.ndarray:
             out = num.fillna(-1).astype("int64").to_numpy()
             out[out < 0] = -1
             return out
-        except Exception:
+        except (ValueError, TypeError):
             warnings.warn(
                 "end_month_arr contains non-numeric object values; "
                 "falling back to per-element conversion (may be slow for large arrays)",
@@ -75,7 +75,7 @@ def _normalize_end_month(end_month_arr, n_customers: int) -> np.ndarray:
                 try:
                     iv = int(v)
                     out[i] = iv if iv >= 0 else -1
-                except Exception:
+                except (ValueError, TypeError):
                     pass
             return out
 
@@ -83,7 +83,7 @@ def _normalize_end_month(end_month_arr, n_customers: int) -> np.ndarray:
         out = a.astype("int64", copy=False)
         out[out < 0] = -1
         return out
-    except Exception:
+    except (ValueError, TypeError):
         return np.full(n_customers, -1, dtype="int64")
 
 
@@ -222,7 +222,7 @@ def _weights_for_keys(keys: np.ndarray, base_weight: Optional[np.ndarray]) -> Op
             return None
         w = base_weight[idx]
         return _normalize_weights(w)
-    except Exception:
+    except (IndexError, ValueError, TypeError):
         return None
 
 

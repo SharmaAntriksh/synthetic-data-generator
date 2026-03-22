@@ -53,7 +53,7 @@ def project_table_to_schema(
         if not col.type.equals(field.type):
             try:
                 col = pc.cast(col, field.type, safe=bool(cast_safe))
-            except Exception as ex:
+            except (ValueError, TypeError, ArithmeticError) as ex:
                 if on_cast_error == "warn":
                     warn(
                         f"[projection] Failed to cast column '{name}' "

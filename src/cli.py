@@ -23,6 +23,17 @@ def str2bool(v):
     raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
+def positive_int(v):
+    """Argparse type for positive integers (>= 1)."""
+    try:
+        n = int(v)
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {v}")
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {v}")
+    return n
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="syndata",
@@ -60,13 +71,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--workers",
-        type=int,
+        type=positive_int,
         help="Override sales.workers",
     )
 
     parser.add_argument(
         "--chunk-size",
-        type=int,
+        type=positive_int,
         help="Override sales.chunk_size",
     )
 

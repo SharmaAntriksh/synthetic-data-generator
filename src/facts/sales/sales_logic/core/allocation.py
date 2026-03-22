@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Mapping
 
 import numpy as np
@@ -33,7 +32,7 @@ def _sched_mode_and_values(node: dict, name: str) -> tuple[str, list[float]]:
     for v in values:
         try:
             out.append(float(v))
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             raise ValueError(f"{name}.values must contain only numbers: {e}") from e
 
     return mode, out

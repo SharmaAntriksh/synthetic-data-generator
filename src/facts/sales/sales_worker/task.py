@@ -581,7 +581,7 @@ def _ensure_salesperson_employee_key_effective(
     od = table.column("OrderDate").to_numpy(zero_copy_only=False)
     try:
         odD = od.astype("datetime64[D]")
-    except Exception:
+    except (ValueError, TypeError, OverflowError):
         return table
 
     rng = np.random.default_rng(seed)
