@@ -170,6 +170,19 @@ def _generate_scd2_versions(
     # Reassign ProductKey sequentially
     result["ProductKey"] = np.arange(1, total_rows + 1, dtype="int64")
 
+    # Remap BaseProductKey to the new ProductKey of each group's base variant.
+    # Before SCD2, BaseProductKey == ProductID of the VariantIndex=0 member.
+    # After reassignment, map that ProductID back to the new current ProductKey.
+    if "BaseProductKey" in result.columns and "VariantIndex" in result.columns:
+        base_current = result.loc[
+            (result["VariantIndex"] == 0) & (result["IsCurrent"] == 1),
+            ["ProductID", "ProductKey"],
+        ]
+        pid_to_new_pk = base_current.set_index("ProductID")["ProductKey"]
+        result["BaseProductKey"] = (
+            result["BaseProductKey"].map(pid_to_new_pk).astype("int64")
+        )
+
     n_with_history = int((n_versions > 1).sum())
     info(f"Products SCD2: {n_with_history:,}/{N:,} products have price history "
          f"({total_rows:,} total rows, max {max_possible_versions} versions)")
@@ -379,6 +392,16 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         pricing_cfg=p.get("pricing"),
         seed=seed,
     )
+
+    # Variant pricing consistency: all variants share the base variant's prices.
+    # After SCD2 drift, prices diverge naturally per variant.
+    if "BaseProductKey" in df.columns and "VariantIndex" in df.columns:
+        vi = df["VariantIndex"].to_numpy()
+        if vi.max() > 0:
+            base_rows = df.loc[vi == 0].set_index("ProductKey")[["ListPrice", "UnitCost"]]
+            bpk = df["BaseProductKey"]
+            df["ListPrice"] = bpk.map(base_rows["ListPrice"]).fillna(df["ListPrice"])
+            df["UnitCost"] = bpk.map(base_rows["UnitCost"]).fillna(df["UnitCost"])
 
     # Enrichment columns (parallel when above threshold)
     from multiprocessing import cpu_count
