@@ -577,11 +577,11 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
             "snap_unit_price": True,
             "price_ending": 0.99,
             "price_bands": [
-                {"max": 100,  "step": 10},
-                {"max": 500,  "step": 25},
-                {"max": 2000, "step": 50},
-                {"max": 5000, "step": 100},
-                {"max": 1e18, "step": 250},
+                {"max": 100,  "step": 5},
+                {"max": 500,  "step": 10},
+                {"max": 2000, "step": 25},
+                {"max": 5000, "step": 50},
+                {"max": 1e18, "step": 100},
             ],
             "round_unit_cost": True,
             "cost_bands": [

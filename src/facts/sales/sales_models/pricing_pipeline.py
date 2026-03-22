@@ -379,7 +379,9 @@ def _snap_cost(rng, uc: np.ndarray, acfg: dict) -> np.ndarray:
     else:
         snapped = anchor
 
-    return np.maximum(snapped, 0.0)
+    # Prevent zero-cost items from snapping: floor at the smallest step
+    snapped = np.maximum(snapped, step)
+    return snapped
 
 
 def _snap_discount(disc: np.ndarray, up: np.ndarray, acfg: dict) -> np.ndarray:
@@ -538,51 +540,47 @@ def build_prices(rng, order_dates, qty, price):
     if n <= 0:
         return price
 
-    # ---- 1. Compute per-row inflation factor ----
-    # SCD2 provides discrete product-level price revisions (e.g., new version
-    # every 8 months).  Runtime inflation provides smooth macro-level drift.
-    # These are independent forces:
-    #   - SCD2 = product repricing events (micro)
-    #   - Inflation = economy-wide price drift (macro)
-    # When apply_with_scd2=true (default), both apply.
-    # When apply_with_scd2=false, inflation is skipped if SCD2 is active
-    # (legacy behaviour).
     _product_scd2_active = bool(getattr(State, "product_scd2_active", False))
-    _skip_inflation = _product_scd2_active and not apply_with_scd2
+    _skip_inflation = _product_scd2_active or (not apply_with_scd2)
 
-    if _skip_inflation:
-        factor = np.ones(n, dtype=np.float64)
-    else:
-        order_month_i = order_dates.astype("datetime64[M]").astype("int64")
-        uniq_months, inv = np.unique(order_month_i, return_inverse=True)
-
-        start_m = _global_start_month_int(order_dates)
-        months_since = (uniq_months.astype(np.int64) - start_m).astype(np.float64)
-
-        infl = (1.0 + annual_rate) ** (months_since / 12.0)
-        infl = np.where(np.isfinite(infl), infl, 1.0)
-
-        if month_sigma > 0.0:
-            noises = np.fromiter(
-                (_month_noise(int(m), vol_seed, month_sigma) for m in uniq_months),
-                dtype=np.float64, count=uniq_months.size)
-        else:
-            noises = np.ones_like(infl)
-
-        factor = np.clip(infl * noises, clip_lo, clip_hi)[inv]
-
-    # ---- 2. Inflate + snap UnitPrice ----
+    # ---- 2–3. Resolve UnitPrice and UnitCost ----
     base_up = _as_f64(price["final_unit_price"])
-    up = np.maximum(base_up * factor, 0.0)
-
-    appearance = _load_appearance_cfg()
-    up = _snap_unit_price(rng, up, appearance)
-
-    # ---- 3. Inflate + snap UnitCost ----
     base_uc = _as_f64(price["final_unit_cost"])
-    uc = np.minimum(np.maximum(base_uc * factor, 0.0), up)
-    uc = _snap_cost(rng, uc, appearance)
-    uc = np.minimum(uc, up)
+    appearance = _load_appearance_cfg()
+
+    if _product_scd2_active:
+        # SCD2 active: preserve catalog prices from the product dimension
+        # so star-schema joins stay consistent.  Only discounts vary.
+        up = np.maximum(base_up, 0.0)
+        uc = np.clip(base_uc, 0.0, up)
+    else:
+        # No SCD2: apply runtime inflation + appearance snapping
+        if _skip_inflation:
+            factor = np.ones(n, dtype=np.float64)
+        else:
+            order_month_i = order_dates.astype("datetime64[M]").astype("int64")
+            uniq_months, inv = np.unique(order_month_i, return_inverse=True)
+
+            start_m = _global_start_month_int(order_dates)
+            months_since = (uniq_months.astype(np.int64) - start_m).astype(np.float64)
+
+            infl = (1.0 + annual_rate) ** (months_since / 12.0)
+            infl = np.where(np.isfinite(infl), infl, 1.0)
+
+            if month_sigma > 0.0:
+                noises = np.fromiter(
+                    (_month_noise(int(m), vol_seed, month_sigma) for m in uniq_months),
+                    dtype=np.float64, count=uniq_months.size)
+            else:
+                noises = np.ones_like(infl)
+
+            factor = np.clip(infl * noises, clip_lo, clip_hi)[inv]
+
+        up = np.maximum(base_up * factor, 0.0)
+        up = _snap_unit_price(rng, up, appearance)
+        uc = np.minimum(np.maximum(base_uc * factor, 0.0), up)
+        uc = _snap_cost(rng, uc, appearance)
+        uc = np.minimum(uc, up)
 
     # ---- 4. Draw markdown discount from ladder ----
     (md_enabled, kind_codes, values, probs,

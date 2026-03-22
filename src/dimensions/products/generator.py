@@ -14,7 +14,7 @@ from src.defaults import SCD2_END_OF_TIME
 
 from .contoso_loader import load_contoso_products
 from .contoso_expander import expand_contoso_products
-from .pricing import apply_product_pricing
+from .pricing import apply_product_pricing, snap_drifted_prices
 from .product_profile import enrich_products_attributes, apply_post_merge_enrichment
 
 
@@ -28,6 +28,8 @@ def _generate_scd2_versions(
     prod_cfg,
     start_date: pd.Timestamp,
     end_date: pd.Timestamp,
+    *,
+    pricing_cfg=None,
 ) -> pd.DataFrame:
     """Expand products into SCD2 version rows with price revisions.
 
@@ -62,7 +64,7 @@ def _generate_scd2_versions(
     # Shape: (N, max_possible_versions-1)
     n_extra_max = max_possible_versions - 1
     if n_extra_max > 0:
-        all_drifts = 1.0 + rng.uniform(-price_drift, price_drift * 2, size=(N, n_extra_max))
+        all_drifts = 1.0 + rng.uniform(-price_drift, price_drift, size=(N, n_extra_max))
     else:
         all_drifts = np.empty((N, 0), dtype=np.float64)
 
@@ -121,17 +123,30 @@ def _generate_scd2_versions(
     if n_extra_max > 0:
         # Compute cumulative drift per product per version
         cum_drifts = np.cumprod(all_drifts, axis=1)  # shape (N, n_extra_max)
+
+        drifted_mask = np.zeros(total_rows, dtype=bool)
         for v in range(1, max_possible_versions):
             mask = ver_within == v
             if not mask.any():
                 continue
             prods = row_idx[mask]
             drift_v = cum_drifts[prods, v - 1]
-            list_prices[mask] = np.round(list_prices[mask] * drift_v, 2)
-            unit_costs[mask] = np.round(np.minimum(unit_costs[mask] * drift_v, list_prices[mask]), 2)
+            list_prices[mask] = list_prices[mask] * drift_v
+            unit_costs[mask] = np.minimum(unit_costs[mask] * drift_v, list_prices[mask])
+            drifted_mask |= mask
 
-    result["ListPrice"] = list_prices
-    result["UnitCost"] = unit_costs
+        # Re-snap drifted prices to the same appearance grid used by
+        # apply_product_pricing so SCD2 versions look equally realistic.
+        if drifted_mask.any():
+            lp_snapped, uc_snapped = snap_drifted_prices(
+                list_prices[drifted_mask], unit_costs[drifted_mask], pricing_cfg)
+            list_prices[drifted_mask] = lp_snapped
+            unit_costs[drifted_mask] = uc_snapped
+
+    # Snapping can push cost above list price in edge cases
+    unit_costs = np.minimum(unit_costs, list_prices)
+    result["ListPrice"] = np.round(list_prices, 2)
+    result["UnitCost"] = np.round(unit_costs, 2)
 
     # Sort by ProductID + VersionNumber
     result = result.sort_values(["ProductID", "VersionNumber"]).reset_index(drop=True)
@@ -435,7 +450,10 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     scd2_enabled = bool(getattr(scd2_cfg, "enabled", False)) if scd2_cfg else False
     if scd2_enabled:
         rng_scd2 = np.random.default_rng(seed + 7777)
-        df = _generate_scd2_versions(rng_scd2, df, scd2_cfg, start_date, end_date)
+        df = _generate_scd2_versions(
+            rng_scd2, df, scd2_cfg, start_date, end_date,
+            pricing_cfg=p.get("pricing"),
+        )
 
     # -----------------------------------------------------------------
     # Split into Products (core) and ProductProfile (analytical)

@@ -17,6 +17,17 @@ def _to_bool(x, default=False):
     return bool(x)
 
 
+# Fine-grained bands for SCD2 drift snapping.  The initial catalog uses
+# coarser step=5 bands (from _expand_products_pricing / models.yaml) to
+# set nice round price points ($19.99, $24.99).  Year-over-year
+# repricing uses $2 steps for retail prices (giving $29.99, $31.99,
+# $33.99) and $2.50 steps for wholesale costs (giving $20, $22.50, $25)
+# — matching real supplier contract renegotiations.
+DEFAULT_PRICE_BANDS = [(100.0, 2.0), (500.0, 5.0), (2000.0, 10.0), (5000.0, 25.0), (1e18, 50.0)]
+DEFAULT_COST_BANDS = [(100.0, 2.50), (500.0, 5.0), (2000.0, 10.0), (10000.0, 25.0), (1e18, 50.0)]
+DEFAULT_PRICE_ENDING = 0.99
+
+
 def _stretch_to_range(series: pd.Series, target_min: float, target_max: float, qlo: float, qhi: float) -> pd.Series:
     """
     Map quantiles [qlo, qhi] linearly onto [target_min, target_max].
@@ -120,8 +131,34 @@ def _round_to_step(x: np.ndarray, bands) -> np.ndarray:
 
     step = _step_for_value(a, bands)
     rounded = np.round(a / step) * step
-    rounded = np.maximum(rounded, 0.0)
+    # Floor at the smallest step to prevent zero-cost items
+    rounded = np.maximum(rounded, step)
     return rounded
+
+
+def snap_drifted_prices(
+    list_prices: np.ndarray,
+    unit_costs: np.ndarray,
+    pricing_cfg=None,
+) -> tuple:
+    """Snap drifted ListPrice/UnitCost to a fine-grained appearance grid.
+
+    Uses fine-grained DEFAULT bands rather than the catalog-level bands,
+    because coarser steps erase small year-over-year drift.  Reads
+    ``pricing_cfg["appearance"]["price_ending"]`` if available.
+
+    Returns (snapped_list_prices, snapped_unit_costs).
+    """
+    pcfg = pricing_cfg if isinstance(pricing_cfg, Mapping) else {}
+    app = pcfg.get("appearance", None)
+    app = app if isinstance(app, Mapping) else {}
+    price_ending = _to_float(app.get("price_ending"), DEFAULT_PRICE_ENDING) or DEFAULT_PRICE_ENDING
+
+    lp = _snap_unit_price_to_points(
+        np.asarray(list_prices, dtype=np.float64), DEFAULT_PRICE_BANDS, price_ending)
+    uc = _round_to_step(
+        np.asarray(unit_costs, dtype=np.float64), DEFAULT_COST_BANDS)
+    return lp, uc
 
 
 def _sanitize_unit_price(out: pd.DataFrame, min_price: float | None, max_price: float | None) -> None:
@@ -417,15 +454,12 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     snap_unit_price = _to_bool(appearance_cfg.get("snap_unit_price"), False)
     round_unit_cost = _to_bool(appearance_cfg.get("round_unit_cost"), False)
 
-    default_price_bands = [(100.0, 1.0), (1000.0, 10.0), (10000.0, 50.0), (1e18, 100.0)]
-    default_cost_bands = [(100.0, 1.0), (500.0, 5.0), (2000.0, 25.0), (1e18, 50.0)]
+    price_bands = _parse_bands(appearance_cfg.get("price_bands"), DEFAULT_PRICE_BANDS)
+    cost_bands = _parse_bands(appearance_cfg.get("cost_bands"), DEFAULT_COST_BANDS)
 
-    price_bands = _parse_bands(appearance_cfg.get("price_bands"), default_price_bands)
-    cost_bands = _parse_bands(appearance_cfg.get("cost_bands"), default_cost_bands)
-
-    price_ending = _to_float(appearance_cfg.get("price_ending"), 0.99)
+    price_ending = _to_float(appearance_cfg.get("price_ending"), DEFAULT_PRICE_ENDING)
     if price_ending is None:
-        price_ending = 0.99
+        price_ending = DEFAULT_PRICE_ENDING
 
     if snap_unit_price:
         up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
