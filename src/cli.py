@@ -181,6 +181,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override total promotions (distributed across promotion buckets when possible)",
     )
 
+    # ----------------- SCD2 TOGGLES -----------------
+
+    parser.add_argument(
+        "--products-scd2",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Override products.scd2.enabled (true/false)",
+    )
+
+    parser.add_argument(
+        "--customers-scd2",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Override customers.scd2.enabled (true/false)",
+    )
+
     return parser
 
 
@@ -204,6 +224,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         stores=args.stores,
         products=args.products,
         promotions=args.promotions,
+        products_scd2=args.products_scd2,
+        customers_scd2=args.customers_scd2,
     )
 
     if args.refresh_fx_master:
