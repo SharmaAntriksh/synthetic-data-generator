@@ -1640,7 +1640,7 @@ def build_chunk_table(
         cols["Quantity"] = qty
         cols["NetPrice"] = price["final_net_price"]
         cols["UnitCost"] = price["final_unit_cost"]
-        cols["ListPrice"] = price["final_unit_price"]
+        cols["UnitPrice"] = price["final_unit_price"]
         cols["DiscountAmount"] = price["discount_amt"]
 
         cols["DeliveryStatus"] = dates["delivery_status"]

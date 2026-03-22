@@ -52,10 +52,10 @@ BEGIN
         CASE WHEN @qty1_pct > 30 THEN 'PASS' ELSE 'FAIL' END,
         'Qty=1 is ' + CAST(@qty1_pct AS VARCHAR) + '%');
 
-    -- NetPrice <= ListPrice
+    -- NetPrice <= UnitPrice
     DECLARE @net_exceed INT;
-    SELECT @net_exceed = COUNT(*) FROM dbo.Sales WHERE NetPrice > ListPrice;
-    INSERT INTO #R VALUES ('Domain', 'NetPrice <= ListPrice',
+    SELECT @net_exceed = COUNT(*) FROM dbo.Sales WHERE NetPrice > UnitPrice;
+    INSERT INTO #R VALUES ('Domain', 'NetPrice <= UnitPrice',
         'Selling price should not exceed sticker price',
         CASE WHEN @net_exceed = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@net_exceed AS VARCHAR) + ' violations');

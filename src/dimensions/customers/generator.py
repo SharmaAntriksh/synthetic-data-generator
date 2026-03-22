@@ -812,6 +812,11 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
         {
             "CustomerKey": CustomerKey,
             "CustomerID": CustomerKey.copy(),       # durable business key (= CustomerKey initially)
+            # --- SCD2 metadata (always present, defaults for Type 1 mode) ---
+            "VersionNumber": np.ones(N, dtype="int64"),
+            "EffectiveStartDate": pd.to_datetime(CustomerStartDate),
+            "EffectiveEndDate": SCD2_END_OF_TIME,
+            "IsCurrent": np.ones(N, dtype="int64"),
             "CustomerName": CustomerName,
             "DOB": BirthDate,
             "Gender": Gender,
@@ -838,11 +843,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             # --- Lifecycle dates ---
             "CustomerStartDate": pd.to_datetime(CustomerStartDate),
             "CustomerEndDate": pd.to_datetime(CustomerEndDate),
-            # --- SCD2 metadata (always present, defaults for Type 1 mode) ---
-            "VersionNumber": np.ones(N, dtype="int64"),
-            "EffectiveStartDate": pd.to_datetime(CustomerStartDate),
-            "EffectiveEndDate": SCD2_END_OF_TIME,
-            "IsCurrent": np.ones(N, dtype="int64"),
         }
     )
 

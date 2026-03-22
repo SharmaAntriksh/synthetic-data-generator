@@ -89,10 +89,10 @@ SELECT
     CAST(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () AS DECIMAL(5,1)) AS PctOfTotal
 FROM (
     SELECT CASE
-        WHEN ListPrice < 25    THEN '$0-25'
-        WHEN ListPrice < 100   THEN '$25-100'
-        WHEN ListPrice < 500   THEN '$100-500'
-        WHEN ListPrice < 1000  THEN '$500-1000'
+        WHEN UnitPrice < 25    THEN '$0-25'
+        WHEN UnitPrice < 100   THEN '$25-100'
+        WHEN UnitPrice < 500   THEN '$100-500'
+        WHEN UnitPrice < 1000  THEN '$500-1000'
         ELSE '$1000+'
     END AS PriceBand
     FROM Sales
@@ -111,10 +111,10 @@ FROM Sales
 GROUP BY CASE WHEN DiscountAmount > 0 THEN 'Discounted' ELSE 'Full Price' END;
 -- EXPECTED: majority full price; discounted portion driven by promotion count
 
--- 3c. NetPrice should never exceed ListPrice
+-- 3c. NetPrice should never exceed UnitPrice
 SELECT COUNT(*) AS ExceedCount
 FROM Sales
-WHERE NetPrice > ListPrice;
+WHERE NetPrice > UnitPrice;
 -- EXPECTED: zero (selling price cannot exceed sticker price)
 
 
@@ -265,10 +265,10 @@ FROM (
 
 UNION ALL
 
-SELECT 'Sales: NetPrice <= ListPrice',
-    'NetPrice must not exceed ListPrice (selling price cannot exceed sticker price); FAIL = net exceeds list',
+SELECT 'Sales: NetPrice <= UnitPrice',
+    'NetPrice must not exceed UnitPrice (selling price cannot exceed sticker price); FAIL = net exceeds list',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM Sales WHERE NetPrice > ListPrice
+FROM Sales WHERE NetPrice > UnitPrice
 
 UNION ALL
 

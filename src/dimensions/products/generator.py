@@ -460,12 +460,12 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     # -----------------------------------------------------------------
     _PRODUCTS_CORE_COLS = [
         "ProductKey", "ProductID",
+        "VersionNumber", "EffectiveStartDate", "EffectiveEndDate", "IsCurrent",
         "ProductCode", "ProductName", "ProductDescription",
         "SubcategoryKey", "Brand", "Class", "Color",
         "StockTypeCode", "StockType",
         "UnitCost", "ListPrice",
         "BaseProductKey", "VariantIndex",
-        "VersionNumber", "EffectiveStartDate", "EffectiveEndDate", "IsCurrent",
     ]
 
     core_cols = [c for c in _PRODUCTS_CORE_COLS if c in df.columns]
