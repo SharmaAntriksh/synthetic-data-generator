@@ -1495,7 +1495,7 @@ def build_chunk_table(
                         promo_keys[new_indices[active]] = int(_nc_keys[pi])
 
         # --------------------------------------------------------
-        # EMPLOYEE (SalesPersonEmployeeKey)
+        # EMPLOYEE (EmployeeKey)
         #   Agreement:
         #     - If order identifiers exist (skip_cols == False): 1 salesperson per order (broadcast to all lines),
         #       still respecting effective-dated store assignments by (StoreKey, OrderDate).
@@ -1613,7 +1613,7 @@ def build_chunk_table(
         cols["CustomerKey"] = customer_keys_out
         cols["ProductKey"] = product_keys
         cols["StoreKey"] = store_key_arr
-        cols["SalesPersonEmployeeKey"] = salesperson_key_arr
+        cols["EmployeeKey"] = salesperson_key_arr
         cols["PromotionKey"] = promo_keys
         cols["CurrencyKey"] = currency_arr
 

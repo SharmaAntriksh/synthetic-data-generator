@@ -20,7 +20,7 @@
 
   • The Employees FK uses a full type-compatibility check (system_type_id,
     user_type_id, max_length, precision, scale) because older configs
-    may still have SalesPersonEmployeeKey as BIGINT while
+    may still have EmployeeKey as BIGINT while
     Employees.EmployeeKey is INT.  This matches the pattern in
     20_sales_order_header.sql.
 
@@ -118,7 +118,7 @@ END;
 -- Sales -> Employees (full type-compatibility guard)
 IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Sales', N'SalesPersonEmployeeKey') IS NOT NULL
+AND COL_LENGTH(N'dbo.Sales', N'EmployeeKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
@@ -132,7 +132,7 @@ AND EXISTS (
       ON rc.object_id = OBJECT_ID(N'dbo.Employees')
      AND rc.name = N'EmployeeKey'
     WHERE pc.object_id = OBJECT_ID(N'dbo.Sales')
-      AND pc.name = N'SalesPersonEmployeeKey'
+      AND pc.name = N'EmployeeKey'
       AND pc.system_type_id = rc.system_type_id
       AND pc.user_type_id  = rc.user_type_id
       AND pc.max_length    = rc.max_length
@@ -142,7 +142,7 @@ AND EXISTS (
 BEGIN
     ALTER TABLE dbo.Sales WITH CHECK
     ADD CONSTRAINT FK_Sales_Employees
-        FOREIGN KEY ([SalesPersonEmployeeKey])
+        FOREIGN KEY ([EmployeeKey])
         REFERENCES dbo.Employees ([EmployeeKey]);
 
     ALTER TABLE dbo.Sales CHECK CONSTRAINT FK_Sales_Employees;

@@ -189,18 +189,18 @@ WHERE pp.SupplierKey IS NOT NULL AND s.SupplierKey IS NULL;
 -- 8. Sales Person Consistency
 -- ============================================================================
 
--- 8a. SalesPersonEmployeeKey in Sales should reference valid employee
-SELECT DISTINCT f.SalesPersonEmployeeKey
+-- 8a. EmployeeKey in Sales should reference valid employee
+SELECT DISTINCT f.EmployeeKey
 FROM Sales f
-LEFT JOIN Employees e ON e.EmployeeKey = f.SalesPersonEmployeeKey
-WHERE f.SalesPersonEmployeeKey IS NOT NULL
+LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
+WHERE f.EmployeeKey IS NOT NULL
   AND e.EmployeeKey IS NULL;
 -- EXPECTED: zero rows
 
 -- 8b. Sales person employees should have SalesPersonFlag=1
-SELECT DISTINCT f.SalesPersonEmployeeKey, e.SalesPersonFlag
+SELECT DISTINCT f.EmployeeKey, e.SalesPersonFlag
 FROM Sales f
-JOIN Employees e ON e.EmployeeKey = f.SalesPersonEmployeeKey
+JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
 WHERE e.SalesPersonFlag = 0;
 -- EXPECTED: zero rows
 
@@ -272,8 +272,8 @@ WHERE c.CurrencyKey IS NULL
 UNION ALL
 
 SELECT 'SalesPerson: valid employee references',
-    'Every SalesPersonEmployeeKey in Sales must exist in Employees; FAIL = sale assigned to non-existent employee',
+    'Every EmployeeKey in Sales must exist in Employees; FAIL = sale assigned to non-existent employee',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM (SELECT DISTINCT SalesPersonEmployeeKey FROM Sales WHERE SalesPersonEmployeeKey IS NOT NULL) f
-LEFT JOIN Employees e ON e.EmployeeKey = f.SalesPersonEmployeeKey
+FROM (SELECT DISTINCT EmployeeKey FROM Sales WHERE EmployeeKey IS NOT NULL) f
+LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
 WHERE e.EmployeeKey IS NULL;

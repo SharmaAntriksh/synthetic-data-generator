@@ -559,7 +559,7 @@ def _ensure_salesperson_employee_key_effective(
     order_enc: Optional[_OrderEncoding] = None,
 ) -> pa.Table:
     """
-    Ensure SalesPersonEmployeeKey respects effective-dated EmployeeStoreAssignments.
+    Ensure EmployeeKey respects effective-dated EmployeeStoreAssignments.
 
     Resolves per unique (StoreKey, OrderDate) pair, then batch-samples and broadcasts.
     When SalesOrderNumber exists, employee is constant within each order.
@@ -572,7 +572,7 @@ def _ensure_salesperson_employee_key_effective(
         return table
 
     col_names = table.column_names
-    if "SalesPersonEmployeeKey" not in col_names:
+    if "EmployeeKey" not in col_names:
         return table
     if "StoreKey" not in col_names or "OrderDate" not in col_names:
         return table
@@ -586,7 +586,7 @@ def _ensure_salesperson_employee_key_effective(
 
     rng = np.random.default_rng(seed)
 
-    out_emp = table.column("SalesPersonEmployeeKey").to_numpy(zero_copy_only=False).astype("int32", copy=True)
+    out_emp = table.column("EmployeeKey").to_numpy(zero_copy_only=False).astype("int32", copy=True)
 
     has_orders = order_enc is not None or "SalesOrderNumber" in col_names
 
@@ -696,12 +696,12 @@ def _ensure_salesperson_employee_key_effective(
         valid = ord_emp >= 0
         out_emp[valid] = ord_emp[valid]
 
-    idx = table.schema.get_field_index("SalesPersonEmployeeKey")
-    return table.set_column(idx, "SalesPersonEmployeeKey", pa.array(out_emp, type=pa.int32()))
+    idx = table.schema.get_field_index("EmployeeKey")
+    return table.set_column(idx, "EmployeeKey", pa.array(out_emp, type=pa.int32()))
 
 
 def build_header_from_detail(detail: pa.Table, *, validate_invariants: bool = True) -> pa.Table:
-    inv_cols = ["CustomerKey", "StoreKey", "SalesPersonEmployeeKey", "OrderDate"]
+    inv_cols = ["CustomerKey", "StoreKey", "EmployeeKey", "OrderDate"]
 
     col_names = detail.column_names
     if "PromotionKey" in col_names:
@@ -755,7 +755,7 @@ def build_header_from_detail(detail: pa.Table, *, validate_invariants: bool = Tr
         _add("SalesOrderNumber", "SalesOrderNumber")
         _add("CustomerKey_min", "CustomerKey")
         _add("StoreKey_min", "StoreKey")
-        _add("SalesPersonEmployeeKey_min", "SalesPersonEmployeeKey")
+        _add("EmployeeKey_min", "EmployeeKey")
         _add("PromotionKey_min", "PromotionKey")
         _add("CurrencyKey_min", "CurrencyKey")
         _add("SalesChannelKey_min", "SalesChannelKey")
@@ -781,7 +781,7 @@ def build_header_from_detail(detail: pa.Table, *, validate_invariants: bool = Tr
     _add("SalesOrderNumber", "SalesOrderNumber")
     _add("CustomerKey_min", "CustomerKey")
     _add("StoreKey_min", "StoreKey")
-    _add("SalesPersonEmployeeKey_min", "SalesPersonEmployeeKey")
+    _add("EmployeeKey_min", "EmployeeKey")
     _add("PromotionKey_min", "PromotionKey")
     _add("CurrencyKey_min", "CurrencyKey")
     _add("SalesChannelKey_min", "SalesChannelKey")
@@ -907,10 +907,10 @@ def _worker_task(args):
     header_need_set = None
     if mode in {"sales_order", "both"}:
         so_require = {"SalesOrderNumber", "SalesOrderLineNumber",
-                      "CustomerKey", "StoreKey", "SalesPersonEmployeeKey",
+                      "CustomerKey", "StoreKey", "EmployeeKey",
                       "OrderDate", "IsOrderDelayed"}
         expected_header = State.schema_by_table[TABLE_SALES_ORDER_HEADER]
-        header_need_set = {"StoreKey", "SalesPersonEmployeeKey", "SalesChannelKey",
+        header_need_set = {"StoreKey", "EmployeeKey", "SalesChannelKey",
                            "TimeKey", "PromotionKey", "CurrencyKey"} & set(expected_header.names)
 
     for idx, batch_size, seed in tasks:

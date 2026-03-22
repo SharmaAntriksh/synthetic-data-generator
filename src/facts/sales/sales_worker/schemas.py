@@ -83,7 +83,7 @@ def build_worker_schemas(
         pa.field("CustomerKey", pa.int32()),
         pa.field("ProductKey", pa.int32()),
         pa.field("StoreKey", pa.int32()),
-        pa.field("SalesPersonEmployeeKey", pa.int32()),
+        pa.field("EmployeeKey", pa.int32()),
         pa.field("PromotionKey", pa.int32()),
         pa.field("CurrencyKey", pa.int32()),
         pa.field("OrderDate", pa.date32()),
@@ -103,7 +103,7 @@ def build_worker_schemas(
         pa.field("CustomerKey", pa.int32()),
         pa.field("ProductKey", pa.int32()),
         pa.field("StoreKey", pa.int32()),
-        pa.field("SalesPersonEmployeeKey", pa.int32()),
+        pa.field("EmployeeKey", pa.int32()),
         pa.field("PromotionKey", pa.int32()),
         pa.field("CurrencyKey", pa.int32()),
         pa.field("SalesChannelKey", pa.int16()),
@@ -156,7 +156,7 @@ def build_worker_schemas(
     # ---------------------------------------------------------------------
     # SalesOrderDetail / SalesOrderHeader schemas (OUTPUT only)
     # Agreement:
-    #   - StoreKey and SalesPersonEmployeeKey are ORDER-level (header)
+    #   - StoreKey and EmployeeKey are ORDER-level (header)
     #   - Detail remains line-level for product/pricing/shipping facts
     # ---------------------------------------------------------------------
     detail_fields = [
@@ -178,7 +178,7 @@ def build_worker_schemas(
         pa.field("SalesOrderNumber", pa.int32()),
         pa.field("CustomerKey", pa.int32()),
         pa.field("StoreKey", pa.int32()),
-        pa.field("SalesPersonEmployeeKey", pa.int32()),
+        pa.field("EmployeeKey", pa.int32()),
         pa.field("PromotionKey", pa.int32()),
         pa.field("CurrencyKey", pa.int32()),
         pa.field("SalesChannelKey", pa.int16()),

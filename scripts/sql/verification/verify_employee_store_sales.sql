@@ -1,7 +1,7 @@
 -- ============================================================================
 -- VERIFY EMPLOYEE → EMPLOYEE_STORE_ASSIGNMENTS → SALES RELATIONSHIP
 -- Run after loading generated data into SQL Server.
--- Spots (StoreKey, SalesPersonEmployeeKey, OrderDate) combos in Sales
+-- Spots (StoreKey, EmployeeKey, OrderDate) combos in Sales
 -- that have no matching effective-dated row in EmployeeStoreAssignments.
 -- ============================================================================
 
@@ -10,22 +10,22 @@
 -- 1. ORPHAN DETECTION — Sales with no valid assignment
 -- ############################################################################
 
--- 1a. Sales where (SalesPersonEmployeeKey, StoreKey, OrderDate) has no
+-- 1a. Sales where (EmployeeKey, StoreKey, OrderDate) has no
 --     matching assignment row (the core check)
 SELECT
-    f.SalesPersonEmployeeKey,
+    f.EmployeeKey,
     f.StoreKey,
     f.OrderDate,
     COUNT(*)                                                        AS SalesRows
 FROM Sales f
 LEFT JOIN EmployeeStoreAssignments esa
-  ON  esa.EmployeeKey = f.SalesPersonEmployeeKey
+  ON  esa.EmployeeKey = f.EmployeeKey
  AND esa.StoreKey     = f.StoreKey
  AND f.OrderDate     >= esa.StartDate
  AND (esa.EndDate IS NULL OR f.OrderDate <= esa.EndDate)
-WHERE f.SalesPersonEmployeeKey > 0
+WHERE f.EmployeeKey > 0
   AND esa.EmployeeKey IS NULL
-GROUP BY f.SalesPersonEmployeeKey, f.StoreKey, f.OrderDate
+GROUP BY f.EmployeeKey, f.StoreKey, f.OrderDate
 ORDER BY SalesRows DESC;
 -- EXPECTED: zero rows — every sale should map to an active assignment
 
@@ -34,14 +34,14 @@ SELECT
     COUNT(*)                                                        AS TotalSales,
     SUM(CASE WHEN esa.EmployeeKey IS NOT NULL THEN 1 ELSE 0 END)   AS CoveredSales,
     SUM(CASE WHEN esa.EmployeeKey IS NULL
-              AND f.SalesPersonEmployeeKey > 0 THEN 1 ELSE 0 END)  AS OrphanedSales,
-    SUM(CASE WHEN f.SalesPersonEmployeeKey <= 0 THEN 1 ELSE 0 END) AS NoSalesperson,
+              AND f.EmployeeKey > 0 THEN 1 ELSE 0 END)  AS OrphanedSales,
+    SUM(CASE WHEN f.EmployeeKey <= 0 THEN 1 ELSE 0 END) AS NoSalesperson,
     CAST(SUM(CASE WHEN esa.EmployeeKey IS NULL
-                   AND f.SalesPersonEmployeeKey > 0 THEN 1 ELSE 0 END)
+                   AND f.EmployeeKey > 0 THEN 1 ELSE 0 END)
          * 100.0 / NULLIF(COUNT(*), 0) AS DECIMAL(5,2))            AS OrphanedPct
 FROM Sales f
 LEFT JOIN EmployeeStoreAssignments esa
-  ON  esa.EmployeeKey = f.SalesPersonEmployeeKey
+  ON  esa.EmployeeKey = f.EmployeeKey
  AND esa.StoreKey     = f.StoreKey
  AND f.OrderDate     >= esa.StartDate
  AND (esa.EndDate IS NULL OR f.OrderDate <= esa.EndDate);
@@ -53,10 +53,10 @@ LEFT JOIN EmployeeStoreAssignments esa
 -- ############################################################################
 
 -- 2a. Sales referencing an EmployeeKey that doesn't exist in Employees
-SELECT DISTINCT f.SalesPersonEmployeeKey
+SELECT DISTINCT f.EmployeeKey
 FROM Sales f
-LEFT JOIN Employees e ON e.EmployeeKey = f.SalesPersonEmployeeKey
-WHERE f.SalesPersonEmployeeKey > 0
+LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
+WHERE f.EmployeeKey > 0
   AND e.EmployeeKey IS NULL;
 -- EXPECTED: zero rows
 
@@ -74,12 +74,12 @@ LEFT JOIN Stores s ON s.StoreKey = esa.StoreKey
 WHERE s.StoreKey IS NULL;
 -- EXPECTED: zero rows
 
--- 2d. Sales with SalesPersonEmployeeKey = -1 or 0 (unassigned)
+-- 2d. Sales with EmployeeKey = -1 or 0 (unassigned)
 SELECT
     COUNT(*)                                                        AS UnassignedSales,
     CAST(COUNT(*) * 100.0 / (SELECT COUNT(*) FROM Sales) AS DECIMAL(5,2)) AS PctUnassigned
 FROM Sales
-WHERE SalesPersonEmployeeKey <= 0;
+WHERE EmployeeKey <= 0;
 -- EXPECTED: zero or near-zero
 
 
@@ -141,20 +141,20 @@ WHERE a.EndDate IS NOT NULL
 -- ############################################################################
 
 -- 4a. Store Managers (EmployeeKey 30M–40M) should NOT appear in Sales
-SELECT DISTINCT f.SalesPersonEmployeeKey
+SELECT DISTINCT f.EmployeeKey
 FROM Sales f
-WHERE f.SalesPersonEmployeeKey >= 30000000
-  AND f.SalesPersonEmployeeKey <  40000000;
+WHERE f.EmployeeKey >= 30000000
+  AND f.EmployeeKey <  40000000;
 -- EXPECTED: zero rows (managers are excluded from salesperson sampling)
 
 -- 4b. Every employee in Sales should have a sales-eligible role in the bridge
-SELECT DISTINCT f.SalesPersonEmployeeKey, f.StoreKey
+SELECT DISTINCT f.EmployeeKey, f.StoreKey
 FROM Sales f
-WHERE f.SalesPersonEmployeeKey > 0
+WHERE f.EmployeeKey > 0
   AND NOT EXISTS (
     SELECT 1
     FROM EmployeeStoreAssignments esa
-    WHERE esa.EmployeeKey = f.SalesPersonEmployeeKey
+    WHERE esa.EmployeeKey = f.EmployeeKey
       AND esa.StoreKey    = f.StoreKey
       AND esa.RoleAtStore = 'Sales Associate'
   );
@@ -181,7 +181,7 @@ SELECT
     f.OrderDate,
     COUNT(*) AS SalesOnDate
 FROM Sales f
-WHERE f.SalesPersonEmployeeKey > 0
+WHERE f.EmployeeKey > 0
   AND NOT EXISTS (
     SELECT 1
     FROM EmployeeStoreAssignments esa
@@ -215,24 +215,24 @@ SELECT
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
 FROM Sales f
 LEFT JOIN EmployeeStoreAssignments esa
-  ON  esa.EmployeeKey = f.SalesPersonEmployeeKey
+  ON  esa.EmployeeKey = f.EmployeeKey
  AND esa.StoreKey     = f.StoreKey
  AND f.OrderDate     >= esa.StartDate
  AND (esa.EndDate IS NULL OR f.OrderDate <= esa.EndDate)
-WHERE f.SalesPersonEmployeeKey > 0
+WHERE f.EmployeeKey > 0
   AND esa.EmployeeKey IS NULL
 
 UNION ALL
 
 SELECT
     'All salesperson keys exist in Employees',
-    'SalesPersonEmployeeKey in Sales references a valid Employees row',
+    'EmployeeKey in Sales references a valid Employees row',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM (
-    SELECT DISTINCT f.SalesPersonEmployeeKey
+    SELECT DISTINCT f.EmployeeKey
     FROM Sales f
-    LEFT JOIN Employees e ON e.EmployeeKey = f.SalesPersonEmployeeKey
-    WHERE f.SalesPersonEmployeeKey > 0 AND e.EmployeeKey IS NULL
+    LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
+    WHERE f.EmployeeKey > 0 AND e.EmployeeKey IS NULL
 ) x
 
 UNION ALL
@@ -252,11 +252,11 @@ UNION ALL
 
 SELECT
     'No managers in sales',
-    'Store Manager keys (30M-40M range) should not appear as SalesPersonEmployeeKey',
+    'Store Manager keys (30M-40M range) should not appear as EmployeeKey',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM Sales
-WHERE SalesPersonEmployeeKey >= 30000000
-  AND SalesPersonEmployeeKey <  40000000
+WHERE EmployeeKey >= 30000000
+  AND EmployeeKey <  40000000
 
 UNION ALL
 
@@ -291,7 +291,7 @@ UNION ALL
 
 SELECT
     'No unassigned salesperson keys',
-    'SalesPersonEmployeeKey should be > 0 (not -1 or 0)',
+    'EmployeeKey should be > 0 (not -1 or 0)',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM Sales
-WHERE SalesPersonEmployeeKey <= 0;
+WHERE EmployeeKey <= 0;

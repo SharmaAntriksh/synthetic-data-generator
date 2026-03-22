@@ -273,7 +273,7 @@ def _check_referential_integrity(
         ("sales", "fact", "StoreKey", "stores", "StoreKey"),
         ("sales", "fact", "PromotionKey", "promotions", "PromotionKey"),
         ("sales", "fact", "CurrencyKey", "currency", "CurrencyKey"),
-        ("sales", "fact", "SalesPersonEmployeeKey", "employees", "EmployeeKey"),
+        ("sales", "fact", "EmployeeKey", "employees", "EmployeeKey"),
         ("sales", "fact", "SalesChannelKey", "sales_channels", "SalesChannelKey"),
         ("sales", "fact", "TimeKey", "time", "TimeKey"),
         # Sales return → dimensions

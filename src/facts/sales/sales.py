@@ -1152,19 +1152,19 @@ def generate_sales_fact(
             new_customer_promo_keys = np.array([], dtype=np.int32)
 
     # ------------------------------------------------------------
-    # Employees / store assignments -> SalesPersonEmployeeKey
+    # Employees / store assignments -> EmployeeKey
     # ------------------------------------------------------------
     emp_assign_path = parquet_folder_p / "employee_store_assignments.parquet"
 
-    # Fail fast: the bridge is the single source of truth for SalesPersonEmployeeKey.
-    # Without it, every Sales row would get SalesPersonEmployeeKey = -1.
+    # Fail fast: the bridge is the single source of truth for EmployeeKey.
+    # Without it, every Sales row would get EmployeeKey = -1.
     if not emp_assign_path.exists():
         raise FileNotFoundError(
             f"employee_store_assignments.parquet is required: {emp_assign_path}. "
             f"Run dimension generation first."
         )
 
-    # config-driven allowlist: which RoleAtStore can appear as SalesPersonEmployeeKey
+    # config-driven allowlist: which RoleAtStore can appear as EmployeeKey
     salesperson_roles = _cfg_get(cfg, ["sales", "salesperson_roles"], default=None)
     if not (isinstance(salesperson_roles, list) and salesperson_roles):
         primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")

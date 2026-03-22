@@ -1,7 +1,7 @@
 -----------------------------------------------------------------------
 -- FACT: SalesOrderHeader (CANDIDATE KEY + FOREIGN KEYS + CHECKS)
 -- Columns (expected):
---   SalesOrderNumber, CustomerKey, StoreKey, SalesPersonEmployeeKey,
+--   SalesOrderNumber, CustomerKey, StoreKey, EmployeeKey,
 --   OrderDate, TimeKey, SalesChannelKey, IsOrderDelayed
 -----------------------------------------------------------------------
 
@@ -82,14 +82,14 @@ BEGIN
     ALTER TABLE dbo.SalesOrderHeader CHECK CONSTRAINT FK_SalesOrderHeader_Stores;
 END;
 
--- SalesOrderHeader -> Employees (SalesPersonEmployeeKey) [guarded for type compatibility]
+-- SalesOrderHeader -> Employees (EmployeeKey) [guarded for type compatibility]
 IF OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.SalesOrderHeader', N'SalesPersonEmployeeKey') IS NOT NULL
+AND COL_LENGTH(N'dbo.SalesOrderHeader', N'EmployeeKey') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
-    WHERE name = N'FK_SalesOrderHeader_Employees_SalesPersonEmployeeKey'
+    WHERE name = N'FK_SalesOrderHeader_Employees_EmployeeKey'
       AND parent_object_id = OBJECT_ID(N'dbo.SalesOrderHeader')
 )
 AND EXISTS (
@@ -99,7 +99,7 @@ AND EXISTS (
       ON rc.object_id = OBJECT_ID(N'dbo.Employees')
      AND rc.name = N'EmployeeKey'
     WHERE pc.object_id = OBJECT_ID(N'dbo.SalesOrderHeader')
-      AND pc.name = N'SalesPersonEmployeeKey'
+      AND pc.name = N'EmployeeKey'
       AND pc.system_type_id = rc.system_type_id
       AND pc.user_type_id = rc.user_type_id
       AND pc.max_length = rc.max_length
@@ -108,11 +108,11 @@ AND EXISTS (
 )
 BEGIN
     ALTER TABLE dbo.SalesOrderHeader WITH CHECK
-    ADD CONSTRAINT FK_SalesOrderHeader_Employees_SalesPersonEmployeeKey
-        FOREIGN KEY ([SalesPersonEmployeeKey])
+    ADD CONSTRAINT FK_SalesOrderHeader_Employees_EmployeeKey
+        FOREIGN KEY ([EmployeeKey])
         REFERENCES dbo.Employees ([EmployeeKey]);
 
-    ALTER TABLE dbo.SalesOrderHeader CHECK CONSTRAINT FK_SalesOrderHeader_Employees_SalesPersonEmployeeKey;
+    ALTER TABLE dbo.SalesOrderHeader CHECK CONSTRAINT FK_SalesOrderHeader_Employees_EmployeeKey;
 END;
 
 -- SalesOrderHeader -> Dates (OrderDate)
