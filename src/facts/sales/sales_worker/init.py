@@ -14,6 +14,7 @@ from ..output_paths import (
     TABLE_SALES_RETURN,
 )
 from ..sales_logic import bind_globals, State
+from ..sales_logic.chunk_builder import reset_worker_cdf_cache
 from .schemas import build_worker_schemas
 from src.utils.config_helpers import int_or, float_or, str_or
 from src.utils.shared_arrays import resolve_array
@@ -595,6 +596,7 @@ def _build_brand_prob_by_month_rotate_winner(
 
 
 def init_sales_worker(worker_cfg: dict) -> None:
+    reset_worker_cdf_cache()
     # Resolve any shared-memory descriptors back into numpy array views.
     # This is a no-op for values that are already plain arrays/None.
     _REQUIRED_ARRAYS = {"product_np", "store_keys", "customer_keys", "date_pool", "date_prob"}

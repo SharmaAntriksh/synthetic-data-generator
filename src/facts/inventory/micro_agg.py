@@ -6,8 +6,7 @@ grouped by (ProductKey, StoreKey, Year, Month).
 
 Returns a small dict of numpy arrays (trivial to pickle across IPC).
 
-Uses structured-array sorting + np.add.reduceat for O(n log n) groupby.
-Scales safely to millions of distinct products (no dense allocation).
+Uses flat composite int64 key + argsort + np.add.reduceat for O(n log n) groupby.
 """
 from __future__ import annotations
 
@@ -47,46 +46,47 @@ def micro_aggregate_inventory(
     if n == 0:
         return None
 
-    # Build composite sort key: (product, store, year, month)
-    # Sort lexicographically then use reduceat for O(n log n) groupby.
-    sort_keys = np.empty(n, dtype=[
-        ("p", np.int64), ("s", np.int64),
-        ("y", np.int16), ("m", np.int8),
-    ])
-    sort_keys["p"] = product_keys
-    sort_keys["s"] = store_keys
-    sort_keys["y"] = year
-    sort_keys["m"] = month
+    # Groupby via flat composite int64 key + argsort + reduceat.
+    # Much faster than structured-array sort (single contiguous int64 sort
+    # vs. multi-field structured dtype sort).
+    max_store = int(store_keys.max()) + 1
+    max_month = 13  # months 1..12
+    year_min = int(year.min())
+    n_years = int(year.max()) - year_min + 1
+    stride_s = n_years * max_month
+    stride_y = max_month
 
-    order = np.argsort(sort_keys, order=("p", "s", "y", "m"))
-    s_p = product_keys[order]
-    s_s = store_keys[order]
-    s_y = year[order]
-    s_m = month[order]
+    flat_key = (
+        product_keys * (max_store * stride_s)
+        + store_keys * stride_s
+        + (year - year_min).astype(np.int64) * stride_y
+        + month.astype(np.int64)
+    )
+
+    order = np.argsort(flat_key)
+    s_fk = flat_key[order]
     s_q = qty[order]
 
-    # Find group boundaries (where any key column changes)
     diff = np.empty(n, dtype=bool)
     diff[0] = True
-    diff[1:] = (
-        (s_p[1:] != s_p[:-1])
-        | (s_s[1:] != s_s[:-1])
-        | (s_y[1:] != s_y[:-1])
-        | (s_m[1:] != s_m[:-1])
-    )
+    diff[1:] = s_fk[1:] != s_fk[:-1]
     group_starts = np.flatnonzero(diff)
-
-    if group_starts.size == 0:
-        return None
-
-    # Sum qty within each group using reduceat
     group_qty = np.add.reduceat(s_q, group_starts)
+    fk_groups = s_fk[group_starts]
 
-    # Extract group keys (first element of each group)
+    # Decode flat keys back to (product, store, year, month)
+    remainder = fk_groups
+    g_product = remainder // (max_store * stride_s)
+    remainder = remainder % (max_store * stride_s)
+    g_store = remainder // stride_s
+    remainder = remainder % stride_s
+    g_year = remainder // stride_y + year_min
+    g_month = remainder % stride_y
+
     return {
-        "product_key": s_p[group_starts],
-        "store_key": s_s[group_starts],
-        "year": s_y[group_starts].astype(np.int16),
-        "month": s_m[group_starts].astype(np.int8),
+        "product_key": g_product,
+        "store_key": g_store,
+        "year": g_year.astype(np.int16),
+        "month": g_month.astype(np.int8),
         "quantity_sold": group_qty.astype(np.int64),
     }
