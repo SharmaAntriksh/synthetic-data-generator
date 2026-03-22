@@ -170,20 +170,9 @@ def _generate_scd2_versions(
     # Reassign ProductKey sequentially
     result["ProductKey"] = np.arange(1, total_rows + 1, dtype="int64")
 
-    # Remap BaseProductKey to the new ProductKey of each group's base variant.
-    # Before SCD2, BaseProductKey == ProductID of the VariantIndex=0 member.
-    # After reassignment, map that ProductID back to the new current ProductKey.
-    if "BaseProductKey" in result.columns and "VariantIndex" in result.columns:
-        base_current = result.loc[
-            (result["VariantIndex"] == 0) & (result["IsCurrent"] == 1),
-            ["ProductID", "ProductKey"],
-        ]
-        pid_to_new_pk = base_current.set_index("ProductID")["ProductKey"]
-        remapped = result["BaseProductKey"].map(pid_to_new_pk)
-        # Fallback to original value if mapping is incomplete (e.g. no-variant products)
-        result["BaseProductKey"] = (
-            remapped.fillna(result["BaseProductKey"]).astype("int64")
-        )
+    # BaseProductKey retains its pre-SCD2 value (== ProductID of the
+    # VariantIndex=0 base product).  This is a stable reference to the
+    # product identity, independent of which SCD2 version row it lands on.
 
     n_with_history = int((n_versions > 1).sum())
     info(f"Products SCD2: {n_with_history:,}/{N:,} products have price history "
@@ -479,6 +468,10 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
             rng_scd2, df, scd2_cfg, start_date, end_date,
             pricing_cfg=p.get("pricing"),
         )
+
+    # Backfill any null descriptions with the product name
+    if "ProductDescription" in df.columns:
+        df["ProductDescription"] = df["ProductDescription"].fillna(df["ProductName"])
 
     # -----------------------------------------------------------------
     # Split into Products (core) and ProductProfile (analytical)

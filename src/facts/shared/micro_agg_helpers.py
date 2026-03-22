@@ -36,7 +36,7 @@ def deduplicate_tuples(
     arrays: List[np.ndarray],
     output_keys: List[str],
 ) -> Optional[Dict[str, np.ndarray]]:
-    """Deduplicate N-ary tuples via hash-based DataFrame.drop_duplicates.
+    """Deduplicate N-ary tuples via pandas hash-based drop_duplicates.
 
     Returns a dict mapping *output_keys* to the unique columns,
     or None if the result is empty.

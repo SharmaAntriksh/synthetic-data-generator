@@ -59,6 +59,17 @@ def _as_datetime64_D(x):
 _brand_flat_cache_ref: list | None = None
 _brand_flat_cache_data: tuple | None = None  # (flat_idx, offsets)
 
+# Worker-lifetime CDF cache for weighted product sampling.
+# Keyed by (pool_id, brand_or_merged, cal_month).  Contents are deterministic
+# (intersections + CDFs depend only on store assortment, brand buckets,
+# and product weights — all identical across chunks in the same worker).
+_worker_cdf_cache: dict = {}
+
+
+def reset_worker_cdf_cache() -> None:
+    """Clear the worker-lifetime CDF cache (called once per worker init)."""
+    _worker_cdf_cache.clear()
+
 
 def _get_brand_flat_cache(brand_to_rows: list, B: int) -> tuple:
     """Return (flat_idx, offsets) for brand_to_rows, caching across calls."""
@@ -296,9 +307,8 @@ def _sample_products_per_store(
             # --- Brand-aware path ---
             if brand_to_rows is not None and pool.size > 0:
                 _sample_brand_aware(
-                    rng, out, orig_idx, count, pool, brand_to_rows,
+                    rng, out, orig_idx, count, pool,
                     brand_probs, B, product_weight, _cdf_cache, _cal_month,
-                    n_products,
                 )
             elif product_weight is not None and pool.size > 1:
                 # --- Popularity-weighted (no brand) ---
@@ -332,67 +342,45 @@ def _sample_products_per_store(
 
 
 def _sample_brand_aware(
-    rng, out, orig_idx, count, pool, brand_to_rows, brand_probs, B,
-    product_weight, _cdf_cache, _cal_month, n_products,
+    rng, out, orig_idx, count, pool, brand_probs, B,
+    product_weight, _cdf_cache, _cal_month,
 ):
-    """Pick brand first, then sample from store-pool ∩ brand-bucket."""
-    # Pick a brand for each order line
-    brand_ids = rng.choice(B, size=count, p=brand_probs)
+    """Sample products using merged brand × popularity CDF (no brand loop).
 
-    # Cache key: id(pool) is stable within a worker (pools are persistent numpy views)
+    Builds a single per-store CDF where each product's weight incorporates
+    its brand probability: w(p) = brand_prob[brand_of_p] * product_weight[p].
+    One vectorized RNG + searchsorted call per store instead of looping over
+    ~200 brands.  Produces the same marginal distribution as the two-stage
+    "pick brand, then pick within brand" approach.
+    """
     pool_set_key = id(pool)
+    merged_key = (pool_set_key, "_merged_", _cal_month)
 
-    # Group by brand
-    brand_order = np.argsort(brand_ids, kind="stable")
-    brand_counts = np.bincount(brand_ids, minlength=B)
-    brand_starts = np.zeros(B + 1, dtype=np.int64)
-    np.cumsum(brand_counts, out=brand_starts[1:])
+    if _cdf_cache is not None and merged_key in _cdf_cache:
+        merged_pool, merged_cdf = _cdf_cache[merged_key]
+    else:
+        # Build combined weight: brand_prob[brand] * product_weight[product]
+        product_brand_key = _get_state_attr("product_brand_key", default=None)
+        w = np.ones(len(pool), dtype=np.float64)
+        if product_weight is not None:
+            w *= product_weight[pool]
+        if product_brand_key is not None:
+            pool_brands = product_brand_key[pool].astype(np.intp)
+            valid = (pool_brands >= 0) & (pool_brands < B)
+            w[valid] *= brand_probs[pool_brands[valid]]
+            w[~valid] *= 1e-6
+        merged_cdf = _normalize_cdf(w)
+        merged_pool = pool
+        if _cdf_cache is not None:
+            _cdf_cache[merged_key] = (merged_pool, merged_cdf)
 
-    for b in range(B):
-        bs, be = int(brand_starts[b]), int(brand_starts[b + 1])
-        cnt = be - bs
-        if cnt == 0:
-            continue
-        b_orig = orig_idx[brand_order[bs:be]]
-
-        # Get store ∩ brand rows (cached)
-        cache_key = (pool_set_key, b, _cal_month)
-        if _cdf_cache is not None and cache_key in _cdf_cache:
-            isect, cdf = _cdf_cache[cache_key]
-        else:
-            # Intersect: store pool rows that belong to brand b
-            brand_rows = brand_to_rows[b]
-            if brand_rows is not None and len(brand_rows) > 0:
-                # brand_rows is sorted (from argsort); pool may not be
-                pool_s = np.sort(pool) if pool.size > 1 else pool
-                pos = np.searchsorted(brand_rows, pool_s)
-                pos = np.clip(pos, 0, len(brand_rows) - 1)
-                mask = brand_rows[pos] == pool_s
-                isect = pool_s[mask]
-            else:
-                isect = np.empty(0, dtype=np.int32)
-
-            # Build CDF for weighted sampling within intersection
-            if isect.size > 0 and product_weight is not None:
-                cdf = _normalize_cdf(product_weight[isect])
-            else:
-                cdf = None
-
-            if _cdf_cache is not None:
-                _cdf_cache[cache_key] = (isect, cdf)
-
-        # Sample from intersection
-        if isect.size > 0:
-            if cdf is not None and cdf.size > 0 and float(cdf[-1]) > 1e-12:
-                u = rng.random(cnt)
-                picks = np.searchsorted(cdf, u, side="right")
-                np.minimum(picks, len(isect) - 1, out=picks)
-                out[b_orig] = isect[picks]
-            else:
-                out[b_orig] = isect[rng.integers(0, len(isect), size=cnt)]
-        else:
-            # Brand has no products in this store — fall back to full pool
-            out[b_orig] = pool[rng.integers(0, len(pool), size=cnt)]
+    if merged_cdf is not None and merged_cdf.size > 0 and float(merged_cdf[-1]) > 1e-12:
+        u = rng.random(count)
+        picks = np.searchsorted(merged_cdf, u, side="right")
+        np.minimum(picks, len(merged_pool) - 1, out=picks)
+        out[orig_idx] = merged_pool[picks]
+    else:
+        out[orig_idx] = pool[rng.integers(0, len(pool), size=count)]
 
 
 def _get_state_attr(*names, default=None):
@@ -979,9 +967,9 @@ def build_chunk_table(
     max_lines = int(getattr(State, "max_lines_per_order", 6) or 6)
     avg_lines_est = 1.0 if max_lines == 1 else 1.8
 
-    # CDF cache for weighted product sampling — keyed by (pool_key, cal_month).
-    # Only 12 unique calendar months exist, so CDFs are reused across years.
-    _product_cdf_cache: dict = {}
+    # CDF cache: use worker-lifetime cache so subsequent chunks skip
+    # intersection + CDF recomputation entirely (contents are deterministic).
+    _product_cdf_cache = _worker_cdf_cache
 
     for m_offset in range(T):
         m_rows = int(rows_per_month[m_offset])
@@ -1507,7 +1495,7 @@ def build_chunk_table(
                         promo_keys[new_indices[active]] = int(_nc_keys[pi])
 
         # --------------------------------------------------------
-        # EMPLOYEE (SalesPersonEmployeeKey)
+        # EMPLOYEE (EmployeeKey)
         #   Agreement:
         #     - If order identifiers exist (skip_cols == False): 1 salesperson per order (broadcast to all lines),
         #       still respecting effective-dated store assignments by (StoreKey, OrderDate).
@@ -1625,7 +1613,7 @@ def build_chunk_table(
         cols["CustomerKey"] = customer_keys_out
         cols["ProductKey"] = product_keys
         cols["StoreKey"] = store_key_arr
-        cols["SalesPersonEmployeeKey"] = salesperson_key_arr
+        cols["EmployeeKey"] = salesperson_key_arr
         cols["PromotionKey"] = promo_keys
         cols["CurrencyKey"] = currency_arr
 

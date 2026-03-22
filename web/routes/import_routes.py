@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json as _json
+import logging
 import os
 import subprocess
 import sys
@@ -27,7 +28,16 @@ from web.shared_state import REPO_ROOT, _ANSI_RE
 router = APIRouter(prefix="/api", tags=["import"])
 
 _DATASETS_DIR = REPO_ROOT / "generated_datasets"
+_DATASETS_DIR_RESOLVED = _DATASETS_DIR.resolve()
 _IMPORT_SCRIPT = REPO_ROOT / "scripts" / "sql" / "run_sql_server_import.py"
+
+
+def _safe_dataset_path(name: str) -> Path:
+    """Resolve dataset name to a path, rejecting traversal attempts."""
+    resolved = (_DATASETS_DIR / name).resolve()
+    if not resolved.is_relative_to(_DATASETS_DIR_RESOLVED):
+        raise ValueError("Invalid dataset name")
+    return resolved
 
 # ---------------------------------------------------------------------------
 # Job state (single import at a time)
@@ -74,16 +84,10 @@ def list_odbc_drivers():
 # Import execution
 # ---------------------------------------------------------------------------
 
-def _run_import_thread(job: dict, req: ImportRequest):
+def _run_import_thread(job: dict, req: ImportRequest, dataset_path: Path):
     """Run the SQL Server import script as a subprocess."""
     global _current_import
     try:
-        dataset_path = _DATASETS_DIR / req.dataset
-        if not dataset_path.is_dir():
-            job["logs"].append(f"ERROR: Dataset not found: {req.dataset}")
-            job["status"] = "failed"
-            job["exit_code"] = -1
-            return
 
         cmd = [
             sys.executable, "-u", str(_IMPORT_SCRIPT),
@@ -124,8 +128,9 @@ def _run_import_thread(job: dict, req: ImportRequest):
         proc.wait()
         job["exit_code"] = proc.returncode
         job["status"] = "done" if proc.returncode == 0 else "failed"
-    except Exception as e:
-        job["logs"].append(f"ERROR: {e}")
+    except Exception:
+        logging.getLogger(__name__).exception("Import thread failed")
+        job["logs"].append("ERROR: Import failed unexpectedly. Check server logs for details.")
         job["status"] = "failed"
         job["exit_code"] = -1
     finally:
@@ -149,7 +154,10 @@ def start_import(req: ImportRequest):
         raise HTTPException(400, "Username is required when not using Windows Authentication.")
 
     # Validate dataset exists and has SQL scripts (CSV format only)
-    dataset_path = _DATASETS_DIR / req.dataset
+    try:
+        dataset_path = _safe_dataset_path(req.dataset)
+    except ValueError:
+        raise HTTPException(400, "Invalid dataset name.")
     if not dataset_path.is_dir():
         raise HTTPException(404, f"Dataset not found: {req.dataset}")
     sql_dir = dataset_path / "sql"
@@ -175,7 +183,7 @@ def start_import(req: ImportRequest):
         }
         _current_import = job
 
-    t = threading.Thread(target=_run_import_thread, args=(job, req), daemon=True)
+    t = threading.Thread(target=_run_import_thread, args=(job, req, dataset_path), daemon=True)
     t.start()
     return {"ok": True, "job_id": job["id"]}
 

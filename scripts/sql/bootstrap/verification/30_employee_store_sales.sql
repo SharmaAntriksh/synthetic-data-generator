@@ -22,14 +22,14 @@ BEGIN
 
     -- Orphaned sales
     DECLARE @orphaned INT;
-    SELECT @orphaned = COUNT(DISTINCT CAST(f.SalesPersonEmployeeKey AS VARCHAR) + '-' + CAST(f.StoreKey AS VARCHAR))
+    SELECT @orphaned = COUNT(DISTINCT CAST(f.EmployeeKey AS VARCHAR) + '-' + CAST(f.StoreKey AS VARCHAR))
     FROM dbo.Sales f
     LEFT JOIN dbo.EmployeeStoreAssignments esa
-      ON  esa.EmployeeKey = f.SalesPersonEmployeeKey
+      ON  esa.EmployeeKey = f.EmployeeKey
      AND esa.StoreKey     = f.StoreKey
      AND f.OrderDate     >= esa.StartDate
      AND (esa.EndDate IS NULL OR f.OrderDate <= esa.EndDate)
-    WHERE f.SalesPersonEmployeeKey > 0
+    WHERE f.EmployeeKey > 0
       AND esa.EmployeeKey IS NULL;
     INSERT INTO #R VALUES ('Referential', 'No orphaned sales (employee+store+date)',
         'Every sale with a salesperson has a matching effective-dated assignment',
@@ -38,11 +38,11 @@ BEGIN
 
     -- Salesperson FK
     DECLARE @bad_sp INT;
-    SELECT @bad_sp = COUNT(DISTINCT f.SalesPersonEmployeeKey)
-    FROM dbo.Sales f LEFT JOIN dbo.Employees e ON e.EmployeeKey = f.SalesPersonEmployeeKey
-    WHERE f.SalesPersonEmployeeKey > 0 AND e.EmployeeKey IS NULL;
+    SELECT @bad_sp = COUNT(DISTINCT f.EmployeeKey)
+    FROM dbo.Sales f LEFT JOIN dbo.Employees e ON e.EmployeeKey = f.EmployeeKey
+    WHERE f.EmployeeKey > 0 AND e.EmployeeKey IS NULL;
     INSERT INTO #R VALUES ('Referential', 'All salesperson keys exist in Employees',
-        'SalesPersonEmployeeKey in Sales references a valid Employees row',
+        'EmployeeKey in Sales references a valid Employees row',
         CASE WHEN @bad_sp = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@bad_sp AS VARCHAR) + ' invalid keys');
 
@@ -58,10 +58,10 @@ BEGIN
 
     -- No managers in sales
     DECLARE @mgr_sales INT;
-    SELECT @mgr_sales = COUNT(DISTINCT SalesPersonEmployeeKey) FROM dbo.Sales
-    WHERE SalesPersonEmployeeKey >= 30000000 AND SalesPersonEmployeeKey < 40000000;
+    SELECT @mgr_sales = COUNT(DISTINCT EmployeeKey) FROM dbo.Sales
+    WHERE EmployeeKey >= 30000000 AND EmployeeKey < 40000000;
     INSERT INTO #R VALUES ('Domain', 'No managers in sales',
-        'Store Manager keys (30M-40M range) should not appear as SalesPersonEmployeeKey',
+        'Store Manager keys (30M-40M range) should not appear as EmployeeKey',
         CASE WHEN @mgr_sales = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@mgr_sales AS VARCHAR) + ' manager keys found');
 
@@ -92,11 +92,11 @@ BEGIN
 
     -- Unassigned salesperson keys
     DECLARE @unassigned INT;
-    SELECT @unassigned = COUNT(*) FROM dbo.Sales WHERE SalesPersonEmployeeKey <= 0;
+    SELECT @unassigned = COUNT(*) FROM dbo.Sales WHERE EmployeeKey <= 0;
     DECLARE @total_sales INT;
     SELECT @total_sales = COUNT(*) FROM dbo.Sales;
     INSERT INTO #R VALUES ('Domain', 'No unassigned salesperson keys',
-        'SalesPersonEmployeeKey should be > 0 (not -1 or 0)',
+        'EmployeeKey should be > 0 (not -1 or 0)',
         CASE WHEN @unassigned = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@unassigned AS VARCHAR) + ' of ' + CAST(@total_sales AS VARCHAR) + ' unassigned');
 

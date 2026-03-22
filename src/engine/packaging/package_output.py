@@ -28,7 +28,6 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     """
     file_format = str(sales_cfg.file_format).lower()
     is_csv = file_format == "csv"
-    # info(f"[DEBUG] package_output file_format={file_format!r} is_csv={is_csv}")
 
     _raw_folder = unquote(str(cfg.final_output_folder))
     if ".." in _raw_folder:

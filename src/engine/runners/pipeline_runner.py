@@ -45,6 +45,10 @@ class PipelineOverrides:
     products: Optional[int] = None              # products.num_products
     promotions: Optional[int] = None            # "total" promotions, distributed across buckets when possible
 
+    # SCD2 toggles
+    products_scd2: Optional[bool] = None        # products.scd2.enabled
+    customers_scd2: Optional[bool] = None       # customers.scd2.enabled
+
 
 
 def _inject_models_appearance(cfg, models_cfg) -> None:
@@ -336,6 +340,11 @@ def _apply_overrides(cfg, sales_cfg, overrides: PipelineOverrides):
 
     if overrides.promotions is not None:
         _apply_promotions_total(cfg.promotions, int(overrides.promotions))
+
+    if overrides.products_scd2 is not None:
+        cfg.products.scd2.enabled = bool(overrides.products_scd2)
+    if overrides.customers_scd2 is not None:
+        cfg.customers.scd2.enabled = bool(overrides.customers_scd2)
 
     return cfg, sales_cfg
 

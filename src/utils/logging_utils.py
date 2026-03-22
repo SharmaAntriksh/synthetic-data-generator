@@ -27,12 +27,12 @@ def short_path(p: Any) -> Any:
         return p
     try:
         pth = Path(p)
-    except Exception:
+    except TypeError:
         return p
 
     try:
         return str(pth.relative_to(PROJECT_ROOT))
-    except Exception:
+    except (ValueError, TypeError):
         # Preserve previous fallback behavior: only last component
         return pth.name
 
@@ -125,7 +125,7 @@ def _activate_pending() -> None:
 def _is_tty() -> bool:
     try:
         return sys.stdout.isatty()
-    except Exception:
+    except (AttributeError, OSError):
         return False
 
 
@@ -187,7 +187,7 @@ def configure_logging(
         if _LOG_FD is not None:
             try:
                 os.close(_LOG_FD)
-            except Exception:
+            except OSError:
                 pass
             _LOG_FD = None
 
@@ -259,7 +259,7 @@ def _close_log_fd() -> None:
     if _LOG_FD is not None:
         try:
             os.close(_LOG_FD)
-        except Exception:
+        except OSError:
             pass
         _LOG_FD = None
 
@@ -272,7 +272,7 @@ def _write_to_file(line: str) -> None:
         return
     try:
         os.write(_LOG_FD, (line + "\n").encode("utf-8", errors="replace"))
-    except Exception:
+    except OSError:
         # File logging should never crash the pipeline
         pass
 
@@ -411,7 +411,7 @@ def work(msg: str = "", *, outfile: Any = None, **_ignore: Any) -> None:
     elif outfile:
         try:
             final = f"-> {Path(outfile).name}"
-        except Exception:
+        except TypeError:
             final = f"-> {outfile}"
     else:
         final = ""

@@ -102,7 +102,7 @@ def normalize_to_schema(
                 if pa.types.is_decimal(field.type) and pa.types.is_floating(col.type):
                     col = pc.round(col, ndigits=int(field.type.scale))
                 col = pc.cast(col, field.type, safe=cast_safe)
-            except Exception as ex:
+            except (ValueError, TypeError, ArithmeticError) as ex:
                 raise RuntimeError(
                     f"[{table_name or 'unknown'}] Failed cast '{field.name}': {col.type} -> {field.type} "
                     f"(safe={cast_safe}): {ex}"

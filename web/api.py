@@ -10,6 +10,7 @@ Launch:  python -m uvicorn web.api:app --port 8502
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
+from src import __version__
 from web.routes.config_routes import router as config_router
 from web.routes.models_routes import router as models_router
 from web.routes.generation_routes import router as generation_router
@@ -30,15 +32,20 @@ from web.routes.import_routes import router as import_router
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Synthetic Data Generator", version="1.0.0")
+app = FastAPI(title="Synthetic Data Generator", version=__version__)
+
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:8502",
+    "http://127.0.0.1:8502",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+_cors_env = os.environ.get("CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else _DEFAULT_CORS_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8502",
-        "http://127.0.0.1:8502",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )

@@ -188,7 +188,7 @@ def _process_single_part(
             try:
                 sort_keys = [(c, "ascending") for c in pcols]
                 table = table.sort_by(sort_keys)
-            except Exception as ex:
+            except (KeyError, ValueError, TypeError) as ex:
                 warn(f"[DELTA] Sort failed for {os.path.basename(pf_path)}: {ex}")
 
         _delta_write_table(

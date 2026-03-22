@@ -23,6 +23,17 @@ def str2bool(v):
     raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
+def positive_int(v):
+    """Argparse type for positive integers (>= 1)."""
+    try:
+        n = int(v)
+    except (ValueError, TypeError):
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {v}")
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {v}")
+    return n
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="syndata",
@@ -60,13 +71,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--workers",
-        type=int,
+        type=positive_int,
         help="Override sales.workers",
     )
 
     parser.add_argument(
         "--chunk-size",
-        type=int,
+        type=positive_int,
         help="Override sales.chunk_size",
     )
 
@@ -170,6 +181,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override total promotions (distributed across promotion buckets when possible)",
     )
 
+    # ----------------- SCD2 TOGGLES -----------------
+
+    parser.add_argument(
+        "--products-scd2",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Override products.scd2.enabled (true/false)",
+    )
+
+    parser.add_argument(
+        "--customers-scd2",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Override customers.scd2.enabled (true/false)",
+    )
+
     return parser
 
 
@@ -193,6 +224,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         stores=args.stores,
         products=args.products,
         promotions=args.promotions,
+        products_scd2=args.products_scd2,
+        customers_scd2=args.customers_scd2,
     )
 
     if args.refresh_fx_master:

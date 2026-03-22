@@ -144,11 +144,11 @@ class SharedArrayGroup:
         for shm in self._blocks:
             try:
                 shm.close()
-            except Exception:
+            except (OSError, BufferError):
                 pass
             try:
                 shm.unlink()
-            except Exception:
+            except (OSError, BufferError):
                 pass
         self._blocks.clear()
 

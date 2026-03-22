@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json as _json
+import logging
 import os
 import subprocess
 import sys
@@ -23,6 +24,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from src.utils.config_helpers import int_or
 from web.shared_state import (
     REPO_ROOT,
     _ANSI_RE,
@@ -35,6 +37,7 @@ import web.shared_state as _state
 
 router = APIRouter(prefix="/api", tags=["generation"])
 
+_PIPELINE_TIMEOUT = int_or(os.environ.get("PIPELINE_TIMEOUT_SECONDS"), 4 * 3600)
 _VALID_ONLY = {"dimensions", "sales"}
 _VALID_REGEN = {"all", "products", "customers", "stores", "employees", "dates",
                 "geography", "currency", "exchange_rates", "promotions", "suppliers",
@@ -159,17 +162,18 @@ def _run_pipeline_thread(job: dict, cfg_snapshot: dict, models_snapshot: dict, r
                 clean = _ANSI_RE.sub("", line.rstrip())
                 job["logs"].append(clean)
 
-            # 4-hour hard timeout to prevent zombie processes
+            # Hard timeout to prevent zombie processes (configurable via env var)
             try:
-                proc.wait(timeout=4 * 3600)
+                proc.wait(timeout=_PIPELINE_TIMEOUT)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()  # ensure returncode is set after kill
-                job["logs"].append("ERROR: Pipeline killed after 4-hour timeout")
+                job["logs"].append(f"ERROR: Pipeline killed after {_PIPELINE_TIMEOUT}s timeout")
             job["exit_code"] = proc.returncode
             job["status"] = "done" if proc.returncode == 0 else "failed"
-    except Exception as e:
-        job["logs"].append(f"ERROR: {e}")
+    except Exception:
+        logging.getLogger(__name__).exception("Pipeline thread failed")
+        job["logs"].append("ERROR: Pipeline failed unexpectedly. Check server logs for details.")
         job["status"] = "failed"
         job["exit_code"] = -1
     finally:

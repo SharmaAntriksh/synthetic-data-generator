@@ -82,7 +82,7 @@ def _safe_parse_as_of(as_of_date: Any, fallback: pd.Timestamp) -> pd.Timestamp:
         return fallback
     try:
         ts = pd.to_datetime(as_of_date).normalize()
-    except Exception as exc:
+    except (ValueError, TypeError) as exc:
         raise ValueError(
             f"Unable to parse as_of_date={as_of_date!r} as a date. "
             "Provide an ISO-format string like '2025-12-31'."

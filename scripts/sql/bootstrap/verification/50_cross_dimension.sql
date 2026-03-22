@@ -82,8 +82,8 @@ BEGIN
        AND OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
     BEGIN
         DECLARE @no_flag INT;
-        SELECT @no_flag = COUNT(DISTINCT f.SalesPersonEmployeeKey)
-        FROM dbo.Sales f JOIN dbo.Employees e ON e.EmployeeKey = f.SalesPersonEmployeeKey
+        SELECT @no_flag = COUNT(DISTINCT f.EmployeeKey)
+        FROM dbo.Sales f JOIN dbo.Employees e ON e.EmployeeKey = f.EmployeeKey
         WHERE e.SalesPersonFlag = 0;
         INSERT INTO #R VALUES ('Domain', 'SalesPerson has SalesPersonFlag=1',
             'Employees appearing in Sales should have SalesPersonFlag set',

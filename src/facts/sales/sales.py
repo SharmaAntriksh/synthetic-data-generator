@@ -924,7 +924,7 @@ def generate_sales_fact(
 
             del _prod_df_dedup
 
-        except Exception as exc:
+        except (KeyError, ValueError, TypeError, OSError) as exc:
             info(f"Could not load/derive Brand from products.parquet ({type(exc).__name__}: {exc}); "
                  "disabling brand_popularity for this run.")
             product_brand_key = None
@@ -996,7 +996,7 @@ def generate_sales_fact(
             product_seasonality = np.zeros(len(_sea_str), dtype=np.int8)
             for _sname, _scode in _SEASON_ENCODE.items():
                 product_seasonality[_sea_str == _sname] = _scode
-        except Exception as exc:
+        except (KeyError, ValueError, TypeError, OSError) as exc:
             info(f"Could not load product profile ({type(exc).__name__}: {exc}); using uniform product sampling.")
             product_popularity = None
             product_seasonality = None
@@ -1045,7 +1045,7 @@ def generate_sales_fact(
                     _product_scd2_active = True
                     info(f"Product SCD2: {_product_scd2_starts.shape[1]} max versions × "
                          f"{_product_scd2_starts.shape[0]:,} products")
-            except Exception as exc:
+            except (KeyError, ValueError, TypeError, OSError) as exc:
                 info(f"Product SCD2 build failed ({type(exc).__name__}: {exc}); "
                      "using current-version prices for all months.")
 
@@ -1152,19 +1152,19 @@ def generate_sales_fact(
             new_customer_promo_keys = np.array([], dtype=np.int32)
 
     # ------------------------------------------------------------
-    # Employees / store assignments -> SalesPersonEmployeeKey
+    # Employees / store assignments -> EmployeeKey
     # ------------------------------------------------------------
     emp_assign_path = parquet_folder_p / "employee_store_assignments.parquet"
 
-    # Fail fast: the bridge is the single source of truth for SalesPersonEmployeeKey.
-    # Without it, every Sales row would get SalesPersonEmployeeKey = -1.
+    # Fail fast: the bridge is the single source of truth for EmployeeKey.
+    # Without it, every Sales row would get EmployeeKey = -1.
     if not emp_assign_path.exists():
         raise FileNotFoundError(
             f"employee_store_assignments.parquet is required: {emp_assign_path}. "
             f"Run dimension generation first."
         )
 
-    # config-driven allowlist: which RoleAtStore can appear as SalesPersonEmployeeKey
+    # config-driven allowlist: which RoleAtStore can appear as EmployeeKey
     salesperson_roles = _cfg_get(cfg, ["sales", "salesperson_roles"], default=None)
     if not (isinstance(salesperson_roles, list) and salesperson_roles):
         primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")
@@ -1451,7 +1451,7 @@ def generate_sales_fact(
             if mem_cap < n_workers:
                 info(f"Auto-capping workers {n_workers} -> {mem_cap} (available RAM: {avail_mb:.0f} MB)")
                 n_workers = mem_cap
-        except Exception as exc:
+        except (OSError, AttributeError) as exc:
             logging.getLogger(__name__).debug(
                 "Could not query available RAM (%s); skipping worker cap", exc
             )
@@ -1685,7 +1685,7 @@ def generate_sales_fact(
                 category_labels=budget_lookups["budget_category_labels"],
             )
             info("Budget streaming aggregation: enabled")
-        except Exception as exc:
+        except (KeyError, ValueError, TypeError) as exc:
             info(f"Budget streaming aggregation: disabled ({type(exc).__name__}: {exc})")
             budget_enabled = False
             budget_acc = None

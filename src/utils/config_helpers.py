@@ -43,7 +43,7 @@ def int_or(value: Any, default: int) -> int:
         if value is None or value == "":
             return int(default)
         return int(value)
-    except Exception:
+    except (ValueError, TypeError):
         return int(default)
 
 
@@ -53,7 +53,7 @@ def float_or(value: Any, default: float) -> float:
         if value is None or value == "":
             return float(default)
         return float(value)
-    except Exception:
+    except (ValueError, TypeError):
         return float(default)
 
 
