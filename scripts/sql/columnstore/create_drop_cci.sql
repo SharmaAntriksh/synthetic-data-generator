@@ -32,7 +32,7 @@ SELECT s.name, t.name, t.object_id
 FROM sys.tables t
 JOIN sys.schemas s ON s.schema_id = t.schema_id
 WHERE t.is_ms_shipped = 0
-  AND s.name NOT IN ('sys', 'INFORMATION_SCHEMA');
+  AND s.name NOT IN ('sys', 'INFORMATION_SCHEMA', 'admin');
 
 IF NOT EXISTS (SELECT 1 FROM #CCI_Targets)
     THROW 51000, 'No user tables found in the database.', 1;

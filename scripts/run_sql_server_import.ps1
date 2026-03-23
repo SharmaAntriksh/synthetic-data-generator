@@ -26,6 +26,9 @@ param (
     # --- Optional flags ---
     [bool]$ApplyCCI = $false,
 
+    # Drop primary key and foreign key constraints after import (reduces size)
+    [bool]$DropPK = $false,
+
     # Run data verification after import (EXEC verify.RunAll)
     [switch]$Verify,
 
@@ -92,6 +95,7 @@ try {
     }
 
     if ($ApplyCCI) { $argsList += "--apply-cci" }
+    if ($DropPK)   { $argsList += "--drop-pk" }
     if ($Verify)   { $argsList += "--verify" }
     if ($OdbcDriver) { $argsList += @("--odbc-driver", $OdbcDriver) }
 
@@ -122,6 +126,7 @@ try {
 
         $flags = @()
         if ($ApplyCCI) { $flags += "apply-cci" }
+        if ($DropPK)   { $flags += "drop-pk" }
         if ($Verify)   { $flags += "verify" }
         if ($OdbcDriver) { $flags += ("odbc=" + $OdbcDriver) }
 

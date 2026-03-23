@@ -683,7 +683,7 @@ def _run_verify(cursor) -> None:
         if summary:
             verdict = summary[4] if len(summary) > 4 else "UNKNOWN"
             level = "DONE" if failed == 0 else "WARN"
-            _log(level, f"  Verification: {passed} passed, {failed} failed, {info} info — {verdict}")
+            _log(level, f"  Verification: {passed} passed, {failed} failed, {info} info - {verdict}")
 
     _drain_results(cursor)
 
@@ -695,6 +695,7 @@ def import_sql_server(
     run_dir: Path,
     connection_string: str,
     apply_cci: bool = False,
+    drop_pk: bool = False,
     verify: bool = False,
 ) -> None:
     import time as _time
@@ -712,6 +713,7 @@ def import_sql_server(
 
     bootstrap_dir = PROJECT_ROOT / "scripts" / "sql" / "bootstrap"
     cci_proc_file = bootstrap_dir / "create_cci_proc.sql"
+    pk_proc_file = bootstrap_dir / "create_pk_proc.sql"
 
     tables_files, view_files, constraint_files, cci_apply_files, verify_files = _collect_phase_scripts(sql_dir)
 
@@ -851,7 +853,7 @@ def import_sql_server(
             f"Failed importing SQL into database '{database}'. Details: {exc.args}"
         ) from exc
 
-    # Step 3: CCI — always install the management proc; only apply when requested
+    # Step 3: CCI + optional PK/FK drop (share one connection)
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             _try_disable_query_timeout(conn)
@@ -860,8 +862,57 @@ def import_sql_server(
             # 3.1 Install CCI management proc (always — ships with the database)
             if cci_proc_file.is_file():
                 execute_sql_batches(cursor, cci_proc_file)
+            if pk_proc_file.is_file():
+                execute_sql_batches(cursor, pk_proc_file)
 
-            # 3.2 Apply CCI scripts (only when --apply-cci is set)
+            # 3.2 Drop PK/FK constraints via stored proc (only when --drop-pk is set)
+            #     Must run BEFORE CCI apply — CCI requires no clustered rowstore index.
+            if drop_pk:
+                _t_drop = _time.time()
+                _log("INFO", "  Dropping Primary Keys & Foreign Keys")
+
+                # Snapshot PK sizes before drop
+                cursor.execute(
+                    "SELECT t.name, "
+                    "CAST(SUM(ps.used_page_count) * 8.0 / 1024 AS DECIMAL(10,1)) "
+                    "FROM sys.key_constraints kc "
+                    "JOIN sys.tables t ON t.object_id = kc.parent_object_id "
+                    "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
+                    "JOIN sys.indexes i ON i.object_id = kc.parent_object_id AND i.name = kc.name "
+                    "JOIN sys.dm_db_partition_stats ps ON ps.object_id = i.object_id AND ps.index_id = i.index_id "
+                    "WHERE kc.type = 'PK' AND t.is_ms_shipped = 0 "
+                    "  AND sc.name NOT IN ('sys','INFORMATION_SCHEMA','admin') "
+                    "GROUP BY t.name ORDER BY SUM(ps.used_page_count) DESC"
+                )
+                pk_before = cursor.fetchall()
+
+                if not pk_before:
+                    _log("INFO", "    No primary keys found to drop")
+                else:
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM sys.foreign_keys fk "
+                        "JOIN sys.tables t ON t.object_id = fk.parent_object_id "
+                        "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+                        "WHERE t.is_ms_shipped = 0 AND s.name NOT IN ('sys','INFORMATION_SCHEMA','admin')"
+                    )
+                    fk_count_before = int(cursor.fetchone()[0])
+                    total_saved = sum(float(r[1]) for r in pk_before)
+
+                    # Call the stored proc — saves definitions to backup table, then drops
+                    cursor.execute("EXEC [admin].[ManagePrimaryKeys] @Action = 'DROP'")
+                    _drain_results(cursor)
+
+                    if fk_count_before:
+                        _log("WORK", f"    Dropped {fk_count_before} foreign key constraints")
+                    for tbl_name, size_mb in pk_before:
+                        if float(size_mb) >= 1.0:
+                            _log("WORK", f"    {tbl_name} - freed {size_mb} MB")
+
+                    _log("DONE", f"  Dropped {len(pk_before)} primary keys, {fk_count_before} foreign keys - "
+                         f"freed {total_saved:.1f} MB in {_time.time() - _t_drop:.1f}s")
+                    _log("INFO", "    Definitions saved to [admin].[_PK_Backup] for RESTORE")
+
+            # 3.3 Apply CCI scripts (only when --apply-cci is set)
             if apply_cci:
                 if not cci_apply_files:
                     _log("INFO", "  No CCI apply scripts found; skipping.")
@@ -887,7 +938,7 @@ def import_sql_server(
 
     except pyodbc.Error as exc:
         raise SqlServerImportError(
-            f"Failed running CCI apply scripts in database '{database}'. Details: {exc.args}"
+            f"Failed running post-import steps in database '{database}'. Details: {exc.args}"
         ) from exc
 
     # Step 4: optional verification (run verify.RunAll scorecard)

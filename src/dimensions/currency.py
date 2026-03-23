@@ -11,7 +11,7 @@ from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 
 
-from src.defaults import CURRENCY_NAME_MAP
+from src.defaults import CURRENCY_BASE, CURRENCY_NAME_MAP
 
 
 # ---------------------------------------------------------
@@ -81,6 +81,11 @@ def _normalize_currency_list(currencies: List[str]) -> List[str]:
 
         seen.add(code)
         normalized.append(code)
+
+    # Ensure the base currency (USD) is always present — ExchangeRates.FromCurrency references it
+    base = CURRENCY_BASE.upper()
+    if base not in seen:
+        normalized.insert(0, base)
 
     return normalized
 

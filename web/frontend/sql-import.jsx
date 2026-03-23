@@ -4,11 +4,11 @@ function SqlImport({ onBack }) {
   /* Connection settings */
   const [server, setServer] = useState("");
   const [database, setDatabase] = useState("");
-  const [dbManuallyEdited, setDbManuallyEdited] = useState(false);
   const [trusted, setTrusted] = useState(true);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [applyCci, setApplyCci] = useState(false);
+  const [dropPk, setDropPk] = useState(false);
   const [odbcDriver, setOdbcDriver] = useState("");
 
   /* Dataset selection */
@@ -130,6 +130,7 @@ function SqlImport({ onBack }) {
         user: trusted ? null : user.trim(),
         password: trusted ? null : password,
         apply_cci: applyCci,
+        drop_pk: dropPk,
         odbc_driver: odbcDriver || null,
       }),
     })
@@ -228,7 +229,7 @@ function SqlImport({ onBack }) {
 
           <div style={{marginBottom: 12}}>
             <label style={labelStyle}>Database</label>
-            <input type="text" value={database} onChange={e => { setDatabase(e.target.value); setDbManuallyEdited(true); }} placeholder="ContosoRetailDW" style={inputStyle} disabled={isRunning} />
+            <input type="text" value={database} onChange={e => setDatabase(e.target.value)} placeholder="ContosoRetailDW" style={inputStyle} disabled={isRunning} />
           </div>
 
           <div style={{marginBottom: 12}}>
@@ -267,6 +268,21 @@ function SqlImport({ onBack }) {
             </label>
             <div style={{fontSize: 11, color: "var(--muted)", marginTop: 2, paddingLeft: 22}}>Improves analytics query performance. Adds 30-60s to import time.</div>
           </div>
+
+          <div style={{marginBottom: 12}}>
+            <label style={{...labelStyle, display: "flex", alignItems: "center", gap: 8, cursor: "pointer"}}>
+              <input type="checkbox" checked={dropPk} onChange={e => setDropPk(e.target.checked)} disabled={isRunning} />
+              Drop Primary Keys
+            </label>
+            <div style={{fontSize: 11, color: "var(--muted)", marginTop: 2, paddingLeft: 22}}>Drops PK and FK constraints after load. Reduces database size for analytics use.</div>
+          </div>
+
+          <div style={{marginTop: 16, padding: "10px 14px", background: "var(--alt)", border: "1px solid var(--border)", borderLeft: "3px solid var(--accent)", borderRadius: 6, fontSize: 12, lineHeight: 1.6, color: "var(--fg)"}}>
+            {!applyCci && !dropPk && <><span style={{fontWeight: 600, color: "var(--accent)"}}>Relational / OLTP</span> — Full integrity with PK indexes for fast lookups.</>}
+            {!applyCci && dropPk && <><span style={{fontWeight: 600, color: "var(--accent)"}}>Smaller relational</span> — No PK indexes, saves space but no index seeks.</>}
+            {applyCci && !dropPk && <><span style={{fontWeight: 600, color: "var(--accent)"}}>Analytics + integrity</span> — Columnstore compression with PK constraints retained.</>}
+            {applyCci && dropPk && <><span style={{fontWeight: 600, color: "var(--accent)"}}>Pure analytics (smallest)</span> — Columnstore only, no PK/FK overhead.</>}
+          </div>
         </div>
 
         {/* Right column: Dataset */}
@@ -282,7 +298,7 @@ function SqlImport({ onBack }) {
               {datasets.map(ds => {
                 const isSel = selectedDataset === ds.name;
                 return (
-                  <button key={ds.name} onClick={() => { if (isRunning) return; setSelectedDataset(ds.name); if (!dbManuallyEdited && ds.description) setDatabase(toDbName(ds.description)); }} style={{
+                  <button key={ds.name} onClick={() => { if (isRunning) return; setSelectedDataset(ds.name); if (ds.description) setDatabase(toDbName(ds.description)); }} style={{
                     display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", borderRadius: 8,
                     cursor: isRunning ? "default" : "pointer",
                     border: `1px solid ${isSel ? "var(--accent)" : "var(--border)"}`,

@@ -354,7 +354,7 @@ function App() {
                 <F label="EU %"><N value={cfg.pctEu} onChange={v => s("pctEu", v)} min={0} max={100} /></F>
                 <F label="Asia %"><N value={cfg.pctAsia} onChange={v => s("pctAsia", v)} min={0} max={100} /></F>
               </R4>
-              <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6}}>Sum: {cfg.pctIndia + cfg.pctUs + cfg.pctEu + cfg.pctAsia} (auto-normalized)</div>
+              <Hint>Sum: {cfg.pctIndia + cfg.pctUs + cfg.pctEu + cfg.pctAsia}% (auto-normalized)</Hint>
               <Sld label="Organization %" value={cfg.pctOrg} min={0} max={100} step={1} onChange={v => s("pctOrg", v)} fmt={v => `${v}%`} />
             </Box>
             <Sld label="Active ratio" value={cfg.customerActiveRatio} min={.1} max={1} step={.01} onChange={v => s("customerActiveRatio", v)} />
@@ -382,14 +382,14 @@ function App() {
                 <F label="Min unit price"><N value={cfg.minPrice} onChange={v => s("minPrice", v)} min={0} step={10} /></F>
                 <F label="Max unit price"><N value={cfg.maxPrice} onChange={v => s("maxPrice", v)} min={1} step={50} /></F>
               </R3>
-              {cfg.maxPrice > cfg.minPrice && <div style={{fontSize: 11, color: "var(--muted)", marginTop: 8}}>Scaled range: ~{((cfg.minPrice || 0) * (cfg.valueScale || 1)).toLocaleString()} {"\u2192"} {((cfg.maxPrice || 0) * (cfg.valueScale || 1)).toLocaleString()}</div>}
+              {cfg.maxPrice > cfg.minPrice && <Hint accent>Scaled range: ~{((cfg.minPrice || 0) * (cfg.valueScale || 1)).toLocaleString()} {"\u2192"} {((cfg.maxPrice || 0) * (cfg.valueScale || 1)).toLocaleString()}</Hint>}
             </Box>
             <Box title="Cost Margins">
               <R2>
                 <F label="Min margin %" help="Minimum cost margin as a fraction (e.g. 0.20 = 20%)."><N value={cfg.marginMin} onChange={v => s("marginMin", v)} min={0} max={1} step={.01} /></F>
                 <F label="Max margin %" help="Maximum cost margin as a fraction."><N value={cfg.marginMax} onChange={v => s("marginMax", v)} min={0} max={1} step={.01} /></F>
               </R2>
-              <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6}}>Margin range: {((cfg.marginMin || 0) * 100).toFixed(0)}% {"\u2013"} {((cfg.marginMax || 0) * 100).toFixed(0)}%</div>
+              <Hint>Margin range: {((cfg.marginMin || 0) * 100).toFixed(0)}% {"\u2013"} {((cfg.marginMax || 0) * 100).toFixed(0)}%</Hint>
             </Box>
             <Box title="Brand Normalization">
               <Check checked={cfg.brandNormalize} onChange={v => s("brandNormalize", v)} label="Pull brand prices toward global median" />
@@ -430,7 +430,7 @@ function App() {
             </Box>
             <Box title="Assortment">
               <Check checked={cfg.storeAssortmentEnabled} onChange={v => s("storeAssortmentEnabled", v)} label="Enable product assortment filtering" />
-              <div style={{fontSize: 11, color: "var(--muted)", marginTop: 4}}>When off, every store sells every product (cross-join).</div>
+              <Hint>When off, every store sells every product (cross-join).</Hint>
             </Box>
           </div>}
 
@@ -468,7 +468,7 @@ function App() {
                 <F label="Bundle" help="Bundle deal promos."><N value={cfg.promoBundle} onChange={v => s("promoBundle", v)} min={0} max={100} step={1} /></F>
                 <F label="New Customer" help="New customer welcome promos."><N value={cfg.promoNewCustomer} onChange={v => s("promoNewCustomer", v)} min={0} max={100} step={1} /></F>
               </R4>
-              <div style={{fontSize: 11, color: "var(--muted)", marginTop: 6}}>Total: {(cfg.promoSeasonal || 0) + (cfg.promoClearance || 0) + (cfg.promoLimited || 0) + (cfg.promoFlash || 0) + (cfg.promoVolume || 0) + (cfg.promoLoyalty || 0) + (cfg.promoBundle || 0) + (cfg.promoNewCustomer || 0)} promos (+ holidays auto-generated per year)</div>
+              <Hint>Total: {(cfg.promoSeasonal || 0) + (cfg.promoClearance || 0) + (cfg.promoLimited || 0) + (cfg.promoFlash || 0) + (cfg.promoVolume || 0) + (cfg.promoLoyalty || 0) + (cfg.promoBundle || 0) + (cfg.promoNewCustomer || 0)} promos (+ holidays auto-generated per year)</Hint>
             </Box>
             <F label="New customer window (months)" help="Months after CustomerStartDate where New Customer promo applies. 0 = same month only."><N value={cfg.promoNewCustWindow} onChange={v => s("promoNewCustWindow", v)} min={0} max={24} step={1} /></F>
           </div>}

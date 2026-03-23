@@ -200,3 +200,11 @@ function Box({title, children}) {
     </div>
   );
 }
+
+function Hint({children, accent}) {
+  return (
+    <div style={{marginTop: 8, padding: "6px 12px", borderLeft: `3px solid ${accent ? "var(--accent)" : "var(--border)"}`, borderRadius: "0 6px 6px 0", background: "var(--alt)", fontSize: 11.5, color: "var(--dim)", lineHeight: 1.5}}>
+      {children}
+    </div>
+  );
+}

@@ -65,6 +65,7 @@ class ImportRequest(BaseModel):
     user: Optional[str] = None
     password: Optional[str] = None
     apply_cci: bool = False
+    drop_pk: bool = False
     odbc_driver: Optional[str] = None
 
 
@@ -193,6 +194,9 @@ def _run_import_thread(job: dict, req: ImportRequest, dataset_path: Path):
 
         if req.apply_cci:
             cmd.append("--apply-cci")
+
+        if req.drop_pk:
+            cmd.append("--drop-pk")
 
         if req.odbc_driver:
             cmd.extend(["--odbc-driver", req.odbc_driver])

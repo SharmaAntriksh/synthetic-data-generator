@@ -90,7 +90,7 @@ BEGIN
     FROM sys.tables t
     JOIN sys.schemas s ON s.schema_id = t.schema_id
     WHERE t.is_ms_shipped = 0
-      AND s.name NOT IN ('sys', 'INFORMATION_SCHEMA')
+      AND s.name NOT IN ('sys', 'INFORMATION_SCHEMA', 'admin')
       AND (
           @Tables IS NULL
           OR t.name IN (

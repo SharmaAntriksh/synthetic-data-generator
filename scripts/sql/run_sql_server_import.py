@@ -109,6 +109,15 @@ def main() -> int:
     )
 
     parser.add_argument(
+        "--drop-pk",
+        action="store_true",
+        help=(
+            "Drop primary key and foreign key constraints after import. "
+            "Reduces database size significantly for analytics workloads."
+        ),
+    )
+
+    parser.add_argument(
         "--verify",
         action="store_true",
         help=(
@@ -135,6 +144,7 @@ def main() -> int:
             run_dir=run_dir,
             connection_string=connection_string,
             apply_cci=bool(args.apply_cci),
+            drop_pk=bool(args.drop_pk),
             verify=bool(args.verify),
         )
 
