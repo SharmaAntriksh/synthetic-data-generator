@@ -538,6 +538,7 @@ class StoresConfig(_Base):
     # Store attribute config
     square_footage: Optional[Dict[str, Any]] = None
     staffing_ranges: Optional[Dict[str, Any]] = None
+    region_weights: Optional[Dict[str, float]] = None  # currency code → fraction of stores
     use_name_pools: bool = True
     # Online store settings
     online_stores: Optional[int] = None      # explicit count carved from num_stores

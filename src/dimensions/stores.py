@@ -247,13 +247,20 @@ def _sample_geography_keys(
     geo_keys: np.ndarray,
     n: int,
     iso_by_geo: Optional[dict[int, str]] = None,
+    pop_by_geo: Optional[dict[int, int]] = None,
     ensure_iso_coverage: bool = False,
+    region_weights: Optional[dict[str, float]] = None,
 ) -> np.ndarray:
-    """
-    Sample GeographyKey values for Stores.
+    """Sample GeographyKey values for Stores.
 
-    If *ensure_iso_coverage* is True, attempt to cover as many distinct
-    ISOCode groups as possible by seeding at least one store per group.
+    Supports three distribution modes (applied in priority order):
+
+    1. **region_weights** — explicit fraction of stores per currency region.
+       Within each region, cities are sampled by population weight.
+    2. **ensure_iso_coverage** — seed at least one store per currency group,
+       then fill remaining stores by population weight.
+    3. **population only** — sample all stores by population weight
+       (falls back to uniform if no population data).
     """
     keys = np.asarray(geo_keys, dtype=np.int64)
     if keys.size == 0:
@@ -261,36 +268,122 @@ def _sample_geography_keys(
     if n <= 0:
         raise ValueError(f"n must be > 0, got {n}")
 
-    if not ensure_iso_coverage or not iso_by_geo:
-        return rng.choice(keys, size=n, replace=True)
+    # Build population weights (uniform fallback if no data)
+    pop_arr = np.array(
+        [max(1, pop_by_geo.get(int(k), 1)) for k in keys],
+        dtype=np.float64,
+    ) if pop_by_geo else np.ones(keys.size, dtype=np.float64)
 
-    iso_arr = np.array([iso_by_geo.get(int(k), "") for k in keys], dtype=object)
-    valid = iso_arr != ""
-    if not np.any(valid):
-        return rng.choice(keys, size=n, replace=True)
+    iso_arr = np.array(
+        [iso_by_geo.get(int(k), "") for k in keys], dtype=object,
+    ) if iso_by_geo else np.full(keys.size, "", dtype=object)
 
-    uniq_iso = sorted(set(iso_arr[valid].tolist()))
-    if not uniq_iso:
-        return rng.choice(keys, size=n, replace=True)
+    # --- Mode 1: explicit region weights ---
+    if region_weights and iso_by_geo:
+        return _sample_by_region_weights(
+            rng, keys, n, iso_arr, pop_arr, region_weights,
+        )
 
-    if n < len(uniq_iso):
-        chosen_iso = rng.choice(
-            np.array(uniq_iso, dtype=object), size=n, replace=False,
-        ).tolist()
-    else:
-        chosen_iso = uniq_iso
+    # --- Mode 2: ISO coverage + population weighting ---
+    if ensure_iso_coverage and iso_by_geo:
+        valid = iso_arr != ""
+        if not np.any(valid):
+            return _weighted_choice(rng, keys, pop_arr, n)
 
-    first: list[int] = []
-    for code in chosen_iso:
-        pool = keys[iso_arr == code]
-        if pool.size:
-            first.append(int(rng.choice(pool, size=1)[0]))
+        uniq_iso = sorted(set(iso_arr[valid].tolist()))
+        if not uniq_iso:
+            return _weighted_choice(rng, keys, pop_arr, n)
 
-    first_arr = np.asarray(first, dtype=np.int64)
-    remaining = n - int(first_arr.size)
-    rest = rng.choice(keys, size=remaining, replace=True) if remaining > 0 else np.empty(0, dtype=np.int64)
+        # Seed one store per currency group (population-weighted pick)
+        if n < len(uniq_iso):
+            chosen_iso = rng.choice(
+                np.array(uniq_iso, dtype=object), size=n, replace=False,
+            ).tolist()
+        else:
+            chosen_iso = uniq_iso
 
-    out = np.concatenate([first_arr, rest])
+        first: list[int] = []
+        for code in chosen_iso:
+            mask = iso_arr == code
+            pool = keys[mask]
+            pool_w = pop_arr[mask]
+            first.append(int(_weighted_choice(rng, pool, pool_w, 1)[0]))
+
+        first_arr = np.asarray(first, dtype=np.int64)
+        remaining = n - len(first_arr)
+        if remaining > 0:
+            rest = _weighted_choice(rng, keys, pop_arr, remaining)
+            out = np.concatenate([first_arr, rest])
+        else:
+            out = first_arr
+        rng.shuffle(out)
+        return out
+
+    # --- Mode 3: population weighting only ---
+    return _weighted_choice(rng, keys, pop_arr, n)
+
+
+def _weighted_choice(
+    rng: np.random.Generator,
+    keys: np.ndarray,
+    weights: np.ndarray,
+    n: int,
+) -> np.ndarray:
+    """Sample *n* keys with replacement, weighted by *weights*."""
+    w = weights / weights.sum()
+    return rng.choice(keys, size=n, replace=True, p=w)
+
+
+def _sample_by_region_weights(
+    rng: np.random.Generator,
+    keys: np.ndarray,
+    n: int,
+    iso_arr: np.ndarray,
+    pop_arr: np.ndarray,
+    region_weights: dict[str, float],
+) -> np.ndarray:
+    """Allocate stores across regions by weight, then population-sample within."""
+    # Normalize weights to sum to 1
+    total_w = sum(region_weights.values())
+    if total_w <= 0:
+        return _weighted_choice(rng, keys, pop_arr, n)
+
+    result: list[np.ndarray] = []
+    allocated = 0
+
+    # Sort regions for determinism; find last non-empty region for remainder
+    sorted_regions = sorted(region_weights.items(), key=lambda x: -x[1])
+    non_empty = [
+        code for code, _ in sorted_regions
+        if (iso_arr == code).any()
+    ]
+    last_non_empty = non_empty[-1] if non_empty else None
+
+    for code, weight in sorted_regions:
+        mask = iso_arr == code
+        pool = keys[mask]
+        if pool.size == 0:
+            continue
+        pool_w = pop_arr[mask]
+
+        # Last non-empty region gets the remainder to avoid rounding gaps
+        if code == last_non_empty:
+            count = n - allocated
+        else:
+            count = max(1, int(round(n * weight / total_w)))
+            count = min(count, n - allocated)
+
+        if count <= 0:
+            continue
+
+        result.append(_weighted_choice(rng, pool, pool_w, count))
+        allocated += count
+
+    # Fill any unallocated (rounding or missing regions) with global pop-weighted
+    if allocated < n:
+        result.append(_weighted_choice(rng, keys, pop_arr, n - allocated))
+
+    out = np.concatenate(result)
     rng.shuffle(out)
     return out
 
@@ -529,8 +622,10 @@ def generate_store_table(
     geo_loc_short: Optional[Dict[int, str]] = None,
     geo_loc_full: Optional[Dict[int, str]] = None,
     iso_by_geo: Optional[dict[int, str]] = None,
+    pop_by_geo: Optional[dict[int, int]] = None,
     country_by_geo: Optional[dict[int, str]] = None,
     ensure_iso_coverage: bool = False,
+    region_weights: Optional[dict[str, float]] = None,
     people_pools=None,
     district_size: int = 10,
     districts_per_region: int = 8,
@@ -655,7 +750,9 @@ def generate_store_table(
         geo_keys=geo_keys.astype(np.int64),
         n=num_stores,
         iso_by_geo=iso_by_geo,
+        pop_by_geo=pop_by_geo,
         ensure_iso_coverage=bool(ensure_iso_coverage),
+        region_weights=region_weights,
     )
 
     # Location strings
@@ -1027,11 +1124,39 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             )
         )
 
+    # Population lookup — used for population-weighted store distribution
+    pop_by_geo: Optional[dict[int, int]] = None
+    if "Population" in geo.columns:
+        gp = geo[["GeographyKey", "Population"]].dropna()
+        pop_by_geo = dict(
+            zip(
+                gp["GeographyKey"].astype(np.int64).to_numpy(),
+                gp["Population"].astype(np.int64).to_numpy(),
+            )
+        )
+
+    # Region weights — validate keys against available currencies
+    region_weights: Optional[dict[str, float]] = None
+    if store_cfg.region_weights:
+        region_weights = dict(store_cfg.region_weights)
+        if iso_by_geo:
+            available_iso = set(iso_by_geo.values())
+            invalid = sorted(set(region_weights.keys()) - available_iso)
+            if invalid:
+                warn(
+                    f"stores.region_weights references currencies not in geography: {invalid}. "
+                    f"These will be ignored. Available: {sorted(available_iso)}"
+                )
+                for code in invalid:
+                    del region_weights[code]
+            if not region_weights:
+                region_weights = None
+
     sqft_cfg = as_dict(store_cfg.square_footage)
     staffing_overrides = as_dict(store_cfg.staffing_ranges) if store_cfg.staffing_ranges else None
 
     version_cfg = dict(store_cfg)
-    version_cfg["schema_version"] = 6  # v6: store-type staffing ranges (replaces sqft formula)
+    version_cfg["schema_version"] = 7  # v7: population-weighted geography sampling
     version_cfg["_geography_sig"] = _geography_signature(geo_keys)
 
     if not should_regenerate("stores", version_cfg, out_path):
@@ -1082,8 +1207,10 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             geo_loc_short=loc_short_map,
             geo_loc_full=loc_full_map,
             iso_by_geo=iso_by_geo,
+            pop_by_geo=pop_by_geo,
             country_by_geo=country_by_geo,
             ensure_iso_coverage=ensure_iso_coverage,
+            region_weights=region_weights,
             people_pools=people_pools,
             district_size=store_cfg.district_size,
             districts_per_region=store_cfg.districts_per_region,

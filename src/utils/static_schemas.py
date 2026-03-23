@@ -313,6 +313,10 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("Country", VARCHAR(100, not_null=True)),
         ("Continent", VARCHAR(100, not_null=True)),
         ("ISOCode", VARCHAR(10, not_null=True)),
+        ("Latitude", FLOAT(not_null=True)),
+        ("Longitude", FLOAT(not_null=True)),
+        ("Timezone", VARCHAR(50, not_null=True)),
+        ("Population", BIGINT(not_null=True)),
     ),
     "Products": (
         ("ProductKey", INT_NN),
