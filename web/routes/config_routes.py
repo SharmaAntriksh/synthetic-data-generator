@@ -200,8 +200,6 @@ def get_config():
         "storeClosingEnabled": bool(_g(stores, "closing", "enabled", default=True)),
         "storeCloseShare": float(_g(stores, "closing", "close_share", default=0.10)),
         # Employees
-        "employeeMinStaff": int(getattr(emp, "min_staff_per_store", 3)),
-        "employeeMaxStaff": int(getattr(emp, "max_staff_per_store", 5)),
         "employeeEmailDomain": str(_g(emp, "hr", "email_domain", default="contoso.com")),
         # Exchange Rates
         "erCurrencies": list(getattr(er, "currencies", ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"])),
@@ -403,8 +401,6 @@ def update_config(body: ConfigUpdate):
         if "storeCloseShare" in v: cfg.stores.closing.close_share = float(v["storeCloseShare"])
 
         # Employees
-        if "employeeMinStaff" in v: cfg.employees.min_staff_per_store = int(v["employeeMinStaff"])
-        if "employeeMaxStaff" in v: cfg.employees.max_staff_per_store = int(v["employeeMaxStaff"])
         if "employeeEmailDomain" in v: cfg.employees.hr.email_domain = v["employeeEmailDomain"]
 
         # Exchange Rates

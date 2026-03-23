@@ -45,6 +45,8 @@ from src.defaults import (
     STORE_BRAND_DOMAINS as _BRAND_DOMAINS,
     STORE_EU_COUNTRY_CODES as _EU_COUNTRY_CODES,
     ONLINE_STORE_KEY_BASE as _ONLINE_SK_BASE,
+    STORE_STAFFING_RANGES as _STAFFING_RANGES,
+    STORE_STAFFING_DEFAULT as _STAFFING_DEFAULT,
 )
 
 
@@ -199,55 +201,39 @@ def _square_footage_from_cfg(
     return out
 
 
-def _employee_count_from_cfg(
+def _employee_count_by_store_type(
     *,
     rng: np.random.Generator,
     store_type: pd.Series,
-    status: pd.Series,
-    square_footage: pd.Series,
-    emp_cfg: Dict,
+    staffing_overrides: Optional[Dict] = None,
 ) -> np.ndarray:
+    """Assign EmployeeCount based on store type staffing ranges.
+
+    Uses ``STORE_STAFFING_RANGES`` from defaults, with optional per-type
+    overrides from ``stores.staffing_ranges`` in config.yaml.
+    Online stores are always 1 (one online sales representative).
+    Closed stores keep their operational count so employees exist
+    during the store's open period.
     """
-    Config shape (optional)::
-
-      stores:
-        employee_count:
-          base_per_1000_sqft: 0.35
-          online_base: [5, 60]
-          ...
-    """
-    base_rate = float_or(emp_cfg.get("base_per_1000_sqft"), 0.35)
-    online_lo, online_hi = range2(emp_cfg.get("online_base"), 5.0, 60.0)
-
-    closed_mult = float_or(emp_cfg.get("closed_multiplier"), 0.15)
-    reno_mult = float_or(emp_cfg.get("renovating_multiplier"), 0.60)
-
-    emp_min = int_or(emp_cfg.get("min"), 3)
-    emp_max = int_or(emp_cfg.get("max"), 800)
+    ranges = dict(_STAFFING_RANGES)
+    # Online stores: always 1 (the online sales representative)
+    ranges["Online"] = (1, 1)
+    if staffing_overrides:
+        for stype, spec in staffing_overrides.items():
+            if stype == "Online":
+                continue  # online staffing is fixed
+            if isinstance(spec, (list, tuple)) and len(spec) == 2:
+                ranges[stype] = (int(spec[0]), int(spec[1]))
 
     st = store_type.astype(str).to_numpy()
-    ss = status.astype(str).to_numpy()
-    sqft = square_footage.to_numpy(dtype=np.float64)
+    n = len(st)
+    out = np.zeros(n, dtype=np.int64)
 
-    baseline = np.maximum(1.0, (sqft / 1000.0) * base_rate)
+    for stype in np.unique(st):
+        mask = st == stype
+        lo, hi = ranges.get(stype, _STAFFING_DEFAULT)
+        out[mask] = rng.integers(lo, hi + 1, size=int(mask.sum()))
 
-    online_mask = st == "Online"
-    if online_mask.any():
-        baseline[online_mask] = rng.uniform(online_lo, online_hi, size=int(online_mask.sum()))
-
-    closed_mask = ss == "Closed"
-    if closed_mask.any():
-        baseline[closed_mask] = baseline[closed_mask] * closed_mult
-
-    reno_mask = ss == "Renovating"
-    if reno_mask.any():
-        baseline[reno_mask] = baseline[reno_mask] * reno_mult
-
-    jitter = rng.normal(loc=1.0, scale=0.10, size=baseline.size)
-    baseline = baseline * np.clip(jitter, 0.7, 1.4)
-
-    out = np.round(baseline).astype(np.int64)
-    out = np.clip(out, emp_min, emp_max)
     return out
 
 
@@ -539,7 +525,7 @@ def generate_store_table(
     closing_end: str = "2025-12-31",
     seed: int = 42,
     square_footage_cfg: Optional[Dict] = None,
-    employee_count_cfg: Optional[Dict] = None,
+    staffing_overrides: Optional[Dict] = None,
     geo_loc_short: Optional[Dict[int, str]] = None,
     geo_loc_full: Optional[Dict[int, str]] = None,
     iso_by_geo: Optional[dict[int, str]] = None,
@@ -867,17 +853,11 @@ def generate_store_table(
         n=num_stores,
     )
 
-    df["EmployeeCount"] = _employee_count_from_cfg(
+    df["EmployeeCount"] = _employee_count_by_store_type(
         rng=rng,
         store_type=df["StoreType"],
-        status=df["Status"],
-        square_footage=df["SquareFootage"],
-        emp_cfg=as_dict(employee_count_cfg),
+        staffing_overrides=as_dict(staffing_overrides),
     )
-    # Online stores: exactly 1 employee (the online sales representative)
-    _online_ec_mask = df["StoreType"].to_numpy() == "Online"
-    if _online_ec_mask.any():
-        df.loc[_online_ec_mask, "EmployeeCount"] = 1
 
     # Phone — format varies by country via ISO/currency code
     gk_arr  = df["GeographyKey"].to_numpy(dtype=np.int64)
@@ -1039,10 +1019,10 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
         )
 
     sqft_cfg = as_dict(store_cfg.square_footage)
-    emp_cfg  = as_dict(store_cfg.employee_count)
+    staffing_overrides = as_dict(store_cfg.staffing_ranges) if store_cfg.staffing_ranges else None
 
     version_cfg = dict(store_cfg)
-    version_cfg["schema_version"] = 5  # v5: static model, all stores open before global_start
+    version_cfg["schema_version"] = 6  # v6: store-type staffing ranges (replaces sqft formula)
     version_cfg["_geography_sig"] = _geography_signature(geo_keys)
 
     if not should_regenerate("stores", version_cfg, out_path):
@@ -1089,7 +1069,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             closing_end=store_cfg.closing_end or "2025-12-31",
             seed=resolve_seed(cfg, store_cfg, fallback=42),
             square_footage_cfg=sqft_cfg,
-            employee_count_cfg=emp_cfg,
+            staffing_overrides=staffing_overrides,
             geo_loc_short=loc_short_map,
             geo_loc_full=loc_full_map,
             iso_by_geo=iso_by_geo,

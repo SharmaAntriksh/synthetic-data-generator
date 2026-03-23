@@ -6,7 +6,8 @@ handled by employees.py (which sets TerminationDate), so the bridge
 simply reflects each employee's effective window.
 
 Output columns:
-  EmployeeKey, StoreKey, StartDate, EndDate, FTE, RoleAtStore, Status
+  AssignmentKey, EmployeeKey, StoreKey, StartDate, EndDate, FTE,
+  RoleAtStore, IsPrimary, TransferReason, Status
 """
 from __future__ import annotations
 
@@ -75,8 +76,8 @@ def generate_employee_store_assignments(
     (clamped to hire/termination dates).
     """
     out_cols = [
-        "EmployeeKey", "StoreKey", "StartDate", "EndDate",
-        "FTE", "RoleAtStore", "Status",
+        "AssignmentKey", "EmployeeKey", "StoreKey", "StartDate", "EndDate",
+        "FTE", "RoleAtStore", "IsPrimary", "TransferReason", "Status",
     ]
 
     if employees.empty:
@@ -106,14 +107,18 @@ def generate_employee_store_assignments(
     end = end[ok]
 
     is_terminated = emp["TerminationDate"].notna().values & (emp["IsActive"].values == 0)
+    n_rows = len(emp)
 
     out = pd.DataFrame({
+        "AssignmentKey": np.arange(1, n_rows + 1, dtype=np.int32),
         "EmployeeKey": emp["EmployeeKey"].astype(np.int32),
         "StoreKey": emp["HomeStoreKey"].astype(np.int32),
         "StartDate": start,
         "EndDate": end,
         "FTE": emp["FTE"].fillna(1.0).astype(np.float64),
         "RoleAtStore": emp["Title"].astype(str),
+        "IsPrimary": np.int8(1),
+        "TransferReason": "Initial",
         "Status": np.where(is_terminated, "Completed", "Active"),
     })
 
@@ -161,7 +166,7 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
     )
 
     version_cfg = dict(a_cfg)
-    version_cfg["schema_version"] = 15  # v15: static model, 1 row per employee
+    version_cfg["schema_version"] = 16  # v16: add AssignmentKey, IsPrimary, TransferReason
     version_cfg["_stores_cfg"] = dict(cfg.stores)
     version_cfg["_rows_employees"] = int(len(employees))
     if len(employees) > 0:

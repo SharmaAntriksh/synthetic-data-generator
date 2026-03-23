@@ -160,6 +160,10 @@ promotions:
 stores:
   online_stores: 5                    # online store count (carved from scale.stores total)
   online_close_share: 0.20             # fraction of online stores that close
+  staffing_ranges:                     # [min, max] staff per store type (online=1 fixed)
+    Supermarket: [8, 20]
+    Hypermarket: [15, 40]
+    Convenience: [2, 6]
   closing:
     enabled: true
     close_share: 0.20                  # fraction of physical stores that close
@@ -168,8 +172,6 @@ stores:
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:
-  min_staff_per_store: 4
-  max_staff_per_store: 10
   hr:
     email_domain: "contoso.com"
 
