@@ -85,7 +85,12 @@ class TestBuildDimGeography:
         assert set(df["ISOCode"].unique()) == {"USD", "GBP"}
 
     def test_no_matching_currency_raises(self):
-        cfg = self._cfg(["XYZ"])
+        # base_currency (USD) is always included, so use a non-USD base
+        # with a currency that has no geography rows
+        cfg = AppConfig.model_validate({
+            "geography": {},
+            "exchange_rates": {"currencies": ["XYZ"], "base_currency": "XYZ"},
+        })
 
         with pytest.raises(DimensionError, match="No geography rows remain"):
             build_dim_geography(cfg)

@@ -164,6 +164,12 @@ stores:
     Supermarket: [8, 20]
     Hypermarket: [15, 40]
     Convenience: [2, 6]
+  # region_weights:                    # optional: fraction of stores per currency region
+  #   USD: 0.40                        # 40% of stores in US cities
+  #   EUR: 0.30                        # 30% in Eurozone cities
+  #   GBP: 0.10                        # 10% in UK cities
+  #   INR: 0.20                        # 20% in Indian cities
+  # (omit to use population-weighted distribution across all regions)
   closing:
     enabled: true
     close_share: 0.20                  # fraction of physical stores that close
