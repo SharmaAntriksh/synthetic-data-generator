@@ -89,7 +89,7 @@ customers:
   active_ratio: 0.98
   household_pct: 0.35               # fraction of individuals in multi-person households
 
-  region_mix: { US: 51, EU: 39, India: 10 }
+  region_mix: { Americas: 41, Europe: 39, India: 2, APAC: 18 }
   org_pct: 1
 
   profile: steady                   # gradual | steady | aggressive | instant
