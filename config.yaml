@@ -35,8 +35,8 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "csv"              # csv | parquet | deltaparquet
-  sales_output: "both"               # sales | sales_order | both
+  file_format: "parquet"              # csv | parquet | deltaparquet
+  sales_output: "sales"               # sales | sales_order | both
   skip_order_cols: false
 
   merge:
@@ -172,6 +172,11 @@ stores:
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:
+  transfers:
+    enabled: true                     # enable inter-store staff transfers
+    annual_rate: 0.20                  # fraction of eligible staff that transfer per year
+    min_tenure_months: 4               # minimum months at current store before eligible
+    same_region_pref: 0.70             # probability transfer stays within the same region
   hr:
     email_domain: "contoso.com"
 

@@ -284,11 +284,19 @@ class StoreAssignmentsConfig(_Base):
     min_primary_sales_per_store: int = 1
 
 
+class TransfersConfig(_Base):
+    enabled: bool = False
+    annual_rate: float = 0.05
+    min_tenure_months: int = 6
+    same_region_pref: float = 0.7
+
+
 class EmployeesConfig(_Base):
     district_size: int = 10
     districts_per_region: int = 8
     hr: HRConfig = HRConfig()
     store_assignments: StoreAssignmentsConfig = StoreAssignmentsConfig()
+    transfers: TransfersConfig = TransfersConfig()
     # Parquet output knobs
     parquet_compression: str = "snappy"
     parquet_compression_level: Optional[int] = None

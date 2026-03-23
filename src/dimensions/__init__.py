@@ -5,8 +5,7 @@ from .promotions import run_promotions
 from .currency import run_currency
 from .dates import run_dates
 from .exchange_rates import run_exchange_rates
-from .employees import run_employees
-from .employee_store_assignments import run_employee_store_assignments
+from .employees import run_employees, run_employee_store_assignments
 
 __all__ = [
     "run_customers",

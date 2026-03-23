@@ -6,8 +6,8 @@ handled by employees.py (which sets TerminationDate), so the bridge
 simply reflects each employee's effective window.
 
 Output columns:
-  AssignmentKey, EmployeeKey, StoreKey, StartDate, EndDate, FTE,
-  RoleAtStore, IsPrimary, TransferReason, Status
+  AssignmentKey, EmployeeKey, AssignmentSequence, StoreKey, StartDate,
+  EndDate, FTE, RoleAtStore, IsPrimary, TransferReason, Status
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.dimensions.employees import (
+from src.dimensions.employees.generator import (
     STORE_MGR_KEY_BASE,
     STAFF_KEY_BASE,
     STAFF_KEY_STORE_MULT,
@@ -30,6 +30,7 @@ from src.utils.config_helpers import (
     str_or,
     parse_global_dates,
 )
+from src.utils.config_precedence import resolve_seed
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +77,8 @@ def generate_employee_store_assignments(
     (clamped to hire/termination dates).
     """
     out_cols = [
-        "AssignmentKey", "EmployeeKey", "StoreKey", "StartDate", "EndDate",
+        "AssignmentKey", "EmployeeKey", "AssignmentSequence",
+        "StoreKey", "StartDate", "EndDate",
         "FTE", "RoleAtStore", "IsPrimary", "TransferReason", "Status",
     ]
 
@@ -127,6 +129,12 @@ def generate_employee_store_assignments(
 
     out = out.sort_values(["EmployeeKey", "StartDate"]).reset_index(drop=True)
 
+    # Per-employee sequential number (1, 2, 3, ... for each employee's assignments)
+    out["AssignmentSequence"] = out.groupby("EmployeeKey").cumcount().astype(np.int16) + 1
+
+    # Enforce column order to match static schema (BULK INSERT is positional)
+    out = out[out_cols]
+
     info(
         f"Bridge table: {len(out)} rows, "
         f"{out['EmployeeKey'].nunique()} employees, "
@@ -165,9 +173,14 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
         columns=["EmployeeKey", "HireDate", "TerminationDate", "Title", "FTE", "IsActive"],
     )
 
+    # Transfer config
+    transfers_cfg = emp_cfg.transfers
+    transfers_enabled = transfers_cfg.enabled
+
     version_cfg = dict(a_cfg)
-    version_cfg["schema_version"] = 16  # v16: add AssignmentKey, IsPrimary, TransferReason
+    version_cfg["schema_version"] = 17  # v17: transfer engine support
     version_cfg["_stores_cfg"] = dict(cfg.stores)
+    version_cfg["_transfers"] = as_dict(transfers_cfg)
     version_cfg["_rows_employees"] = int(len(employees))
     if len(employees) > 0:
         ek = pd.to_numeric(employees["EmployeeKey"], errors="coerce").dropna().astype(np.int32)
@@ -194,6 +207,33 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
             global_start=global_start,
             global_end=global_end,
         )
+
+        if transfers_enabled:
+            from src.dimensions.employees.transfers import apply_transfers
+
+            stores_path = parquet_folder / "stores.parquet"
+            if not stores_path.exists():
+                raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
+
+            _stores_cols = [
+                "StoreKey", "StoreType", "Status", "StoreRegion",
+                "OpeningDate", "ClosingDate",
+            ]
+            try:
+                stores_df = pd.read_parquet(stores_path, columns=_stores_cols)
+            except (KeyError, ValueError):
+                stores_df = pd.read_parquet(stores_path)
+
+            df = apply_transfers(
+                df, stores_df,
+                seed=resolve_seed(cfg, as_dict(emp_cfg), fallback=42) ^ 0x7F3A,
+                global_start=global_start,
+                global_end=global_end,
+                annual_rate=transfers_cfg.annual_rate,
+                min_tenure_months=transfers_cfg.min_tenure_months,
+                same_region_pref=transfers_cfg.same_region_pref,
+                salesperson_roles=[emp_cfg.store_assignments.primary_sales_role],
+            )
 
         write_parquet_with_date32(
             df,
