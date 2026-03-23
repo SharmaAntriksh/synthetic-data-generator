@@ -147,6 +147,8 @@ def apply_transfers(
     # --- Work on a mutable copy -------------------------------------------
     df = assignments.copy()
     transfer_count = 0
+    skipped_guard = 0
+    skipped_no_dest = 0
 
     start_year = global_start.year
     end_year = global_end.year
@@ -208,6 +210,7 @@ def apply_transfers(
                 source_sk, transfer_date, df, salesperson_roles,
             )
             if source_count <= 1:
+                skipped_guard += 1
                 continue
 
             # Pick destination store
@@ -223,6 +226,7 @@ def apply_transfers(
                 close_dates=close_dates,
             )
             if dest_sk is None:
+                skipped_no_dest += 1
                 continue
 
             # --- Execute transfer ---
@@ -239,16 +243,27 @@ def apply_transfers(
                 p=EMPLOYEE_TRANSFER_REASON_PROBS,
             )
 
+            # Clamp EndDate to day before destination store closes (last open day),
+            # matching the convention used by generate_employee_store_assignments
+            new_end = original_end
+            new_status = "Active"
+            dest_close = close_dates.get(dest_sk)
+            if dest_close is not None:
+                last_open_day = dest_close - pd.Timedelta(days=1)
+                if last_open_day < new_end:
+                    new_end = last_open_day
+                    new_status = "Completed"
+
             year_new_rows.append({
                 "EmployeeKey": np.int32(emp_key),
                 "StoreKey": np.int32(dest_sk),
                 "StartDate": transfer_date,
-                "EndDate": original_end,
+                "EndDate": new_end,
                 "FTE": row["FTE"],
                 "RoleAtStore": row["RoleAtStore"],
                 "IsPrimary": np.int8(1),
                 "TransferReason": str(reason),
-                "Status": "Active",
+                "Status": new_status,
             })
             transfer_count += 1
 
@@ -257,7 +272,10 @@ def apply_transfers(
             df = pd.concat([df, pd.DataFrame(year_new_rows)], ignore_index=True)
 
     if transfer_count == 0:
-        info("Transfers: 0 transfers generated (no eligible employees or destinations)")
+        info(
+            f"Transfers: 0 transfers generated "
+            f"(skipped: {skipped_guard} guard, {skipped_no_dest} no destination)"
+        )
         return assignments
 
     # Sort and reassign keys/sequences
@@ -272,7 +290,8 @@ def apply_transfers(
     info(
         f"Transfers: {transfer_count} transfers across "
         f"{df['EmployeeKey'].nunique()} employees, "
-        f"{df['StoreKey'].nunique()} stores"
+        f"{df['StoreKey'].nunique()} stores "
+        f"(skipped: {skipped_guard} guard, {skipped_no_dest} no destination)"
     )
 
     # --- Invariant check: every open store has >= 1 salesperson -----------

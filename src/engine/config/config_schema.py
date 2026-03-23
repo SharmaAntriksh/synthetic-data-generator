@@ -292,8 +292,6 @@ class TransfersConfig(_Base):
 
 
 class EmployeesConfig(_Base):
-    district_size: int = 10
-    districts_per_region: int = 8
     hr: HRConfig = HRConfig()
     store_assignments: StoreAssignmentsConfig = StoreAssignmentsConfig()
     transfers: TransfersConfig = TransfersConfig()

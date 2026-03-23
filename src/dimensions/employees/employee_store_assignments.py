@@ -1,9 +1,9 @@
 """Employee Store Assignment bridge table generator.
 
-Static model: one row per employee at their home store for the duration
-of their tenure.  No transfers, no relocations.  Store closures are
-handled by employees.py (which sets TerminationDate), so the bridge
-simply reflects each employee's effective window.
+Generates the initial bridge table (one row per employee at their home
+store).  When ``employees.transfers.enabled`` is True, the transfer
+engine (``transfers.py``) post-processes the table to add inter-store
+transfers, producing multiple rows per transferred employee.
 
 Output columns:
   AssignmentKey, EmployeeKey, AssignmentSequence, StoreKey, StartDate,
@@ -22,7 +22,7 @@ from src.dimensions.employees.generator import (
     STAFF_KEY_STORE_MULT,
 )
 from src.defaults import ONLINE_EMP_KEY_BASE
-from src.utils.logging_utils import info, skip, stage
+from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 from src.utils.config_helpers import (
@@ -90,9 +90,17 @@ def generate_employee_store_assignments(
     emp["HireDate"] = pd.to_datetime(emp["HireDate"], errors="coerce").dt.normalize()
     emp["TerminationDate"] = pd.to_datetime(emp["TerminationDate"], errors="coerce").dt.normalize()
 
-    # Build one row per employee
+    # Build one row per employee (corporate hierarchy has no store assignment)
     home_sk = emp["HomeStoreKey"]
     valid = home_sk.notna() & emp["HireDate"].notna()
+    dropped = emp[~valid]
+    if len(dropped) > 0:
+        ek = dropped["EmployeeKey"].astype(np.int64)
+        # Store-level keys (30M+) being dropped is unexpected → warn
+        store_level = ek >= STORE_MGR_KEY_BASE
+        n_unexpected = int(store_level.sum())
+        if n_unexpected > 0:
+            warn(f"{n_unexpected} store employee(s) dropped: missing StoreKey or HireDate")
     emp = emp[valid]
 
     if emp.empty:

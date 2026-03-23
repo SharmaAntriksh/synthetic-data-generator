@@ -334,8 +334,6 @@ def generate_employee_dimension(
     seed: int,
     global_start: pd.Timestamp,
     global_end: pd.Timestamp,
-    district_size: int = 10,
-    districts_per_region: int = 8,
     people_pools=None,
     iso_by_geo: dict[int, str] | None = None,
     default_region: str = "US",
@@ -410,8 +408,8 @@ def generate_employee_dimension(
         sort_cols.append("StoreKey")
         stores = stores.sort_values(sort_cols).reset_index(drop=True)
 
-        district_size = max(1, int_or(district_size, 10))
-        districts_per_region = max(1, int_or(districts_per_region, 8))
+        district_size = 10
+        districts_per_region = 8
 
         if has_continent:
             district_id = np.zeros(n_stores, dtype=np.int16)
@@ -481,9 +479,12 @@ def generate_employee_dimension(
             StoreKey=pd.NA, GeographyKey=pd.NA,
         ))
 
+    # Build district → region mapping from actual store data
+    district_to_region = dict(zip(district_id.tolist(), region_id.tolist()))
+
     unique_districts = np.unique(district_id)
     for did in unique_districts:
-        rid = int(((did - 1) // districts_per_region) + 1)
+        rid = int(district_to_region[int(did)])
         rows.append(dict(
             EmployeeKey=_district_mgr_key(int(did)),
             ParentEmployeeKey=_region_mgr_key(rid),
@@ -918,8 +919,6 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             seed=seed,
             global_start=global_start,
             global_end=global_end,
-            district_size=emp_cfg.district_size,
-            districts_per_region=emp_cfg.districts_per_region,
             people_pools=people_pools,
             iso_by_geo=iso_by_geo,
             default_region="US",

@@ -561,13 +561,18 @@ def generate_store_table(
 
     rng = np.random.default_rng(int_or(seed, 42))
 
-    # --- Key allocation: physical 1..N_phys, online 901..901+N_online ---
+    # --- Key allocation: physical 1..N_phys, online 10_001..10_001+N_online ---
     n_online = int_or(online_stores, 0)
     if n_online < 0:
         raise ValueError(f"online_stores must be >= 0, got {n_online}")
     if n_online >= num_stores:
         raise ValueError(f"online_stores ({n_online}) must be < num_stores ({num_stores})")
     n_physical = num_stores - n_online
+    if n_physical >= _ONLINE_SK_BASE:
+        raise ValueError(
+            f"Physical store count ({n_physical}) exceeds ONLINE_STORE_KEY_BASE "
+            f"({_ONLINE_SK_BASE}). Max physical stores is {_ONLINE_SK_BASE - 1}."
+        )
 
     phys_keys = np.arange(1, n_physical + 1, dtype=np.int64)
     online_keys = (_ONLINE_SK_BASE + np.arange(1, n_online + 1, dtype=np.int64)) if n_online > 0 else np.array([], dtype=np.int64)
@@ -852,6 +857,10 @@ def generate_store_table(
         sqft_cfg=as_dict(square_footage_cfg),
         n=num_stores,
     )
+    # Online stores have no physical space
+    _online_sqft_mask = df["StoreType"].to_numpy() == "Online"
+    if _online_sqft_mask.any():
+        df.loc[_online_sqft_mask, "SquareFootage"] = 0
 
     df["EmployeeCount"] = _employee_count_by_store_type(
         rng=rng,

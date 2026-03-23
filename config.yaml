@@ -9,7 +9,7 @@ scale:
   sales_rows: 108328
   products: 5167                    #5167 total products in base file
   customers: 18834
-  stores: 100
+  stores: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
