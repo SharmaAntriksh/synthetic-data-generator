@@ -710,7 +710,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
         models_cfg = worker_cfg.get("models_cfg")
 
         parquet_dict_exclude = worker_cfg.get("parquet_dict_exclude")
-        write_pyarrow = worker_cfg.get("write_pyarrow", True)
 
         # NEW: configurable cap for SalesOrderLineNumber per SalesOrderNumber
         max_lines_per_order = int_or(worker_cfg.get("max_lines_per_order"), 5)
@@ -1073,7 +1072,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "partition_enabled": bool(partition_enabled),
             "partition_cols": list(partition_cols),
             "models_cfg": models_cfg,
-            "write_pyarrow": bool(write_pyarrow),
             "date_cols_by_table": bundle.date_cols_by_table,
             "schema_no_order": bundle.schema_no_order,
             "schema_with_order": bundle.schema_with_order,

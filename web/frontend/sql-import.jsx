@@ -4,6 +4,7 @@ function SqlImport({ onBack }) {
   /* Connection settings */
   const [server, setServer] = useState("");
   const [database, setDatabase] = useState("");
+  const [dbManuallyEdited, setDbManuallyEdited] = useState(false);
   const [trusted, setTrusted] = useState(true);
   const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
@@ -20,13 +21,40 @@ function SqlImport({ onBack }) {
   const [driverAvailable, setDriverAvailable] = useState(null);
   const [driverError, setDriverError] = useState(null);
 
+  /* Server discovery */
+  const [discoveredServers, setDiscoveredServers] = useState([]);
+  const [serversLoading, setServersLoading] = useState(true);
+
   /* Import job state */
   const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState([]);
   const [elapsed, setElapsed] = useState(0);
   const [jobStatus, setJobStatus] = useState(null); /* done | failed | cancelled */
+  const [idleSecs, setIdleSecs] = useState(0);
   const timerRef = useRef(null);
+  const lastLogRef = useRef(Date.now());
+  const idleTimerRef = useRef(null);
+  const esRef = useRef(null);
   const logsEndRef = useRef(null);
+
+  const toDbName = (s) => s ? s.replace(/[^a-zA-Z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "") : "";
+
+  const stopTimers = (status, elapsedVal) => {
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    clearInterval(timerRef.current);
+    clearInterval(idleTimerRef.current);
+    setIdleSecs(0);
+    setIsRunning(false);
+    if (status) setJobStatus(status);
+    if (elapsedVal != null) setElapsed(elapsedVal);
+  };
+
+  /* Clean up timers and SSE on unmount */
+  useEffect(() => () => {
+    clearInterval(timerRef.current);
+    clearInterval(idleTimerRef.current);
+    if (esRef.current) esRef.current.close();
+  }, []);
 
   /* Load datasets and check ODBC on mount */
   useEffect(() => {
@@ -36,6 +64,10 @@ function SqlImport({ onBack }) {
         /* Only show CSV datasets (SQL import requires CSV format) */
         const csvDatasets = (data.datasets || []).filter(ds => ds.format === "csv");
         setDatasets(csvDatasets);
+        if (csvDatasets.length > 0) {
+          setSelectedDataset(csvDatasets[0].name);
+          if (csvDatasets[0].description) setDatabase(toDbName(csvDatasets[0].description));
+        }
         setDatasetsLoading(false);
       })
       .catch(() => setDatasetsLoading(false));
@@ -51,6 +83,16 @@ function SqlImport({ onBack }) {
         if (data.error) setDriverError(data.error);
       })
       .catch(() => setDriverAvailable(false));
+
+    fetch(API + "/import/servers")
+      .then(r => r.json())
+      .then(data => {
+        const servers = data.servers || [];
+        setDiscoveredServers(servers);
+        if (servers.length > 0) setServer(servers[0].server);
+        setServersLoading(false);
+      })
+      .catch(() => setServersLoading(false));
   }, []);
 
   /* Auto-scroll logs */
@@ -67,9 +109,15 @@ function SqlImport({ onBack }) {
     setJobStatus(null);
     setIsRunning(true);
     setElapsed(0);
+    setIdleSecs(0);
+    lastLogRef.current = Date.now();
 
     const startTime = Date.now();
     timerRef.current = setInterval(() => setElapsed((Date.now() - startTime) / 1000), 100);
+    idleTimerRef.current = setInterval(() => {
+      const secs = Math.floor((Date.now() - lastLogRef.current) / 1000);
+      setIdleSecs(prev => prev === secs ? prev : secs);
+    }, 1000);
 
     fetch(API + "/import/start", {
       method: "POST",
@@ -92,29 +140,25 @@ function SqlImport({ onBack }) {
       .then(() => {
         /* Stream logs via SSE */
         const es = new EventSource(API + "/import/stream");
+        esRef.current = es;
         es.onmessage = (ev) => {
           const data = JSON.parse(ev.data);
-          if (data.type === "log") setLogs(prev => [...prev, data.line]);
+          if (data.type === "log") {
+            lastLogRef.current = Date.now();
+            setIdleSecs(0);
+            setLogs(prev => [...prev, data.line]);
+          }
           if (data.type === "status") setElapsed(data.elapsed);
           if (data.type === "end" || data.type === "idle") {
-            es.close();
-            clearInterval(timerRef.current);
-            setIsRunning(false);
-            setElapsed(data.elapsed || 0);
-            setJobStatus(data.status || "done");
+            stopTimers(data.status || "done", data.elapsed || 0);
           }
         };
         es.onerror = () => {
-          es.close();
-          clearInterval(timerRef.current);
-          setIsRunning(false);
-          setJobStatus("failed");
+          stopTimers("failed");
         };
       })
       .catch(err => {
-        clearInterval(timerRef.current);
-        setIsRunning(false);
-        setJobStatus("failed");
+        stopTimers("failed");
         setLogs(prev => [...prev, `ERROR: ${err.message}`]);
       });
   };
@@ -165,12 +209,26 @@ function SqlImport({ onBack }) {
 
           <div style={{marginBottom: 12}}>
             <label style={labelStyle}>Server</label>
-            <input type="text" value={server} onChange={e => setServer(e.target.value)} placeholder="HOSTNAME\INSTANCE" style={inputStyle} disabled={isRunning} />
+            {serversLoading ? (
+              <div style={{...inputStyle, color: "var(--muted)", display: "flex", alignItems: "center"}}>Discovering servers...</div>
+            ) : discoveredServers.length > 0 ? (
+              <div style={{display: "flex", gap: 6}}>
+                <select value={discoveredServers.some(s => s.server === server) ? server : "__custom__"} onChange={e => { if (e.target.value !== "__custom__") setServer(e.target.value); else setServer(""); }} style={{...inputStyle, flex: 1}} disabled={isRunning}>
+                  {discoveredServers.map(s => <option key={s.server} value={s.server}>{s.server}{s.version ? ` (v${s.version.split(".")[0]})` : ""}{s.source === "network" ? " \u2014 network" : ""}</option>)}
+                  <option value="__custom__">Other (type manually)</option>
+                </select>
+                {!discoveredServers.some(s => s.server === server) && (
+                  <input type="text" value={server} onChange={e => setServer(e.target.value)} placeholder="HOSTNAME\INSTANCE" style={{...inputStyle, flex: 1}} disabled={isRunning} autoFocus />
+                )}
+              </div>
+            ) : (
+              <input type="text" value={server} onChange={e => setServer(e.target.value)} placeholder="HOSTNAME\INSTANCE" style={inputStyle} disabled={isRunning} />
+            )}
           </div>
 
           <div style={{marginBottom: 12}}>
             <label style={labelStyle}>Database</label>
-            <input type="text" value={database} onChange={e => setDatabase(e.target.value)} placeholder="ContosoRetailDW" style={inputStyle} disabled={isRunning} />
+            <input type="text" value={database} onChange={e => { setDatabase(e.target.value); setDbManuallyEdited(true); }} placeholder="ContosoRetailDW" style={inputStyle} disabled={isRunning} />
           </div>
 
           <div style={{marginBottom: 12}}>
@@ -224,7 +282,7 @@ function SqlImport({ onBack }) {
               {datasets.map(ds => {
                 const isSel = selectedDataset === ds.name;
                 return (
-                  <button key={ds.name} onClick={() => !isRunning && setSelectedDataset(ds.name)} style={{
+                  <button key={ds.name} onClick={() => { if (isRunning) return; setSelectedDataset(ds.name); if (!dbManuallyEdited && ds.description) setDatabase(toDbName(ds.description)); }} style={{
                     display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 12px", borderRadius: 8,
                     cursor: isRunning ? "default" : "pointer",
                     border: `1px solid ${isSel ? "var(--accent)" : "var(--border)"}`,
@@ -297,6 +355,12 @@ function SqlImport({ onBack }) {
                 <div key={idx} style={{color: isErr ? "var(--err)" : isDone ? "var(--ok)" : isWarn ? "var(--warn)" : "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-all"}}>{line}</div>
               );
             })}
+            {isRunning && idleSecs >= 2 && (
+              <div style={{color: "var(--accent)", opacity: .8, display: "flex", alignItems: "center", gap: 6, paddingTop: 2}}>
+                <span style={{display: "inline-block", animation: "spin 1s linear infinite", fontSize: 13}}>&#10227;</span>
+                <span>working ... {idleSecs}s</span>
+              </div>
+            )}
             <div ref={logsEndRef} />
           </div>
         </div>

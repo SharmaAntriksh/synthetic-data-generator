@@ -109,7 +109,7 @@ function App() {
       setCfg(data);
     }).catch(() => {
       setLoadError("Failed to load config from server");
-      setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, profile: "steady", firstYearPct: .27, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, geoWeights: {"United States": .35, India: .2, "United Kingdom": .1, Germany: .1, France: .1, Australia: .07, Canada: .08}, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, csEnabled: false, csGenerateBridge: false, csSegmentCount: 10, csPerCustomerMin: 1, csPerCustomerMax: 2, csIncludeScore: true, csIncludePrimaryFlag: true, csIncludeValidity: true, csValidityGrain: "month", csChurnRateQtr: .08, csNewCustomerMonths: 2, csSeed: 123, subEnabled: false, subGenerateBridge: false, subParticipationRate: .65, subAvgSubscriptions: 1.5, subMaxSubscriptions: 5, subChurnRate: .25, subTrialRate: .30, subSeed: 700, storeEnsureIsoCoverage: true, storeDistrictSize: 10, storeDistrictsPerRegion: 8, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, employeeMinStaff: 3, employeeMaxStaff: 5, employeeEmailDomain: "contoso.com", employeeStoreAssignments: true, erCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erVolatility: .02, erFutureDrift: .02, erUseGlobalDates: true, budgetEnabled: true, budgetReportCurrency: "USD", budgetDefaultGrowth: .05, budgetReturnRateCap: .30, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
+      setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, qualityReport: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, profile: "steady", firstYearPct: .27, householdPct: .35, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, geoWeights: {"United States": .35, India: .2, "United Kingdom": .1, Germany: .1, France: .1, Australia: .07, Canada: .08}, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, csEnabled: false, csGenerateBridge: false, csSegmentCount: 10, csPerCustomerMin: 1, csPerCustomerMax: 2, csIncludeScore: true, csIncludePrimaryFlag: true, csIncludeValidity: true, csValidityGrain: "month", csChurnRateQtr: .08, csNewCustomerMonths: 2, csSeed: 123, subEnabled: false, subGenerateBridge: false, subParticipationRate: .65, subAvgSubscriptions: 1.5, subMaxSubscriptions: 5, subChurnRate: .25, subTrialRate: .30, subTrialConversionRate: .85, subSeed: 700, storeEnsureIsoCoverage: true, storeDistrictSize: 10, storeDistrictsPerRegion: 8, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, storeOnlineStores: 5, storeOnlineCloseShare: .10, storeClosingEnabled: true, storeCloseShare: .10, employeeMinStaff: 3, employeeMaxStaff: 5, employeeEmailDomain: "contoso.com", erCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erVolatility: .02, erFutureDrift: .02, erUseGlobalDates: true, budgetEnabled: true, budgetReportCurrency: "USD", budgetDefaultGrowth: .05, budgetReturnRateCap: .30, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
     });
     fetch(API + "/presets").then(r => r.json()).then(data => { setPresets(data); setPresetBucket(Object.keys(data)[0] || ""); }).catch(() => {});
     fetch(API + "/models").then(r => r.text()).then(text => { setModelsYaml(text); setModelsOrig(text); setModelsDisk(text); }).catch(() => {});
@@ -284,7 +284,7 @@ function App() {
           <R3>
             <F label="Max lines per order"><N value={cfg.maxLinesPerOrder} onChange={v => s("maxLinesPerOrder", v)} min={1} max={20} step={1} /></F>
             <F label="Seed" help="Global random seed for reproducibility."><N value={cfg.seed} onChange={v => s("seed", v)} min={0} step={1} /></F>
-            <F label=" "><div style={{display: "flex", flexDirection: "column", gap: 8, paddingTop: 16}}><Check checked={cfg.skipOrderCols} onChange={v => s("skipOrderCols", v)} label="Skip order columns" /><Check checked={cfg.salesOptimize} onChange={v => s("salesOptimize", v)} label="Optimize merged files" /></div></F>
+            <F label=" "><div style={{display: "flex", flexDirection: "column", gap: 8, paddingTop: 16}}><Check checked={cfg.skipOrderCols} onChange={v => s("skipOrderCols", v)} label="Skip order columns" /><Check checked={cfg.salesOptimize} onChange={v => s("salesOptimize", v)} label="Optimize merged files" /><Check checked={cfg.qualityReport} onChange={v => s("qualityReport", v)} label="Quality report" /></div></F>
           </R3>
         </Section>
 
@@ -358,6 +358,7 @@ function App() {
               <Sld label="Organization %" value={cfg.pctOrg} min={0} max={100} step={1} onChange={v => s("pctOrg", v)} fmt={v => `${v}%`} />
             </Box>
             <Sld label="Active ratio" value={cfg.customerActiveRatio} min={.1} max={1} step={.01} onChange={v => s("customerActiveRatio", v)} />
+            <Sld label="Household %" value={cfg.householdPct} min={0} max={1} step={.05} onChange={v => s("householdPct", v)} fmt={v => `${(v * 100).toFixed(0)}%`} />
             <Box title="Behavior Profile">
               <R2>
                 <F label="Profile" help="Controls acquisition curve, churn, seasonality, and demand shape."><Sel value={cfg.profile} onChange={v => s("profile", v)} options={["gradual", "steady", "aggressive", "instant"]} labels={["Gradual (S-curve ramp)", "Steady (mature business)", "Aggressive (fast growth)", "Instant (all customers day 1)"]} /></F>
@@ -412,12 +413,20 @@ function App() {
               <F label="Districts per region"><N value={cfg.storeDistrictsPerRegion} onChange={v => s("storeDistrictsPerRegion", v)} min={1} step={1} /></F>
               <F label=" "><div style={{paddingTop: 16}}><Check checked={cfg.storeEnsureIsoCoverage} onChange={v => s("storeEnsureIsoCoverage", v)} label="Ensure ISO country coverage" /></div></F>
             </R3>
+            <Box title="Online stores">
+              <R2>
+                <F label="Online store count" help="Number of online stores carved from total store count."><N value={cfg.storeOnlineStores} onChange={v => s("storeOnlineStores", v)} min={0} step={1} /></F>
+                <F label="Online close share" help="Fraction of online stores that close."><N value={cfg.storeOnlineCloseShare} onChange={v => s("storeOnlineCloseShare", v)} min={0} max={1} step={0.05} /></F>
+              </R2>
+            </Box>
             <Box title="Store opening/closing dates">
               <R3>
                 <F label="Opening start"><input type="date" style={iS} value={cfg.storeOpeningStart} onChange={e => s("storeOpeningStart", e.target.value)} /></F>
                 <F label="Opening end"><input type="date" style={iS} value={cfg.storeOpeningEnd} onChange={e => s("storeOpeningEnd", e.target.value)} /></F>
                 <F label="Closing end"><input type="date" style={iS} value={cfg.storeClosingEnd} onChange={e => s("storeClosingEnd", e.target.value)} /></F>
               </R3>
+              <div style={{marginTop: 8}}><Check checked={cfg.storeClosingEnabled} onChange={v => s("storeClosingEnabled", v)} label="Enable store closures" /></div>
+              {cfg.storeClosingEnabled && <Sld label="Close share" value={cfg.storeCloseShare} min={0} max={1} step={.05} onChange={v => s("storeCloseShare", v)} fmt={v => `${(v * 100).toFixed(0)}%`} />}
             </Box>
             <Box title="Assortment">
               <Check checked={cfg.storeAssortmentEnabled} onChange={v => s("storeAssortmentEnabled", v)} label="Enable product assortment filtering" />
@@ -432,7 +441,6 @@ function App() {
               <F label="Max staff per store"><N value={cfg.employeeMaxStaff} onChange={v => s("employeeMaxStaff", v)} min={1} step={1} /></F>
               <F label="Email domain"><input type="text" style={iS} value={cfg.employeeEmailDomain} onChange={e => s("employeeEmailDomain", e.target.value)} /></F>
             </R3>
-            <div style={{marginTop: 12}}><Check checked={cfg.employeeStoreAssignments} onChange={v => s("employeeStoreAssignments", v)} label="Enable store assignments (role-based scheduling)" /></div>
           </div>}
 
           {/* ── Returns ── */}
@@ -506,6 +514,9 @@ function App() {
               <R3>
                 <F label="Churn rate"><N value={cfg.subChurnRate} onChange={v => s("subChurnRate", v)} min={0} max={1} step={0.05} /></F>
                 <F label="Trial rate"><N value={cfg.subTrialRate} onChange={v => s("subTrialRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Trial conversion" help="Fraction of trial users that convert to paid."><N value={cfg.subTrialConversionRate} onChange={v => s("subTrialConversionRate", v)} min={0} max={1} step={0.05} /></F>
+              </R3>
+              <R3>
                 <F label="Seed"><N value={cfg.subSeed} onChange={v => s("subSeed", v)} min={0} step={1} /></F>
               </R3>
             </>}

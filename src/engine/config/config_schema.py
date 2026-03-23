@@ -464,7 +464,6 @@ class SalesConfig(_Base):
     workers: Optional[int] = None
     row_group_size: int = 1_000_000
     compression: str = "snappy"
-    write_pyarrow: bool = True
     quality_report: bool = True
 
     # Order ID run identifier (0..999)

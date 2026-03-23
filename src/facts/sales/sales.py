@@ -565,7 +565,6 @@ def generate_sales_fact(
     write_delta=False,     # legacy (ignored)
     delta_output_folder=None,
     skip_order_cols=False,
-    write_pyarrow=True,
     partition_enabled=False,
     partition_cols=None,
     return_manifest: bool = False,
@@ -597,7 +596,6 @@ def generate_sales_fact(
     compression = _apply_cfg_default(compression, "snappy", sales_cfg.compression)
     workers = _apply_cfg_default(workers, None, sales_cfg.workers)
     tune_chunk = _apply_cfg_default(tune_chunk, False, _bool_or(sales_cfg.tune_chunk, tune_chunk))
-    write_pyarrow = _apply_cfg_default(write_pyarrow, True, _bool_or(sales_cfg.write_pyarrow, write_pyarrow))
     skip_order_cols = _apply_cfg_default(
         skip_order_cols,
         False,
@@ -1600,8 +1598,6 @@ def generate_sales_fact(
         write_delta=write_delta,
         skip_order_cols=bool(skip_order_cols),
         skip_order_cols_requested=bool(skip_order_cols),
-
-        write_pyarrow=write_pyarrow,
 
         partition_enabled=partition_enabled,
         partition_cols=partition_cols,

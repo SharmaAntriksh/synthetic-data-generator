@@ -100,7 +100,7 @@ class TestAppConfigFromYAML:
     def test_employees_section(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)
         assert app.employees.hr.email_domain == "contoso.com"
-        assert app.employees.store_assignments.enabled is True
+        assert app.employees.store_assignments.primary_sales_role == "Sales Associate"
 
     def test_exchange_rates_section(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)

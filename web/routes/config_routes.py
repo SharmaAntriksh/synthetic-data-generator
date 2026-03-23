@@ -76,8 +76,6 @@ def get_config():
     inv = _g(cfg, "inventory", default={})
     cost = _g(cfg, "products", "pricing", "cost", default={})
     brand_norm = _g(cfg, "products", "pricing", "brand_normalization", default={})
-    store_assigns = _g(emp, "store_assignments", default={})
-
     return {
         # Global
         "seed": int(_g(cfg, "defaults", "seed", default=42) or 42),
@@ -91,6 +89,7 @@ def get_config():
         "partitionEnabled": bool(_g(sales, "partitioning", "enabled", default=True)),
         "maxLinesPerOrder": int(getattr(sales, "max_lines_per_order", 5)),
         "salesOptimize": bool(getattr(sales, "optimize", True)),
+        "qualityReport": bool(getattr(sales, "quality_report", True)),
         # Dates
         "startDate": str(_g(defaults, "start", default="2023-01-01")),
         "endDate": str(_g(defaults, "end", default="2026-12-31")),
@@ -122,26 +121,27 @@ def get_config():
         "customerActiveRatio": float(getattr(cust, "active_ratio", 0.90)),
         "profile": str(getattr(cust, "profile", "steady")),
         "firstYearPct": float(getattr(cust, "first_year_pct", 0.27)),
+        "householdPct": float(getattr(cust, "household_pct", 0.35) or 0.35),
         # Customers SCD2
         "custScd2Enabled": bool(getattr(getattr(cust, "scd2", None), "enabled", False)),
         "custScd2ChangeRate": float(getattr(getattr(cust, "scd2", None), "change_rate", 0.15)),
         "custScd2MaxVersions": int(getattr(getattr(cust, "scd2", None), "max_versions", 4)),
         # Products detail (pricing/cost/brand_norm are plain dicts from products.pricing)
-        "valueScale": float(pricing.get("value_scale", 1.0) if isinstance(pricing, dict) else getattr(pricing, "value_scale", 1.0)),
-        "minPrice": float(pricing.get("min_unit_price", 10) if isinstance(pricing, dict) else getattr(pricing, "min_unit_price", 10)),
-        "maxPrice": float(pricing.get("max_unit_price", 3000) if isinstance(pricing, dict) else getattr(pricing, "max_unit_price", 3000)),
+        "valueScale": float(_g(pricing, "value_scale", default=1.0)),
+        "minPrice": float(_g(pricing, "min_unit_price", default=10)),
+        "maxPrice": float(_g(pricing, "max_unit_price", default=3000)),
         "productActiveRatio": float(getattr(prods, "active_ratio", 0.94)),
-        "marginMin": float(cost.get("min_margin_pct", 0.20) if isinstance(cost, dict) else getattr(cost, "min_margin_pct", 0.20)),
-        "marginMax": float(cost.get("max_margin_pct", 0.35) if isinstance(cost, dict) else getattr(cost, "max_margin_pct", 0.35)),
-        "brandNormalize": bool(brand_norm.get("enabled", False) if isinstance(brand_norm, dict) else getattr(brand_norm, "enabled", False)),
-        "brandNormalizeAlpha": float(brand_norm.get("alpha", 0.35) if isinstance(brand_norm, dict) else getattr(brand_norm, "alpha", 0.35)),
+        "marginMin": float(_g(cost, "min_margin_pct", default=0.20)),
+        "marginMax": float(_g(cost, "max_margin_pct", default=0.35)),
+        "brandNormalize": bool(_g(brand_norm, "enabled", default=False)),
+        "brandNormalizeAlpha": float(_g(brand_norm, "alpha", default=0.35)),
         # Products SCD2
         "prodScd2Enabled": bool(getattr(getattr(prods, "scd2", None), "enabled", False)),
         "prodScd2RevisionFreq": int(getattr(getattr(prods, "scd2", None), "revision_frequency", 12)),
         "prodScd2PriceDrift": float(getattr(getattr(prods, "scd2", None), "price_drift", 0.05)),
         "prodScd2MaxVersions": int(getattr(getattr(prods, "scd2", None), "max_versions", 4)),
         # Geography
-        "geoWeights": dict((geo.get("country_weights", {}) if isinstance(geo, dict) else getattr(geo, "country_weights", {})) or {}),
+        "geoWeights": dict(_g(geo, "country_weights", default={}) or {}),
         # Returns
         "returnsEnabled": bool(getattr(returns, "enabled", True)),
         "returnRate": float(getattr(returns, "return_rate", 0.03)),
@@ -185,6 +185,7 @@ def get_config():
         "subMaxSubscriptions": int(getattr(sub, "max_subscriptions", 5)),
         "subChurnRate": float(getattr(sub, "churn_rate", 0.25)),
         "subTrialRate": float(getattr(sub, "trial_rate", 0.30)),
+        "subTrialConversionRate": float(getattr(sub, "trial_conversion_rate", 0.85)),
         "subSeed": int(getattr(sub, "seed", 700) or 700),
         # Stores detail
         "storeEnsureIsoCoverage": bool(getattr(stores, "ensure_iso_coverage", True)),
@@ -194,11 +195,14 @@ def get_config():
         "storeOpeningEnd": str(_g(stores, "opening", "end", default="2023-12-31")),
         "storeClosingEnd": str(getattr(stores, "closing_end", "2028-12-31")),
         "storeAssortmentEnabled": bool(_g(stores, "assortment", "enabled", default=True)),
+        "storeOnlineStores": int(getattr(stores, "online_stores", 5) or 5),
+        "storeOnlineCloseShare": float(getattr(stores, "online_close_share", 0.10)),
+        "storeClosingEnabled": bool(_g(stores, "closing", "enabled", default=True)),
+        "storeCloseShare": float(_g(stores, "closing", "close_share", default=0.10)),
         # Employees
         "employeeMinStaff": int(getattr(emp, "min_staff_per_store", 3)),
         "employeeMaxStaff": int(getattr(emp, "max_staff_per_store", 5)),
         "employeeEmailDomain": str(_g(emp, "hr", "email_domain", default="contoso.com")),
-        "employeeStoreAssignments": bool(getattr(store_assigns, "enabled", True)),
         # Exchange Rates
         "erCurrencies": list(getattr(er, "currencies", ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"])),
         "erBaseCurrency": str(getattr(er, "base_currency", "USD")),
@@ -266,6 +270,7 @@ def update_config(body: ConfigUpdate):
             cfg.sales.partitioning["enabled"] = bool(v["partitionEnabled"])
         if "maxLinesPerOrder" in v: cfg.sales.max_lines_per_order = int(v["maxLinesPerOrder"])
         if "salesOptimize" in v: cfg.sales.optimize = bool(v["salesOptimize"])
+        if "qualityReport" in v: cfg.sales.quality_report = bool(v["qualityReport"])
 
         # Dates
         if "startDate" in v: cfg.defaults.dates.start = v["startDate"]
@@ -300,6 +305,7 @@ def update_config(body: ConfigUpdate):
         if "customerActiveRatio" in v: cfg.customers.active_ratio = float(v["customerActiveRatio"])
         if "profile" in v: cfg.customers.profile = v["profile"]
         if "firstYearPct" in v: cfg.customers.first_year_pct = float(v["firstYearPct"])
+        if "householdPct" in v: cfg.customers.household_pct = float(v["householdPct"])
 
         # Customers SCD2
         if any(k.startswith("custScd2") for k in v):
@@ -380,6 +386,7 @@ def update_config(body: ConfigUpdate):
         if "subMaxSubscriptions" in v: cfg.subscriptions.max_subscriptions = int(v["subMaxSubscriptions"])
         if "subChurnRate" in v: cfg.subscriptions.churn_rate = float(v["subChurnRate"])
         if "subTrialRate" in v: cfg.subscriptions.trial_rate = float(v["subTrialRate"])
+        if "subTrialConversionRate" in v: cfg.subscriptions.trial_conversion_rate = float(v["subTrialConversionRate"])
         if "subSeed" in v: cfg.subscriptions.seed = int(v["subSeed"])
 
         # Stores detail
@@ -390,12 +397,15 @@ def update_config(body: ConfigUpdate):
         if "storeOpeningEnd" in v: cfg.stores.opening.end = v["storeOpeningEnd"]
         if "storeClosingEnd" in v: cfg.stores.closing_end = v["storeClosingEnd"]
         if "storeAssortmentEnabled" in v: cfg.stores.assortment.enabled = bool(v["storeAssortmentEnabled"])
+        if "storeOnlineStores" in v: cfg.stores.online_stores = int(v["storeOnlineStores"])
+        if "storeOnlineCloseShare" in v: cfg.stores.online_close_share = float(v["storeOnlineCloseShare"])
+        if "storeClosingEnabled" in v: cfg.stores.closing.enabled = bool(v["storeClosingEnabled"])
+        if "storeCloseShare" in v: cfg.stores.closing.close_share = float(v["storeCloseShare"])
 
         # Employees
         if "employeeMinStaff" in v: cfg.employees.min_staff_per_store = int(v["employeeMinStaff"])
         if "employeeMaxStaff" in v: cfg.employees.max_staff_per_store = int(v["employeeMaxStaff"])
         if "employeeEmailDomain" in v: cfg.employees.hr.email_domain = v["employeeEmailDomain"]
-        if "employeeStoreAssignments" in v: cfg.employees.store_assignments.enabled = bool(v["employeeStoreAssignments"])
 
         # Exchange Rates
         if "erCurrencies" in v and isinstance(v["erCurrencies"], list): cfg.exchange_rates.currencies = v["erCurrencies"]

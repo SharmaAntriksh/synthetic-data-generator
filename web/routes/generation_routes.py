@@ -93,9 +93,8 @@ def validate_config():
         warnings.append(f"Products ({products:,}) exceed sales rows.")
 
     pricing = _g(cfg, "products", "pricing", "base", default={})
-    # pricing is a plain dict (products.pricing is Dict[str, Any])
-    lo = float(pricing.get("min_unit_price", 10) if isinstance(pricing, dict) else getattr(pricing, "min_unit_price", 10))
-    hi = float(pricing.get("max_unit_price", 5000) if isinstance(pricing, dict) else getattr(pricing, "max_unit_price", 5000))
+    lo = float(_g(pricing, "min_unit_price", default=10))
+    hi = float(_g(pricing, "max_unit_price", default=5000))
     if hi <= lo:
         errors.append("Max unit price must exceed min unit price.")
 

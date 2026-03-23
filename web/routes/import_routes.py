@@ -23,7 +23,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+import re
+
 from web.shared_state import REPO_ROOT, _ANSI_RE
+
+# Spinner lines from sql_server_import.py use \r to overwrite in-place.
+# In a subprocess pipe they appear as separate lines — filter them out.
+_SPINNER_RE = re.compile(r"^\s*\[[-\\|/]\]\s")
 
 router = APIRouter(prefix="/api", tags=["import"])
 
@@ -60,6 +66,86 @@ class ImportRequest(BaseModel):
     password: Optional[str] = None
     apply_cci: bool = False
     odbc_driver: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# SQL Server instance discovery
+# ---------------------------------------------------------------------------
+
+def _discover_local_instances() -> list[dict]:
+    """Discover local SQL Server instances via Windows registry."""
+    results = []
+    if sys.platform != "win32":
+        return results
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL",
+        ) as key:
+            hostname = os.environ.get("COMPUTERNAME", "localhost")
+            i = 0
+            while True:
+                try:
+                    name, _val, _ = winreg.EnumValue(key, i)
+                    server = hostname if name.upper() == "MSSQLSERVER" else f"{hostname}\\{name}"
+                    results.append({"server": server, "source": "local"})
+                    i += 1
+                except OSError:
+                    break
+    except OSError:
+        pass
+    return results
+
+
+def _discover_network_instances(timeout: float = 2.0) -> list[dict]:
+    """Discover SQL Server instances on the network via UDP broadcast."""
+    import socket
+    results = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(timeout)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.sendto(b"\x02", ("<broadcast>", 1434))
+            seen = set()
+            while True:
+                try:
+                    data, addr = sock.recvfrom(4096)
+                    info = data[3:].decode("ascii", errors="replace")
+                    # Parse "ServerName;FOO;InstanceName;BAR;..." pairs
+                    parts = info.strip(";").split(";")
+                    pairs = dict(zip(parts[0::2], parts[1::2]))
+                    srv_name = pairs.get("ServerName", addr[0])
+                    inst_name = pairs.get("InstanceName", "")
+                    version = pairs.get("Version", "")
+                    server = srv_name if inst_name.upper() == "MSSQLSERVER" else f"{srv_name}\\{inst_name}"
+                    if server not in seen:
+                        seen.add(server)
+                        results.append({"server": server, "source": "network", "version": version})
+                except socket.timeout:
+                    break
+    except OSError:
+        pass
+    return results
+
+
+@router.get("/import/servers")
+def list_sql_servers():
+    """Discover available SQL Server instances (local + network)."""
+    local = _discover_local_instances()
+    network = _discover_network_instances(timeout=2.0)
+    # Merge: prefer local entries, add network-only ones
+    seen = {s["server"].upper() for s in local}
+    merged = list(local)
+    for s in network:
+        if s["server"].upper() not in seen:
+            merged.append(s)
+        else:
+            # Enrich local entry with version from network discovery
+            for m in merged:
+                if m["server"].upper() == s["server"].upper() and s.get("version"):
+                    m["version"] = s["version"]
+    return {"servers": merged}
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +209,8 @@ def _run_import_thread(job: dict, req: ImportRequest, dataset_path: Path):
 
         for line in proc.stdout:
             clean = _ANSI_RE.sub("", line.rstrip())
+            if not clean or _SPINNER_RE.match(clean):
+                continue
             job["logs"].append(clean)
 
         proc.wait()
