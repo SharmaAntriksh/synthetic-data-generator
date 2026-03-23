@@ -157,16 +157,26 @@ def _run_pipeline_thread(job: dict, cfg_snapshot: dict, models_snapshot: dict, r
             )
             job["process"] = proc
 
-            for line in proc.stdout:
-                clean = _ANSI_RE.sub("", line.rstrip())
-                job["logs"].append(clean)
+            # Timer fires while the stdout loop is still blocking — the
+            # only way to enforce a wall-clock limit on the subprocess.
+            timed_out = threading.Event()
 
-            # Hard timeout to prevent zombie processes (configurable via env var)
+            def _kill_on_timeout():
+                if proc.poll() is None:
+                    proc.kill()
+                    timed_out.set()
+
+            timer = threading.Timer(_PIPELINE_TIMEOUT, _kill_on_timeout)
+            timer.start()
             try:
-                proc.wait(timeout=_PIPELINE_TIMEOUT)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()  # ensure returncode is set after kill
+                for line in proc.stdout:
+                    clean = _ANSI_RE.sub("", line.rstrip())
+                    job["logs"].append(clean)
+                proc.wait()
+            finally:
+                timer.cancel()
+
+            if timed_out.is_set():
                 job["logs"].append(f"ERROR: Pipeline killed after {_PIPELINE_TIMEOUT}s timeout")
             job["exit_code"] = proc.returncode
             job["status"] = "done" if proc.returncode == 0 else "failed"

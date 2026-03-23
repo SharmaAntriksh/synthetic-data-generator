@@ -11,6 +11,7 @@ import asyncio
 import json as _json
 import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -23,8 +24,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-import re
-
+from src.utils.config_helpers import int_or
 from web.shared_state import REPO_ROOT, _ANSI_RE
 
 # Spinner lines from sql_server_import.py use \r to overwrite in-place.
@@ -33,6 +33,7 @@ _SPINNER_RE = re.compile(r"^\s*\[[-\\|/]\]\s")
 
 router = APIRouter(prefix="/api", tags=["import"])
 
+_IMPORT_TIMEOUT = int_or(os.environ.get("IMPORT_TIMEOUT_SECONDS"), 4 * 3600)
 _DATASETS_DIR = REPO_ROOT / "generated_datasets"
 _DATASETS_DIR_RESOLVED = _DATASETS_DIR.resolve()
 _IMPORT_SCRIPT = REPO_ROOT / "scripts" / "sql" / "run_sql_server_import.py"
@@ -211,13 +212,29 @@ def _run_import_thread(job: dict, req: ImportRequest, dataset_path: Path):
         )
         job["process"] = proc
 
-        for line in proc.stdout:
-            clean = _ANSI_RE.sub("", line.rstrip())
-            if not clean or _SPINNER_RE.match(clean):
-                continue
-            job["logs"].append(clean)
+        # Timer fires while the stdout loop is still blocking — the
+        # only way to enforce a wall-clock limit on the subprocess.
+        timed_out = threading.Event()
 
-        proc.wait()
+        def _kill_on_timeout():
+            if proc.poll() is None:
+                proc.kill()
+                timed_out.set()
+
+        timer = threading.Timer(_IMPORT_TIMEOUT, _kill_on_timeout)
+        timer.start()
+        try:
+            for line in proc.stdout:
+                clean = _ANSI_RE.sub("", line.rstrip())
+                if not clean or _SPINNER_RE.match(clean):
+                    continue
+                job["logs"].append(clean)
+            proc.wait()
+        finally:
+            timer.cancel()
+
+        if timed_out.is_set():
+            job["logs"].append(f"ERROR: Import killed after {_IMPORT_TIMEOUT}s timeout")
         job["exit_code"] = proc.returncode
         job["status"] = "done" if proc.returncode == 0 else "failed"
     except Exception:

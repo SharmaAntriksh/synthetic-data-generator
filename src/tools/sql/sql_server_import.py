@@ -40,6 +40,7 @@ _COLORS = {
     "INFO": "\033[94m",   # Blue
     "WORK": "\033[93m",   # Yellow
     "DONE": "\033[92m",   # Green
+    "PASS": "\033[92m",   # Green (verification checks)
     "SKIP": "\033[90m",   # Grey
     "WARN": "\033[95m",   # Magenta
     "FAIL": "\033[91m",   # Red
@@ -670,7 +671,7 @@ def _run_verify(cursor) -> None:
         )
         if result == "PASS":
             passed += 1
-            _log("DONE", f"    [{suite}] {check}  ({actual})")
+            _log("PASS", f"    [{suite}] {check}  ({actual})")
         elif result == "INFO":
             info += 1
         else:
@@ -854,6 +855,8 @@ def import_sql_server(
         ) from exc
 
     # Step 3: CCI + optional PK/FK drop (share one connection)
+    if drop_pk or apply_cci:
+        _log("INFO", "=" * 60)
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             _try_disable_query_timeout(conn)
@@ -913,6 +916,8 @@ def import_sql_server(
                     _log("INFO", "    Definitions saved to [admin].[_PK_Backup] for RESTORE")
 
             # 3.3 Apply CCI scripts (only when --apply-cci is set)
+            if apply_cci and drop_pk:
+                _log("INFO", "=" * 60)
             if apply_cci:
                 if not cci_apply_files:
                     _log("INFO", "  No CCI apply scripts found; skipping.")
@@ -945,6 +950,7 @@ def import_sql_server(
     if not verify:
         return
 
+    _log("INFO", "=" * 60)
     try:
         with pyodbc.connect(db_conn_str, autocommit=True) as conn:
             _try_disable_query_timeout(conn)

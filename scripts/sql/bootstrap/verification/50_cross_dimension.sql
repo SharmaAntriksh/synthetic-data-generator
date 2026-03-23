@@ -22,15 +22,16 @@ BEGIN
         ActualValue VARCHAR(100) NOT NULL
     );
 
-    -- Employee GeographyKey FK
+    -- Employee GeographyKey FK (GeographyKey=0 is the corporate sentinel
+    -- for top-level employees not assigned to any store/geography)
     IF OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
     BEGIN
         DECLARE @bad_emp_geo INT;
         SELECT @bad_emp_geo = COUNT(DISTINCT e.GeographyKey)
         FROM dbo.Employees e LEFT JOIN dbo.Geography g ON g.GeographyKey = e.GeographyKey
-        WHERE e.GeographyKey IS NOT NULL AND g.GeographyKey IS NULL;
+        WHERE e.GeographyKey IS NOT NULL AND e.GeographyKey <> 0 AND g.GeographyKey IS NULL;
         INSERT INTO #R VALUES ('Referential', 'Employee: valid GeographyKey',
-            'Every employee GeographyKey must exist in Geography',
+            'Every non-corporate employee GeographyKey must exist in Geography',
             CASE WHEN @bad_emp_geo = 0 THEN 'PASS' ELSE 'FAIL' END,
             CAST(@bad_emp_geo AS VARCHAR) + ' orphaned keys');
     END

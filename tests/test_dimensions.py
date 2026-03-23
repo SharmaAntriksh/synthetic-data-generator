@@ -354,7 +354,8 @@ class TestBuildDimCurrency:
 
     def test_currency_codes_preserved(self):
         df = build_dim_currency(["cad", "gbp"])
-        assert list(df["ToCurrency"]) == ["CAD", "GBP"]
+        # USD is auto-inserted as base currency when not in the input list
+        assert list(df["ToCurrency"]) == ["USD", "CAD", "GBP"]
 
     def test_determinism(self):
         df1 = build_dim_currency(["USD", "EUR"])
@@ -363,7 +364,9 @@ class TestBuildDimCurrency:
 
     def test_single_currency(self):
         df = build_dim_currency(["JPY"])
-        assert len(df) == 1
+        # USD is auto-inserted as base currency, so JPY-only input yields 2 rows
+        assert len(df) == 2
+        assert list(df["ToCurrency"]) == ["USD", "JPY"]
 
     def test_duplicate_raises(self):
         with pytest.raises(ValueError, match="Duplicate"):

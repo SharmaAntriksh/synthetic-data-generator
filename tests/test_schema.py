@@ -139,7 +139,7 @@ class TestModelsConfigFromYAML:
 
     def test_pricing_inflation(self, raw_models):
         m = ModelsConfig.from_raw_dict(raw_models)
-        assert m.models.pricing.inflation.annual_rate == 0.02
+        assert m.models.pricing.inflation.annual_rate == 0.10
         assert m.models.pricing.inflation.volatility_seed == 123
 
     def test_pricing_markdown(self, raw_models):

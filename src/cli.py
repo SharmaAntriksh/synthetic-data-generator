@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--sales-rows",
-        type=int,
+        type=positive_int,
         help="Override sales.total_rows",
     )
 
@@ -83,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--row-group-size",
-        type=int,
+        type=positive_int,
         help="Override sales.row_group_size (parquet/deltaparquet only)",
     )
 
@@ -159,25 +159,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--customers",
-        type=int,
+        type=positive_int,
         help="Override customers.total_customers",
     )
 
     parser.add_argument(
         "--stores",
-        type=int,
+        type=positive_int,
         help="Override stores count (preferred: stores.num_stores; legacy: stores.total_stores)",
     )
 
     parser.add_argument(
         "--products",
-        type=int,
+        type=positive_int,
         help="Override products.num_products",
     )
 
     parser.add_argument(
         "--promotions",
-        type=int,
+        type=positive_int,
         help="Override total promotions (distributed across promotion buckets when possible)",
     )
 

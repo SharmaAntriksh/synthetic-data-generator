@@ -59,7 +59,7 @@ BEGIN
         SELECT @count_mismatch = COUNT(*) FROM dbo.Stores s
         LEFT JOIN (
             SELECT StoreKey, COUNT(*) AS Cnt FROM dbo.Employees
-            WHERE StoreKey IS NOT NULL AND StoreKey > 0 GROUP BY StoreKey
+            WHERE StoreKey IS NOT NULL AND StoreKey > 0 AND IsActive = 1 GROUP BY StoreKey
         ) e ON e.StoreKey = s.StoreKey
         WHERE s.Status = 'Open'
           AND ABS(s.EmployeeCount - ISNULL(e.Cnt, 0)) > 0;
