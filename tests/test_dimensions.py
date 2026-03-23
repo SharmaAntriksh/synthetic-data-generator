@@ -190,6 +190,7 @@ class TestGenerateStoreTable:
         assert (df["SquareFootage"] > 0).all()
 
     def test_employee_count_positive(self, geo_keys):
+        """All stores get positive EmployeeCount (closed stores keep operational count)."""
         df = generate_store_table(geo_keys=geo_keys, num_stores=30, seed=1)
         assert (df["EmployeeCount"] > 0).all()
 
@@ -843,14 +844,15 @@ class TestGenerateEmployeeDimension:
                     f"Store {sk}: no SA hired before {global_start}"
                 )
 
-    def test_max_staff_zero_means_no_staff(self, people_pools):
+    def test_employee_count_one_means_no_staff(self, people_pools):
+        """EmployeeCount=1 means only the store manager, zero staff."""
         stores = self._make_stores(n=3)
+        stores["EmployeeCount"] = 1  # just the manager
         df = generate_employee_dimension(
             stores=stores,
             seed=42,
             global_start=pd.Timestamp("2021-01-01"),
             global_end=pd.Timestamp("2025-12-31"),
-            max_staff_per_store=0,
             people_pools=people_pools,
         )
         # Should still have corporate + regional + district + store managers

@@ -249,12 +249,10 @@ Store dimension: physical and online store configuration.
 
 ## Employees
 
-Employee dimension: staffing levels and HR configuration.
+Employee dimension: HR configuration. Staff counts are driven by `Stores.EmployeeCount` (see Stores section).
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `employees.min_staff_per_store` | Minimum employees assigned to each store. Guarantees every store has at least this many staff members. | `4` |
-| `employees.max_staff_per_store` | Maximum employees per store. Actual count is randomized between min and max. | `10` |
 | `employees.hr.email_domain` | Domain suffix for generated employee email addresses. | `"contoso.com"` |
 
 ---

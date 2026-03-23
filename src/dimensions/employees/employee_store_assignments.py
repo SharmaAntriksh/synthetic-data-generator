@@ -1,12 +1,13 @@
 """Employee Store Assignment bridge table generator.
 
-Static model: one row per employee at their home store for the duration
-of their tenure.  No transfers, no relocations.  Store closures are
-handled by employees.py (which sets TerminationDate), so the bridge
-simply reflects each employee's effective window.
+Generates the initial bridge table (one row per employee at their home
+store).  When ``employees.transfers.enabled`` is True, the transfer
+engine (``transfers.py``) post-processes the table to add inter-store
+transfers, producing multiple rows per transferred employee.
 
 Output columns:
-  EmployeeKey, StoreKey, StartDate, EndDate, FTE, RoleAtStore, Status
+  AssignmentKey, EmployeeKey, AssignmentSequence, StoreKey, StartDate,
+  EndDate, FTE, RoleAtStore, IsPrimary, TransferReason, Status
 """
 from __future__ import annotations
 
@@ -15,13 +16,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.dimensions.employees import (
+from src.dimensions.employees.generator import (
     STORE_MGR_KEY_BASE,
     STAFF_KEY_BASE,
     STAFF_KEY_STORE_MULT,
 )
 from src.defaults import ONLINE_EMP_KEY_BASE
-from src.utils.logging_utils import info, skip, stage
+from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 from src.utils.config_helpers import (
@@ -29,6 +30,7 @@ from src.utils.config_helpers import (
     str_or,
     parse_global_dates,
 )
+from src.utils.config_precedence import resolve_seed
 
 
 # ---------------------------------------------------------------------------
@@ -75,8 +77,9 @@ def generate_employee_store_assignments(
     (clamped to hire/termination dates).
     """
     out_cols = [
-        "EmployeeKey", "StoreKey", "StartDate", "EndDate",
-        "FTE", "RoleAtStore", "Status",
+        "AssignmentKey", "EmployeeKey", "AssignmentSequence",
+        "StoreKey", "StartDate", "EndDate",
+        "FTE", "RoleAtStore", "IsPrimary", "TransferReason", "Status",
     ]
 
     if employees.empty:
@@ -87,9 +90,17 @@ def generate_employee_store_assignments(
     emp["HireDate"] = pd.to_datetime(emp["HireDate"], errors="coerce").dt.normalize()
     emp["TerminationDate"] = pd.to_datetime(emp["TerminationDate"], errors="coerce").dt.normalize()
 
-    # Build one row per employee
+    # Build one row per employee (corporate hierarchy has no store assignment)
     home_sk = emp["HomeStoreKey"]
     valid = home_sk.notna() & emp["HireDate"].notna()
+    dropped = emp[~valid]
+    if len(dropped) > 0:
+        ek = dropped["EmployeeKey"].astype(np.int64)
+        # Store-level keys (30M+) being dropped is unexpected → warn
+        store_level = ek >= STORE_MGR_KEY_BASE
+        n_unexpected = int(store_level.sum())
+        if n_unexpected > 0:
+            warn(f"{n_unexpected} store employee(s) dropped: missing StoreKey or HireDate")
     emp = emp[valid]
 
     if emp.empty:
@@ -106,14 +117,18 @@ def generate_employee_store_assignments(
     end = end[ok]
 
     is_terminated = emp["TerminationDate"].notna().values & (emp["IsActive"].values == 0)
+    n_rows = len(emp)
 
     out = pd.DataFrame({
+        "AssignmentKey": np.arange(1, n_rows + 1, dtype=np.int32),
         "EmployeeKey": emp["EmployeeKey"].astype(np.int32),
         "StoreKey": emp["HomeStoreKey"].astype(np.int32),
         "StartDate": start,
         "EndDate": end,
         "FTE": emp["FTE"].fillna(1.0).astype(np.float64),
         "RoleAtStore": emp["Title"].astype(str),
+        "IsPrimary": np.int8(1),
+        "TransferReason": "Initial",
         "Status": np.where(is_terminated, "Completed", "Active"),
     })
 
@@ -121,6 +136,12 @@ def generate_employee_store_assignments(
     out["EndDate"] = pd.to_datetime(out["EndDate"]).dt.normalize()
 
     out = out.sort_values(["EmployeeKey", "StartDate"]).reset_index(drop=True)
+
+    # Per-employee sequential number (1, 2, 3, ... for each employee's assignments)
+    out["AssignmentSequence"] = out.groupby("EmployeeKey").cumcount().astype(np.int16) + 1
+
+    # Enforce column order to match static schema (BULK INSERT is positional)
+    out = out[out_cols]
 
     info(
         f"Bridge table: {len(out)} rows, "
@@ -160,9 +181,14 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
         columns=["EmployeeKey", "HireDate", "TerminationDate", "Title", "FTE", "IsActive"],
     )
 
+    # Transfer config
+    transfers_cfg = emp_cfg.transfers
+    transfers_enabled = transfers_cfg.enabled
+
     version_cfg = dict(a_cfg)
-    version_cfg["schema_version"] = 15  # v15: static model, 1 row per employee
+    version_cfg["schema_version"] = 17  # v17: transfer engine support
     version_cfg["_stores_cfg"] = dict(cfg.stores)
+    version_cfg["_transfers"] = as_dict(transfers_cfg)
     version_cfg["_rows_employees"] = int(len(employees))
     if len(employees) > 0:
         ek = pd.to_numeric(employees["EmployeeKey"], errors="coerce").dropna().astype(np.int32)
@@ -189,6 +215,33 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
             global_start=global_start,
             global_end=global_end,
         )
+
+        if transfers_enabled:
+            from src.dimensions.employees.transfers import apply_transfers
+
+            stores_path = parquet_folder / "stores.parquet"
+            if not stores_path.exists():
+                raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
+
+            _stores_cols = [
+                "StoreKey", "StoreType", "Status", "StoreRegion",
+                "OpeningDate", "ClosingDate",
+            ]
+            try:
+                stores_df = pd.read_parquet(stores_path, columns=_stores_cols)
+            except (KeyError, ValueError):
+                stores_df = pd.read_parquet(stores_path)
+
+            df = apply_transfers(
+                df, stores_df,
+                seed=resolve_seed(cfg, as_dict(emp_cfg), fallback=42) ^ 0x7F3A,
+                global_start=global_start,
+                global_end=global_end,
+                annual_rate=transfers_cfg.annual_rate,
+                min_tenure_months=transfers_cfg.min_tenure_months,
+                same_region_pref=transfers_cfg.same_region_pref,
+                salesperson_roles=[emp_cfg.store_assignments.primary_sales_role],
+            )
 
         write_parquet_with_date32(
             df,

@@ -612,12 +612,16 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("DepartmentName", VARCHAR(50, not_null=True)),
     ),
     "EmployeeStoreAssignments": (
+        ("AssignmentKey", INT_NN),
         ("EmployeeKey", INT_NN),
+        ("AssignmentSequence", SMALLINT(not_null=True)),
         ("StoreKey", INT_NN),
         ("StartDate", DATE_NN),
         ("EndDate", DATE_NN),
         ("FTE", DECIMAL(18, 2, not_null=True)),
         ("RoleAtStore", VARCHAR(100, not_null=True)),
+        ("IsPrimary", BIT(not_null=True)),
+        ("TransferReason", VARCHAR(50, not_null=True)),
         ("Status", VARCHAR(20, not_null=True)),
     ),
     "Suppliers": (

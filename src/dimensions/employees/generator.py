@@ -18,7 +18,6 @@ from src.utils.name_pools import (
 from src.utils.config_helpers import (
     as_dict,
     int_or,
-    float_or,
     bool_or,
     parse_global_dates,
     rand_dates_between,
@@ -335,12 +334,6 @@ def generate_employee_dimension(
     seed: int,
     global_start: pd.Timestamp,
     global_end: pd.Timestamp,
-    district_size: int = 10,
-    districts_per_region: int = 8,
-    max_staff_per_store: int = 5,
-    use_store_employee_count: bool = False,
-    min_staff_per_store: int = 3,
-    staff_scale: float = 0.25,
     people_pools=None,
     iso_by_geo: dict[int, str] | None = None,
     default_region: str = "US",
@@ -372,13 +365,6 @@ def generate_employee_dimension(
     stores = stores.copy()
     stores["StoreKey"] = stores["StoreKey"].astype(np.int32)
 
-    max_staff_per_store = max(0, int_or(max_staff_per_store, 5))
-    min_staff_per_store = max(0, int_or(min_staff_per_store, 3))
-    if max_staff_per_store > 0:
-        min_staff_per_store = min(min_staff_per_store, max_staff_per_store)
-    else:
-        min_staff_per_store = 0
-    staff_scale = float(np.clip(float_or(staff_scale, 0.25), 0.0, 1.0))
     rng = np.random.default_rng(int(seed))
 
     n_stores = len(stores)
@@ -422,8 +408,8 @@ def generate_employee_dimension(
         sort_cols.append("StoreKey")
         stores = stores.sort_values(sort_cols).reset_index(drop=True)
 
-        district_size = max(1, int_or(district_size, 10))
-        districts_per_region = max(1, int_or(districts_per_region, 8))
+        district_size = 10
+        districts_per_region = 8
 
         if has_continent:
             district_id = np.zeros(n_stores, dtype=np.int16)
@@ -493,9 +479,12 @@ def generate_employee_dimension(
             StoreKey=pd.NA, GeographyKey=pd.NA,
         ))
 
+    # Build district → region mapping from actual store data
+    district_to_region = dict(zip(district_id.tolist(), region_id.tolist()))
+
     unique_districts = np.unique(district_id)
     for did in unique_districts:
-        rid = int(((did - 1) // districts_per_region) + 1)
+        rid = int(district_to_region[int(did)])
         rows.append(dict(
             EmployeeKey=_district_mgr_key(int(did)),
             ParentEmployeeKey=_region_mgr_key(rid),
@@ -541,25 +530,17 @@ def generate_employee_dimension(
     })
 
     # ---------------------------------------------------------------
-    # Staff counts (physical stores only — online stores get 0 staff)
+    # Staff counts — read directly from Stores.EmployeeCount (single source of truth).
+    # Subtract 1 for the store manager (already generated above).
+    # Online stores get 0 staff here (their representative is generated separately).
     # ---------------------------------------------------------------
     n_physical = int(_is_physical_store.sum())
-    if max_staff_per_store <= 0 or n_physical == 0:
-        staff_counts = np.zeros(n_physical, dtype=np.int64)
-    elif use_store_employee_count:
-        emp_counts = stores.loc[_is_physical_store, "EmployeeCount"].fillna(0).astype(np.int64).to_numpy()
-        base = np.maximum(0, emp_counts - 1)
-        scaled = np.rint(base.astype(np.float64) * staff_scale).astype(np.int64)
-        staff_counts = np.clip(scaled, 0, max_staff_per_store).astype(np.int64)
-        has_any = base > 0
-        staff_counts = np.where(
-            has_any, np.maximum(staff_counts, min_staff_per_store), 0,
-        ).astype(np.int64)
+    if n_physical == 0:
+        staff_counts = np.zeros(0, dtype=np.int64)
     else:
-        staff_counts = rng.integers(
-            min_staff_per_store, max_staff_per_store + 1,
-            size=n_physical, dtype=np.int64,
-        )
+        emp_counts = stores.loc[_is_physical_store, "EmployeeCount"].fillna(0).astype(np.int64).to_numpy()
+        # EmployeeCount includes the store manager, so subtract 1 for staff
+        staff_counts = np.maximum(0, emp_counts - 1)
 
     # ---------------------------------------------------------------
     # Staff rows — vectorized via np.repeat (physical stores only)
@@ -822,10 +803,6 @@ def generate_employee_dimension(
 
 
 # ---------------------------------------------------------
-# EmployeeCount sync — update stores.parquet after generation
-# ---------------------------------------------------------
-
-# ---------------------------------------------------------
 # Pipeline entrypoint
 # ---------------------------------------------------------
 
@@ -860,7 +837,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         )
 
     version_cfg = as_dict(emp_cfg)
-    version_cfg["schema_version"] = 9  # v9: static model, no attrition, no transfers
+    version_cfg["schema_version"] = 10  # v10: staff counts read from Stores.EmployeeCount
     version_cfg["_stores_sig"] = _stores_signature(stores)
     version_cfg["_stores_cfg"] = as_dict(cfg.stores)
     version_cfg["_global_dates"] = {
@@ -942,12 +919,6 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             seed=seed,
             global_start=global_start,
             global_end=global_end,
-            district_size=emp_cfg.district_size,
-            districts_per_region=emp_cfg.districts_per_region,
-            max_staff_per_store=emp_cfg.max_staff_per_store,
-            use_store_employee_count=emp_cfg.use_store_employee_count,
-            min_staff_per_store=emp_cfg.min_staff_per_store,
-            staff_scale=emp_cfg.staff_scale,
             people_pools=people_pools,
             iso_by_geo=iso_by_geo,
             default_region="US",

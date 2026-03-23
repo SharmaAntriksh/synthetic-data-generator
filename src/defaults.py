@@ -104,8 +104,18 @@ STORE_DEFAULT_OWNERSHIP: tuple[list[str], list[float]] = (
 STORE_REVENUE_CLASSES = np.array(["A", "B", "C"], dtype=object)
 STORE_REVENUE_CLASSES_P = np.array([0.20, 0.60, 0.20], dtype=float)
 
+# Store-type staffing ranges: (min_staff, max_staff) per store type.
+# Used by stores.py to set EmployeeCount; employees.py reads that column directly.
+STORE_STAFFING_RANGES: Dict[str, Tuple[int, int]] = {
+    "Supermarket":  (8, 20),
+    "Hypermarket":  (15, 40),
+    "Convenience":  (2, 6),
+}
+# Fallback for store types not listed above
+STORE_STAFFING_DEFAULT: Tuple[int, int] = (2, 6)
+
 # Online store key ranges — easily distinguishable from physical stores
-ONLINE_STORE_KEY_BASE: int = 900       # Online StoreKeys: 901, 902, ...
+ONLINE_STORE_KEY_BASE: int = 10_000    # Online StoreKeys: 10_001, 10_002, ...
 ONLINE_EMP_KEY_BASE: int = 50_000_000  # Online EmployeeKeys: 50_000_901, 50_000_902, ...
 ONLINE_SALES_REP_ROLE: str = "Online Sales Representative"
 

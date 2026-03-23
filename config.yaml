@@ -9,7 +9,7 @@ scale:
   sales_rows: 108328
   products: 5167                    #5167 total products in base file
   customers: 18834
-  stores: 100
+  stores: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
 # ------------------------------------------------------------------
@@ -35,8 +35,8 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "csv"              # csv | parquet | deltaparquet
-  sales_output: "both"               # sales | sales_order | both
+  file_format: "parquet"              # csv | parquet | deltaparquet
+  sales_output: "sales"               # sales | sales_order | both
   skip_order_cols: false
 
   merge:
@@ -160,6 +160,10 @@ promotions:
 stores:
   online_stores: 5                    # online store count (carved from scale.stores total)
   online_close_share: 0.20             # fraction of online stores that close
+  staffing_ranges:                     # [min, max] staff per store type (online=1 fixed)
+    Supermarket: [8, 20]
+    Hypermarket: [15, 40]
+    Convenience: [2, 6]
   closing:
     enabled: true
     close_share: 0.20                  # fraction of physical stores that close
@@ -168,8 +172,11 @@ stores:
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:
-  min_staff_per_store: 4
-  max_staff_per_store: 10
+  transfers:
+    enabled: true                     # enable inter-store staff transfers
+    annual_rate: 0.20                  # fraction of eligible staff that transfer per year
+    min_tenure_months: 4               # minimum months at current store before eligible
+    same_region_pref: 0.70             # probability transfer stays within the same region
   hr:
     email_domain: "contoso.com"
 

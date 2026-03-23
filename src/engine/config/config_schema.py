@@ -284,15 +284,17 @@ class StoreAssignmentsConfig(_Base):
     min_primary_sales_per_store: int = 1
 
 
+class TransfersConfig(_Base):
+    enabled: bool = False
+    annual_rate: float = 0.05
+    min_tenure_months: int = 6
+    same_region_pref: float = 0.7
+
+
 class EmployeesConfig(_Base):
-    use_store_employee_count: bool = False
-    min_staff_per_store: int = 2
-    max_staff_per_store: int = 6
-    staff_scale: float = 0.25
-    district_size: int = 10
-    districts_per_region: int = 8
     hr: HRConfig = HRConfig()
     store_assignments: StoreAssignmentsConfig = StoreAssignmentsConfig()
+    transfers: TransfersConfig = TransfersConfig()
     # Parquet output knobs
     parquet_compression: str = "snappy"
     parquet_compression_level: Optional[int] = None
@@ -535,7 +537,7 @@ class StoresConfig(_Base):
     assortment: AssortmentConfig = AssortmentConfig()
     # Store attribute config
     square_footage: Optional[Dict[str, Any]] = None
-    employee_count: Optional[Dict[str, Any]] = None
+    staffing_ranges: Optional[Dict[str, Any]] = None
     use_name_pools: bool = True
     # Online store settings
     online_stores: Optional[int] = None      # explicit count carved from num_stores

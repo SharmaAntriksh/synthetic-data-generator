@@ -1168,17 +1168,17 @@ def generate_sales_fact(
         primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")
         salesperson_roles = [str(primary), ONLINE_SALES_REP_ROLE]
 
-    emp_assign_df = load_parquet_df(
-        emp_assign_path,
-        cols=[
-            "EmployeeKey",
-            "StoreKey",
-            "StartDate",
-            "EndDate",
-            "FTE",
-            "RoleAtStore",
-        ],
-    )
+    _esa_base_cols = [
+        "EmployeeKey", "StoreKey", "StartDate", "EndDate",
+        "FTE", "RoleAtStore",
+    ]
+    try:
+        emp_assign_df = load_parquet_df(
+            emp_assign_path, cols=_esa_base_cols + ["IsPrimary"],
+        )
+    except (KeyError, ValueError):
+        # Legacy parquet without IsPrimary column
+        emp_assign_df = load_parquet_df(emp_assign_path, cols=_esa_base_cols)
 
     # Keep only allowed salespeople roles
     if "RoleAtStore" in emp_assign_df.columns:

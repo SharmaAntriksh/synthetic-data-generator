@@ -23,8 +23,7 @@ from src.dimensions.dates import run_dates
 from src.dimensions.currency import run_currency
 from src.dimensions.exchange_rates import run_exchange_rates
 from src.dimensions.suppliers import run_suppliers
-from src.dimensions.employees import run_employees
-from src.dimensions.employee_store_assignments import run_employee_store_assignments
+from src.dimensions.employees import run_employees, run_employee_store_assignments
 from src.dimensions.time import run_time_table
 from src.dimensions.products.products import generate_product_dimension as run_products
 
