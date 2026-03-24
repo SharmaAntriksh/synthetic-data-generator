@@ -49,41 +49,48 @@ class BudgetAccumulator:
         if micro is not None and len(micro.get("return_amount", [])) > 0:
             self._returns_parts.append(micro)
 
-    def finalize_sales(self) -> pd.DataFrame:
+    # ------------------------------------------------------------------
+    # Shared finalize logic
+    # ------------------------------------------------------------------
+
+    def _finalize_parts(
+        self,
+        parts: List[Dict[str, np.ndarray]],
+        value_columns: Dict[str, str],
+        output_columns: List[str],
+    ) -> Optional[pd.DataFrame]:
+        """Concat → groupby → label-map → rename for micro-aggregate parts.
+
+        Args:
+            parts: list of micro-aggregate dicts from workers.
+            value_columns: {internal_name: OutputName} for the value columns
+                (e.g. {"sales_amount": "SalesAmount"}).
+            output_columns: final column order for the returned DataFrame.
+
+        Returns:
+            Labeled DataFrame, or None if parts is empty.
         """
-        Merge all micro-aggregates into a single DataFrame at annual grain.
+        if not parts:
+            return None
 
-        Returns DataFrame with columns:
-            Country, Category, Year, Month, SalesChannelKey,
-            SalesAmount, SalesQuantity
-
-        Then a second-pass groupby to get annual grain:
-            Country, Category, Year, SalesChannelKey,
-            SalesAmount, SalesQuantity
-        """
-        if not self._sales_parts:
-            return pd.DataFrame(columns=[
-                "Country", "Category", "Year", "SalesChannelKey",
-                "SalesAmount", "SalesQuantity",
-            ])
-
-        # Concat all micro-agg arrays
         df = pd.DataFrame({
-            "country_id": np.concatenate([p["country_id"] for p in self._sales_parts]),
-            "category_id": np.concatenate([p["category_id"] for p in self._sales_parts]),
-            "year": np.concatenate([p["year"] for p in self._sales_parts]),
-            "month": np.concatenate([p["month"] for p in self._sales_parts]),
-            "channel_key": np.concatenate([p["channel_key"] for p in self._sales_parts]),
-            "sales_amount": np.concatenate([p["sales_amount"] for p in self._sales_parts]),
-            "sales_qty": np.concatenate([p["sales_qty"] for p in self._sales_parts]),
+            "country_id": np.concatenate([p["country_id"] for p in parts]),
+            "category_id": np.concatenate([p["category_id"] for p in parts]),
+            "year": np.concatenate([p["year"] for p in parts]),
+            "month": np.concatenate([p["month"] for p in parts]),
+            "channel_key": np.concatenate([p["channel_key"] for p in parts]),
+            **{
+                col: np.concatenate([p[col] for p in parts])
+                for col in value_columns
+            },
         })
 
-        # Re-aggregate (workers may produce overlapping month groups in rare edge cases
-        # if chunk boundaries split a month — this final groupby is the safety net)
+        # Re-aggregate (workers may produce overlapping month groups in rare edge
+        # cases if chunk boundaries split a month — this final groupby is the safety net)
         monthly = df.groupby(
             ["country_id", "category_id", "year", "month", "channel_key"],
             as_index=False,
-        ).agg({"sales_amount": "sum", "sales_qty": "sum"})
+        ).agg({col: "sum" for col in value_columns})
 
         # Map ids back to labels (with bounds check)
         country_ids = monthly["country_id"].to_numpy()
@@ -102,61 +109,42 @@ class BudgetAccumulator:
             "year": "Year",
             "month": "Month",
             "channel_key": "SalesChannelKey",
-            "sales_amount": "SalesAmount",
-            "sales_qty": "SalesQuantity",
+            **value_columns,
         }, inplace=True)
 
-        return monthly[["Country", "Category", "Year", "Month",
-                         "SalesChannelKey", "SalesAmount", "SalesQuantity"]]
+        return monthly[output_columns]
+
+    # ------------------------------------------------------------------
+    # Public finalize methods
+    # ------------------------------------------------------------------
+
+    _SALES_OUTPUT_COLS = [
+        "Country", "Category", "Year", "Month",
+        "SalesChannelKey", "SalesAmount", "SalesQuantity",
+    ]
+    _RETURNS_OUTPUT_COLS = [
+        "Country", "Category", "Year", "Month",
+        "SalesChannelKey", "ReturnAmount", "ReturnQuantity",
+    ]
+
+    def finalize_sales(self) -> pd.DataFrame:
+        """Merge all sales micro-aggregates into a monthly-grain DataFrame."""
+        result = self._finalize_parts(
+            self._sales_parts,
+            value_columns={"sales_amount": "SalesAmount", "sales_qty": "SalesQuantity"},
+            output_columns=self._SALES_OUTPUT_COLS,
+        )
+        if result is None:
+            return pd.DataFrame(columns=self._SALES_OUTPUT_COLS)
+        return result
 
     def finalize_returns(self) -> Optional[pd.DataFrame]:
-        """
-        Merge return micro-aggregates into annual grain.
-
-        Returns DataFrame with columns:
-            Country, Category, Year, Month, SalesChannelKey,
-            ReturnAmount, ReturnQuantity
-        """
-        if not self._returns_parts:
-            return None
-
-        df = pd.DataFrame({
-            "country_id": np.concatenate([p["country_id"] for p in self._returns_parts]),
-            "category_id": np.concatenate([p["category_id"] for p in self._returns_parts]),
-            "year": np.concatenate([p["year"] for p in self._returns_parts]),
-            "month": np.concatenate([p["month"] for p in self._returns_parts]),
-            "channel_key": np.concatenate([p["channel_key"] for p in self._returns_parts]),
-            "return_amount": np.concatenate([p["return_amount"] for p in self._returns_parts]),
-            "return_qty": np.concatenate([p["return_qty"] for p in self._returns_parts]),
-        })
-
-        monthly = df.groupby(
-            ["country_id", "category_id", "year", "month", "channel_key"],
-            as_index=False,
-        ).agg({"return_amount": "sum", "return_qty": "sum"})
-
-        country_ids = monthly["country_id"].to_numpy()
-        category_ids = monthly["category_id"].to_numpy()
-        if country_ids.size > 0 and int(country_ids.max()) >= len(self._country_labels):
-            raise IndexError(
-                f"country_id {int(country_ids.max())} >= country_labels length {len(self._country_labels)}"
-            )
-        if category_ids.size > 0 and int(category_ids.max()) >= len(self._category_labels):
-            raise IndexError(
-                f"category_id {int(category_ids.max())} >= category_labels length {len(self._category_labels)}"
-            )
-        monthly["Country"] = self._country_labels[country_ids]
-        monthly["Category"] = self._category_labels[category_ids]
-        monthly.rename(columns={
-            "year": "Year",
-            "month": "Month",
-            "channel_key": "SalesChannelKey",
-            "return_amount": "ReturnAmount",
-            "return_qty": "ReturnQuantity",
-        }, inplace=True)
-
-        return monthly[["Country", "Category", "Year", "Month",
-                         "SalesChannelKey", "ReturnAmount", "ReturnQuantity"]]
+        """Merge return micro-aggregates into a monthly-grain DataFrame."""
+        return self._finalize_parts(
+            self._returns_parts,
+            value_columns={"return_amount": "ReturnAmount", "return_qty": "ReturnQuantity"},
+            output_columns=self._RETURNS_OUTPUT_COLS,
+        )
 
     @property
     def has_data(self) -> bool:

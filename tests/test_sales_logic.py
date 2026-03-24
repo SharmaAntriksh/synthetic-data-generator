@@ -62,7 +62,7 @@ from src.facts.budget.engine import (
 )
 from src.facts.budget.micro_agg import (
     _decode_flat_key,
-    _extract_dimension_columns,
+    _extract_columns_from_table,
     micro_aggregate_sales,
 )
 from src.facts.inventory.accumulator import InventoryAccumulator
