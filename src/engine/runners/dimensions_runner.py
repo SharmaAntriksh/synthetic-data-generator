@@ -160,7 +160,7 @@ DIM_SPECS: List[DimensionSpec] = [
         date_dependent=True,
         inject_global_dates=True,
         enabled=_subscriptions_enabled,
-        outputs_all=("plans.parquet",),
+        outputs_any=("plans.parquet", "customer_subscriptions.parquet"),
     ),
 
     # 3) Stores (depends on geography)

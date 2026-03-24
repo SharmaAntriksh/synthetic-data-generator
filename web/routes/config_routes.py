@@ -186,6 +186,7 @@ def get_config():
         "subChurnRate": float(getattr(sub, "churn_rate", 0.25)),
         "subTrialRate": float(getattr(sub, "trial_rate", 0.30)),
         "subTrialConversionRate": float(getattr(sub, "trial_conversion_rate", 0.85)),
+        "subTrialDays": int(getattr(sub, "trial_days", 14)),
         "subSeed": int(getattr(sub, "seed", 700) or 700),
         # Stores detail
         "storeEnsureIsoCoverage": bool(getattr(stores, "ensure_iso_coverage", True)),
@@ -388,6 +389,7 @@ def update_config(body: ConfigUpdate):
         if "subChurnRate" in v: cfg.subscriptions.churn_rate = float(v["subChurnRate"])
         if "subTrialRate" in v: cfg.subscriptions.trial_rate = float(v["subTrialRate"])
         if "subTrialConversionRate" in v: cfg.subscriptions.trial_conversion_rate = float(v["subTrialConversionRate"])
+        if "subTrialDays" in v: cfg.subscriptions.trial_days = int(v["subTrialDays"])
         if "subSeed" in v: cfg.subscriptions.seed = int(v["subSeed"])
 
         # Stores detail
