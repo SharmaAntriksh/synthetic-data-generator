@@ -17,23 +17,21 @@ from src.versioning import delete_version
 
 from src.dimensions.geography import run_geography
 from src.dimensions.customers import run_customers
+from src.dimensions.customers.subscriptions import run_subscriptions
 from src.dimensions.stores import run_stores
 from src.dimensions.promotions import run_promotions
 from src.dimensions.dates import run_dates
 from src.dimensions.exchange_rates import run_currency, run_exchange_rates
-from src.dimensions.suppliers import run_suppliers
-from src.dimensions.employees import run_employees, run_employee_store_assignments
-from src.dimensions.time import run_time_table
+from src.dimensions.products import run_suppliers
 from src.dimensions.products.products import generate_product_dimension as run_products
+from src.dimensions.employees import run_employees, run_employee_store_assignments
+from src.dimensions.reference import run_time_table, run_return_reasons
 
 from src.dimensions.lookups import (
     run_sales_channels,
     run_loyalty_tiers,
     run_customer_acquisition_channels,
 )
-
-from src.dimensions.return_reasons import run_return_reasons
-from src.dimensions.subscriptions import run_subscriptions
 
 
 # =========================================================

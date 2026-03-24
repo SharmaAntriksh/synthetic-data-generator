@@ -212,7 +212,7 @@ class TestSubscriptionPaymentWeights:
     """Verify payment weights are validated at import time."""
 
     def test_weights_sum_to_one(self):
-        from src.dimensions.subscriptions import _PAYMENT_WEIGHTS
+        from src.dimensions.customers.subscriptions import _PAYMENT_WEIGHTS
         assert abs(_PAYMENT_WEIGHTS.sum() - 1.0) < 1e-9
 
 

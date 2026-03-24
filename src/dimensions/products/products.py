@@ -2,7 +2,7 @@ from pathlib import Path
 from src.utils import info
 from src.utils.logging_utils import stage
 
-from src.dimensions.static_loader import load_static_dimension
+from .static_loader import load_static_dimension
 from .generator import load_product_dimension
 
 
