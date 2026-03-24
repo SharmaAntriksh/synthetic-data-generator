@@ -6,7 +6,7 @@ Analytics-ready retail data generator (star-schema, inspired by ContosoRetailDW)
 
 - **Language:** Python 3.x
 - **Web UI:** FastAPI backend (`web/api.py` + `web/routes/`) + React SPA (`web/frontend/`)
-- **Data:** pandas, numpy, pyarrow, deltalake, fastparquet
+- **Data:** pandas, numpy, pyarrow, deltalake
 - **Config:** PyYAML, pydantic
 - **Other:** yfinance (FX rates), multiprocessing (parallel sales)
 
