@@ -15,10 +15,12 @@
 models:
 
   macro_demand:
-    trend: "boom-and-bust"          # preset: steady-growth | strong-growth | gradual-growth
-                                    #         hockey-stick | decline | boom-and-bust
-                                    #         recession-recovery | seasonal-dominant
-                                    #         plateau | volatile | double-dip
+    trend: "gradual-growth"          # directional (extend over time):
+                                    #   steady-growth | strong-growth | gradual-growth
+                                    #   hockey-stick | decline
+                                    # cyclical (repeat every 10 years):
+                                    #   boom-and-bust | recession-recovery | seasonal-dominant
+                                    #   plateau | volatile | double-dip
   # ================================================================
   # QUANTITY — items per order (basket size)
   # ================================================================

@@ -82,7 +82,8 @@ _TREND_PRESETS: Dict[str, Dict[str, Any]] = {
         "yearly_growth": 0.0,
         "year_level_factors": {
             "mode": "once",
-            "values": [1.0, 1.06, 1.12, 1.18, 1.24, 1.28, 1.34, 1.40, 1.48, 1.55],
+            "values": [1.0, 1.06, 1.12, 1.18, 1.24, 1.28, 1.34, 1.40, 1.48, 1.55,
+                        1.63, 1.71, 1.80, 1.89, 1.99, 2.09, 2.19, 2.30, 2.42, 2.54],
         },
         # No seasonality — steady business, all variation from noise
         "monthly_seasonality": "flat",
@@ -106,7 +107,8 @@ _TREND_PRESETS: Dict[str, Dict[str, Any]] = {
         "yearly_growth": 0.0,
         "year_level_factors": {
             "mode": "once",
-            "values": [0.16, 0.20, 0.25, 0.30, 0.37, 0.45, 0.55, 0.67, 0.82, 1.0],
+            "values": [0.16, 0.20, 0.25, 0.30, 0.37, 0.45, 0.55, 0.67, 0.82, 1.0,
+                        1.22, 1.49, 1.82, 2.22, 2.71, 3.31, 4.04, 4.93, 6.02, 7.35],
         },
         "monthly_seasonality": "flat",
         "noise_std": 0.05,
@@ -133,7 +135,8 @@ _TREND_PRESETS: Dict[str, Dict[str, Any]] = {
         "yearly_growth": 0.0,
         "year_level_factors": {
             "mode": "once",
-            "values": [1.0, 1.15, 1.35, 1.80, 2.00, 1.85, 2.10, 2.40, 2.30, 2.70],
+            "values": [1.0, 1.15, 1.35, 1.80, 2.00, 1.85, 2.10, 2.40, 2.30, 2.70,
+                        2.55, 2.85, 3.10, 2.95, 3.25, 3.50, 3.35, 3.65, 3.90, 3.80],
         },
         "monthly_seasonality": "flat",
         "noise_std": 0.06,
@@ -159,7 +162,8 @@ _TREND_PRESETS: Dict[str, Dict[str, Any]] = {
         "yearly_growth": 0.0,
         "year_level_factors": {
             "mode": "once",
-            "values": [1.0, 1.15, 1.40, 2.00, 3.20, 4.80, 5.50, 6.00, 6.30, 6.80],
+            "values": [1.0, 1.15, 1.40, 2.00, 3.20, 4.80, 5.50, 6.00, 6.30, 6.80,
+                        7.50, 8.30, 9.20, 10.2, 11.3, 12.5, 13.8, 15.3, 17.0, 18.8],
         },
         "monthly_seasonality": "flat",
         "noise_std": 0.07,
@@ -187,7 +191,8 @@ _TREND_PRESETS: Dict[str, Dict[str, Any]] = {
         "yearly_growth": 0.0,
         "year_level_factors": {
             "mode": "once",
-            "values": [1.0, 0.82, 0.67, 0.55, 0.45, 0.37, 0.30, 0.25, 0.20, 0.16],
+            "values": [1.0, 0.82, 0.67, 0.55, 0.45, 0.37, 0.30, 0.25, 0.20, 0.16,
+                        0.13, 0.11, 0.09, 0.07, 0.06, 0.05, 0.04, 0.03, 0.025, 0.02],
         },
         "monthly_seasonality": "flat",
         "noise_std": 0.05,
