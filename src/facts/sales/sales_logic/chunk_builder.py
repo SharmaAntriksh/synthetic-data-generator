@@ -295,43 +295,55 @@ def _sample_products_per_store(
     _store_starts = np.zeros(len(unique_stores) + 1, dtype=np.int64)
     np.cumsum(_store_counts, out=_store_starts[1:])
 
-    for i, sk in enumerate(unique_stores):
-        s, e = int(_store_starts[i]), int(_store_starts[i + 1])
+    n_stores = len(unique_stores)
+    _sk_list = unique_stores.tolist()
+    _pools = [
+        pool if pool is not None and pool.size > 0 else None
+        for pool in (
+            store_to_product_rows[sk] if sk < max_sk and store_to_product_rows[sk] is not None else None
+            for sk in _sk_list
+        )
+    ]
+    _has_brand = brand_to_rows is not None
+    _has_weight = product_weight is not None
+    _cache_get = _cdf_cache.get if _cdf_cache is not None else None
+
+    for i in range(n_stores):
+        s = int(_store_starts[i])
+        e = int(_store_starts[i + 1])
         count = e - s
         orig_idx = _store_order[s:e]
-        sk_int = int(sk)
+        pool = _pools[i]
 
-        if sk_int < max_sk and store_to_product_rows[sk_int] is not None:
-            pool = store_to_product_rows[sk_int]
+        if pool is not None:
+            pool_sz = pool.size
 
-            # --- Brand-aware path ---
-            if brand_to_rows is not None and pool.size > 0:
+            if _has_brand:
                 _sample_brand_aware(
                     rng, out, orig_idx, count, pool,
                     brand_probs, B, product_weight, _cdf_cache, _cal_month,
                 )
-            elif product_weight is not None and pool.size > 1:
-                # --- Popularity-weighted (no brand) ---
+            elif _has_weight and pool_sz > 1:
                 cache_key = (id(pool), -1, _cal_month)
-
-                if _cdf_cache is not None and cache_key in _cdf_cache:
-                    _, cdf = _cdf_cache[cache_key]
+                cached = _cache_get(cache_key) if _cache_get is not None else None
+                if cached is not None:
+                    _, cdf = cached
                 else:
                     w = product_weight[pool]
                     cdf = _normalize_cdf(w)
-                    if _cdf_cache is not None:
+                    if _cache_get is not None:
                         _cdf_cache[cache_key] = (pool, cdf)
 
                 total = float(cdf[-1]) if cdf.size > 0 else 0.0
                 if total > 1e-12:
                     u = rng.random(count)
                     picks = np.searchsorted(cdf, u, side="right")
-                    np.minimum(picks, len(pool) - 1, out=picks)
+                    np.minimum(picks, pool_sz - 1, out=picks)
                     out[orig_idx] = pool[picks]
                 else:
-                    out[orig_idx] = pool[rng.integers(0, len(pool), size=count)]
+                    out[orig_idx] = pool[rng.integers(0, pool_sz, size=count)]
             else:
-                out[orig_idx] = pool[rng.integers(0, len(pool), size=count)]
+                out[orig_idx] = pool[rng.integers(0, pool_sz, size=count)]
         else:
             if _global_p is not None:
                 out[orig_idx] = rng.choice(n_products, size=count, p=_global_p)
@@ -680,13 +692,10 @@ def _sample_salesperson_vectorized(
                     p = w2 / sw
                     all_picked = emp2[rng.choice(emp2.size, size=total_count, p=p)]
 
-                # Scatter into output
-                offset = 0
-                for gi in gi_arr:
-                    count = int(pair_counts[gi])
-                    s, e = int(pair_starts[gi]), int(pair_starts[gi + 1])
-                    out[pair_order[s:e]] = all_picked[offset:offset + count]
-                    offset += count
+                _gi_s = pair_starts[gi_arr]
+                _gi_e = pair_starts[gi_arr + 1]
+                _slot_idx = np.concatenate([pair_order[s:e] for s, e in zip(_gi_s, _gi_e)])
+                out[_slot_idx] = all_picked
         else:
             # Fallback for many employees: iterate per date (rare)
             for j in range(d):
