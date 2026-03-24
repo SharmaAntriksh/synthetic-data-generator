@@ -233,15 +233,28 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
                     stacklevel=2,
                 )
 
-    # seasonality: sin wave (12-month cycle)
-    if amp != 0.0:
+    # seasonality: per-month multipliers (from trend preset) or sin wave fallback
+    monthly_season = cfg.get("monthly_seasonality", None)
+    if monthly_season is not None and len(monthly_season) == 12:
+        season_arr = np.asarray(monthly_season, dtype="float64")
+        month_of_year = (m % 12).astype("int64")
+        s = season_arr[month_of_year]
+    elif amp != 0.0:
         s = 1.0 + amp * np.sin((2.0 * np.pi * m / 12.0) + phase)
     else:
         s = 1.0
 
-    # month-to-month noise (kept small)
+    # month-to-month noise — use a deterministic seed derived from
+    # noise_std so all chunks share the same noise vector.
+    # Without this, multi-chunk generation averages out the noise
+    # (each chunk draws independent noise, sum converges to mean).
     if noise_std > 0.0:
-        n = rng.normal(loc=1.0, scale=noise_std, size=T)
+        import hashlib
+        noise_seed = int(hashlib.md5(
+            f"macro_noise_{noise_std}_{T}".encode()
+        ).hexdigest(), 16) & 0x7FFFFFFF
+        noise_rng = np.random.default_rng(noise_seed)
+        n = noise_rng.normal(loc=1.0, scale=noise_std, size=T)
         n = np.clip(n, 0.5, 1.5)
     else:
         n = 1.0

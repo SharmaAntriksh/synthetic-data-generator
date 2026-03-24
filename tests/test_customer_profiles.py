@@ -4,9 +4,9 @@ from __future__ import annotations
 import pytest
 
 from src.engine.config.config_schema import ModelsInnerConfig
+from src.utils.config_merge import deep_merge
 from src.utils.customer_profiles import (
     VALID_PROFILES,
-    _deep_merge,
     _PROFILES,
     get_profile_defaults,
     get_profile_names,
@@ -28,7 +28,6 @@ class TestProfileDefinitions:
         for name, profile in _PROFILES.items():
             assert "lifecycle" in profile, f"{name} missing lifecycle"
             assert "demand" in profile, f"{name} missing demand"
-            assert "macro_demand" in profile, f"{name} missing macro_demand"
 
     def test_lifecycle_has_expected_keys(self):
         required = {"enable_churn", "base_monthly_churn", "initial_active_customers"}
@@ -45,13 +44,12 @@ class TestProfileDefinitions:
                 assert 1 <= spike["month"] <= 12, f"{name}: invalid spike month"
                 assert spike["boost"] > 0, f"{name}: boost must be positive"
 
-    def test_macro_demand_year_level_factors(self):
+    def test_profiles_do_not_contain_macro_demand(self):
+        """Macro demand is now owned by trend presets, not customer profiles."""
         for name, profile in _PROFILES.items():
-            ylf = profile["macro_demand"]["year_level_factors"]
-
-            assert ylf["mode"] == "once"
-            assert len(ylf["values"]) >= 1
-            assert ylf["values"][0] == 1.0, f"{name}: first year factor should be 1.0"
+            assert "macro_demand" not in profile, (
+                f"{name} still has macro_demand — should be in trend_presets.py"
+            )
 
 
 # ===================================================================
@@ -75,40 +73,40 @@ class TestProfileAPI:
 
 
 # ===================================================================
-# _deep_merge
+# deep_merge
 # ===================================================================
 
 class TestDeepMerge:
     def test_overrides_win(self):
         base = {"a": 1, "b": 2}
 
-        result = _deep_merge(base, {"b": 99})
+        result = deep_merge(base, {"b": 99})
 
         assert result == {"a": 1, "b": 99}
 
     def test_nested_dict_merged(self):
         base = {"a": {"x": 1, "y": 2}}
 
-        result = _deep_merge(base, {"a": {"y": 99, "z": 3}})
+        result = deep_merge(base, {"a": {"y": 99, "z": 3}})
 
         assert result["a"] == {"x": 1, "y": 99, "z": 3}
 
     def test_non_dict_override_replaces(self):
         base = {"a": {"x": 1}}
 
-        result = _deep_merge(base, {"a": "replaced"})
+        result = deep_merge(base, {"a": "replaced"})
 
         assert result["a"] == "replaced"
 
     def test_new_keys_added(self):
-        result = _deep_merge({"a": 1}, {"b": 2})
+        result = deep_merge({"a": 1}, {"b": 2})
 
         assert result == {"a": 1, "b": 2}
 
     def test_base_not_mutated(self):
         base = {"a": 1}
 
-        _deep_merge(base, {"a": 2})
+        deep_merge(base, {"a": 2})
 
         assert base["a"] == 1
 
