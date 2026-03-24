@@ -7,7 +7,8 @@ from .exchange_rates import run_currency, run_exchange_rates
 from .dates import run_dates
 from .products import run_suppliers
 from .employees import run_employees, run_employee_store_assignments
-from .reference import run_time_table, run_return_reasons
+from .dates import run_time_table
+from .return_reasons import run_return_reasons
 from .lookups import run_sales_channels, run_loyalty_tiers, run_customer_acquisition_channels
 
 __all__ = [

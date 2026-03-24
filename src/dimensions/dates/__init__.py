@@ -3,10 +3,12 @@ from .runner import run_dates
 from .generator import generate_date_table
 from .columns import resolve_date_columns
 from .weekly_fiscal import WeeklyFiscalConfig
+from .time import run_time_table
 
 __all__ = [
     "run_dates",
     "generate_date_table",
     "resolve_date_columns",
     "WeeklyFiscalConfig",
+    "run_time_table",
 ]

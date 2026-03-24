@@ -77,7 +77,7 @@ products:
   brand_normalize_alpha: 0.35         # brands keep 65% of price identity
 
   scd2:
-    enabled: false                     # enable SCD Type 2 price history tracking
+    enabled: true                     # enable SCD Type 2 price history tracking
     revision_frequency: 12             # months between price revisions
     price_drift: 0.20                  # ~5% price change per revision
     max_versions: 4                    # max version rows per product

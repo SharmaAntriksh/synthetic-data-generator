@@ -25,7 +25,8 @@ from src.dimensions.exchange_rates import run_currency, run_exchange_rates
 from src.dimensions.products import run_suppliers
 from src.dimensions.products.products import generate_product_dimension as run_products
 from src.dimensions.employees import run_employees, run_employee_store_assignments
-from src.dimensions.reference import run_time_table, run_return_reasons
+from src.dimensions.dates import run_time_table
+from src.dimensions.return_reasons import run_return_reasons
 
 from src.dimensions.lookups import (
     run_sales_channels,
