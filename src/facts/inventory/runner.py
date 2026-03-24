@@ -31,7 +31,7 @@ from src.facts.shared.writers import write_fact_table
 
 from .accumulator import InventoryAccumulator
 from .engine import load_inventory_config, compute_inventory_snapshots, InventoryConfig, _load_product_attrs
-from .worker import _inventory_worker_task, _cast_snapshot_date
+from .worker import _inventory_worker_task, _cast_snapshot_date, _prepare_csv as _prepare_inventory_csv
 from src.defaults import INVENTORY_PARALLEL_THRESHOLD as _PARALLEL_THRESHOLD
 
 
@@ -537,32 +537,3 @@ def _write_inventory(
         table = _cast_snapshot_date(table)
         write_fact_table(table, out_dir, name, file_format,
                          csv_prep_fn=_prepare_inventory_csv)
-
-
-_INVENTORY_CSV_COLUMNS = [
-    "ProductKey", "StoreKey", "SnapshotDate",
-    "QuantityOnHand", "QuantityOnOrder",
-    "QuantitySold", "QuantityReceived",
-    "ReorderFlag", "StockoutFlag", "DaysOutOfStock",
-]
-
-_INVENTORY_CSV_INT_COLS = (
-    "ProductKey", "StoreKey",
-    "QuantityOnHand", "QuantityOnOrder",
-    "QuantitySold", "QuantityReceived",
-    "ReorderFlag", "StockoutFlag", "DaysOutOfStock",
-)
-
-
-def _prepare_inventory_csv(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    for col in _INVENTORY_CSV_COLUMNS:
-        if col not in out.columns:
-            out[col] = None
-    out = out[_INVENTORY_CSV_COLUMNS]
-
-    for col in _INVENTORY_CSV_INT_COLS:
-        if col in out.columns:
-            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0).astype(int)
-
-    return out

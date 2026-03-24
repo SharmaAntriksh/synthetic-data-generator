@@ -498,6 +498,7 @@ def _build_salesperson_by_store_month(
     ends = np.r_[starts[1:], store_sorted.size]
 
     rng = np.random.default_rng(int(seed))
+    months = np.arange(T, dtype=np.int64)
     for s, e in zip(starts, ends):
         store = int(store_sorted[int(s)])
         if store < 0 or store > max_store_key:
@@ -507,33 +508,38 @@ def _build_salesperson_by_store_month(
         if idxs.size == 0:
             continue
 
-        # month -> list of assignment row indices starting/ending
-        starts_ev: list[list[int]] = [[] for _ in range(T)]
-        ends_ev: list[list[int]] = [[] for _ in range(T + 1)]  # end+1
+        so = start_off[idxs]
+        eo = end_off[idxs]
+        valid = eo >= so
+        if not valid.any():
+            continue
 
-        for ii in idxs:
-            so = int(start_off[int(ii)])
-            eo = int(end_off[int(ii)])
-            if eo < so:
+        active_2d = (so[:, None] <= months[None, :]) & (months[None, :] <= eo[:, None])
+        active_2d[~valid] = False
+
+        w_col = weights[idxs]
+        w_eff = active_2d.astype(np.float64) * w_col[:, None]
+        col_sums = w_eff.sum(axis=0)
+        has_cand = col_sums > 1e-12
+
+        if not has_cand.any():
+            continue
+
+        active_months = np.where(has_cand)[0]
+        w_active = w_eff[:, active_months]
+        sums_active = col_sums[active_months]
+        probs = w_active / sums_active[None, :]
+
+        emp_local = a_emp[idxs]
+        for mi_idx in range(active_months.size):
+            m = int(active_months[mi_idx])
+            p = probs[:, mi_idx]
+            nz_idx = np.flatnonzero(p > 0)
+            if nz_idx.size == 0:
                 continue
-            starts_ev[so].append(int(ii))
-            ends_ev[eo + 1].append(int(ii))
-
-        active: set[int] = set()
-        for m in range(T):
-            for ii in starts_ev[m]:
-                active.add(ii)
-            for ii in ends_ev[m]:
-                active.discard(ii)
-
-            if not active:
-                continue
-
-            cand = np.fromiter(active, dtype=np.int64)
-            w = weights[cand]
-            sw = float(w.sum())
-            pick = 0 if sw <= 1e-12 else int(rng.choice(cand.size, p=(w / sw)))
-            out[store, m] = int(a_emp[int(cand[pick])])
+            cand_p = p[nz_idx]
+            pick = 0 if nz_idx.size == 1 else int(rng.choice(nz_idx.size, p=cand_p))
+            out[store, m] = int(emp_local[nz_idx[pick]])
 
     return out
 

@@ -20,6 +20,7 @@ import pyarrow as pa
 from src.facts.complaints.accumulator import ComplaintsAccumulator
 from src.facts.shared.writers import write_fact_table
 from src.utils.logging_utils import info, skip
+from src.utils.config_helpers import parse_global_dates as _parse_global_dates_shared
 
 
 # ---------------------------------------------------------------------------
@@ -93,9 +94,11 @@ _COMPLAINT_DETAILS: Dict[str, list] = {
 
 _SEVERITY_VALUES = np.array(["Low", "Medium", "High", "Critical"], dtype=object)
 _SEVERITY_WEIGHTS = np.array([0.25, 0.40, 0.25, 0.10])
+_SEVERITY_CDF = np.cumsum(_SEVERITY_WEIGHTS); _SEVERITY_CDF[-1] = 1.0
 
 _CHANNEL_VALUES = np.array(["Email", "Phone", "In-Store", "Website", "Chat"], dtype=object)
 _CHANNEL_WEIGHTS = np.array([0.30, 0.25, 0.15, 0.15, 0.15])
+_CHANNEL_CDF = np.cumsum(_CHANNEL_WEIGHTS); _CHANNEL_CDF[-1] = 1.0
 
 _STATUS_VALUES = np.array(["Resolved", "Closed", "Open", "Escalated"], dtype=object)
 
@@ -103,12 +106,242 @@ _RESOLUTION_TYPES = np.array(
     ["Replacement", "Refund", "Discount", "Apology", "Store Credit"], dtype=object
 )
 _RESOLUTION_WEIGHTS = np.array([0.25, 0.30, 0.20, 0.10, 0.15])
+_RESOLUTION_CDF = np.cumsum(_RESOLUTION_WEIGHTS); _RESOLUTION_CDF[-1] = 1.0
 
 # Fraction of complaints that are order-linked vs general
 _ORDER_LINKED_RATE = 0.75
 
 # Below this complainer count, use the serial path (spawning overhead not worth it)
 _PARALLEL_THRESHOLD = 50_000
+
+# Pre-flattened (type, detail) pairs — computed once at import time so neither
+# the serial path nor the worker rebuild them on every call.
+
+def _build_flat_pools():
+    _ot, _od = [], []
+    for ct in _COMPLAINT_TYPES_ORDER:
+        for detail in _COMPLAINT_DETAILS[ct]:
+            _ot.append(ct)
+            _od.append(detail)
+    _gt, _gd = [], []
+    for ct in _COMPLAINT_TYPES_GENERAL:
+        for detail in _COMPLAINT_DETAILS[ct]:
+            _gt.append(ct)
+            _gd.append(detail)
+    return (
+        np.array(_ot, dtype=object), np.array(_od, dtype=object),
+        np.array(_gt, dtype=object), np.array(_gd, dtype=object),
+    )
+
+_ORDER_TYPES_FLAT, _ORDER_DETAILS_FLAT, _GENERAL_TYPES_FLAT, _GENERAL_DETAILS_FLAT = _build_flat_pools()
+
+
+# ---------------------------------------------------------------------------
+# Shared generation — batch RNG, used by both serial and parallel paths
+# ---------------------------------------------------------------------------
+
+def _generate_rows_batch(
+    rng: np.random.Generator,
+    *,
+    complainer_keys: np.ndarray,
+    complaints_per: np.ndarray,
+    cust_orders: Dict[int, Tuple[np.ndarray, np.ndarray]],
+    g_start_ns: int,
+    g_end_ns: int,
+    resolution_rate: float,
+    escalation_rate: float,
+    avg_response_days: int,
+    max_response_days: int,
+) -> Dict[str, np.ndarray]:
+    """Fully vectorized complaint generation — no Python row loop.
+
+    Args:
+        cust_orders: {customer_key: (so_array, ln_array)} — numpy tuple format.
+    """
+    n_complainers = len(complainer_keys)
+    total_rows = int(complaints_per.sum())
+
+    if total_rows == 0:
+        return {k: np.empty(0, dtype=d) for k, d in [
+            ("ckey", np.int64), ("so", np.int64), ("ln", np.int64),
+            ("date_ns", np.int64), ("res_date_ns", np.int64),
+            ("type", object), ("detail", object), ("severity", object),
+            ("channel", object), ("status", object), ("res_type", object),
+            ("resp_days", np.int32),
+        ]}
+
+    # ------------------------------------------------------------------
+    # Flatten per-customer orders into contiguous arrays with boundaries
+    # (O(n_complainers) Python loop — negligible vs O(total_rows) vectorized work)
+    # ------------------------------------------------------------------
+    all_so: List[np.ndarray] = []
+    all_ln: List[np.ndarray] = []
+    order_starts = np.zeros(n_complainers + 1, dtype=np.int64)
+    for i in range(n_complainers):
+        orders = cust_orders.get(int(complainer_keys[i]))
+        if orders is not None:
+            all_so.append(orders[0])
+            all_ln.append(orders[1])
+            order_starts[i + 1] = order_starts[i] + len(orders[0])
+        else:
+            order_starts[i + 1] = order_starts[i]
+
+    if all_so:
+        orders_so_flat = np.concatenate(all_so)
+        orders_ln_flat = np.concatenate(all_ln)
+    else:
+        orders_so_flat = np.empty(0, dtype=np.int64)
+        orders_ln_flat = np.empty(0, dtype=np.int64)
+    has_any_orders = len(orders_so_flat) > 0
+
+    n_orders_per_cust = np.diff(order_starts)  # shape (n_complainers,)
+
+    # Per-row customer index: which complainer each row belongs to
+    cust_idx = np.repeat(np.arange(n_complainers, dtype=np.int64), complaints_per)
+
+    # ------------------------------------------------------------------
+    # BATCH RNG — all random numbers generated upfront
+    # ------------------------------------------------------------------
+    order_linked_rolls = rng.random(total_rows)
+    order_select_rolls = rng.random(total_rows)
+    type_detail_rolls = rng.random(total_rows)
+
+    span = max(1, g_end_ns - g_start_ns)
+    date_offsets = rng.integers(0, span, size=total_rows, dtype=np.int64)
+
+    sev_idx = np.searchsorted(_SEVERITY_CDF, rng.random(total_rows))
+    np.clip(sev_idx, 0, len(_SEVERITY_VALUES) - 1, out=sev_idx)
+
+    chan_idx = np.searchsorted(_CHANNEL_CDF, rng.random(total_rows))
+    np.clip(chan_idx, 0, len(_CHANNEL_VALUES) - 1, out=chan_idx)
+
+    resolution_rolls = rng.random(total_rows)
+    status_rolls = rng.random(total_rows)
+
+    res_type_idx = np.searchsorted(_RESOLUTION_CDF, rng.random(total_rows))
+    np.clip(res_type_idx, 0, len(_RESOLUTION_TYPES) - 1, out=res_type_idx)
+
+    resp_days_raw = rng.exponential(avg_response_days, size=total_rows).astype(np.int32)
+    np.clip(resp_days_raw, 0, max_response_days, out=resp_days_raw)
+
+    escalation_rolls = rng.random(total_rows)
+
+    # ------------------------------------------------------------------
+    # VECTORIZED OUTPUT — no Python row loop
+    # ------------------------------------------------------------------
+
+    # Customer keys: repeat each complainer's key by their complaint count
+    out_ckey = np.repeat(complainer_keys, complaints_per)
+
+    # Dates
+    out_date_ns = g_start_ns + date_offsets
+
+    # Severity and channel (fully batch)
+    out_severity = _SEVERITY_VALUES[sev_idx]
+    out_channel = _CHANNEL_VALUES[chan_idx]
+
+    # --- Order-linked vs general complaint ---
+    n_orders_per_row = n_orders_per_cust[cust_idx]
+    is_order_linked = (order_linked_rolls < _ORDER_LINKED_RATE) & (n_orders_per_row > 0)
+
+    # Order selection for order-linked rows
+    out_so = np.full(total_rows, -1, dtype=np.int64)
+    out_ln = np.full(total_rows, -1, dtype=np.int64)
+    if has_any_orders:
+        order_start_per_row = order_starts[:-1][cust_idx]
+        order_offset = np.minimum(
+            (order_select_rolls * n_orders_per_row).astype(np.int64),
+            np.maximum(n_orders_per_row - 1, 0),
+        )
+        flat_idx = order_start_per_row + order_offset
+        ol_mask = is_order_linked
+        # Clip to valid range to avoid IndexError on non-order-linked rows
+        safe_flat_idx = np.clip(flat_idx, 0, max(len(orders_so_flat) - 1, 0))
+        out_so[ol_mask] = orders_so_flat[safe_flat_idx[ol_mask]]
+        out_ln[ol_mask] = orders_ln_flat[safe_flat_idx[ol_mask]]
+
+    # Type and detail selection
+    aot, aod = _ORDER_TYPES_FLAT, _ORDER_DETAILS_FLAT
+    agt, agd = _GENERAL_TYPES_FLAT, _GENERAL_DETAILS_FLAT
+
+    order_td_idx = np.minimum(
+        (type_detail_rolls * len(aot)).astype(np.int64), len(aot) - 1,
+    )
+    general_td_idx = np.minimum(
+        (type_detail_rolls * len(agt)).astype(np.int64), len(agt) - 1,
+    )
+    out_type = np.where(is_order_linked, aot[order_td_idx], agt[general_td_idx])
+    out_detail = np.where(is_order_linked, aod[order_td_idx], agd[general_td_idx])
+
+    # --- Resolution logic ---
+    is_resolved = resolution_rolls < resolution_rate
+
+    out_status = np.where(
+        is_resolved,
+        np.where(status_rolls < 0.5, _STATUS_VALUES[0], _STATUS_VALUES[1]),
+        np.where(escalation_rolls < escalation_rate, _STATUS_VALUES[3], _STATUS_VALUES[2]),
+    )
+
+    out_res_type = np.where(is_resolved, _RESOLUTION_TYPES[res_type_idx], None)
+
+    out_resp_days = np.where(is_resolved, resp_days_raw, np.int32(-1))
+
+    # Resolution dates (only meaningful for resolved rows)
+    res_date_raw = out_date_ns + resp_days_raw.astype(np.int64) * _NS_PER_DAY
+    needs_clamp = is_resolved & (res_date_raw > g_end_ns)
+    clamped_resp_days = np.maximum(
+        np.int32(0),
+        ((g_end_ns - out_date_ns) // _NS_PER_DAY).astype(np.int32),
+    )
+
+    out_res_date_ns = np.where(
+        is_resolved,
+        np.where(needs_clamp, np.int64(g_end_ns), res_date_raw),
+        np.int64(-1),
+    )
+    out_resp_days = np.where(needs_clamp, clamped_resp_days, out_resp_days)
+
+    return {
+        "ckey": out_ckey,
+        "so": out_so,
+        "ln": out_ln,
+        "date_ns": out_date_ns,
+        "res_date_ns": out_res_date_ns,
+        "type": out_type,
+        "detail": out_detail,
+        "severity": out_severity,
+        "channel": out_channel,
+        "status": out_status,
+        "res_type": out_res_type,
+        "resp_days": out_resp_days,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Order lookup helper
+# ---------------------------------------------------------------------------
+
+def _build_order_lookup(
+    order_arrays: Dict[str, np.ndarray],
+) -> Dict[int, Tuple[np.ndarray, np.ndarray]]:
+    """Build {customer_key: (so_array, ln_array)} from flat order arrays."""
+    ck_arr = order_arrays["CustomerKey"]
+    so_arr = order_arrays["SalesOrderNumber"]
+    ln_arr = order_arrays["SalesOrderLineNumber"]
+
+    cust_orders: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+    if len(ck_arr) > 0:
+        sort_idx = np.argsort(ck_arr, kind="stable")
+        sorted_ck = ck_arr[sort_idx]
+        sorted_so = so_arr[sort_idx]
+        sorted_ln = ln_arr[sort_idx]
+        boundaries = np.where(np.diff(sorted_ck))[0] + 1
+        ck_groups = np.split(sorted_ck, boundaries)
+        so_groups = np.split(sorted_so, boundaries)
+        ln_groups = np.split(sorted_ln, boundaries)
+        for g_ck, g_so, g_ln in zip(ck_groups, so_groups, ln_groups):
+            cust_orders[int(g_ck[0])] = (g_so, g_ln)
+    return cust_orders
 
 
 # ---------------------------------------------------------------------------
@@ -155,131 +388,20 @@ def _complaints_worker_task(args: Tuple) -> Dict[str, np.ndarray]:
     max_response_days = config_scalars["max_response_days"]
 
     # Reconstruct per-customer order lookup from the filtered arrays
-    ck_arr = order_arrays_chunk["CustomerKey"]
-    so_arr = order_arrays_chunk["SalesOrderNumber"]
-    ln_arr = order_arrays_chunk["SalesOrderLineNumber"]
+    cust_orders = _build_order_lookup(order_arrays_chunk)
 
-    # Build dict: CustomerKey -> (so_array, ln_array)
-    cust_orders: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
-    if len(ck_arr) > 0:
-        # Sort by CustomerKey for groupby-style splitting
-        sort_idx = np.argsort(ck_arr, kind="stable")
-        sorted_ck = ck_arr[sort_idx]
-        sorted_so = so_arr[sort_idx]
-        sorted_ln = ln_arr[sort_idx]
-        boundaries = np.where(np.diff(sorted_ck))[0] + 1
-        ck_groups = np.split(sorted_ck, boundaries)
-        so_groups = np.split(sorted_so, boundaries)
-        ln_groups = np.split(sorted_ln, boundaries)
-        for g_ck, g_so, g_ln in zip(ck_groups, so_groups, ln_groups):
-            cust_orders[int(g_ck[0])] = (g_so, g_ln)
-
-    # Flatten all complaint type+detail pairs for order-linked
-    all_order_types: List[str] = []
-    all_order_details: List[str] = []
-    for ct in _COMPLAINT_TYPES_ORDER:
-        for detail in _COMPLAINT_DETAILS[ct]:
-            all_order_types.append(ct)
-            all_order_details.append(detail)
-    aot = np.array(all_order_types, dtype=object)
-    aod = np.array(all_order_details, dtype=object)
-
-    # Flatten for general complaints
-    all_general_types: List[str] = []
-    all_general_details: List[str] = []
-    for ct in _COMPLAINT_TYPES_GENERAL:
-        for detail in _COMPLAINT_DETAILS[ct]:
-            all_general_types.append(ct)
-            all_general_details.append(detail)
-    agt = np.array(all_general_types, dtype=object)
-    agd = np.array(all_general_details, dtype=object)
-
-    n_complainers = len(complainer_keys_chunk)
-    total_rows = int(complaints_per_chunk.sum())
-
-    # Pre-allocate output arrays
-    out_ckey = np.empty(total_rows, dtype=np.int64)
-    out_so = np.full(total_rows, -1, dtype=np.int64)
-    out_ln = np.full(total_rows, -1, dtype=np.int64)
-    out_date_ns = np.empty(total_rows, dtype=np.int64)
-    out_res_date_ns = np.full(total_rows, -1, dtype=np.int64)
-    out_type = np.empty(total_rows, dtype=object)
-    out_detail = np.empty(total_rows, dtype=object)
-    out_severity = np.empty(total_rows, dtype=object)
-    out_channel = np.empty(total_rows, dtype=object)
-    out_status = np.empty(total_rows, dtype=object)
-    out_res_type = np.empty(total_rows, dtype=object)
-    out_resp_days = np.full(total_rows, -1, dtype=np.int32)
-
-    span = g_end_ns - g_start_ns
-
-    row = 0
-    for i in range(n_complainers):
-        ck = int(complainer_keys_chunk[i])
-        n_complaints = int(complaints_per_chunk[i])
-        orders = cust_orders.get(ck)
-        n_orders = len(orders[0]) if orders is not None else 0
-
-        for _ in range(n_complaints):
-            out_ckey[row] = ck
-
-            is_order_linked = child_rng.random() < _ORDER_LINKED_RATE and n_orders > 0
-
-            if is_order_linked:
-                order_idx = child_rng.integers(0, n_orders)
-                out_so[row] = int(orders[0][order_idx])
-                out_ln[row] = int(orders[1][order_idx])
-                td_idx = child_rng.integers(0, len(aot))
-                out_type[row] = aot[td_idx]
-                out_detail[row] = aod[td_idx]
-            else:
-                td_idx = child_rng.integers(0, len(agt))
-                out_type[row] = agt[td_idx]
-                out_detail[row] = agd[td_idx]
-
-            out_date_ns[row] = g_start_ns + child_rng.integers(0, max(1, span))
-
-            out_severity[row] = child_rng.choice(_SEVERITY_VALUES, p=_SEVERITY_WEIGHTS)
-            out_channel[row] = child_rng.choice(_CHANNEL_VALUES, p=_CHANNEL_WEIGHTS)
-
-            if child_rng.random() < resolution_rate:
-                status = child_rng.choice(["Resolved", "Closed"])
-                out_status[row] = status
-                out_res_type[row] = child_rng.choice(_RESOLUTION_TYPES, p=_RESOLUTION_WEIGHTS)
-                resp_days = int(child_rng.exponential(avg_response_days))
-                resp_days = min(resp_days, max_response_days)
-                resp_days = max(resp_days, 0)
-                out_resp_days[row] = resp_days
-                out_res_date_ns[row] = out_date_ns[row] + np.int64(resp_days) * _NS_PER_DAY
-                if out_res_date_ns[row] > g_end_ns:
-                    out_res_date_ns[row] = g_end_ns
-                    out_resp_days[row] = max(
-                        0,
-                        int((g_end_ns - out_date_ns[row]) // _NS_PER_DAY),
-                    )
-            else:
-                if child_rng.random() < escalation_rate:
-                    out_status[row] = "Escalated"
-                else:
-                    out_status[row] = "Open"
-                out_res_type[row] = None
-
-            row += 1
-
-    return {
-        "ckey": out_ckey[:row],
-        "so": out_so[:row],
-        "ln": out_ln[:row],
-        "date_ns": out_date_ns[:row],
-        "res_date_ns": out_res_date_ns[:row],
-        "type": out_type[:row],
-        "detail": out_detail[:row],
-        "severity": out_severity[:row],
-        "channel": out_channel[:row],
-        "status": out_status[:row],
-        "res_type": out_res_type[:row],
-        "resp_days": out_resp_days[:row],
-    }
+    return _generate_rows_batch(
+        child_rng,
+        complainer_keys=complainer_keys_chunk,
+        complaints_per=complaints_per_chunk,
+        cust_orders=cust_orders,
+        g_start_ns=g_start_ns,
+        g_end_ns=g_end_ns,
+        resolution_rate=resolution_rate,
+        escalation_rate=escalation_rate,
+        avg_response_days=avg_response_days,
+        max_response_days=max_response_days,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -319,17 +441,7 @@ def _read_cfg(cfg: Any) -> _ComplaintsCfg:
 
 
 def _parse_global_dates(cfg: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    defaults = getattr(cfg, "defaults", None)
-    if defaults is None:
-        defaults = getattr(cfg, "_defaults", None)
-    gd = getattr(defaults, "dates", None) if defaults else None
-    if gd is None:
-        raise ValueError("Cannot resolve global dates for complaints.")
-    start_raw = gd.get("start", None) if isinstance(gd, dict) else getattr(gd, "start", None)
-    end_raw = gd.get("end", None) if isinstance(gd, dict) else getattr(gd, "end", None)
-    if start_raw is None or end_raw is None:
-        raise ValueError("Global dates must have both 'start' and 'end'.")
-    return pd.Timestamp(start_raw), pd.Timestamp(end_raw)
+    return _parse_global_dates_shared(cfg, {}, dimension_name="complaints")
 
 
 # ---------------------------------------------------------------------------
@@ -391,10 +503,10 @@ def _arrays_to_table(
 
     resp_days_mask = out_resp_days == -1
 
-    so_pa = pa.array(out_so.tolist(), type=pa.int64(), mask=so_mask)
-    ln_pa = pa.array(out_ln.tolist(), type=pa.int64(), mask=ln_mask)
-    res_date_pa = pa.array(res_dates_dt.tolist(), type=pa.date32(), mask=res_date_mask)
-    resp_days_pa = pa.array(out_resp_days.tolist(), type=pa.int32(), mask=resp_days_mask)
+    so_pa = pa.array(out_so, type=pa.int64(), mask=so_mask)
+    ln_pa = pa.array(out_ln, type=pa.int64(), mask=ln_mask)
+    res_date_pa = pa.array(res_dates_dt, type=pa.date32(), mask=res_date_mask)
+    resp_days_pa = pa.array(out_resp_days, type=pa.int32(), mask=resp_days_mask)
 
     return pa.table(
         [
@@ -409,7 +521,7 @@ def _arrays_to_table(
             pa.array(out_severity, type=pa.string()),
             pa.array(out_channel, type=pa.string()),
             pa.array(out_status, type=pa.string()),
-            pa.array(out_res_type.tolist(), type=pa.string()),
+            pa.array(out_res_type, type=pa.string()),
             resp_days_pa,
         ],
         schema=schema,
@@ -451,126 +563,35 @@ def _generate_complaints_serial(
             2, c.max_complaints + 1, size=n_repeaters
         ).astype(np.int32)
 
-    total_rows = int(complaints_per.sum())
-
-    # Build per-customer order lookup (single groupby instead of per-key filter)
+    # Build per-customer order lookup as numpy tuples (same format as worker)
     _complainer_set = set(int(k) for k in complainer_keys)
     _complainer_mask = order_data["CustomerKey"].isin(_complainer_set)
-    cust_orders: Dict[int, pd.DataFrame] = {
-        int(ck): grp for ck, grp in order_data[_complainer_mask].groupby("CustomerKey")
-    }
+    filtered = order_data[_complainer_mask]
+    cust_orders = _build_order_lookup({
+        "CustomerKey": filtered["CustomerKey"].to_numpy(dtype=np.int64),
+        "SalesOrderNumber": filtered["SalesOrderNumber"].to_numpy(dtype=np.int64),
+        "SalesOrderLineNumber": filtered["SalesOrderLineNumber"].to_numpy(dtype=np.int64),
+    })
 
-    # Pre-allocate output arrays
-    out_ckey = np.empty(total_rows, dtype=np.int64)
-    out_so = np.full(total_rows, -1, dtype=np.int64)  # -1 = NULL
-    out_ln = np.full(total_rows, -1, dtype=np.int64)
-    out_date_ns = np.empty(total_rows, dtype=np.int64)
-    out_res_date_ns = np.full(total_rows, -1, dtype=np.int64)  # -1 = NULL
-    out_type = np.empty(total_rows, dtype=object)
-    out_detail = np.empty(total_rows, dtype=object)
-    out_severity = np.empty(total_rows, dtype=object)
-    out_channel = np.empty(total_rows, dtype=object)
-    out_status = np.empty(total_rows, dtype=object)
-    out_res_type = np.empty(total_rows, dtype=object)
-    out_resp_days = np.full(total_rows, -1, dtype=np.int32)  # -1 = NULL
-
-    # Flatten all complaint type+detail pairs for order-linked
-    all_order_types = []
-    all_order_details = []
-    for ct in _COMPLAINT_TYPES_ORDER:
-        for detail in _COMPLAINT_DETAILS[ct]:
-            all_order_types.append(ct)
-            all_order_details.append(detail)
-    all_order_types = np.array(all_order_types, dtype=object)
-    all_order_details = np.array(all_order_details, dtype=object)
-
-    # Flatten for general complaints
-    all_general_types = []
-    all_general_details = []
-    for ct in _COMPLAINT_TYPES_GENERAL:
-        for detail in _COMPLAINT_DETAILS[ct]:
-            all_general_types.append(ct)
-            all_general_details.append(detail)
-    all_general_types = np.array(all_general_types, dtype=object)
-    all_general_details = np.array(all_general_details, dtype=object)
-
-    row = 0
-    for i in range(n_complainers):
-        ck = int(complainer_keys[i])
-        n_complaints = int(complaints_per[i])
-        orders = cust_orders[ck]
-
-        for _ in range(n_complaints):
-            out_ckey[row] = ck
-
-            is_order_linked = rng.random() < _ORDER_LINKED_RATE and len(orders) > 0
-
-            if is_order_linked:
-                # Pick a random order line
-                order_idx = rng.integers(0, len(orders))
-                order_row = orders.iloc[order_idx]
-                out_so[row] = int(order_row["SalesOrderNumber"])
-                out_ln[row] = int(order_row["SalesOrderLineNumber"])
-
-                # Pick type+detail from order-linked pool
-                td_idx = rng.integers(0, len(all_order_types))
-                out_type[row] = all_order_types[td_idx]
-                out_detail[row] = all_order_details[td_idx]
-            else:
-                # General complaint — SalesOrderNumber and LineNumber stay NULL (-1)
-                td_idx = rng.integers(0, len(all_general_types))
-                out_type[row] = all_general_types[td_idx]
-                out_detail[row] = all_general_details[td_idx]
-
-            # Complaint date: random within global date range
-            span = g_end_ns - g_start_ns
-            out_date_ns[row] = g_start_ns + rng.integers(0, max(1, span))
-
-            # Severity and channel
-            out_severity[row] = rng.choice(_SEVERITY_VALUES, p=_SEVERITY_WEIGHTS)
-            out_channel[row] = rng.choice(_CHANNEL_VALUES, p=_CHANNEL_WEIGHTS)
-
-            # Status and resolution
-            if rng.random() < c.resolution_rate:
-                status = rng.choice(["Resolved", "Closed"])
-                out_status[row] = status
-                out_res_type[row] = rng.choice(_RESOLUTION_TYPES, p=_RESOLUTION_WEIGHTS)
-                resp_days = int(rng.exponential(c.avg_response_days))
-                resp_days = min(resp_days, c.max_response_days)
-                resp_days = max(resp_days, 0)
-                out_resp_days[row] = resp_days
-                out_res_date_ns[row] = out_date_ns[row] + np.int64(resp_days) * _NS_PER_DAY
-                # Clamp resolution date to global end
-                if out_res_date_ns[row] > g_end_ns:
-                    out_res_date_ns[row] = g_end_ns
-                    out_resp_days[row] = max(
-                        0,
-                        int((g_end_ns - out_date_ns[row]) // _NS_PER_DAY),
-                    )
-            else:
-                # Unresolved
-                if rng.random() < c.escalation_rate:
-                    out_status[row] = "Escalated"
-                else:
-                    out_status[row] = "Open"
-                # Explicitly set nullable fields to None (not uninitialized)
-                out_res_type[row] = None
-
-            row += 1
+    result = _generate_rows_batch(
+        rng,
+        complainer_keys=complainer_keys,
+        complaints_per=complaints_per,
+        cust_orders=cust_orders,
+        g_start_ns=int(g_start_ns),
+        g_end_ns=int(g_end_ns),
+        resolution_rate=c.resolution_rate,
+        escalation_rate=c.escalation_rate,
+        avg_response_days=c.avg_response_days,
+        max_response_days=c.max_response_days,
+    )
 
     return _arrays_to_table(
-        out_ckey[:row],
-        out_so[:row],
-        out_ln[:row],
-        out_date_ns[:row],
-        out_res_date_ns[:row],
-        out_type[:row],
-        out_detail[:row],
-        out_severity[:row],
-        out_channel[:row],
-        out_status[:row],
-        out_res_type[:row],
-        out_resp_days[:row],
+        result["ckey"], result["so"], result["ln"],
+        result["date_ns"], result["res_date_ns"],
+        result["type"], result["detail"], result["severity"],
+        result["channel"], result["status"], result["res_type"],
+        result["resp_days"],
         key_offset=0,
     )
 
