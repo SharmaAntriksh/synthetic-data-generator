@@ -305,6 +305,7 @@ class EmployeesConfig(_Base):
 # -- Currency --
 
 class CurrencyConfig(_Base):
+    currencies: Optional[List[str]] = None  # if None, derived from union of exchange_rates from/to
     parquet_compression: str = "snappy"
     parquet_compression_level: Optional[int] = None
     force_date32: bool = True
@@ -313,14 +314,27 @@ class CurrencyConfig(_Base):
 # -- Exchange Rates --
 
 class ExchangeRatesConfig(_Base):
-    use_global_dates: bool = True
-    currencies: List[str] = ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"]
+    from_currencies: List[str] = ["USD"]
+    to_currencies: List[str] = ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"]
     base_currency: str = "USD"
-    volatility: float = 0.02
     future_annual_drift: float = 0.02
+    include_monthly: bool = True
     master_file: Optional[str] = None
     # Injected by dimensions_runner
     global_dates: Optional[Any] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_currencies_key(cls, data: Any) -> Any:
+        """Backward compat: rename old ``currencies`` key to ``to_currencies``."""
+        if isinstance(data, dict) and "currencies" in data and "to_currencies" not in data:
+            data = dict(data)
+            data["to_currencies"] = data.pop("currencies")
+        # Strip removed keys so extra="forbid" on _Base doesn't reject them
+        if isinstance(data, dict):
+            for removed in ("volatility", "use_global_dates", "dates"):
+                data.pop(removed, None)
+        return data
 
 
 # -- Geography --

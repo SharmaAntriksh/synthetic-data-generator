@@ -209,13 +209,12 @@ dates:
 # EXCHANGE RATES
 # ------------------------------------------------------------------
 exchange_rates:
-  use_global_dates: true
-
-  currencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"] #, "KRW", "SGD", "AED", "ZAR", "BRL", "MXN"]
+  from_currencies: ["USD", "CAD", "GBP", "EUR"]
+  to_currencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"] #, "KRW", "SGD", "AED", "ZAR", "BRL", "MXN"]
   base_currency: "USD"
 
-  volatility: 0.02
   future_annual_drift: 0.02   # annual compounding rate applied to project rates beyond today
+  include_monthly: true        # generate exchange_rates_monthly.parquet
   # refresh_fx_master is CLI-only: use --refresh-fx-master flag
 
 # ------------------------------------------------------------------

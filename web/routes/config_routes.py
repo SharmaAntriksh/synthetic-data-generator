@@ -202,11 +202,11 @@ def get_config():
         # Employees
         "employeeEmailDomain": str(_g(emp, "hr", "email_domain", default="contoso.com")),
         # Exchange Rates
-        "erCurrencies": list(getattr(er, "currencies", ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"])),
+        "erFromCurrencies": list(getattr(er, "from_currencies", ["USD"])),
+        "erToCurrencies": list(getattr(er, "to_currencies", ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"])),
         "erBaseCurrency": str(getattr(er, "base_currency", "USD")),
-        "erVolatility": float(getattr(er, "volatility", 0.02)),
         "erFutureDrift": float(getattr(er, "future_annual_drift", 0.02)),
-        "erUseGlobalDates": bool(getattr(er, "use_global_dates", True)),
+        "erIncludeMonthly": bool(getattr(er, "include_monthly", True)),
         # Budget detail
         "budgetEnabled": bool(getattr(budget, "enabled", True)),
         "budgetReportCurrency": str(getattr(budget, "report_currency", "USD")),
@@ -404,11 +404,11 @@ def update_config(body: ConfigUpdate):
         if "employeeEmailDomain" in v: cfg.employees.hr.email_domain = v["employeeEmailDomain"]
 
         # Exchange Rates
-        if "erCurrencies" in v and isinstance(v["erCurrencies"], list): cfg.exchange_rates.currencies = v["erCurrencies"]
+        if "erFromCurrencies" in v and isinstance(v["erFromCurrencies"], list): cfg.exchange_rates.from_currencies = v["erFromCurrencies"]
+        if "erToCurrencies" in v and isinstance(v["erToCurrencies"], list): cfg.exchange_rates.to_currencies = v["erToCurrencies"]
         if "erBaseCurrency" in v: cfg.exchange_rates.base_currency = v["erBaseCurrency"]
-        if "erVolatility" in v: cfg.exchange_rates.volatility = float(v["erVolatility"])
         if "erFutureDrift" in v: cfg.exchange_rates.future_annual_drift = float(v["erFutureDrift"])
-        if "erUseGlobalDates" in v: cfg.exchange_rates.use_global_dates = bool(v["erUseGlobalDates"])
+        if "erIncludeMonthly" in v: cfg.exchange_rates.include_monthly = bool(v["erIncludeMonthly"])
 
         # Budget detail
         if "budgetEnabled" in v: cfg.budget.enabled = bool(v["budgetEnabled"])

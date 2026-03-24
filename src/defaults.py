@@ -481,6 +481,35 @@ CURRENCY_NAME_MAP: Dict[str, str] = {
 
 CURRENCY_BASE = "USD"
 
+CURRENCY_DEFAULT_LIST: List[str] = [
+    "CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY",
+]
+
+CURRENCY_SYMBOL_MAP: Dict[str, str] = {
+    "USD": "$",
+    "EUR": "€",
+    "INR": "₹",
+    "GBP": "£",
+    "AUD": "A$",
+    "CAD": "C$",
+    "CNY": "¥",
+    "JPY": "¥",
+    "NZD": "NZ$",
+    "CHF": "CHF",
+    "SEK": "kr",
+    "NOK": "kr",
+    "SGD": "S$",
+    "HKD": "HK$",
+    "KRW": "₩",
+    "ZAR": "R",
+}
+
+CURRENCY_DECIMAL_PLACES: Dict[str, int] = {
+    "JPY": 0,
+    "KRW": 0,
+}
+CURRENCY_DECIMAL_PLACES_DEFAULT = 2
+
 
 # =================================================================
 #  INVENTORY_DEFAULTS

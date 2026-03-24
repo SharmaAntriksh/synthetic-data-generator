@@ -813,12 +813,12 @@ class TestInputValidationEdgeCases:
         after = client.get("/api/config").json()["geoWeights"]
         assert after == before  # unchanged
 
-    def test_er_currencies_non_list_ignored(self, client):
-        """erCurrencies must be a list; non-list should be ignored."""
-        before = client.get("/api/config").json()["erCurrencies"]
-        resp = client.post("/api/config", json={"values": {"erCurrencies": "CAD"}})
+    def test_er_to_currencies_non_list_ignored(self, client):
+        """erToCurrencies must be a list; non-list should be ignored."""
+        before = client.get("/api/config").json()["erToCurrencies"]
+        resp = client.post("/api/config", json={"values": {"erToCurrencies": "CAD"}})
         assert resp.status_code == 200
-        after = client.get("/api/config").json()["erCurrencies"]
+        after = client.get("/api/config").json()["erToCurrencies"]
         assert after == before  # unchanged
 
     def test_unknown_values_key_silently_ignored(self, client):

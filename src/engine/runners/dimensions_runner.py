@@ -20,8 +20,7 @@ from src.dimensions.customers import run_customers
 from src.dimensions.stores import run_stores
 from src.dimensions.promotions import run_promotions
 from src.dimensions.dates import run_dates
-from src.dimensions.currency import run_currency
-from src.dimensions.exchange_rates import run_exchange_rates
+from src.dimensions.exchange_rates import run_currency, run_exchange_rates
 from src.dimensions.suppliers import run_suppliers
 from src.dimensions.employees import run_employees, run_employee_store_assignments
 from src.dimensions.time import run_time_table
@@ -255,7 +254,6 @@ DIM_SPECS: List[DimensionSpec] = [
         run_fn=run_currency,
         deps=("dates",),
         date_dependent=True,
-        inject_global_dates=True,
         outputs_all=("currency.parquet",),
     ),
 
@@ -267,7 +265,7 @@ DIM_SPECS: List[DimensionSpec] = [
         deps=("dates", "currency"),
         date_dependent=True,
         inject_global_dates=True,
-        outputs_all=("exchange_rates.parquet",),
+        outputs_all=("exchange_rates.parquet", "exchange_rates_monthly.parquet"),
     ),
 
     # 9) Time

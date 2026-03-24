@@ -577,8 +577,10 @@ DIM_SCHEMAS: Dict[str, Schema] = {
     ),
     "Currency": (
         ("CurrencyKey", INT_NN),
-        ("ToCurrency", VARCHAR(10, not_null=True)),
+        ("CurrencyCode", VARCHAR(10, not_null=True)),
         ("CurrencyName", VARCHAR(50, not_null=True)),
+        ("CurrencySymbol", VARCHAR(10, not_null=True)),
+        ("DecimalPlaces", INT_NN),
     ),
     "Employees": (
         ("EmployeeKey", INT_NN),
@@ -736,9 +738,22 @@ FACT_SCHEMAS: Dict[str, Schema] = {
     ),
     "ExchangeRates": (
         ("Date", DATE_NN),
+        ("FromCurrencyKey", INT_NN),
+        ("ToCurrencyKey", INT_NN),
         ("FromCurrency", VARCHAR(10, not_null=True)),
         ("ToCurrency", VARCHAR(10, not_null=True)),
         ("Rate", DECIMAL(10, 6, not_null=True)),
+    ),
+    "ExchangeRatesMonthly": (
+        ("Date", DATE_NN),
+        ("FromCurrencyKey", INT_NN),
+        ("ToCurrencyKey", INT_NN),
+        ("FromCurrency", VARCHAR(10, not_null=True)),
+        ("ToCurrency", VARCHAR(10, not_null=True)),
+        ("AvgRate", DECIMAL(10, 6, not_null=True)),
+        ("MinRate", DECIMAL(10, 6, not_null=True)),
+        ("MaxRate", DECIMAL(10, 6, not_null=True)),
+        ("EndOfMonthRate", DECIMAL(10, 6, not_null=True)),
     ),
     "BudgetYearly": (
         ("Country", VARCHAR(100, not_null=True)),

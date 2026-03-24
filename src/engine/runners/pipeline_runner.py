@@ -153,8 +153,7 @@ def run_pipeline(
         # ----------------------------
         cfg, sales_cfg = _apply_overrides(cfg, sales_cfg, overrides)
 
-        # FX always follows global dates
-        cfg = _force_fx_to_global_dates(cfg)
+        # FX always follows global dates (enforced by resolve_fx_dates at generation time)
 
         # ----------------------------
         # Dry run
@@ -348,20 +347,6 @@ def _apply_overrides(cfg, sales_cfg, overrides: PipelineOverrides):
 
     return cfg, sales_cfg
 
-
-def _force_fx_to_global_dates(cfg) -> Any:
-    """Ensure exchange_rates follows injected global dates.
-
-    NOTE: ``apply_cross_section_rules()`` in ``config.py`` enforces this
-    at config-load time.  This guard is kept for backward compatibility
-    with callers that build an ``AppConfig`` without going through the
-    standard loader (e.g. the web UI deep-copy path).
-    """
-    fx = cfg.exchange_rates
-    if fx is not None and isinstance(fx, Mapping):
-        fx.use_global_dates = True
-        fx.pop("dates", None)
-    return cfg
 
 
 def _clean_final_outputs(cfg) -> None:

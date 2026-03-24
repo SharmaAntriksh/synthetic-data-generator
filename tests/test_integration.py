@@ -13,7 +13,6 @@ from src.engine.runners.pipeline_runner import (
     PipelineOverrides,
     run_pipeline,
     _apply_overrides,
-    _force_fx_to_global_dates,
     _inject_models_appearance,
 )
 from src.exceptions import ConfigError, PipelineError
@@ -376,35 +375,6 @@ class TestCrossSectionValidation:
         errors, warnings = validate(cfg)
         assert any("customers" in w.lower() for w in warnings)
 
-
-# ===================================================================
-# 6. FX dates are forced to global dates
-# ===================================================================
-
-class TestFxDatesForced:
-    def test_fx_uses_global_dates(self, base_cfg):
-        cfg = base_cfg.model_copy(deep=True)
-        # Manually set independent FX dates that should be removed
-        cfg.exchange_rates["dates"] = {"start": "1999-01-01", "end": "1999-12-31"}
-        cfg.exchange_rates.use_global_dates = False
-
-        result = _force_fx_to_global_dates(cfg)
-        fx = result.exchange_rates
-        assert fx.use_global_dates is True
-        assert not hasattr(fx, "dates") or getattr(fx, "dates", None) is None
-
-    def test_fx_force_idempotent(self, base_cfg):
-        cfg = base_cfg.model_copy(deep=True)
-        r1 = _force_fx_to_global_dates(cfg)
-        r2 = _force_fx_to_global_dates(r1.model_copy(deep=True))
-        assert r1.exchange_rates.use_global_dates == r2.exchange_rates.use_global_dates
-
-    def test_missing_exchange_rates_is_safe(self):
-        """AppConfig always has exchange_rates (default ExchangeRatesConfig)."""
-        from src.engine.config.config_schema import AppConfig
-        cfg = AppConfig()
-        result = _force_fx_to_global_dates(cfg)
-        assert result.exchange_rates.use_global_dates is True
 
 
 # ===================================================================

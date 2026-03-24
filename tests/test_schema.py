@@ -105,7 +105,7 @@ class TestAppConfigFromYAML:
     def test_exchange_rates_section(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)
         assert "USD" == app.exchange_rates.base_currency
-        assert len(app.exchange_rates.currencies) >= 5
+        assert len(app.exchange_rates.to_currencies) >= 5
 
     def test_returns_section(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)

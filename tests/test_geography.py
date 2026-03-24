@@ -89,7 +89,7 @@ class TestBuildDimGeography:
         # with a currency that has no geography rows
         cfg = AppConfig.model_validate({
             "geography": {},
-            "exchange_rates": {"currencies": ["XYZ"], "base_currency": "XYZ"},
+            "exchange_rates": {"from_currencies": ["XYZ"], "to_currencies": ["XYZ"], "base_currency": "XYZ"},
         })
 
         with pytest.raises(DimensionError, match="No geography rows remain"):

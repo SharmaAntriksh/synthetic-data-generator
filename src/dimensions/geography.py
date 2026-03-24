@@ -1,7 +1,7 @@
 """Geography dimension generator.
 
 Loads cities from a master parquet file (``data/geography/geography_master.parquet``)
-and filters to currencies listed in ``exchange_rates.currencies``.
+and filters to currencies listed in ``exchange_rates.from_currencies`` / ``to_currencies``.
 
 The master file ships with the repo and can be extended by users —
 add rows for new cities and list their currency in config.yaml.
@@ -170,9 +170,10 @@ def _validate_cfg(cfg: Dict) -> Dict:
     if not hasattr(cfg, "exchange_rates") or not isinstance(cfg.exchange_rates, Mapping):
         raise KeyError("Missing required config section: 'exchange_rates'")
 
-    currencies = cfg.exchange_rates.currencies
-    if not isinstance(currencies, (list, tuple)) or not currencies:
-        raise ValueError("exchange_rates.currencies must be a non-empty list of currency ISO codes")
+    er = cfg.exchange_rates
+    currencies = list(er.from_currencies or []) + list(er.to_currencies or [])
+    if not currencies:
+        raise ValueError("exchange_rates.from_currencies/to_currencies must contain at least one currency code")
 
     return cfg.geography
 
@@ -197,7 +198,8 @@ def build_dim_geography(
     if _geo_cfg is None:
         _validate_cfg(cfg)
 
-    allowed_iso = set(map(str, cfg.exchange_rates.currencies))
+    er = cfg.exchange_rates
+    allowed_iso = set(map(str, list(er.from_currencies or []) + list(er.to_currencies or [])))
     # Always include base currency (USD) — same convention as currency dimension
     base = str(getattr(cfg.exchange_rates, "base_currency", "USD")).upper()
     allowed_iso.add(base)
@@ -215,7 +217,7 @@ def build_dim_geography(
     if df.empty:
         raise DimensionError(
             f"No geography rows remain after filtering by allowed currencies: {sorted(allowed_iso)}. "
-            f"Ensure exchange_rates.currencies includes at least one of: {available_codes}"
+            f"Ensure exchange_rates.from_currencies/to_currencies includes at least one of: {available_codes}"
         )
 
     # Reject currencies configured but not covered by any geography row
@@ -223,7 +225,7 @@ def build_dim_geography(
     uncovered = sorted(allowed_iso - covered_iso)
     if uncovered:
         warn(
-            f"exchange_rates.currencies contains codes with no geography coverage: {uncovered}. "
+            f"exchange_rates currencies contain codes with no geography coverage: {uncovered}. "
             f"These currencies will have no stores or customers assigned."
         )
 
@@ -288,7 +290,10 @@ def run_geography(cfg: Dict, parquet_folder: Path) -> None:
 
     version_cfg = {
         "schema_version": 2,  # v2: master-file based with enriched columns
-        "exchange_rates": {"currencies": list(map(str, cfg.exchange_rates.currencies))},
+        "exchange_rates": {
+            "from_currencies": list(map(str, cfg.exchange_rates.from_currencies or [])),
+            "to_currencies": list(map(str, cfg.exchange_rates.to_currencies or [])),
+        },
         "_master_sig": _master_signature(),
     }
 

@@ -30,9 +30,11 @@ from src.dimensions.dates import (
 )
 
 # ---------------------------------------------------------------------------
-# Currency
+# Currency / Exchange Rates
 # ---------------------------------------------------------------------------
-from src.dimensions.currency import build_dim_currency, _normalize_currency_list
+from src.dimensions.exchange_rates import build_dim_currency
+from src.dimensions.exchange_rates.helpers import normalize_currency_list
+from src.dimensions.exchange_rates.monthly_rates import build_monthly_rates
 
 # ---------------------------------------------------------------------------
 # Promotions
@@ -347,7 +349,10 @@ class TestBuildDimCurrency:
         df = build_dim_currency(["USD", "EUR", "GBP"])
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 3
-        assert list(df.columns) == ["CurrencyKey", "ToCurrency", "CurrencyName"]
+        assert list(df.columns) == [
+            "CurrencyKey", "CurrencyCode", "CurrencyName",
+            "CurrencySymbol", "DecimalPlaces",
+        ]
 
     def test_keys_sequential(self):
         df = build_dim_currency(["USD", "EUR", "INR"])
@@ -356,7 +361,7 @@ class TestBuildDimCurrency:
     def test_currency_codes_preserved(self):
         df = build_dim_currency(["cad", "gbp"])
         # USD is auto-inserted as base currency when not in the input list
-        assert list(df["ToCurrency"]) == ["USD", "CAD", "GBP"]
+        assert list(df["CurrencyCode"]) == ["USD", "CAD", "GBP"]
 
     def test_determinism(self):
         df1 = build_dim_currency(["USD", "EUR"])
@@ -367,7 +372,7 @@ class TestBuildDimCurrency:
         df = build_dim_currency(["JPY"])
         # USD is auto-inserted as base currency, so JPY-only input yields 2 rows
         assert len(df) == 2
-        assert list(df["ToCurrency"]) == ["USD", "JPY"]
+        assert list(df["CurrencyCode"]) == ["USD", "JPY"]
 
     def test_duplicate_raises(self):
         with pytest.raises(ValueError, match="Duplicate"):
@@ -393,16 +398,30 @@ class TestBuildDimCurrency:
         df = build_dim_currency(["USD", "EUR"])
         # Known currencies should have proper names
         assert df["CurrencyName"].notna().all()
-        assert "Dollar" in df.loc[df["ToCurrency"] == "USD", "CurrencyName"].iloc[0]
+        assert "Dollar" in df.loc[df["CurrencyCode"] == "USD", "CurrencyName"].iloc[0]
+
+    def test_currency_symbol(self):
+        df = build_dim_currency(["USD", "EUR", "JPY"])
+        symbols = dict(zip(df["CurrencyCode"], df["CurrencySymbol"]))
+        assert symbols["USD"] == "$"
+        assert symbols["EUR"] == "€"
+        assert symbols["JPY"] == "¥"
+
+    def test_decimal_places(self):
+        df = build_dim_currency(["USD", "JPY", "KRW"])
+        decimals = dict(zip(df["CurrencyCode"], df["DecimalPlaces"]))
+        assert decimals["USD"] == 2
+        assert decimals["JPY"] == 0
+        assert decimals["KRW"] == 0
 
 
 class TestNormalizeCurrencyList:
     def test_whitespace_stripped(self):
-        result = _normalize_currency_list(["  usd ", " eur"])
+        result = normalize_currency_list(["  usd ", " eur"])
         assert result == ["USD", "EUR"]
 
     def test_case_normalized(self):
-        result = _normalize_currency_list(["usd", "Eur", "GBP"])
+        result = normalize_currency_list(["usd", "Eur", "GBP"])
         assert result == ["USD", "EUR", "GBP"]
 
 
@@ -1100,51 +1119,136 @@ class TestBuildYearWindows:
 # ===================================================================
 
 class TestResolveFxDates:
-    def _fx_cfg(self, **kwargs):
-        """Create a simple namespace for FX config (supports attribute access)."""
-        from types import SimpleNamespace
-        return SimpleNamespace(**kwargs)
+    """Tests for resolve_fx_dates which always reads from cfg.defaults.dates."""
 
-    def test_global_dates_mode(self):
-        from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = self._fx_cfg(use_global_dates=True)
-        global_defaults = {"start": "2021-01-01", "end": "2025-12-31"}
-        start, end = resolve_fx_dates(fx_cfg, global_defaults)
+    def _cfg_with_dates(self, start="2021-01-01", end="2025-12-31"):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            defaults=SimpleNamespace(dates=SimpleNamespace(start=start, end=end))
+        )
+
+    def test_returns_global_dates(self):
+        from src.dimensions.exchange_rates.helpers import resolve_fx_dates
+        cfg = self._cfg_with_dates("2021-01-01", "2025-12-31")
+        start, end = resolve_fx_dates(cfg)
         assert start == "2021-01-01"
         assert end == "2025-12-31"
 
-    def test_local_dates_mode(self):
-        from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = self._fx_cfg(
-            use_global_dates=False,
-            dates={"start": "2022-01-01", "end": "2023-12-31"},
-        )
-        start, end = resolve_fx_dates(fx_cfg, {})
-        assert start == "2022-01-01"
-        assert end == "2023-12-31"
+    def test_missing_defaults_raises(self):
+        from types import SimpleNamespace
+        from src.dimensions.exchange_rates.helpers import resolve_fx_dates
+        from src.exceptions import ConfigError
+        cfg = SimpleNamespace(defaults=None)
+        with pytest.raises(ConfigError, match="global defaults dates"):
+            resolve_fx_dates(cfg)
 
-    def test_override_dates(self):
-        from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = self._fx_cfg(
-            use_global_dates=False,
-            dates={"start": "2020-01-01", "end": "2020-12-31"},
-            override={"dates": {"start": "2021-01-01", "end": "2021-12-31"}},
-        )
-        start, end = resolve_fx_dates(fx_cfg, {})
-        assert start == "2021-01-01"
-        assert end == "2021-12-31"
+    def test_missing_dates_obj_raises(self):
+        from types import SimpleNamespace
+        from src.dimensions.exchange_rates.helpers import resolve_fx_dates
+        from src.exceptions import ConfigError
+        cfg = SimpleNamespace(defaults=SimpleNamespace(dates=None))
+        with pytest.raises(ConfigError, match="global defaults dates"):
+            resolve_fx_dates(cfg)
 
-    def test_missing_global_dates_raises(self):
-        from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = self._fx_cfg(use_global_dates=True)
-        with pytest.raises(ValueError, match="global defaults"):
-            resolve_fx_dates(fx_cfg, None)
 
-    def test_missing_local_dates_raises(self):
-        from src.dimensions.exchange_rates import resolve_fx_dates
-        fx_cfg = self._fx_cfg(use_global_dates=False)
-        with pytest.raises(ValueError, match="missing start/end"):
-            resolve_fx_dates(fx_cfg, {})
+# ===================================================================
+# CROSS-RATE TRIANGULATION
+# ===================================================================
+
+class TestTriangulateRates:
+    """Tests for cross-rate triangulation logic."""
+
+    def _master(self):
+        """Build a simple 3-day USD master with EUR and GBP."""
+        dates = pd.date_range("2024-01-01", periods=3, freq="D")
+        rows = []
+        for d in dates:
+            rows.append({"Date": d.date(), "FromCurrency": "USD", "ToCurrency": "EUR", "Rate": 0.90})
+            rows.append({"Date": d.date(), "FromCurrency": "USD", "ToCurrency": "GBP", "Rate": 0.80})
+        return pd.DataFrame(rows)
+
+    def test_direct_usd_to_eur(self):
+        from src.dimensions.exchange_rates.exchange_rates import _triangulate_rates
+        df = _triangulate_rates(self._master(), ["USD"], ["EUR"])
+        assert len(df) == 3
+        assert (df["FromCurrency"] == "USD").all()
+        assert (df["ToCurrency"] == "EUR").all()
+        assert np.allclose(df["Rate"], 0.90)
+
+    def test_inverse_eur_to_usd(self):
+        from src.dimensions.exchange_rates.exchange_rates import _triangulate_rates
+        df = _triangulate_rates(self._master(), ["EUR"], ["USD"])
+        assert len(df) == 3
+        assert np.allclose(df["Rate"], 1.0 / 0.90)
+
+    def test_cross_eur_to_gbp(self):
+        from src.dimensions.exchange_rates.exchange_rates import _triangulate_rates
+        df = _triangulate_rates(self._master(), ["EUR"], ["GBP"])
+        assert len(df) == 3
+        # EUR→GBP = rate(USD→GBP) / rate(USD→EUR) = 0.80 / 0.90
+        assert np.allclose(df["Rate"], 0.80 / 0.90)
+
+    def test_same_currency_excluded(self):
+        from src.dimensions.exchange_rates.exchange_rates import _triangulate_rates
+        df = _triangulate_rates(self._master(), ["EUR"], ["EUR"])
+        assert len(df) == 0
+
+    def test_multiple_from_to(self):
+        from src.dimensions.exchange_rates.exchange_rates import _triangulate_rates
+        df = _triangulate_rates(self._master(), ["USD", "EUR"], ["EUR", "GBP"])
+        pairs = set(zip(df["FromCurrency"], df["ToCurrency"]))
+        # USD→EUR, USD→GBP, EUR→GBP (EUR→EUR excluded)
+        assert ("USD", "EUR") in pairs
+        assert ("USD", "GBP") in pairs
+        assert ("EUR", "GBP") in pairs
+        assert ("EUR", "EUR") not in pairs
+
+
+# ===================================================================
+# MONTHLY RATES AGGREGATION
+# ===================================================================
+
+class TestBuildMonthlyRates:
+    """Tests for monthly exchange rate aggregation."""
+
+    def _daily(self):
+        dates = pd.date_range("2024-01-01", "2024-03-31", freq="D")
+        rows = []
+        for i, d in enumerate(dates):
+            rows.append({
+                "Date": d.date(),
+                "FromCurrencyKey": 1,
+                "ToCurrencyKey": 2,
+                "FromCurrency": "USD",
+                "ToCurrency": "EUR",
+                "Rate": 0.90 + (i % 10) * 0.001,
+            })
+        return pd.DataFrame(rows)
+
+    def test_output_columns(self):
+        df = build_monthly_rates(self._daily())
+        assert list(df.columns) == [
+            "Date", "FromCurrencyKey", "ToCurrencyKey",
+            "FromCurrency", "ToCurrency",
+            "AvgRate", "MinRate", "MaxRate", "EndOfMonthRate",
+        ]
+
+    def test_monthly_grain(self):
+        df = build_monthly_rates(self._daily())
+        assert len(df) == 3  # Jan, Feb, Mar
+
+    def test_min_max_bounds(self):
+        df = build_monthly_rates(self._daily())
+        assert (df["MinRate"] <= df["AvgRate"]).all()
+        assert (df["AvgRate"] <= df["MaxRate"]).all()
+
+    def test_end_of_month_rate(self):
+        daily = self._daily()
+        monthly = build_monthly_rates(daily)
+        # EndOfMonthRate for Jan should be the last day of Jan
+        jan = monthly[monthly["Date"] == pd.Timestamp("2024-01-01")].iloc[0]
+        daily_jan = daily[pd.to_datetime(daily["Date"]).dt.month == 1]
+        assert jan["EndOfMonthRate"] == daily_jan.iloc[-1]["Rate"]
 
 
 # ===================================================================
@@ -1207,7 +1311,7 @@ class TestCrossGeneratorQuality:
     def test_currency_codes_match_defaults(self):
         """Currency codes from build_dim_currency should be uppercase 3-letter."""
         df = build_dim_currency(["USD", "EUR", "GBP", "INR"])
-        for code in df["ToCurrency"]:
+        for code in df["CurrencyCode"]:
             assert len(code) == 3
             assert code == code.upper()
             assert code.isalpha()

@@ -4,16 +4,7 @@ import yfinance as yf
 from datetime import timedelta
 
 from src.utils.logging_utils import info, warn
-
-# ---------------------------------------------------------
-# DEFAULT CURRENCY LIST
-# ---------------------------------------------------------
-CURRENCIES = [
-    "EUR", "GBP", "INR", "AUD", "CAD", "CNY",
-    "JPY", "SGD", "CHF", "ZAR", "HKD", "NZD", "SEK"
-]
-
-BASE = "USD"
+from src.defaults import CURRENCY_BASE, CURRENCY_DEFAULT_LIST
 
 
 # ---------------------------------------------------------
@@ -32,13 +23,13 @@ def download_history(currency, start_date, end_date):
     start_ts = pd.to_datetime(start_date).normalize()
     end_ts = pd.to_datetime(end_date).normalize()
 
-    if currency == BASE:
+    if currency == CURRENCY_BASE:
         dates = pd.date_range(start=start_ts, end=end_ts, freq="D")
         return pd.DataFrame({"Date": dates, "Rate": 1.0})
 
     # Primary: USD -> CUR
-    primary = f"{BASE}{currency}=X"
-    fallback = f"{currency}{BASE}=X"  # may represent USD per 1 CUR, invert to get CUR per 1 USD
+    primary = f"{CURRENCY_BASE}{currency}=X"
+    fallback = f"{currency}{CURRENCY_BASE}=X"  # may represent USD per 1 CUR, invert to get CUR per 1 USD
 
     def _download(ticker: str) -> pd.DataFrame:
         data = yf.download(
@@ -165,7 +156,7 @@ def refresh_fx_master(out_path):
         info(f"Refreshing FX for {cur}: {gap_start.date()} -> {today.date()}")
         df_gap = download_history(cur, gap_start, today)
         df_gap = fill_missing_days(df_gap, gap_start, today)
-        df_gap["FromCurrency"] = BASE
+        df_gap["FromCurrency"] = CURRENCY_BASE
         df_gap["ToCurrency"] = cur
         updates.append(df_gap)
 
@@ -217,7 +208,7 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    curr_list = currencies or CURRENCIES
+    curr_list = currencies or CURRENCY_DEFAULT_LIST
 
     start_ts = pd.to_datetime(start_date).normalize()
     end_ts = pd.to_datetime(end_date).normalize()
@@ -267,7 +258,7 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
                 info(f"Downloading FX for {cur}: {gap_start.date()} -> {gap_end.date()}")
                 df_gap = download_history(cur, gap_start, gap_end)
                 df_gap = fill_missing_days(df_gap, gap_start, gap_end)
-                df_gap["FromCurrency"] = BASE
+                df_gap["FromCurrency"] = CURRENCY_BASE
                 df_gap["ToCurrency"] = cur
                 updates.append(df_gap)
 
@@ -322,7 +313,7 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
             days_ahead = (merged.loc[future_mask, "Date"] - anchor_date).dt.days
             merged.loc[future_mask, "Rate"] = anchor_rate * (1 + annual_drift) ** (days_ahead / 365.25)
 
-        merged["FromCurrency"] = BASE
+        merged["FromCurrency"] = CURRENCY_BASE
         merged["ToCurrency"] = cur
         parts.append(merged[["Date", "FromCurrency", "ToCurrency", "Rate"]])
 

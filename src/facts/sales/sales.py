@@ -1114,9 +1114,9 @@ def generate_sales_fact(
 
     # Geography + currency mapping
     geo_df = load_parquet_df(parquet_folder_p / "geography.parquet", ["GeographyKey", "ISOCode"])
-    currency_df = load_parquet_df(parquet_folder_p / "currency.parquet", ["CurrencyKey", "ToCurrency"])
+    currency_df = load_parquet_df(parquet_folder_p / "currency.parquet", ["CurrencyKey", "CurrencyCode"])
 
-    geo_df = geo_df.merge(currency_df, left_on="ISOCode", right_on="ToCurrency", how="left")
+    geo_df = geo_df.merge(currency_df, left_on="ISOCode", right_on="CurrencyCode", how="left")
     if geo_df["CurrencyKey"].isna().any():
         n_missing = int(geo_df["CurrencyKey"].isna().sum())
         missing_isos = geo_df.loc[geo_df["CurrencyKey"].isna(), "ISOCode"].unique().tolist()

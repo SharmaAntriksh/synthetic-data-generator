@@ -1046,13 +1046,17 @@ def apply_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
             complaints_cfg["enabled"] = False
             cfg["complaints"] = complaints_cfg
 
-    # Rule 3: FX dates follow global dates (enforced here AND in pipeline_runner
-    # for backward compat, but catching it at config time gives earlier feedback).
+    # Rule 3: FX dates always follow global dates.
+    # Also migrate old ``currencies`` key → ``to_currencies`` at raw-dict level
+    # (before Pydantic sees it) for backward compat with existing config files.
     fx_cfg = cfg.get("exchange_rates")
     if isinstance(fx_cfg, Mapping):
         fx_cfg = dict(fx_cfg)
-        fx_cfg["use_global_dates"] = True
+        fx_cfg.pop("use_global_dates", None)
         fx_cfg.pop("dates", None)
+        fx_cfg.pop("volatility", None)
+        if "currencies" in fx_cfg and "to_currencies" not in fx_cfg:
+            fx_cfg["to_currencies"] = fx_cfg.pop("currencies")
         cfg["exchange_rates"] = fx_cfg
 
     return cfg
