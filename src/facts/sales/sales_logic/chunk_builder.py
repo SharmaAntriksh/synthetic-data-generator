@@ -1164,25 +1164,44 @@ def build_chunk_table(
             _ck_idx = np.clip(np.asarray(_cust_for_store, dtype=np.int32) - 1, 0, len(_cust_geo) - 1)
             _cust_countries = _geo2c[np.clip(_cust_geo[_ck_idx], 0, len(_geo2c) - 1)]
             _use_local = rng.random(_n_to_sample) < 0.70
-            order_store = np.empty(_n_to_sample, dtype=np.int32)
 
-            for _cid in np.unique(_cust_countries):
-                _cmask = _cust_countries == _cid
-                _local_mask = _use_local & _cmask
-                _global_mask = ~_use_local & _cmask
+            # Vectorized geo-bias: padded 2D pool LUT, one-shot fancy-index sample
+            _month_set = set(_month_stores.tolist())
+            _unique_countries = np.unique(_cust_countries)
+            _max_cid = int(_unique_countries.max()) + 1
 
-                # Local stores: intersection of country stores and month-eligible stores
-                _country_sk = _c2sk[int(_cid)] if int(_cid) < len(_c2sk) else np.array([], dtype=np.int32)
-                _local_pool = _country_sk[np.isin(_country_sk, _month_stores)] if _country_sk.size else np.array([], dtype=np.int32)
-                if _local_pool.size == 0:
-                    _local_pool = _month_stores  # fallback
+            # First pass: compute per-country local pools and max pool length
+            _local_pools = [None] * _max_cid
+            _max_pool_len = 0
+            for _cid_v in _unique_countries:
+                _cid_int = int(_cid_v)
+                _country_sk = _c2sk[_cid_int] if _cid_int < len(_c2sk) else np.array([], dtype=np.int32)
+                if _country_sk.size:
+                    _lp = _country_sk[np.array([s in _month_set for s in _country_sk.tolist()], dtype=bool)]
+                else:
+                    _lp = np.array([], dtype=np.int32)
+                if _lp.size == 0:
+                    _lp = _month_stores
+                _local_pools[_cid_int] = _lp
+                if _lp.size > _max_pool_len:
+                    _max_pool_len = _lp.size
 
-                _n_local = int(_local_mask.sum())
-                if _n_local > 0:
-                    order_store[_local_mask] = _local_pool[rng.integers(0, len(_local_pool), size=_n_local)]
-                _n_global = int(_global_mask.sum())
-                if _n_global > 0:
-                    order_store[_global_mask] = _month_stores[rng.integers(0, len(_month_stores), size=_n_global)]
+            # Build padded 2D array (needs max_pool_len from first pass)
+            _pool_2d = np.empty((_max_cid, _max_pool_len), dtype=np.int32)
+            _pool_lens = np.ones(_max_cid, dtype=np.int64)  # default 1 avoids mod-by-zero
+            for _cid_v in _unique_countries:
+                _cid_int = int(_cid_v)
+                _lp = _local_pools[_cid_int]
+                _pool_lens[_cid_int] = _lp.size
+                _pool_2d[_cid_int, :_lp.size] = _lp
+                if _lp.size < _max_pool_len:
+                    _pool_2d[_cid_int, _lp.size:] = _lp[0]
+
+            _rand_idx = rng.integers(0, np.iinfo(np.int64).max, size=_n_to_sample).astype(np.int64)
+            _local_pick = _pool_2d[_cust_countries, _rand_idx % _pool_lens[_cust_countries]]
+            _global_pick = _month_stores[rng.integers(0, len(_month_stores), size=_n_to_sample)]
+
+            order_store = np.where(_use_local, _local_pick, _global_pick).astype(np.int32)
         else:
             order_store = _month_stores[rng.integers(0, len(_month_stores), size=_n_to_sample)]
 
@@ -1252,34 +1271,51 @@ def build_chunk_table(
         _has_channel_corr = (_store_ch_keys is not None and _ch_prob_by_store is not None)
 
         if _has_channel_corr:
-            # Sample one channel per order (or per line if skip_cols)
+            # Vectorized: padded 2D CDF + channel-key LUT, one-shot broadcast sample
+            _max_sk_ch = max(len(_store_ch_keys), len(_ch_prob_by_store))
+            _unique_sk_all = np.unique(store_key_arr)
+            _max_n_ch = max(
+                (len(_store_ch_keys[int(s)]) for s in _unique_sk_all
+                 if int(s) < len(_store_ch_keys) and _store_ch_keys[int(s)] is not None),
+                default=len(SALES_CHANNEL_CORE_KEYS),
+            )
+            _ch_keys_2d = np.full((_max_sk_ch, _max_n_ch), SALES_CHANNEL_CORE_KEYS[0], dtype=np.int16)
+            _ch_cdf_2d = np.ones((_max_sk_ch, _max_n_ch), dtype=np.float64)
+
+            for _sk_v in _unique_sk_all:
+                _sk_i = int(_sk_v)
+                if _sk_i >= _max_sk_ch:
+                    continue
+                _ck = _store_ch_keys[_sk_i] if _sk_i < len(_store_ch_keys) and _store_ch_keys[_sk_i] is not None else SALES_CHANNEL_CORE_KEYS
+                _cp = _ch_prob_by_store[_sk_i] if _sk_i < len(_ch_prob_by_store) and _ch_prob_by_store[_sk_i] is not None else None
+                _nc = len(_ck)
+                _ch_keys_2d[_sk_i, :_nc] = _ck
+                if _nc < _max_n_ch:
+                    _ch_keys_2d[_sk_i, _nc:] = _ck[-1]
+                if _cp is not None and len(_cp) == _nc:
+                    _cdf = np.cumsum(_cp)
+                    _cdf[-1] = 1.0
+                    _ch_cdf_2d[_sk_i, :_nc] = _cdf
+                else:
+                    # Uniform: CDF = [1/n, 2/n, ..., 1.0]
+                    _ch_cdf_2d[_sk_i, :_nc] = np.arange(1, _nc + 1, dtype=np.float64) / _nc
+                if _nc < _max_n_ch:
+                    _ch_cdf_2d[_sk_i, _nc:] = 1.0
+
+            def _sample_channels_vectorized(_store_arr, _n):
+                """Sample channel keys for all rows via 2D CDF lookup."""
+                _r = rng.random(_n)
+                _sk_clp = np.clip(_store_arr.astype(np.int64), 0, _max_sk_ch - 1)
+                _row_cdf = _ch_cdf_2d[_sk_clp]          # shape: (_n, _max_n_ch)
+                _ch_idx = np.argmax(_r[:, None] < _row_cdf, axis=1)  # inverse CDF
+                return _ch_keys_2d[_sk_clp, _ch_idx]
+
             if not skip_cols and order_idx is not None:
-                # Per-order: use order-level store keys
                 _order_stores_for_ch = store_key_arr[order_starts] if order_starts is not None else store_key_arr[:n_unique_orders]
-                _ch_per_order = np.empty(n_unique_orders, dtype=np.int16)
-                for _sk_val in np.unique(_order_stores_for_ch):
-                    _sk_int = int(_sk_val)
-                    _sk_mask = _order_stores_for_ch == _sk_val
-                    _n_sk = int(_sk_mask.sum())
-                    _ch_k = _store_ch_keys[_sk_int] if _sk_int < len(_store_ch_keys) and _store_ch_keys[_sk_int] is not None else SALES_CHANNEL_CORE_KEYS
-                    _ch_p = _ch_prob_by_store[_sk_int] if _sk_int < len(_ch_prob_by_store) and _ch_prob_by_store[_sk_int] is not None else None
-                    if _ch_p is not None and len(_ch_p) == len(_ch_k):
-                        _ch_per_order[_sk_mask] = _ch_k[rng.choice(len(_ch_k), size=_n_sk, p=_ch_p)]
-                    else:
-                        _ch_per_order[_sk_mask] = _ch_k[rng.integers(0, len(_ch_k), size=_n_sk)]
+                _ch_per_order = _sample_channels_vectorized(_order_stores_for_ch, n_unique_orders)
                 sales_channel_key_arr = _ch_per_order[order_idx]
             else:
-                sales_channel_key_arr = np.empty(n_lines, dtype=np.int16)
-                for _sk_val in np.unique(store_key_arr):
-                    _sk_int = int(_sk_val)
-                    _sk_mask = store_key_arr == _sk_val
-                    _n_sk = int(_sk_mask.sum())
-                    _ch_k = _store_ch_keys[_sk_int] if _sk_int < len(_store_ch_keys) and _store_ch_keys[_sk_int] is not None else SALES_CHANNEL_CORE_KEYS
-                    _ch_p = _ch_prob_by_store[_sk_int] if _sk_int < len(_ch_prob_by_store) and _ch_prob_by_store[_sk_int] is not None else None
-                    if _ch_p is not None and len(_ch_p) == len(_ch_k):
-                        sales_channel_key_arr[_sk_mask] = _ch_k[rng.choice(len(_ch_k), size=_n_sk, p=_ch_p)]
-                    else:
-                        sales_channel_key_arr[_sk_mask] = _ch_k[rng.integers(0, len(_ch_k), size=_n_sk)]
+                sales_channel_key_arr = _sample_channels_vectorized(store_key_arr, n_lines)
         else:
             # Fallback: uniform channel sampling (old behavior)
             sales_channel_key_arr = None

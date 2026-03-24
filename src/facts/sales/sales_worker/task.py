@@ -638,56 +638,89 @@ def _ensure_salesperson_employee_key_effective(
     # Pre-fetch store keys that actually appear to skip dict lookups for missing stores.
     unique_stores = np.unique(pair_store)
 
-    # Build a local cache of filtered (non-manager) employee pools per store to avoid
-    # re-filtering the same store's pool across many dates.
+    # Vectorized: group by store, 2D broadcast eligibility, batch CDF sample
     _store_pool_cache: Dict[int, Optional[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {}
-
-    for i in range(n_pairs):
-        sk = int(pair_store[i])
-
-        # Use cached per-store pool lookup
-        if sk not in _store_pool_cache:
-            rec = eff.get(sk)
-            if rec is None:
+    for sk_val in unique_stores:
+        sk = int(sk_val)
+        rec = eff.get(sk)
+        if rec is None:
+            _store_pool_cache[sk] = None
+        else:
+            emp_arr, startD, endD, w_arr = rec
+            non_mgr = (emp_arr < 30_000_000) | (emp_arr >= 40_000_000)
+            if not non_mgr.any():
                 _store_pool_cache[sk] = None
             else:
-                emp_arr, startD, endD, w_arr = rec
-                # Pre-filter manager keys once per store
-                non_mgr = (emp_arr < 30_000_000) | (emp_arr >= 40_000_000)
-                if not non_mgr.any():
-                    _store_pool_cache[sk] = None
-                else:
-                    _store_pool_cache[sk] = (
-                        np.asarray(emp_arr[non_mgr], dtype=np.int64),
-                        startD[non_mgr],
-                        endD[non_mgr],
-                        np.asarray(w_arr[non_mgr], dtype=np.float64),
-                    )
+                _store_pool_cache[sk] = (
+                    np.asarray(emp_arr[non_mgr], dtype=np.int64),
+                    startD[non_mgr].astype("datetime64[D]").astype(np.int64),
+                    endD[non_mgr].astype("datetime64[D]").astype(np.int64),
+                    np.asarray(w_arr[non_mgr], dtype=np.float64),
+                )
 
-        pool = _store_pool_cache[sk]
+    _ps_sort = np.argsort(pair_store, kind="mergesort")
+    _ps_sorted = pair_store[_ps_sort]
+    _ps_breaks = np.searchsorted(_ps_sorted, unique_stores, side="left")
+    _ps_breaks_r = np.searchsorted(_ps_sorted, unique_stores, side="right")
+
+    for si in range(len(unique_stores)):
+        sk = int(unique_stores[si])
+        pool = _store_pool_cache.get(sk)
         if pool is None:
             continue
 
-        emp2, startD2, endD2, w2 = pool
-        d = np.datetime64(int(pair_day64[i]), "D")
+        emp2, startD2_i64, endD2_i64, w2 = pool
 
-        ok = (startD2 <= d) & (d <= endD2)
-        if not ok.any():
+        _grp = _ps_sort[_ps_breaks[si]:_ps_breaks_r[si]]
+        if _grp.size == 0:
             continue
 
-        emp_ok = emp2[ok]
-        w_ok = w2[ok]
+        _grp_days = pair_day64[_grp]
+        _grp_counts = pair_counts[_grp]
 
-        count = int(pair_counts[i])
-        sw = w_ok.sum()
+        _days_col = _grp_days[:, None]
+        _ok = (startD2_i64[None, :] <= _days_col) & (_days_col <= endD2_i64[None, :])
 
-        if sw <= 1e-12:
-            picked = emp_ok[rng.integers(0, emp_ok.size, size=count)]
-        else:
-            picked = emp_ok[rng.choice(emp_ok.size, size=count, p=w_ok / sw)]
+        _w_eff = _ok.astype(np.float64) * w2[None, :]
+        _row_sums = _w_eff.sum(axis=1)
+        _has_eligible = _row_sums > 1e-12
 
-        s, e = int(pair_starts[i]), int(pair_starts[i + 1])
-        ord_emp[pair_order[s:e]] = picked
+        if not _has_eligible.any():
+            continue
+
+        # Zero-weight but eligible rows: fall back to uniform
+        _any_ok = _ok.any(axis=1)
+        _uniform_rows = ~_has_eligible & _any_ok
+        if _uniform_rows.any():
+            _n_eligible = _ok[_uniform_rows].sum(axis=1).astype(np.float64)
+            _w_eff[_uniform_rows] = _ok[_uniform_rows].astype(np.float64)
+            _row_sums[_uniform_rows] = _n_eligible
+            _has_eligible |= _uniform_rows
+
+        _safe_sums = np.where(_row_sums > 0, _row_sums, 1.0)
+        _cdf = np.cumsum(_w_eff, axis=1) / _safe_sums[:, None]
+        _cdf[:, -1] = 1.0
+
+        _eligible_idx = np.where(_has_eligible)[0]
+        _eligible_counts = _grp_counts[_eligible_idx]
+        _total_store_orders = int(_eligible_counts.sum())
+        if _total_store_orders == 0:
+            continue
+
+        _repeat_idx = np.repeat(_eligible_idx, _eligible_counts)
+
+        _r = rng.random(_total_store_orders)
+        _row_cdf = _cdf[_repeat_idx]
+        _emp_idx = np.argmax(_r[:, None] < _row_cdf, axis=1)
+        _picked = emp2[_emp_idx]
+
+        # Scatter back: map picked employees to their ord_emp slots
+        _eligible_pairs = _grp[_eligible_idx]
+        _pair_s = pair_starts[_eligible_pairs].astype(np.int64)
+        _pair_e = pair_starts[_eligible_pairs + 1].astype(np.int64)
+        # Expand pair_order indices for all eligible orders
+        _slot_idx = np.concatenate([pair_order[s:e] for s, e in zip(_pair_s, _pair_e)])
+        ord_emp[_slot_idx] = _picked
 
     if has_orders:
         row_emp = ord_emp[order_inv]

@@ -7,6 +7,7 @@ per-customer product selection loop.
 """
 from __future__ import annotations
 
+from bisect import bisect_left
 from typing import Any, Dict, List, NamedTuple, Tuple
 
 import numpy as np
@@ -196,41 +197,40 @@ def generate_wishlist_items(
     # OUTPUT ARRAYS
     # ------------------------------------------------------------------
     out_prod_idx = _base_prod_idx.copy()
-    out_ckey = np.empty(total_rows, dtype=np.int64)
-    out_date_ns = np.empty(total_rows, dtype=np.int64)
 
     offsets = np.zeros(n_participants + 1, dtype=np.int64)
     np.cumsum(items_per, out=offsets[1:])
 
-    # Extract pool fields and array refs to locals for inner-loop speed
+    out_ckey = np.repeat(cust_keys, items_per)
+
+    _span = (latest_ns - earliest_ns).astype(np.int64)
+    _span = np.where(_span <= 0, NS_PER_DAY, _span)
+    _e_rep = np.repeat(earliest_ns, items_per).astype(np.int64)
+    _s_rep = np.repeat(_span, items_per)
+    out_date_ns = _e_rep + (_date_rands * _s_rep).astype(np.int64)
+
+    # Per-customer product selection with bisect for scalar CDF lookups
+    # (avoids numpy call overhead that dominates at single-element scale)
     _prod_subcat = prod_subcat
     _n_products = n_products
 
     sc_idx_map = pool.sc_idx_map
     subcat_starts = pool.subcat_starts
     subcat_ends = pool.subcat_ends
-    pool_indices = pool.pool_indices
+    _pool_indices_arr = pool.pool_indices
     subcat_cdf_starts = pool.subcat_cdf_starts
     subcat_cdf_ends = pool.subcat_cdf_ends
-    cdf_data = pool.cdf_data
 
-    # ------------------------------------------------------------------
-    # PER-CUSTOMER PRODUCT SELECTION
-    # ------------------------------------------------------------------
+    _global_cdf_list = global_cdf.tolist()
+    _cdf_data_list = pool.cdf_data.tolist()
+
     for i in range(n_participants):
         start = int(offsets[i])
         end = int(offsets[i + 1])
         n_items = end - start
+        if n_items == 0:
+            continue
         ck = int(cust_keys[i])
-
-        out_ckey[start:end] = ck
-
-        e_ns = int(earliest_ns[i])
-        l_ns = int(latest_ns[i])
-        span = l_ns - e_ns
-        if span <= 0:
-            span = NS_PER_DAY
-        out_date_ns[start:end] = e_ns + (_date_rands[start:end] * span).astype(np.int64)
 
         purch_list: List[int] = purchased_map.get(ck) or []
         has_purch = len(purch_list) > 0
@@ -264,13 +264,13 @@ def generate_wishlist_items(
                     ce = int(subcat_cdf_ends[sc_i])
                     has_cdf = ce > cs
                     if has_cdf and pool_len > 0:
-                        sc_cdf_slice = cdf_data[cs:ce]
+                        sc_cdf_slice = _cdf_data_list[cs:ce]
                         for _ in range(50):
                             r = float(_misc[_mi]); _mi += 1
-                            local_idx = int(np.searchsorted(sc_cdf_slice, r))
+                            local_idx = bisect_left(sc_cdf_slice, r)
                             if local_idx >= pool_len:
                                 local_idx = pool_len - 1
-                            pick = int(pool_indices[ps + local_idx])
+                            pick = int(_pool_indices_arr[ps + local_idx])
                             if pick not in chosen_set:
                                 out_prod_idx[pos] = pick
                                 chosen_set.add(pick)
@@ -278,7 +278,7 @@ def generate_wishlist_items(
                                 break
                     elif pool_len > 0:
                         r = float(_misc[_mi]); _mi += 1
-                        pick = int(pool_indices[ps + min(int(r * pool_len), pool_len - 1)])
+                        pick = int(_pool_indices_arr[ps + min(int(r * pool_len), pool_len - 1)])
                         if pick not in chosen_set:
                             out_prod_idx[pos] = pick
                             chosen_set.add(pick)
@@ -290,7 +290,7 @@ def generate_wishlist_items(
                 if pick in chosen_set:
                     for _ in range(200):
                         r = float(_misc[_mi]); _mi += 1
-                        pick = int(np.searchsorted(global_cdf, r))
+                        pick = bisect_left(_global_cdf_list, r)
                         if pick >= _n_products:
                             pick = _n_products - 1
                         if pick not in chosen_set:
