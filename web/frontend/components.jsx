@@ -194,7 +194,7 @@ function ThemeToggle() {
 
 function Box({title, children}) {
   return (
-    <div style={{marginTop: 16, padding: "14px 16px", background: "var(--alt)", borderRadius: 10, border: "1px solid var(--border)"}}>
+    <div style={{marginTop: 16, padding: "14px 16px", background: "transparent", borderRadius: 10, border: "1px solid var(--border)"}}>
       {title && <div style={{fontSize: 12, fontWeight: 600, color: "var(--dim)", marginBottom: 10}}>{title}</div>}
       {children}
     </div>

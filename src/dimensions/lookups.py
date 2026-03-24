@@ -418,51 +418,6 @@ def _df_customer_acquisition_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
 
 
 
-def _df_delivery_performances(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
-    """
-    Delivery outcome / performance lookup (line-level).
-    Use DeliveryPerformanceKey on Sales lines; derive labels + IsDelayed via relationship.
-
-    Config:
-      delivery_performances:
-        include_exception: true|false
-        rows: [ ... ]  # optional override (must match required cols)
-    """
-    required = [
-        "DeliveryPerformanceKey",
-        "DeliveryPerformance",
-        "PerformanceGroup",
-        "IsDelayed",
-        "SortOrder",
-        "LateBucket",
-    ]
-
-    override = _maybe_override_rows(dim_cfg, required_cols=required)
-    if override is not None:
-        override["DeliveryPerformanceKey"] = override["DeliveryPerformanceKey"].astype(np.int16)
-        override["SortOrder"] = override["SortOrder"].astype(np.int16)
-        override["IsDelayed"] = override["IsDelayed"].astype(bool)
-        return override
-
-    include_exception = bool(dim_cfg.get("include_exception", True))
-
-    rows = [
-        (0, "NotApplicable", "NA", False, 0, "NA"),
-        (1, "Early", "Early", False, 1, "Early"),
-        (2, "OnTime", "OnTime", False, 2, "OnTime"),
-        (3, "Late (1-2 days)", "Late", True, 3, "Late1_2"),
-        (4, "Late (3-5 days)", "Late", True, 4, "Late3_5"),
-        (5, "Late (6+ days)", "Late", True, 5, "Late6plus"),
-    ]
-    if include_exception:
-        rows.append((6, "Delivery Exception", "Exception", True, 6, "Exception"))
-
-    df = pd.DataFrame(rows, columns=required)
-    df["DeliveryPerformanceKey"] = df["DeliveryPerformanceKey"].astype(np.int16)
-    df["SortOrder"] = df["SortOrder"].astype(np.int16)
-    df["IsDelayed"] = df["IsDelayed"].astype(bool)
-    return df
-
 # =========================================================
 # Pipeline entrypoints (run_* wrappers)
 # =========================================================
@@ -481,15 +436,4 @@ def run_loyalty_tiers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 def run_customer_acquisition_channels(cfg: Dict[str, Any], parquet_folder: Path) -> None:
     _run_lookup_dim(cfg=cfg, dim_key="customer_acquisition_channels", out_name="customer_acquisition_channels.parquet",
                     build_df=_df_customer_acquisition_channels, parquet_folder=parquet_folder)
-
-
-
-def run_lookups(cfg: Dict[str, Any], parquet_folder: Path) -> None:
-    """
-    Convenience function if you prefer a single call from dimensions_runner.
-    You can also call individual run_* functions if you want per-dim force control.
-    """
-    run_sales_channels(cfg, parquet_folder)
-    run_loyalty_tiers(cfg, parquet_folder)
-    run_customer_acquisition_channels(cfg, parquet_folder)
 

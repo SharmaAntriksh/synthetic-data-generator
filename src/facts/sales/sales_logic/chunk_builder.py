@@ -26,7 +26,7 @@ from .core import (
     compute_dates,
     compute_prices,
 )
-from .columns import build_extra_columns
+from .columns import build_extra_columns, SALES_CHANNEL_CORE_KEYS
 
 # ------------------------------------------------------------
 # Helpers
@@ -1261,7 +1261,7 @@ def build_chunk_table(
                     _sk_int = int(_sk_val)
                     _sk_mask = _order_stores_for_ch == _sk_val
                     _n_sk = int(_sk_mask.sum())
-                    _ch_k = _store_ch_keys[_sk_int] if _sk_int < len(_store_ch_keys) and _store_ch_keys[_sk_int] is not None else np.array([1, 2, 3, 4, 5], dtype=np.int16)
+                    _ch_k = _store_ch_keys[_sk_int] if _sk_int < len(_store_ch_keys) and _store_ch_keys[_sk_int] is not None else SALES_CHANNEL_CORE_KEYS
                     _ch_p = _ch_prob_by_store[_sk_int] if _sk_int < len(_ch_prob_by_store) and _ch_prob_by_store[_sk_int] is not None else None
                     if _ch_p is not None and len(_ch_p) == len(_ch_k):
                         _ch_per_order[_sk_mask] = _ch_k[rng.choice(len(_ch_k), size=_n_sk, p=_ch_p)]
@@ -1274,7 +1274,7 @@ def build_chunk_table(
                     _sk_int = int(_sk_val)
                     _sk_mask = store_key_arr == _sk_val
                     _n_sk = int(_sk_mask.sum())
-                    _ch_k = _store_ch_keys[_sk_int] if _sk_int < len(_store_ch_keys) and _store_ch_keys[_sk_int] is not None else np.array([1, 2, 3, 4, 5], dtype=np.int16)
+                    _ch_k = _store_ch_keys[_sk_int] if _sk_int < len(_store_ch_keys) and _store_ch_keys[_sk_int] is not None else SALES_CHANNEL_CORE_KEYS
                     _ch_p = _ch_prob_by_store[_sk_int] if _sk_int < len(_ch_prob_by_store) and _ch_prob_by_store[_sk_int] is not None else None
                     if _ch_p is not None and len(_ch_p) == len(_ch_k):
                         sales_channel_key_arr[_sk_mask] = _ch_k[rng.choice(len(_ch_k), size=_n_sk, p=_ch_p)]

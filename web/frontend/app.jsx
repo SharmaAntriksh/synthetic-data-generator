@@ -22,11 +22,10 @@ function validate(config) {
   if (Math.abs(geoSum - 1) > .05 && geoSum > 0) warnings.push(`Geography weights sum to ${(geoSum * 100).toFixed(0)}% (expected ~100%).`);
   if (config.returnsEnabled && config.returnMaxDays <= config.returnMinDays) warnings.push("Return max days should exceed min days.");
   if (config.marginMax <= config.marginMin) warnings.push("Max margin should exceed min margin.");
-  if (config.csEnabled && config.csPerCustomerMax < config.csPerCustomerMin) errors.push("Segment max per customer must be >= min.");
-  if (config.csEnabled && config.csPerCustomerMax > config.csSegmentCount) errors.push("Segment max per customer must be <= segment count.");
   if (config.subEnabled && config.subMaxSubscriptions < 1) errors.push("Subscriptions max must be >= 1.");
   if (config.subEnabled && config.subParticipationRate > 1) errors.push("Subscription participation rate must be <= 1.0.");
-  if (config.employeeMaxStaff < config.employeeMinStaff) warnings.push("Employee max staff should be >= min staff.");
+  if (config.transfersEnabled && config.transfersAnnualRate > 1) warnings.push("Transfer annual rate should be <= 1.0.");
+  if (config.transfersEnabled && config.transfersSameRegionPref > 1) warnings.push("Same-region preference should be <= 1.0.");
 
   return {errors, warnings};
 }
@@ -109,7 +108,7 @@ function App() {
       setCfg(data);
     }).catch(() => {
       setLoadError("Failed to load config from server");
-      setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, qualityReport: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, profile: "steady", firstYearPct: .27, householdPct: .35, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, geoWeights: {"United States": .35, India: .2, "United Kingdom": .1, Germany: .1, France: .1, Australia: .07, Canada: .08}, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, csEnabled: false, csGenerateBridge: false, csSegmentCount: 10, csPerCustomerMin: 1, csPerCustomerMax: 2, csIncludeScore: true, csIncludePrimaryFlag: true, csIncludeValidity: true, csValidityGrain: "month", csChurnRateQtr: .08, csNewCustomerMonths: 2, csSeed: 123, subEnabled: false, subGenerateBridge: false, subParticipationRate: .65, subAvgSubscriptions: 1.5, subMaxSubscriptions: 5, subChurnRate: .25, subTrialRate: .30, subTrialConversionRate: .85, subSeed: 700, storeEnsureIsoCoverage: true, storeDistrictSize: 10, storeDistrictsPerRegion: 8, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, storeOnlineStores: 5, storeOnlineCloseShare: .10, storeClosingEnabled: true, storeCloseShare: .10, employeeMinStaff: 3, employeeMaxStaff: 5, employeeEmailDomain: "contoso.com", erCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erVolatility: .02, erFutureDrift: .02, erUseGlobalDates: true, budgetEnabled: true, budgetReportCurrency: "USD", budgetDefaultGrowth: .05, budgetReturnRateCap: .30, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
+      setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, qualityReport: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, profile: "steady", firstYearPct: .27, householdPct: .35, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, geoWeights: {"United States": .35, India: .2, "United Kingdom": .1, Germany: .1, France: .1, Australia: .07, Canada: .08}, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, subEnabled: false, subGenerateBridge: false, subParticipationRate: .65, subAvgSubscriptions: 1.5, subMaxSubscriptions: 5, subChurnRate: .25, subTrialRate: .30, subTrialConversionRate: .85, subSeed: 700, storeEnsureIsoCoverage: true, storeStaffingRanges: {Supermarket: [8, 20], Hypermarket: [15, 40], Convenience: [2, 6]}, storeRegionWeights: {}, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, storeOnlineStores: 5, storeOnlineCloseShare: .10, storeClosingEnabled: true, storeCloseShare: .10, employeeEmailDomain: "contoso.com", transfersEnabled: false, transfersAnnualRate: .05, transfersMinTenureMonths: 6, transfersSameRegionPref: .70, erFromCurrencies: ["USD"], erToCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erFutureDrift: .02, erIncludeMonthly: true, budgetEnabled: true, budgetReportCurrency: "USD", budgetDefaultGrowth: .05, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
     });
     fetch(API + "/presets").then(r => r.json()).then(data => { setPresets(data); setPresetBucket(Object.keys(data)[0] || ""); }).catch(() => {});
     fetch(API + "/models").then(r => r.text()).then(text => { setModelsYaml(text); setModelsOrig(text); setModelsDisk(text); }).catch(() => {});
@@ -327,7 +326,7 @@ function App() {
             {[
               ["customers", "Customers"], ["products", "Products"], ["stores", "Stores"], ["employees", "Employees"],
               ["returns", "Returns", cfg.returnsEnabled], ["promotions", "Promos"],
-              ["segments", "Segments", cfg.csEnabled], ["subscriptions", "Subscriptions", cfg.subEnabled],
+              ["subscriptions", "Subscriptions", cfg.subEnabled],
               ["exchange", "FX Rates"], ["budget", "Budget", cfg.budgetEnabled], ["inventory", "Inventory", cfg.inventoryEnabled],
               ["wishlists", "Wishlists", cfg.wlEnabled], ["complaints", "Complaints", cfg.ccEnabled],
             ].map(([tabKey, label, flag]) => {
@@ -355,10 +354,12 @@ function App() {
                 <F label="Asia %"><N value={cfg.pctAsia} onChange={v => s("pctAsia", v)} min={0} max={100} /></F>
               </R4>
               <Hint>Sum: {cfg.pctIndia + cfg.pctUs + cfg.pctEu + cfg.pctAsia}% (auto-normalized)</Hint>
-              <Sld label="Organization %" value={cfg.pctOrg} min={0} max={100} step={1} onChange={v => s("pctOrg", v)} fmt={v => `${v}%`} />
+              <F label="Organization %" help="Percentage of customers that are organizations (B2B)."><N value={cfg.pctOrg} onChange={v => s("pctOrg", v)} min={0} max={100} step={1} /></F>
             </Box>
-            <Sld label="Active ratio" value={cfg.customerActiveRatio} min={.1} max={1} step={.01} onChange={v => s("customerActiveRatio", v)} />
-            <Sld label="Household %" value={cfg.householdPct} min={0} max={1} step={.05} onChange={v => s("householdPct", v)} fmt={v => `${(v * 100).toFixed(0)}%`} />
+            <R2>
+              <F label="Active ratio" help="Fraction of customers active during date range."><N value={cfg.customerActiveRatio} onChange={v => s("customerActiveRatio", v)} min={.1} max={1} step={.01} /></F>
+              <F label="Household %" help="Fraction of customers assigned to households."><N value={cfg.householdPct} onChange={v => s("householdPct", v)} min={0} max={1} step={.05} /></F>
+            </R2>
             <Box title="Behavior Profile">
               <R2>
                 <F label="Profile" help="Controls acquisition curve, churn, seasonality, and demand shape."><Sel value={cfg.profile} onChange={v => s("profile", v)} options={["gradual", "steady", "aggressive", "instant"]} labels={["Gradual (S-curve ramp)", "Steady (mature business)", "Aggressive (fast growth)", "Instant (all customers day 1)"]} /></F>
@@ -393,9 +394,9 @@ function App() {
             </Box>
             <Box title="Brand Normalization">
               <Check checked={cfg.brandNormalize} onChange={v => s("brandNormalize", v)} label="Pull brand prices toward global median" />
-              {cfg.brandNormalize && <div style={{marginTop: 8}}><Sld label="Alpha (brand identity retention)" value={cfg.brandNormalizeAlpha} min={0} max={1} step={.05} onChange={v => s("brandNormalizeAlpha", v)} /></div>}
+              {cfg.brandNormalize && <div style={{marginTop: 8}}><F label="Alpha (brand identity retention)" help="0 = full normalization, 1 = no normalization."><N value={cfg.brandNormalizeAlpha} onChange={v => s("brandNormalizeAlpha", v)} min={0} max={1} step={.05} /></F></div>}
             </Box>
-            <Sld label="Active ratio" value={cfg.productActiveRatio} min={.1} max={1} step={.01} onChange={v => s("productActiveRatio", v)} />
+            <F label="Active ratio" help="Fraction of products active during date range."><N value={cfg.productActiveRatio} onChange={v => s("productActiveRatio", v)} min={.1} max={1} step={.01} /></F>
             <Box title="SCD Type 2 (Price History)">
               <Check checked={cfg.prodScd2Enabled} onChange={v => s("prodScd2Enabled", v)} label="Enable product price version history" />
               {cfg.prodScd2Enabled && <R3>
@@ -408,11 +409,31 @@ function App() {
 
           {/* ── Stores ── */}
           {dimTab === "stores" && <div style={{marginTop: 8}}>
-            <R3>
-              <F label="District size" help="Stores per district."><N value={cfg.storeDistrictSize} onChange={v => s("storeDistrictSize", v)} min={1} step={1} /></F>
-              <F label="Districts per region"><N value={cfg.storeDistrictsPerRegion} onChange={v => s("storeDistrictsPerRegion", v)} min={1} step={1} /></F>
-              <F label=" "><div style={{paddingTop: 16}}><Check checked={cfg.storeEnsureIsoCoverage} onChange={v => s("storeEnsureIsoCoverage", v)} label="Ensure ISO country coverage" /></div></F>
-            </R3>
+            <div style={{marginBottom: 8}}><Check checked={cfg.storeEnsureIsoCoverage} onChange={v => s("storeEnsureIsoCoverage", v)} label="Ensure ISO country coverage" /></div>
+            <Box title="Staffing ranges" help="Min/max staff per store type. Online stores always have 1.">
+              {Object.entries(cfg.storeStaffingRanges || {}).map(([type, range]) => {
+                const [lo, hi] = Array.isArray(range) ? range : [2, 6];
+                const setRange = r => s("storeStaffingRanges", {...(cfg.storeStaffingRanges || {}), [type]: r});
+                return <R3 key={type}>
+                  <F label={type}>
+                    <div style={{display: "flex", gap: 8, alignItems: "center"}}>
+                      <N value={lo} onChange={v => setRange([v, hi])} min={1} step={1} />
+                      <span style={{color: "var(--dim)"}}>to</span>
+                      <N value={hi} onChange={v => setRange([lo, v])} min={1} step={1} />
+                    </div>
+                  </F>
+                </R3>;
+              })}
+              {Object.keys(cfg.storeStaffingRanges || {}).length === 0 && <Hint>No staffing ranges configured. Stores use default staff counts.</Hint>}
+            </Box>
+            <Box title="Region weights" help="Fraction of stores per currency region. Omit for population-weighted distribution.">
+              {Object.entries(cfg.storeRegionWeights || {}).map(([code, weight]) =>
+                <R2 key={code}>
+                  <F label={code}><N value={weight} onChange={v => s("storeRegionWeights", {...(cfg.storeRegionWeights || {}), [code]: v})} min={0} max={1} step={0.05} /></F>
+                </R2>
+              )}
+              {Object.keys(cfg.storeRegionWeights || {}).length === 0 && <Hint>No region weights set. Stores distributed by population weighting.</Hint>}
+            </Box>
             <Box title="Online stores">
               <R2>
                 <F label="Online store count" help="Number of online stores carved from total store count."><N value={cfg.storeOnlineStores} onChange={v => s("storeOnlineStores", v)} min={0} step={1} /></F>
@@ -426,7 +447,7 @@ function App() {
                 <F label="Closing end"><input type="date" style={iS} value={cfg.storeClosingEnd} onChange={e => s("storeClosingEnd", e.target.value)} /></F>
               </R3>
               <div style={{marginTop: 8}}><Check checked={cfg.storeClosingEnabled} onChange={v => s("storeClosingEnabled", v)} label="Enable store closures" /></div>
-              {cfg.storeClosingEnabled && <Sld label="Close share" value={cfg.storeCloseShare} min={0} max={1} step={.05} onChange={v => s("storeCloseShare", v)} fmt={v => `${(v * 100).toFixed(0)}%`} />}
+              {cfg.storeClosingEnabled && <F label="Close share" help="Fraction of physical stores that close."><N value={cfg.storeCloseShare} onChange={v => s("storeCloseShare", v)} min={0} max={1} step={.05} /></F>}
             </Box>
             <Box title="Assortment">
               <Check checked={cfg.storeAssortmentEnabled} onChange={v => s("storeAssortmentEnabled", v)} label="Enable product assortment filtering" />
@@ -436,11 +457,15 @@ function App() {
 
           {/* ── Employees ── */}
           {dimTab === "employees" && <div style={{marginTop: 8}}>
-            <R3>
-              <F label="Min staff per store"><N value={cfg.employeeMinStaff} onChange={v => s("employeeMinStaff", v)} min={1} step={1} /></F>
-              <F label="Max staff per store"><N value={cfg.employeeMaxStaff} onChange={v => s("employeeMaxStaff", v)} min={1} step={1} /></F>
-              <F label="Email domain"><input type="text" style={iS} value={cfg.employeeEmailDomain} onChange={e => s("employeeEmailDomain", e.target.value)} /></F>
-            </R3>
+            <F label="Email domain"><input type="text" style={iS} value={cfg.employeeEmailDomain} onChange={e => s("employeeEmailDomain", e.target.value)} /></F>
+            <Box title="Transfers" help="Inter-store staff transfers generate additional assignment rows.">
+              <Check checked={cfg.transfersEnabled} onChange={v => s("transfersEnabled", v)} label="Enable inter-store transfers" />
+              {cfg.transfersEnabled && <R3>
+                <F label="Annual rate" help="Fraction of eligible staff that transfer per year."><N value={cfg.transfersAnnualRate} onChange={v => s("transfersAnnualRate", v)} min={0} max={1} step={0.05} /></F>
+                <F label="Min tenure (months)" help="Minimum months at current store before eligible."><N value={cfg.transfersMinTenureMonths} onChange={v => s("transfersMinTenureMonths", v)} min={1} step={1} /></F>
+                <F label="Same-region preference" help="Probability transfer stays within the same region."><N value={cfg.transfersSameRegionPref} onChange={v => s("transfersSameRegionPref", v)} min={0} max={1} step={0.05} /></F>
+              </R3>}
+            </Box>
           </div>}
 
           {/* ── Returns ── */}
@@ -473,34 +498,6 @@ function App() {
             <F label="New customer window (months)" help="Months after CustomerStartDate where New Customer promo applies. 0 = same month only."><N value={cfg.promoNewCustWindow} onChange={v => s("promoNewCustWindow", v)} min={0} max={24} step={1} /></F>
           </div>}
 
-          {/* ── Customer Segments ── */}
-          {dimTab === "segments" && <div style={{marginTop: 8}}>
-            <div style={{marginTop: 4}}><Check checked={cfg.csEnabled} onChange={v => s("csEnabled", v)} label="Enable customer segments" /></div>
-            {cfg.csEnabled && <>
-              <div style={{marginTop: 8}}><Check checked={cfg.csGenerateBridge} onChange={v => s("csGenerateBridge", v)} label="Generate bridge table" /></div>
-              <R3>
-                <F label="Segment count"><N value={cfg.csSegmentCount} onChange={v => s("csSegmentCount", v)} min={1} step={1} /></F>
-                <F label="Min per customer"><N value={cfg.csPerCustomerMin} onChange={v => s("csPerCustomerMin", v)} min={1} step={1} /></F>
-                <F label="Max per customer"><N value={cfg.csPerCustomerMax} onChange={v => s("csPerCustomerMax", v)} min={1} step={1} /></F>
-              </R3>
-              <Box title="Include columns">
-                <div style={{display: "flex", gap: 16, flexWrap: "wrap"}}>
-                  <Check checked={cfg.csIncludeScore} onChange={v => s("csIncludeScore", v)} label="Score" />
-                  <Check checked={cfg.csIncludePrimaryFlag} onChange={v => s("csIncludePrimaryFlag", v)} label="Primary flag" />
-                  <Check checked={cfg.csIncludeValidity} onChange={v => s("csIncludeValidity", v)} label="Validity periods" />
-                </div>
-              </Box>
-              {cfg.csIncludeValidity && <Box title="Validity settings">
-                <R3>
-                  <F label="Grain"><Sel value={cfg.csValidityGrain} onChange={v => s("csValidityGrain", v)} options={["month", "day"]} /></F>
-                  <F label="Churn rate (quarterly)"><N value={cfg.csChurnRateQtr} onChange={v => s("csChurnRateQtr", v)} min={0} max={1} step={.01} /></F>
-                  <F label="New customer months"><N value={cfg.csNewCustomerMonths} onChange={v => s("csNewCustomerMonths", v)} min={0} step={1} /></F>
-                </R3>
-              </Box>}
-              <F label="Seed"><N value={cfg.csSeed} onChange={v => s("csSeed", v)} min={0} step={1} /></F>
-            </>}
-          </div>}
-
           {/* ── Subscriptions ── */}
           {dimTab === "subscriptions" && <div style={{marginTop: 8}}>
             <div style={{marginTop: 4}}><Check checked={cfg.subEnabled} onChange={v => s("subEnabled", v)} label="Enable subscriptions" /></div>
@@ -524,25 +521,28 @@ function App() {
 
           {/* ── Exchange Rates ── */}
           {dimTab === "exchange" && <div style={{marginTop: 8}}>
-            <F label="Currencies" help="Comma-separated list of currency codes.">
-              <input type="text" style={iS} value={(cfg.erCurrencies || []).join(", ")} onChange={e => s("erCurrencies", e.target.value.split(",").map(code => code.trim()).filter(Boolean))} />
-            </F>
-            <R3>
+            <R2>
+              <F label="From currencies" help="Comma-separated source currency codes (e.g. USD, CAD).">
+                <input type="text" style={iS} value={(cfg.erFromCurrencies || []).join(", ")} onChange={e => s("erFromCurrencies", e.target.value.split(",").map(c => c.trim().toUpperCase()).filter(Boolean))} />
+              </F>
+              <F label="To currencies" help="Comma-separated target currency codes.">
+                <input type="text" style={iS} value={(cfg.erToCurrencies || []).join(", ")} onChange={e => s("erToCurrencies", e.target.value.split(",").map(c => c.trim().toUpperCase()).filter(Boolean))} />
+              </F>
+            </R2>
+            <R2>
               <F label="Base currency"><input type="text" style={iS} value={cfg.erBaseCurrency} onChange={e => s("erBaseCurrency", e.target.value.toUpperCase())} /></F>
-              <F label="Volatility" help="Daily FX rate volatility."><N value={cfg.erVolatility} onChange={v => s("erVolatility", v)} min={0} max={.5} step={.005} /></F>
-              <F label="Future annual drift"><N value={cfg.erFutureDrift} onChange={v => s("erFutureDrift", v)} min={0} max={.5} step={.005} /></F>
-            </R3>
-            <div style={{marginTop: 10}}><Check checked={cfg.erUseGlobalDates} onChange={v => s("erUseGlobalDates", v)} label="Use global date range" /></div>
+              <F label="Future annual drift" help="Annual compounding rate for projected rates beyond today."><N value={cfg.erFutureDrift} onChange={v => s("erFutureDrift", v)} min={0} max={.5} step={.005} /></F>
+            </R2>
+            <div style={{marginTop: 10}}><Check checked={cfg.erIncludeMonthly} onChange={v => s("erIncludeMonthly", v)} label="Generate monthly exchange rates table" /></div>
           </div>}
 
           {/* ── Budget ── */}
           {dimTab === "budget" && <div style={{marginTop: 8}}>
             <div style={{marginTop: 4}}><Check checked={cfg.budgetEnabled} onChange={v => s("budgetEnabled", v)} label="Generate Budget fact table" /></div>
-            {cfg.budgetEnabled && <R3>
+            {cfg.budgetEnabled && <R2>
               <F label="Report currency"><input type="text" style={iS} value={cfg.budgetReportCurrency} onChange={e => s("budgetReportCurrency", e.target.value.toUpperCase())} /></F>
               <F label="Default backcast growth"><N value={cfg.budgetDefaultGrowth} onChange={v => s("budgetDefaultGrowth", v)} min={-1} max={1} step={.01} /></F>
-              <F label="Return rate cap"><N value={cfg.budgetReturnRateCap} onChange={v => s("budgetReturnRateCap", v)} min={0} max={1} step={.01} /></F>
-            </R3>}
+            </R2>}
           </div>}
 
           {/* ── Inventory ── */}
@@ -553,7 +553,7 @@ function App() {
                 <F label="Grain"><Sel value={cfg.inventoryGrain} onChange={v => s("inventoryGrain", v)} options={["monthly", "daily"]} /></F>
                 <F label=" "><div style={{paddingTop: 16}}><Check checked={cfg.inventoryShrinkageEnabled} onChange={v => s("inventoryShrinkageEnabled", v)} label="Enable shrinkage" /></div></F>
               </R2>
-              {cfg.inventoryShrinkageEnabled && <Sld label="Shrinkage rate" value={cfg.inventoryShrinkageRate} min={0} max={.1} step={.005} onChange={v => s("inventoryShrinkageRate", v)} fmt={v => `${(v * 100).toFixed(1)}%`} />}
+              {cfg.inventoryShrinkageEnabled && <F label="Shrinkage rate" help="Annual shrinkage as a fraction (e.g. 0.02 = 2%)."><N value={cfg.inventoryShrinkageRate} onChange={v => s("inventoryShrinkageRate", v)} min={0} max={.1} step={.005} /></F>}
             </>}
           </div>}
 
@@ -805,7 +805,7 @@ function App() {
                 <F label="Min qty"><N value={mf.qtyMin} onChange={v => sm("qtyMin", v)} min={1} step={1} /></F>
                 <F label="Max qty"><N value={mf.qtyMax} onChange={v => sm("qtyMax", v)} min={1} step={1} /></F>
               </R3>
-              <Sld label="Noise sigma" value={mf.qtyNoise} min={0} max={.5} step={.01} onChange={v => sm("qtyNoise", v)} />
+              <F label="Noise sigma" help="Random noise added to quantity (std dev)."><N value={mf.qtyNoise} onChange={v => sm("qtyNoise", v)} min={0} max={.5} step={.01} /></F>
               <Box title="Monthly seasonality factors">
                 <div style={{display: "grid", gridTemplateColumns: "repeat(12,1fr)", gap: 6}}>
                   {MONTHS.map((month, idx) => (
@@ -954,7 +954,6 @@ function App() {
             {cfg.returnsEnabled && <>{" · "}<Badge variant="success">Returns {(cfg.returnRate * 100).toFixed(1)}%</Badge></>}
             {cfg.budgetEnabled && <>{" · "}<Badge>Budget</Badge></>}
             {cfg.inventoryEnabled && <>{" · "}<Badge>Inventory</Badge></>}
-            {cfg.csEnabled && <>{" · "}<Badge>Segments</Badge></>}
             {cfg.subEnabled && <>{" · "}<Badge>Subscriptions</Badge></>}
             {cfg.wlEnabled && <>{" · "}<Badge>Wishlists</Badge></>}
             {cfg.ccEnabled && <>{" · "}<Badge>Complaints</Badge></>}

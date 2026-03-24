@@ -189,8 +189,6 @@ def get_config():
         "subSeed": int(getattr(sub, "seed", 700) or 700),
         # Stores detail
         "storeEnsureIsoCoverage": bool(getattr(stores, "ensure_iso_coverage", True)),
-        "storeDistrictSize": int(getattr(stores, "district_size", 10)),
-        "storeDistrictsPerRegion": int(getattr(stores, "districts_per_region", 8)),
         "storeOpeningStart": str(_g(stores, "opening", "start", default="1995-01-01")),
         "storeOpeningEnd": str(_g(stores, "opening", "end", default="2023-12-31")),
         "storeClosingEnd": str(getattr(stores, "closing_end", "2028-12-31")),
@@ -199,8 +197,14 @@ def get_config():
         "storeOnlineCloseShare": float(getattr(stores, "online_close_share", 0.10)),
         "storeClosingEnabled": bool(_g(stores, "closing", "enabled", default=True)),
         "storeCloseShare": float(_g(stores, "closing", "close_share", default=0.10)),
+        "storeStaffingRanges": dict(getattr(stores, "staffing_ranges", None) or {}),
+        "storeRegionWeights": dict(getattr(stores, "region_weights", None) or {}),
         # Employees
         "employeeEmailDomain": str(_g(emp, "hr", "email_domain", default="contoso.com")),
+        "transfersEnabled": bool(_g(emp, "transfers", "enabled", default=False)),
+        "transfersAnnualRate": float(_g(emp, "transfers", "annual_rate", default=0.05)),
+        "transfersMinTenureMonths": int(_g(emp, "transfers", "min_tenure_months", default=6)),
+        "transfersSameRegionPref": float(_g(emp, "transfers", "same_region_pref", default=0.70)),
         # Exchange Rates
         "erFromCurrencies": list(getattr(er, "from_currencies", ["USD"])),
         "erToCurrencies": list(getattr(er, "to_currencies", ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"])),
@@ -211,7 +215,6 @@ def get_config():
         "budgetEnabled": bool(getattr(budget, "enabled", True)),
         "budgetReportCurrency": str(getattr(budget, "report_currency", "USD")),
         "budgetDefaultGrowth": float(getattr(budget, "default_backcast_growth", 0.05)),
-        "budgetReturnRateCap": float(getattr(budget, "return_rate_cap", 0.30)),
         # Inventory detail
         "inventoryEnabled": bool(getattr(inv, "enabled", True)),
         "inventoryGrain": str(getattr(inv, "grain", "monthly")),
@@ -389,8 +392,6 @@ def update_config(body: ConfigUpdate):
 
         # Stores detail
         if "storeEnsureIsoCoverage" in v: cfg.stores.ensure_iso_coverage = bool(v["storeEnsureIsoCoverage"])
-        if "storeDistrictSize" in v: cfg.stores.district_size = int(v["storeDistrictSize"])
-        if "storeDistrictsPerRegion" in v: cfg.stores.districts_per_region = int(v["storeDistrictsPerRegion"])
         if "storeOpeningStart" in v: cfg.stores.opening.start = v["storeOpeningStart"]
         if "storeOpeningEnd" in v: cfg.stores.opening.end = v["storeOpeningEnd"]
         if "storeClosingEnd" in v: cfg.stores.closing_end = v["storeClosingEnd"]
@@ -399,9 +400,15 @@ def update_config(body: ConfigUpdate):
         if "storeOnlineCloseShare" in v: cfg.stores.online_close_share = float(v["storeOnlineCloseShare"])
         if "storeClosingEnabled" in v: cfg.stores.closing.enabled = bool(v["storeClosingEnabled"])
         if "storeCloseShare" in v: cfg.stores.closing.close_share = float(v["storeCloseShare"])
+        if "storeStaffingRanges" in v and isinstance(v["storeStaffingRanges"], dict): cfg.stores.staffing_ranges = v["storeStaffingRanges"]
+        if "storeRegionWeights" in v and isinstance(v["storeRegionWeights"], dict): cfg.stores.region_weights = v["storeRegionWeights"]
 
         # Employees
         if "employeeEmailDomain" in v: cfg.employees.hr.email_domain = v["employeeEmailDomain"]
+        if "transfersEnabled" in v: cfg.employees.transfers.enabled = bool(v["transfersEnabled"])
+        if "transfersAnnualRate" in v: cfg.employees.transfers.annual_rate = float(v["transfersAnnualRate"])
+        if "transfersMinTenureMonths" in v: cfg.employees.transfers.min_tenure_months = int(v["transfersMinTenureMonths"])
+        if "transfersSameRegionPref" in v: cfg.employees.transfers.same_region_pref = float(v["transfersSameRegionPref"])
 
         # Exchange Rates
         if "erFromCurrencies" in v and isinstance(v["erFromCurrencies"], list): cfg.exchange_rates.from_currencies = v["erFromCurrencies"]
@@ -414,7 +421,6 @@ def update_config(body: ConfigUpdate):
         if "budgetEnabled" in v: cfg.budget.enabled = bool(v["budgetEnabled"])
         if "budgetReportCurrency" in v: cfg.budget.report_currency = v["budgetReportCurrency"]
         if "budgetDefaultGrowth" in v: cfg.budget.default_backcast_growth = float(v["budgetDefaultGrowth"])
-        if "budgetReturnRateCap" in v: cfg.budget.return_rate_cap = float(v["budgetReturnRateCap"])
 
         # Inventory detail
         if "inventoryEnabled" in v: cfg.inventory.enabled = bool(v["inventoryEnabled"])

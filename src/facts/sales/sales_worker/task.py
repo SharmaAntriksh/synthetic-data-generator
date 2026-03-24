@@ -16,6 +16,7 @@ except Exception:  # pragma: no cover
 from ..sales_logic import State, build_chunk_table
 from ..sales_logic.columns import (
     RETAIL_HOUR_W, DIGITAL_HOUR_W, BUSINESS_HOUR_W, ASSISTED_HOUR_W,
+    SALES_CHANNEL_CORE_KEYS,
     _normalize_prob as _normalize_hour_prob,
     _PROFILE_FROM_GROUP,
     _parse_time_str,
@@ -314,7 +315,7 @@ def _sales_channels_spec() -> tuple[np.ndarray, np.ndarray]:
                 keys = arr
 
     if keys is None or keys.size == 0:
-        keys = np.array([1, 2, 3, 4, 5], dtype=np.int16)
+        keys = SALES_CHANNEL_CORE_KEYS
 
     p = np.full(keys.shape[0], 1.0 / keys.shape[0], dtype=np.float64)
     State._sales_channel_spec = (keys, p)

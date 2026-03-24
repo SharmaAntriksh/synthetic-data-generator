@@ -12,12 +12,6 @@ from .utils import arrow, ensure_dir_for_file
 from .projection import project_table_to_schema
 from .delta import write_delta_from_parquet_parts
 
-# Back-compat imports (not in __all__, but importable for existing callers)
-from .utils import _arrow, _ensure_dir_for_file  # noqa: F401
-from .encoding import _schema_dict_cols, _validate_required  # noqa: F401
-from .projection import _project_table_to_schema  # noqa: F401
-from .parquet_merge import _read_row_group_projected  # noqa: F401
-
 
 __all__ = [
     # public constants

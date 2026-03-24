@@ -57,23 +57,57 @@ src/
   defaults.py                    # Centralized hardcoded constants (stores, customers, promos, etc.)
   exceptions.py                  # Custom exception hierarchy (PipelineError, ConfigError, etc.)
   dimensions/                    # One generator per dimension table
-    customers/                   # Customer dimension package (split from monolithic customers.py)
-      __init__.py                # Re-exports run_customers, generate_synthetic_customers
+    customers/                   # Customer dimension package
+      __init__.py                # Re-exports run_customers, run_subscriptions
       generator.py               # Main orchestrator: generate_synthetic_customers(), run_customers()
       helpers.py                 # Date math, acquisition curves, income/phone/credit/address generation
       org_profile.py             # OrganizationProfile constants + generate_org_profile()
       households.py              # Household assignment (spouse/dependent matching)
       scd2.py                    # SCD2 life event engine (career, marriage, relocation, etc.)
+      subscriptions.py           # Plans + CustomerSubscriptions (many-to-many bridge)
+      worker.py                  # Multiprocessing chunk worker for parallel customer generation
+    dates/                       # Date dimension package — one module per calendar system
+      __init__.py                # Re-exports run_dates, generate_date_table, resolve_date_columns, WeeklyFiscalConfig, run_time_table
+      runner.py                  # run_dates() — config parsing, versioning, parquet write
+      generator.py               # Orchestrator: calls add_*_columns() subsystems in sequence
+      calendar.py                # add_calendar_columns() — base calendar + as-of relative offsets
+      iso.py                     # add_iso_columns() — ISO week fields + offsets
+      fiscal.py                  # add_fiscal_columns() — monthly fiscal system + offsets
+      weekly_fiscal.py           # WeeklyFiscalConfig + add_weekly_fiscal_columns() — 4-4-5 system
+      columns.py                 # resolve_date_columns() — builds ordered output column list per config
+      helpers.py                 # Shared constants (_EXCEL_EPOCH, _ISO_WEEK_REF) and utility functions
+      time.py                    # Time-of-day dimension (15-minute grain, 96 rows)
+    employees/                   # Employee dimension package
+      __init__.py                # Re-exports run_employees, run_employee_store_assignments
+      generator.py               # Employee generation with role profiles, HR fields
+      employee_store_assignments.py  # Multi-store assignment with transfer reasons
+      transfers.py               # Transfer scheduling logic
+    exchange_rates/              # Currency + exchange rate dimensions
+      __init__.py                # Re-exports run_currency, run_exchange_rates
+      currency.py                # Currency dimension from defaults
+      exchange_rates.py          # Daily exchange rates (Yahoo Finance or synthetic)
+      monthly_rates.py           # Monthly aggregated rates
+      helpers.py                 # Triangulation, date alignment utilities
     products/                    # Product dimension package
-      products.py                # Entry point: generate_product_dimension()
+      __init__.py                # Re-exports run_suppliers, generate_product_dimension, load_static_dimension
+      products.py                # Entry point: generate_product_dimension() (category + subcategory + products)
       generator.py               # Orchestrator: load → expand → price → enrich → SCD2 → write
+      scd2.py                    # SCD2 price revision versioning (vectorized)
       product_profile.py         # ProductProfile enrichment (analytical attributes)
       pricing.py                 # Price grid: bands, margin, snap, brand normalization
       contoso_loader.py          # Load base Contoso product catalog
       contoso_expander.py        # Stratified trim/expand of Contoso products
-    stores.py, employees.py, dates.py,
-    currency.py, exchange_rates.py, promotions.py, geography.py,
-    subscriptions.py, lookups.py (sales channels, loyalty tiers, etc.)
+      catalog_builder.py         # Product catalog assembly helpers
+      static_loader.py           # Generic static dimension loader (category, subcategory)
+      suppliers.py               # Supplier dimension generation
+      worker.py                  # Multiprocessing chunk worker for parallel product enrichment
+    stores/                      # Store dimension package
+      __init__.py                # Re-exports run_stores
+      generator.py               # Store generation with geography, staffing, assortment
+    geography.py                 # Geography dimension (countries, states, cities, population weighting)
+    promotions.py                # Promotions dimension (seasonal, clearance, BOGO, etc.)
+    lookups.py                   # Lookup dimensions (sales channels, loyalty tiers, acquisition channels)
+    return_reasons.py            # Return reason dimension
   facts/
     sales/                       # Core sales fact generation
       sales.py                   # Entry point, orchestrates worker pool
@@ -115,6 +149,8 @@ web/
     models_routes.py             # /api/models endpoints
     generation_routes.py         # /api/generate, /api/validate endpoints
     presets_routes.py            # /api/presets endpoints
+    data_routes.py               # /api/datasets endpoints (browse, preview generated data)
+    import_routes.py             # /api/import endpoints (SQL Server import management)
   frontend/                      # React SPA (YAML editor, presets, log viewer)
 ```
 
@@ -178,7 +214,7 @@ CLI flags > config.yaml values (one-time, not persisted).
 
 20. **Web payload size limits:** YAML and models endpoints reject bodies > 1 MB (HTTP 413). This prevents memory exhaustion from oversized payloads.
 
-21. **Weekly fiscal column guard:** `dates.py` only computes `FWYearWeekOffset` / `FWYearMonthOffset` / `FWYearQuarterOffset` when `FWYearWeekNumber` exists in the DataFrame. Previously, accessing these columns when `include_weekly_fiscal=false` caused a `KeyError`.
+21. **Weekly fiscal column guard:** `dates/weekly_fiscal.py` only computes `FWYearWeekOffset` / `FWYearMonthOffset` / `FWYearQuarterOffset` when `FWYearWeekNumber` exists in the DataFrame. Previously, accessing these columns when `include_weekly_fiscal=false` caused a `KeyError`.
 
 22. **Nested probability validation:** `defaults.py` now validates probability arrays inside nested dicts (`CUSTOMER_HOME_OWNERSHIP_PROBS_BY_INCOME`, `CUSTOMER_OCCUPATION_PROBS_BY_EDUCATION`) and lists (`CUSTOMER_MARITAL_PROBS_BY_AGE`, `CUSTOMER_EDUCATION_PROBS_BY_AGE`) at import time, not just top-level arrays.
 
@@ -223,7 +259,7 @@ pytest --lf            # rerun only last-failed tests
 pytest --co            # list tests without running
 ```
 
-Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py`, `test_dimensions.py`, `test_packaging.py`, `test_sales_logic.py`, `test_utils.py`, `test_web_routes.py`, `test_schema.py` (1021+ tests; web API/route tests require `httpx` and are skipped without it).
+Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py`, `test_dimensions.py`, `test_packaging.py`, `test_sales_logic.py`, `test_utils.py`, `test_web_routes.py`, `test_schema.py`, `test_gotchas_and_guards.py` (914+ tests; web API/route tests require `httpx` and are skipped without it).
 
 ## Output Formats
 

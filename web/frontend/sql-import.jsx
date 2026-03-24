@@ -9,6 +9,7 @@ function SqlImport({ onBack }) {
   const [password, setPassword] = useState("");
   const [applyCci, setApplyCci] = useState(false);
   const [dropPk, setDropPk] = useState(false);
+  const [verify, setVerify] = useState(false);
   const [odbcDriver, setOdbcDriver] = useState("");
 
   /* Dataset selection */
@@ -131,6 +132,7 @@ function SqlImport({ onBack }) {
         password: trusted ? null : password,
         apply_cci: applyCci,
         drop_pk: dropPk,
+        verify,
         odbc_driver: odbcDriver || null,
       }),
     })
@@ -212,17 +214,18 @@ function SqlImport({ onBack }) {
             <label style={labelStyle}>Server</label>
             {serversLoading ? (
               <div style={{...inputStyle, color: "var(--muted)", display: "flex", alignItems: "center"}}>Discovering servers...</div>
-            ) : discoveredServers.length > 0 ? (
-              <div style={{display: "flex", gap: 6}}>
-                <select value={discoveredServers.some(s => s.server === server) ? server : "__custom__"} onChange={e => { if (e.target.value !== "__custom__") setServer(e.target.value); else setServer(""); }} style={{...inputStyle, flex: 1}} disabled={isRunning}>
+            ) : discoveredServers.length > 0 ? (() => {
+              const isKnown = discoveredServers.some(s => s.server === server);
+              return <div style={{display: "flex", gap: 6}}>
+                <select value={isKnown ? server : "__custom__"} onChange={e => { if (e.target.value !== "__custom__") setServer(e.target.value); else setServer(""); }} style={{...inputStyle, flex: 1}} disabled={isRunning}>
                   {discoveredServers.map(s => <option key={s.server} value={s.server}>{s.server}{s.version ? ` (v${s.version.split(".")[0]})` : ""}{s.source === "network" ? " \u2014 network" : ""}</option>)}
                   <option value="__custom__">Other (type manually)</option>
                 </select>
-                {!discoveredServers.some(s => s.server === server) && (
+                {!isKnown && (
                   <input type="text" value={server} onChange={e => setServer(e.target.value)} placeholder="HOSTNAME\INSTANCE" style={{...inputStyle, flex: 1}} disabled={isRunning} autoFocus />
                 )}
-              </div>
-            ) : (
+              </div>;
+            })() : (
               <input type="text" value={server} onChange={e => setServer(e.target.value)} placeholder="HOSTNAME\INSTANCE" style={inputStyle} disabled={isRunning} />
             )}
           </div>
@@ -275,6 +278,14 @@ function SqlImport({ onBack }) {
               Drop Primary Keys
             </label>
             <div style={{fontSize: 11, color: "var(--muted)", marginTop: 2, paddingLeft: 22}}>Drops PK and FK constraints after load. Reduces database size for analytics use.</div>
+          </div>
+
+          <div style={{marginBottom: 12}}>
+            <label style={{...labelStyle, display: "flex", alignItems: "center", gap: 8, cursor: "pointer"}}>
+              <input type="checkbox" checked={verify} onChange={e => setVerify(e.target.checked)} disabled={isRunning} />
+              Verify After Import
+            </label>
+            <div style={{fontSize: 11, color: "var(--muted)", marginTop: 2, paddingLeft: 22}}>Runs data verification scorecard after import. Reports PASS/FAIL for each check.</div>
           </div>
 
           <div style={{marginTop: 16, padding: "10px 14px", background: "var(--alt)", border: "1px solid var(--border)", borderLeft: "3px solid var(--accent)", borderRadius: 6, fontSize: 12, lineHeight: 1.6, color: "var(--fg)"}}>
@@ -364,8 +375,8 @@ function SqlImport({ onBack }) {
           </div>
           <div style={{maxHeight: 360, overflowY: "auto", padding: "8px 12px", background: "var(--surface)", fontFamily: "var(--mono)", fontSize: 11.5, lineHeight: 1.6}}>
             {logs.map((line, idx) => {
-              const isErr = /FAIL|ERROR/i.test(line);
-              const isDone = /DONE/i.test(line);
+              const isErr = /FAIL|ERROR/i.test(line) && !/0 failed/i.test(line);
+              const isDone = /DONE/i.test(line) || /ALL PASSED/i.test(line);
               const isWarn = /WARN/i.test(line);
               return (
                 <div key={idx} style={{color: isErr ? "var(--err)" : isDone ? "var(--ok)" : isWarn ? "var(--warn)" : "var(--text)", whiteSpace: "pre-wrap", wordBreak: "break-all"}}>{line}</div>
