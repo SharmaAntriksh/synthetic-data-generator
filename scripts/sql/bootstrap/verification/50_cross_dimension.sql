@@ -36,18 +36,32 @@ BEGIN
             CAST(@bad_emp_geo AS VARCHAR) + ' orphaned keys');
     END
 
-    -- ExchangeRates ToCurrency FK
+    -- ExchangeRates FromCurrencyKey FK
     IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
        AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
     BEGIN
-        DECLARE @bad_fx INT;
-        SELECT @bad_fx = COUNT(DISTINCT er.ToCurrency)
-        FROM dbo.ExchangeRates er LEFT JOIN dbo.Currency c ON c.ToCurrency = er.ToCurrency
-        WHERE c.ToCurrency IS NULL;
-        INSERT INTO #R VALUES ('Referential', 'FX ToCurrency exists in Currency',
-            'All ToCurrency values in ExchangeRates must exist in Currency',
-            CASE WHEN @bad_fx = 0 THEN 'PASS' ELSE 'FAIL' END,
-            CAST(@bad_fx AS VARCHAR) + ' orphaned currencies');
+        DECLARE @bad_fx_from INT;
+        SELECT @bad_fx_from = COUNT(DISTINCT er.FromCurrencyKey)
+        FROM dbo.ExchangeRates er LEFT JOIN dbo.Currency c ON c.CurrencyKey = er.FromCurrencyKey
+        WHERE c.CurrencyKey IS NULL;
+        INSERT INTO #R VALUES ('Referential', 'FX FromCurrencyKey exists in Currency',
+            'All FromCurrencyKey values in ExchangeRates must exist in Currency',
+            CASE WHEN @bad_fx_from = 0 THEN 'PASS' ELSE 'FAIL' END,
+            CAST(@bad_fx_from AS VARCHAR) + ' orphaned currencies');
+    END
+
+    -- ExchangeRates ToCurrencyKey FK
+    IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
+       AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
+    BEGIN
+        DECLARE @bad_fx_to INT;
+        SELECT @bad_fx_to = COUNT(DISTINCT er.ToCurrencyKey)
+        FROM dbo.ExchangeRates er LEFT JOIN dbo.Currency c ON c.CurrencyKey = er.ToCurrencyKey
+        WHERE c.CurrencyKey IS NULL;
+        INSERT INTO #R VALUES ('Referential', 'FX ToCurrencyKey exists in Currency',
+            'All ToCurrencyKey values in ExchangeRates must exist in Currency',
+            CASE WHEN @bad_fx_to = 0 THEN 'PASS' ELSE 'FAIL' END,
+            CAST(@bad_fx_to AS VARCHAR) + ' orphaned currencies');
     END
 
     -- SupplierKey FK (ProductProfile -> Suppliers)

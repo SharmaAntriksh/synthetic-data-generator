@@ -76,11 +76,18 @@ LEFT JOIN Currency c ON c.CurrencyKey = f.CurrencyKey
 WHERE c.CurrencyKey IS NULL;
 -- EXPECTED: zero rows
 
--- 3b. All ToCurrency values in ExchangeRates exist in Currency dimension
-SELECT DISTINCT er.ToCurrency
+-- 3b. All FromCurrencyKey values in ExchangeRates exist in Currency dimension
+SELECT DISTINCT er.FromCurrencyKey
 FROM ExchangeRates er
-LEFT JOIN Currency c ON c.ToCurrency = er.ToCurrency
-WHERE c.ToCurrency IS NULL;
+LEFT JOIN Currency c ON c.CurrencyKey = er.FromCurrencyKey
+WHERE c.CurrencyKey IS NULL;
+-- EXPECTED: zero rows
+
+-- 3c. All ToCurrencyKey values in ExchangeRates exist in Currency dimension
+SELECT DISTINCT er.ToCurrencyKey
+FROM ExchangeRates er
+LEFT JOIN Currency c ON c.CurrencyKey = er.ToCurrencyKey
+WHERE c.CurrencyKey IS NULL;
 -- EXPECTED: zero rows
 
 

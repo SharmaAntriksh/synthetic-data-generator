@@ -34,7 +34,7 @@ BEGIN
         table_name      sysname       NOT NULL,
         constraint_name sysname       NOT NULL,
         definition_sql  nvarchar(max) NOT NULL,
-        dropped_at      datetime2     NOT NULL DEFAULT SYSUTCDATETIME()
+        dropped_at      datetime2     NOT NULL DEFAULT SYSDATETIME()
     );
 END;
 GO

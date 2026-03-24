@@ -368,9 +368,9 @@ BEGIN
 END;
 GO
 
--- Currency(ToCurrency) – referenced by ExchangeRates FKs
+-- Currency(CurrencyCode) – unique business key
 IF OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
-AND COL_LENGTH(N'dbo.Currency', N'ToCurrency') IS NOT NULL
+AND COL_LENGTH(N'dbo.Currency', N'CurrencyCode') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.indexes i
@@ -383,11 +383,11 @@ AND NOT EXISTS (
       AND ic.is_included_column = 0
     GROUP BY i.index_id
     HAVING COUNT(*) = 1
-       AND MAX(CASE WHEN c.name = N'ToCurrency' AND ic.key_ordinal = 1 THEN 1 ELSE 0 END) = 1
+       AND MAX(CASE WHEN c.name = N'CurrencyCode' AND ic.key_ordinal = 1 THEN 1 ELSE 0 END) = 1
 )
 BEGIN
-    CREATE UNIQUE INDEX [UX_Currency_ToCurrency]
-    ON dbo.Currency([ToCurrency]);
+    CREATE UNIQUE INDEX [UX_Currency_CurrencyCode]
+    ON dbo.Currency([CurrencyCode]);
 END;
 GO
 
@@ -612,7 +612,7 @@ BEGIN
     ALTER TABLE dbo.Stores CHECK CONSTRAINT FK_Stores_Geography;
 END;
 
--- ExchangeRates -> Currency (FromCurrency)
+-- ExchangeRates -> Currency (FromCurrencyKey)
 IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
 AND NOT EXISTS (
@@ -624,13 +624,13 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.ExchangeRates WITH CHECK
     ADD CONSTRAINT FK_ExchangeRates_FromCurrency
-        FOREIGN KEY ([FromCurrency])
-        REFERENCES dbo.Currency ([ToCurrency]);
+        FOREIGN KEY ([FromCurrencyKey])
+        REFERENCES dbo.Currency ([CurrencyKey]);
 
     ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_FromCurrency;
 END;
 
--- ExchangeRates -> Currency (ToCurrency)
+-- ExchangeRates -> Currency (ToCurrencyKey)
 IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
 AND NOT EXISTS (
@@ -642,8 +642,8 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.ExchangeRates WITH CHECK
     ADD CONSTRAINT FK_ExchangeRates_ToCurrency
-        FOREIGN KEY ([ToCurrency])
-        REFERENCES dbo.Currency ([ToCurrency]);
+        FOREIGN KEY ([ToCurrencyKey])
+        REFERENCES dbo.Currency ([CurrencyKey]);
 
     ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_ToCurrency;
 END;
@@ -664,6 +664,61 @@ BEGIN
         REFERENCES dbo.Dates ([Date]);
 
     ALTER TABLE dbo.ExchangeRates CHECK CONSTRAINT FK_ExchangeRates_Dates;
+END;
+GO
+
+-----------------------------------------------------------------------
+-- 3b. EXCHANGE RATES MONTHLY (conditional – table may not exist)
+-----------------------------------------------------------------------
+
+-- ExchangeRatesMonthly (composite PK)
+IF OBJECT_ID(N'dbo.ExchangeRatesMonthly', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_ExchangeRatesMonthly'
+      AND parent_object_id = OBJECT_ID(N'dbo.ExchangeRatesMonthly')
+)
+BEGIN
+    ALTER TABLE dbo.ExchangeRatesMonthly
+    ADD CONSTRAINT PK_ExchangeRatesMonthly PRIMARY KEY NONCLUSTERED ([Date], [FromCurrencyKey], [ToCurrencyKey]);
+END;
+GO
+
+-- ExchangeRatesMonthly -> Currency (FromCurrencyKey)
+IF OBJECT_ID(N'dbo.ExchangeRatesMonthly', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ExchangeRatesMonthly_FromCurrency'
+      AND parent_object_id = OBJECT_ID(N'dbo.ExchangeRatesMonthly')
+)
+BEGIN
+    ALTER TABLE dbo.ExchangeRatesMonthly WITH CHECK
+    ADD CONSTRAINT FK_ExchangeRatesMonthly_FromCurrency
+        FOREIGN KEY ([FromCurrencyKey])
+        REFERENCES dbo.Currency ([CurrencyKey]);
+
+    ALTER TABLE dbo.ExchangeRatesMonthly CHECK CONSTRAINT FK_ExchangeRatesMonthly_FromCurrency;
+END;
+
+-- ExchangeRatesMonthly -> Currency (ToCurrencyKey)
+IF OBJECT_ID(N'dbo.ExchangeRatesMonthly', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Currency', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_ExchangeRatesMonthly_ToCurrency'
+      AND parent_object_id = OBJECT_ID(N'dbo.ExchangeRatesMonthly')
+)
+BEGIN
+    ALTER TABLE dbo.ExchangeRatesMonthly WITH CHECK
+    ADD CONSTRAINT FK_ExchangeRatesMonthly_ToCurrency
+        FOREIGN KEY ([ToCurrencyKey])
+        REFERENCES dbo.Currency ([CurrencyKey]);
+
+    ALTER TABLE dbo.ExchangeRatesMonthly CHECK CONSTRAINT FK_ExchangeRatesMonthly_ToCurrency;
 END;
 GO
 
