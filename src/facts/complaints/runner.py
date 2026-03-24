@@ -20,6 +20,7 @@ import pyarrow as pa
 from src.facts.complaints.accumulator import ComplaintsAccumulator
 from src.facts.shared.writers import write_fact_table
 from src.utils.logging_utils import info, skip
+from src.utils.config_helpers import parse_global_dates as _parse_global_dates_shared
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +111,27 @@ _ORDER_LINKED_RATE = 0.75
 # Below this complainer count, use the serial path (spawning overhead not worth it)
 _PARALLEL_THRESHOLD = 50_000
 
+# Pre-flattened (type, detail) pairs — computed once at import time so neither
+# the serial path nor the worker rebuild them on every call.
+
+def _build_flat_pools():
+    _ot, _od = [], []
+    for ct in _COMPLAINT_TYPES_ORDER:
+        for detail in _COMPLAINT_DETAILS[ct]:
+            _ot.append(ct)
+            _od.append(detail)
+    _gt, _gd = [], []
+    for ct in _COMPLAINT_TYPES_GENERAL:
+        for detail in _COMPLAINT_DETAILS[ct]:
+            _gt.append(ct)
+            _gd.append(detail)
+    return (
+        np.array(_ot, dtype=object), np.array(_od, dtype=object),
+        np.array(_gt, dtype=object), np.array(_gd, dtype=object),
+    )
+
+_ORDER_TYPES_FLAT, _ORDER_DETAILS_FLAT, _GENERAL_TYPES_FLAT, _GENERAL_DETAILS_FLAT = _build_flat_pools()
+
 
 # ---------------------------------------------------------------------------
 # Worker function — must be top-level for Windows spawn pickling
@@ -174,25 +196,8 @@ def _complaints_worker_task(args: Tuple) -> Dict[str, np.ndarray]:
         for g_ck, g_so, g_ln in zip(ck_groups, so_groups, ln_groups):
             cust_orders[int(g_ck[0])] = (g_so, g_ln)
 
-    # Flatten all complaint type+detail pairs for order-linked
-    all_order_types: List[str] = []
-    all_order_details: List[str] = []
-    for ct in _COMPLAINT_TYPES_ORDER:
-        for detail in _COMPLAINT_DETAILS[ct]:
-            all_order_types.append(ct)
-            all_order_details.append(detail)
-    aot = np.array(all_order_types, dtype=object)
-    aod = np.array(all_order_details, dtype=object)
-
-    # Flatten for general complaints
-    all_general_types: List[str] = []
-    all_general_details: List[str] = []
-    for ct in _COMPLAINT_TYPES_GENERAL:
-        for detail in _COMPLAINT_DETAILS[ct]:
-            all_general_types.append(ct)
-            all_general_details.append(detail)
-    agt = np.array(all_general_types, dtype=object)
-    agd = np.array(all_general_details, dtype=object)
+    aot, aod = _ORDER_TYPES_FLAT, _ORDER_DETAILS_FLAT
+    agt, agd = _GENERAL_TYPES_FLAT, _GENERAL_DETAILS_FLAT
 
     n_complainers = len(complainer_keys_chunk)
     total_rows = int(complaints_per_chunk.sum())
@@ -319,17 +324,7 @@ def _read_cfg(cfg: Any) -> _ComplaintsCfg:
 
 
 def _parse_global_dates(cfg: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    defaults = getattr(cfg, "defaults", None)
-    if defaults is None:
-        defaults = getattr(cfg, "_defaults", None)
-    gd = getattr(defaults, "dates", None) if defaults else None
-    if gd is None:
-        raise ValueError("Cannot resolve global dates for complaints.")
-    start_raw = gd.get("start", None) if isinstance(gd, dict) else getattr(gd, "start", None)
-    end_raw = gd.get("end", None) if isinstance(gd, dict) else getattr(gd, "end", None)
-    if start_raw is None or end_raw is None:
-        raise ValueError("Global dates must have both 'start' and 'end'.")
-    return pd.Timestamp(start_raw), pd.Timestamp(end_raw)
+    return _parse_global_dates_shared(cfg, {}, dimension_name="complaints")
 
 
 # ---------------------------------------------------------------------------
@@ -474,25 +469,8 @@ def _generate_complaints_serial(
     out_res_type = np.empty(total_rows, dtype=object)
     out_resp_days = np.full(total_rows, -1, dtype=np.int32)  # -1 = NULL
 
-    # Flatten all complaint type+detail pairs for order-linked
-    all_order_types = []
-    all_order_details = []
-    for ct in _COMPLAINT_TYPES_ORDER:
-        for detail in _COMPLAINT_DETAILS[ct]:
-            all_order_types.append(ct)
-            all_order_details.append(detail)
-    all_order_types = np.array(all_order_types, dtype=object)
-    all_order_details = np.array(all_order_details, dtype=object)
-
-    # Flatten for general complaints
-    all_general_types = []
-    all_general_details = []
-    for ct in _COMPLAINT_TYPES_GENERAL:
-        for detail in _COMPLAINT_DETAILS[ct]:
-            all_general_types.append(ct)
-            all_general_details.append(detail)
-    all_general_types = np.array(all_general_types, dtype=object)
-    all_general_details = np.array(all_general_details, dtype=object)
+    all_order_types, all_order_details = _ORDER_TYPES_FLAT, _ORDER_DETAILS_FLAT
+    all_general_types, all_general_details = _GENERAL_TYPES_FLAT, _GENERAL_DETAILS_FLAT
 
     row = 0
     for i in range(n_complainers):

@@ -27,6 +27,7 @@ import pyarrow.parquet as pq
 
 from src.facts.wishlists.accumulator import WishlistAccumulator
 from src.utils.logging_utils import info, skip
+from src.utils.config_helpers import parse_global_dates as _parse_global_dates_shared
 from src.defaults import WISHLIST_PARALLEL_THRESHOLD
 
 import logging as _logging
@@ -78,17 +79,7 @@ def _read_cfg(cfg: Any) -> _WishlistsCfg:
 
 
 def _parse_global_dates(cfg: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    defaults = getattr(cfg, "defaults", None)
-    if defaults is None:
-        defaults = getattr(cfg, "_defaults", None)
-    gd = getattr(defaults, "dates", None) if defaults else None
-    if gd is None:
-        raise ValueError("Cannot resolve global dates for wishlists.")
-    start_raw = gd.get("start", None) if isinstance(gd, dict) else getattr(gd, "start", None)
-    end_raw = gd.get("end", None) if isinstance(gd, dict) else getattr(gd, "end", None)
-    if start_raw is None or end_raw is None:
-        raise ValueError("Global dates must have both 'start' and 'end'.")
-    return pd.Timestamp(start_raw), pd.Timestamp(end_raw)
+    return _parse_global_dates_shared(cfg, {}, dimension_name="wishlists")
 
 
 # ---------------------------------------------------------------------------
@@ -194,106 +185,6 @@ def _build_product_weights(
     else:
         weights = np.ones(n, dtype=np.float64) / n
     return weights
-
-
-# ---------------------------------------------------------------------------
-# Product selection with sales-driven conversion + affinity
-# ---------------------------------------------------------------------------
-
-def _weighted_pick(cdf: np.ndarray, rng: np.random.Generator) -> int:
-    """Single weighted draw via pre-computed CDF + searchsorted (O(log n))."""
-    idx = int(np.searchsorted(cdf, rng.random()))
-    return min(idx, len(cdf) - 1)
-
-
-def _pick_products_for_customer(
-    rng: np.random.Generator,
-    n_items: int,
-    purchased_indices: np.ndarray,
-    n_products: int,
-    prod_subcat: np.ndarray,
-    subcat_to_indices: Dict[int, np.ndarray],
-    affinity: float,
-    conversion_rate: float,
-    global_cdf: np.ndarray,
-    subcat_cdfs: Dict[int, np.ndarray],
-    subcat_to_pool_and_weights: Dict[int, Tuple[np.ndarray, np.ndarray]],
-) -> np.ndarray:
-    """Pick n_items product indices for a customer's wishlist.
-
-    Uses pre-computed CDFs for O(log n) weighted sampling instead of
-    rebuilding CDFs per call.
-    """
-    has_purchases = len(purchased_indices) > 0
-    chosen = np.empty(n_items, dtype=np.int64)
-    chosen_set: set = set()
-
-    for j in range(n_items):
-        picked = False
-
-        # Conversion slot: pick from actual purchases
-        if has_purchases and rng.random() < conversion_rate:
-            if chosen_set:
-                mask = np.ones(len(purchased_indices), dtype=bool)
-                for exc in chosen_set:
-                    mask &= (purchased_indices != exc)
-                available = purchased_indices[mask]
-            else:
-                available = purchased_indices
-            if len(available) > 0:
-                chosen[j] = int(available[rng.integers(0, len(available))])
-                chosen_set.add(chosen[j])
-                picked = True
-
-        # Affinity slot: pick from same subcategory as a prior item
-        if not picked and j > 0 and rng.random() < affinity:
-            anchor = chosen[rng.integers(0, j)]
-            sc = int(prod_subcat[anchor])
-            pool, sc_w = subcat_to_pool_and_weights[sc]
-            if chosen_set:
-                mask = np.ones(len(pool), dtype=bool)
-                for exc in chosen_set:
-                    mask &= (pool != exc)
-                available = pool[mask]
-            else:
-                available = pool
-            if len(available) > 0:
-                if chosen_set:
-                    w = sc_w[mask]
-                    w_sum = w.sum()
-                    if w_sum > 0:
-                        _sc_cdf = np.cumsum(w / w_sum)
-                        _sc_cdf[-1] = 1.0
-                        chosen[j] = int(available[np.searchsorted(_sc_cdf, rng.random())])
-                    else:
-                        chosen[j] = int(available[rng.integers(0, len(available))])
-                else:
-                    sc_cdf = subcat_cdfs.get(sc)
-                    if sc_cdf is not None:
-                        idx = min(int(np.searchsorted(sc_cdf, rng.random())), len(pool) - 1)
-                        chosen[j] = int(pool[idx])
-                    else:
-                        chosen[j] = int(pool[rng.integers(0, len(pool))])
-                chosen_set.add(chosen[j])
-                picked = True
-
-        # Global weighted random via pre-computed CDF (rejection for no-dups)
-        if not picked:
-            for _ in range(200):
-                pick = _weighted_pick(global_cdf, rng)
-                if pick not in chosen_set:
-                    chosen[j] = pick
-                    chosen_set.add(pick)
-                    break
-            else:
-                remaining = np.setdiff1d(
-                    np.arange(n_products),
-                    np.fromiter(chosen_set, dtype=np.int64, count=len(chosen_set)),
-                )
-                chosen[j] = int(remaining[rng.integers(0, len(remaining))])
-                chosen_set.add(chosen[j])
-
-    return chosen
 
 
 # ---------------------------------------------------------------------------
