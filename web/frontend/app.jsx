@@ -348,10 +348,10 @@ function App() {
           {dimTab === "customers" && <div style={{marginTop: 8}}>
             <Box title="Regional mix (% of customers)">
               <R4>
+                <F label="Americas %"><N value={cfg.pctUs} onChange={v => s("pctUs", v)} min={0} max={100} /></F>
+                <F label="Europe %"><N value={cfg.pctEu} onChange={v => s("pctEu", v)} min={0} max={100} /></F>
                 <F label="India %"><N value={cfg.pctIndia} onChange={v => s("pctIndia", v)} min={0} max={100} /></F>
-                <F label="US %"><N value={cfg.pctUs} onChange={v => s("pctUs", v)} min={0} max={100} /></F>
-                <F label="EU %"><N value={cfg.pctEu} onChange={v => s("pctEu", v)} min={0} max={100} /></F>
-                <F label="Asia %"><N value={cfg.pctAsia} onChange={v => s("pctAsia", v)} min={0} max={100} /></F>
+                <F label="APAC %"><N value={cfg.pctAsia} onChange={v => s("pctAsia", v)} min={0} max={100} /></F>
               </R4>
               <Hint>Sum: {cfg.pctIndia + cfg.pctUs + cfg.pctEu + cfg.pctAsia}% (auto-normalized)</Hint>
               <F label="Organization %" help="Percentage of customers that are organizations (B2B)."><N value={cfg.pctOrg} onChange={v => s("pctOrg", v)} min={0} max={100} step={1} /></F>
