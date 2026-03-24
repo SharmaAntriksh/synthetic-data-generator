@@ -78,15 +78,13 @@ def _get_brand_flat_cache(brand_to_rows: list, B: int) -> tuple:
         return _brand_flat_cache_data
 
     flat_parts = []
-    offsets = np.zeros(B + 1, dtype="int64")
-    for b in range(B):
-        bucket = brand_to_rows[b]
+    lengths = np.zeros(B, dtype=np.int64)
+    for b, bucket in enumerate(brand_to_rows):
         if bucket is not None and len(bucket) > 0:
             flat_parts.append(np.asarray(bucket, dtype="int32"))
-            offsets[b + 1] = offsets[b] + len(bucket)
-        else:
-            offsets[b + 1] = offsets[b]
-
+            lengths[b] = len(bucket)
+    offsets = np.zeros(B + 1, dtype="int64")
+    np.cumsum(lengths, out=offsets[1:])
     flat_idx = np.concatenate(flat_parts) if flat_parts else np.empty(0, dtype="int32")
     _brand_flat_cache_ref = brand_to_rows
     _brand_flat_cache_data = (flat_idx, offsets)
@@ -1246,15 +1244,17 @@ def build_chunk_table(
                 _bad_idx = np.where(_bad)[0]
                 _bad_dates = _line_dates_d[_bad_idx]
                 _unique_bad_dates = np.unique(_bad_dates)
+                _sk_i32 = store_keys.astype(np.int32)
+                _all_open = store_open_day[np.clip(_sk_i32, 0, _max_sk_d - 1)]
+                _all_close_arr = None
+                if store_close_day is not None:
+                    _all_close_arr = store_close_day[np.clip(_sk_i32, 0, _max_sk_c - 1)]
                 for _bd in _unique_bad_dates:
                     _date_mask = _bad_dates == _bd
                     _date_rows = _bad_idx[_date_mask]
-                    # Filter ALL stores by day (not just month stores)
-                    _all_open = store_open_day[np.clip(store_keys.astype(np.int32), 0, _max_sk_d - 1)]
                     _day_ok = _all_open <= _bd
-                    if store_close_day is not None:
-                        _all_close = store_close_day[np.clip(store_keys.astype(np.int32), 0, _max_sk_c - 1)]
-                        _day_ok &= _all_close > _bd
+                    if _all_close_arr is not None:
+                        _day_ok = _day_ok & (_all_close_arr > _bd)
                     _day_stores = store_keys[_day_ok]
                     if _day_stores.size == 0:
                         _day_stores = store_keys  # last-resort fallback
