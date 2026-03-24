@@ -386,10 +386,10 @@ def _expand_region_mix(cfg: Dict[str, Any]) -> Dict[str, Any]:
         return cfg
 
     _REGION_MAP = {
-        "us": "pct_us", "usa": "pct_us", "united states": "pct_us",
+        "us": "pct_us", "usa": "pct_us", "united states": "pct_us", "americas": "pct_us",
         "eu": "pct_eu", "europe": "pct_eu",
         "india": "pct_india",
-        "asia": "pct_asia",
+        "asia": "pct_asia", "asia-pacific": "pct_asia", "apac": "pct_asia",
     }
     unknown_regions = []
     for name, pct in region_mix.items():
@@ -401,7 +401,8 @@ def _expand_region_mix(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if unknown_regions:
         raise ValueError(
             f"Unknown region(s) in customers.region_mix: {unknown_regions}. "
-            f"Valid regions: us, eu, india, asia (aliases: usa, united states, europe)"
+            f"Valid regions: Americas, Europe, India, Asia-Pacific "
+            f"(aliases: us, usa, eu, apac)"
         )
 
     cust.setdefault("pct_us", 0.0)

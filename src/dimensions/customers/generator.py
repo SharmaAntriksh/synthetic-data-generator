@@ -17,6 +17,7 @@ from src.utils.config_precedence import resolve_seed
 from src.defaults import SCD2_END_OF_TIME
 from src.versioning import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
+from src.utils.config_helpers import region_from_iso_code
 from src.utils.name_pools import (
     resolve_people_folder,
     load_people_pools,
@@ -176,6 +177,29 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
 
     geo_lookup = geography.set_index("GeographyKey")[["City", "State", "Country"]]
 
+    # Build per-region geography pools (keys + population weights)
+    # so customers are assigned to cities in their own region,
+    # weighted by population for realistic distribution.
+    _geo_region_pools: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    if "ISOCode" in geography.columns:
+        geo_iso = geography["ISOCode"].astype(str).to_numpy()
+        geo_pop = (
+            geography["Population"].to_numpy(dtype=np.float64)
+            if "Population" in geography.columns
+            else np.ones(len(geography), dtype=np.float64)
+        )
+        geo_pop = np.maximum(geo_pop, 1.0)  # avoid zero weights
+
+        geo_region = np.array(
+            [region_from_iso_code(iso) for iso in geo_iso], dtype=object,
+        )
+        for region_code in np.unique(geo_region):
+            mask = geo_region == region_code
+            pool_keys = geo_keys[mask]
+            pool_weights = geo_pop[mask]
+            pool_weights = pool_weights / pool_weights.sum()
+            _geo_region_pools[region_code] = (pool_keys, pool_weights)
+
     N = int(total_customers)
     if N <= 0:
         raise ValueError("Customer count must be positive")
@@ -206,7 +230,23 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     Gender[~IsOrg] = rng.choice(["Male", "Female"], size=(~IsOrg).sum())
     Gender[IsOrg] = "Org"
 
-    GeographyKey = rng.choice(geo_keys, size=N, replace=True)
+    # Assign GeographyKey per customer: sample from their region's cities,
+    # weighted by population. Falls back to uniform if no region pools.
+    GeographyKey = np.empty(N, dtype=np.int64)
+    if _geo_region_pools:
+        for region_code in np.unique(Region):
+            mask = Region == region_code
+            n_region = int(mask.sum())
+            if region_code in _geo_region_pools:
+                pool_keys, pool_weights = _geo_region_pools[region_code]
+                GeographyKey[mask] = rng.choice(
+                    pool_keys, size=n_region, replace=True, p=pool_weights,
+                )
+            else:
+                # Region has no matching cities — use all cities uniformly
+                GeographyKey[mask] = rng.choice(geo_keys, size=n_region, replace=True)
+    else:
+        GeographyKey = rng.choice(geo_keys, size=N, replace=True)
 
     # --- names via name_pools (no output schema change) ---
     FirstName, LastName, _ = assign_person_names(
