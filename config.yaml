@@ -92,7 +92,7 @@ customers:
   region_mix: { Americas: 41, Europe: 39, India: 2, APAC: 18 }
   org_pct: 1
 
-  profile: steady                   # gradual | steady | aggressive | instant
+  profile: gradual                   # gradual | steady | aggressive | instant
   first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
 
   scd2:

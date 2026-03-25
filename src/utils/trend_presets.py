@@ -358,6 +358,114 @@ _TREND_PRESETS: Dict[str, Dict[str, Any]] = {
         "max_distinct_ratio": 0.70,
         "min_distinct_customers": 250,
     },
+
+    # ------------------------------------------------------------------
+    # new-market-entry — Near-zero start with a long "finding PMF" phase
+    #                    (years 1-4), then accelerating growth once traction
+    #                    hits. Different from hockey-stick: the flat start
+    #                    is longer and the ramp is more gradual.
+    # ------------------------------------------------------------------
+    "new-market-entry": {
+        "base_level": 1.0,
+        "yearly_growth": 0.0,
+        "year_level_factors": {
+            "mode": "once",
+            "values": [0.05, 0.06, 0.08, 0.12, 0.20, 0.35, 0.55, 0.80, 1.10, 1.45,
+                        1.85, 2.30, 2.80, 3.35, 3.95, 4.60, 5.30, 6.05, 6.85, 7.70],
+        },
+        "monthly_seasonality": "flat",
+        "noise_std": 0.08,
+        "shock_probability": 0.08,
+        "shock_impact": [-0.10, 0.25],
+        "row_share_of_growth": 0.7,
+        "early_month_cap": {
+            "enabled": True,
+            "max_rows_per_customer": 15,
+            "redistribute_excess": True,
+        },
+        "eligible_blend": 0.0,
+        "bootstrap_months": 10,
+        "max_distinct_ratio": 0.50,
+        "min_distinct_customers": 100,
+    },
+
+    # ------------------------------------------------------------------
+    # seasonal-with-growth — Visible retail seasonality combined with a
+    #                        clear upward trend. The middle ground between
+    #                        seasonal-dominant (flat trend) and growth
+    #                        presets (muted seasons).
+    # ------------------------------------------------------------------
+    "seasonal-with-growth": {
+        "base_level": 1.0,
+        "yearly_growth": 0.0,
+        "year_level_factors": {
+            "mode": "repeat",
+            "values": [1.0, 1.18, 1.38, 1.60, 1.85, 2.12, 2.42, 2.75, 3.10, 3.50],
+        },
+        "monthly_seasonality": "retail",
+        "noise_std": 0.05,
+        "shock_probability": 0.05,
+        "shock_impact": [-0.10, 0.12],
+        "row_share_of_growth": 0.5,
+        "early_month_cap": {
+            "enabled": True,
+            "max_rows_per_customer": 25,
+            "redistribute_excess": True,
+        },
+        "eligible_blend": 0.0,
+        "bootstrap_months": 6,
+        "max_distinct_ratio": 0.65,
+        "min_distinct_customers": 200,
+    },
+
+    # ------------------------------------------------------------------
+    # slow-decline — Gentle, steady erosion over time. Softer than
+    #                "decline" — more like a brand slowly losing relevance
+    #                rather than collapsing. ~10%/yr revenue drop.
+    # ------------------------------------------------------------------
+    "slow-decline": {
+        "base_level": 1.0,
+        "yearly_growth": 0.0,
+        "year_level_factors": {
+            "mode": "repeat",
+            "values": [1.0, 0.91, 0.83, 0.75, 0.68, 0.62, 0.56, 0.51, 0.47, 0.42],
+        },
+        "monthly_seasonality": "flat",
+        "noise_std": 0.04,
+        "shock_probability": 0.04,
+        "shock_impact": [-0.08, 0.06],
+        "row_share_of_growth": 0.5,
+        "early_month_cap": {"enabled": False},
+        "eligible_blend": 0.0,
+        "bootstrap_months": 3,
+        "max_distinct_ratio": 0.70,
+        "min_distinct_customers": 250,
+    },
+
+    # ------------------------------------------------------------------
+    # stagnation — Truly flat revenue from day one. Factors stay at 1.0
+    #              because inflation naturally offsets the baseline demand
+    #              decay from customer lifecycle churn, producing flat
+    #              revenue. No growth, no decline.
+    # ------------------------------------------------------------------
+    "stagnation": {
+        "base_level": 1.0,
+        "yearly_growth": 0.0,
+        "year_level_factors": {
+            "mode": "repeat",
+            "values": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        },
+        "monthly_seasonality": "flat",
+        "noise_std": 0.04,
+        "shock_probability": 0.04,
+        "shock_impact": [-0.08, 0.06],
+        "row_share_of_growth": 0.5,
+        "early_month_cap": {"enabled": False},
+        "eligible_blend": 0.0,
+        "bootstrap_months": 3,
+        "max_distinct_ratio": 0.70,
+        "min_distinct_customers": 250,
+    },
 }
 
 VALID_TRENDS = frozenset(_TREND_PRESETS.keys())
