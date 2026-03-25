@@ -1,1 +1,1 @@
-from .generator import run_stores, generate_store_table
+from .generator import run_stores, generate_store_table, GeoContext

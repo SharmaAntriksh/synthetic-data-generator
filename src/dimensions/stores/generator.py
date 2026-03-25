@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -49,6 +50,19 @@ from src.defaults import (
     STORE_STAFFING_RANGES as _STAFFING_RANGES,
     STORE_STAFFING_DEFAULT as _STAFFING_DEFAULT,
 )
+
+
+@dataclass(eq=False)
+class GeoContext:
+    """Geography lookups passed into store generation."""
+    geo_keys: np.ndarray
+    geo_loc_short: Optional[Dict[int, str]] = None
+    geo_loc_full: Optional[Dict[int, str]] = None
+    iso_by_geo: Optional[dict[int, str]] = None
+    pop_by_geo: Optional[dict[int, int]] = None
+    country_by_geo: Optional[dict[int, str]] = None
+    ensure_iso_coverage: bool = False
+    region_weights: Optional[dict[str, float]] = None
 
 
 # ---------------------------------------------------------
@@ -612,7 +626,7 @@ def _build_analytical(
 
 def generate_store_table(
     *,
-    geo_keys: np.ndarray,
+    geo: GeoContext,
     num_stores: int = 200,
     opening_start: str = "2018-01-01",
     opening_end: str = "2025-12-31",
@@ -620,13 +634,6 @@ def generate_store_table(
     seed: int = 42,
     square_footage_cfg: Optional[Dict] = None,
     staffing_overrides: Optional[Dict] = None,
-    geo_loc_short: Optional[Dict[int, str]] = None,
-    geo_loc_full: Optional[Dict[int, str]] = None,
-    iso_by_geo: Optional[dict[int, str]] = None,
-    pop_by_geo: Optional[dict[int, int]] = None,
-    country_by_geo: Optional[dict[int, str]] = None,
-    ensure_iso_coverage: bool = False,
-    region_weights: Optional[dict[str, float]] = None,
     people_pools=None,
     district_size: int = 10,
     districts_per_region: int = 8,
@@ -648,6 +655,16 @@ def generate_store_table(
       AvgTransactionValue, CustomerSatisfactionScore, InventoryTurnoverTarget,
       LastAuditScore, ShrinkageRatePct
     """
+    # Unpack geo context
+    geo_keys = geo.geo_keys
+    geo_loc_short = geo.geo_loc_short
+    geo_loc_full = geo.geo_loc_full
+    iso_by_geo = geo.iso_by_geo
+    pop_by_geo = geo.pop_by_geo
+    country_by_geo = geo.country_by_geo
+    ensure_iso_coverage = geo.ensure_iso_coverage
+    region_weights = geo.region_weights
+
     num_stores = int_or(num_stores, 200)
 
     # Floor: guarantee at least _MIN_STORES for a healthy pipeline run
@@ -1107,47 +1124,28 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     if not geo_path.exists():
         raise FileNotFoundError(f"Missing geography parquet: {geo_path}")
 
-    geo = _safe_read_geography(geo_path)
-    geo_keys = geo["GeographyKey"].astype(np.int64).to_numpy()
-    loc_short_map, loc_full_map = _build_location_maps(geo)
+    geo_df = _safe_read_geography(geo_path)
+    geo_keys = geo_df["GeographyKey"].astype(np.int64).to_numpy()
+    loc_short_map, loc_full_map = _build_location_maps(geo_df)
 
-    ensure_iso_coverage = bool(store_cfg.ensure_iso_coverage)
+    def _geo_lookup(col: str, dtype=str) -> Optional[dict]:
+        if col not in geo_df.columns:
+            return None
+        g = geo_df[["GeographyKey", col]].dropna()
+        return dict(zip(
+            g["GeographyKey"].astype(np.int64).to_numpy(),
+            g[col].astype(dtype).to_numpy(),
+        ))
 
-    iso_by_geo: Optional[dict[int, str]] = None
-    if "ISOCode" in geo.columns:
-        g = geo[["GeographyKey", "ISOCode"]].dropna()
-        iso_by_geo = dict(
-            zip(
-                g["GeographyKey"].astype(np.int64).to_numpy(),
-                g["ISOCode"].astype(str).to_numpy(),
-            )
-        )
+    iso_by_geo = _geo_lookup("ISOCode")
 
-    # Country lookup — used for district sub-grouping within zones
     country_col = next(
-        (c for c in ("Country", "CountryRegionName", "RegionCountryName") if c in geo.columns),
+        (c for c in ("Country", "CountryRegionName", "RegionCountryName") if c in geo_df.columns),
         None,
     )
-    country_by_geo: Optional[dict[int, str]] = None
-    if country_col is not None:
-        gc = geo[["GeographyKey", country_col]].dropna()
-        country_by_geo = dict(
-            zip(
-                gc["GeographyKey"].astype(np.int64).to_numpy(),
-                gc[country_col].astype(str).to_numpy(),
-            )
-        )
+    country_by_geo = _geo_lookup(country_col) if country_col else None
 
-    # Population lookup — used for population-weighted store distribution
-    pop_by_geo: Optional[dict[int, int]] = None
-    if "Population" in geo.columns:
-        gp = geo[["GeographyKey", "Population"]].dropna()
-        pop_by_geo = dict(
-            zip(
-                gp["GeographyKey"].astype(np.int64).to_numpy(),
-                gp["Population"].astype(np.int64).to_numpy(),
-            )
-        )
+    pop_by_geo = _geo_lookup("Population", dtype=np.int64)
 
     # Region weights — validate keys against available currencies
     region_weights: Optional[dict[str, float]] = None
@@ -1208,9 +1206,20 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     online_stores_count = int_or(store_cfg.online_stores, 0)
     online_close_share_val = float_or(store_cfg.online_close_share, 0.10)
 
+    geo_ctx = GeoContext(
+        geo_keys=geo_keys,
+        geo_loc_short=loc_short_map,
+        geo_loc_full=loc_full_map,
+        iso_by_geo=iso_by_geo,
+        pop_by_geo=pop_by_geo,
+        country_by_geo=country_by_geo,
+        ensure_iso_coverage=bool(store_cfg.ensure_iso_coverage),
+        region_weights=region_weights,
+    )
+
     with stage("Generating Stores"):
         df = generate_store_table(
-            geo_keys=geo_keys,
+            geo=geo_ctx,
             num_stores=int_or(store_cfg.num_stores, 200),
             opening_start=opening_cfg.get("start") or "2018-01-01",
             opening_end=opening_cfg.get("end") or "2025-12-31",
@@ -1218,13 +1227,6 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             seed=resolve_seed(cfg, store_cfg, fallback=42),
             square_footage_cfg=sqft_cfg,
             staffing_overrides=staffing_overrides,
-            geo_loc_short=loc_short_map,
-            geo_loc_full=loc_full_map,
-            iso_by_geo=iso_by_geo,
-            pop_by_geo=pop_by_geo,
-            country_by_geo=country_by_geo,
-            ensure_iso_coverage=ensure_iso_coverage,
-            region_weights=region_weights,
             people_pools=people_pools,
             district_size=store_cfg.district_size,
             districts_per_region=store_cfg.districts_per_region,

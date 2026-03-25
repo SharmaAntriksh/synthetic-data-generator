@@ -144,7 +144,7 @@ subscriptions:
   seed: 700
 
 # ------------------------------------------------------------------
-# GEOGRAPHY (static — derived from CURATED_ROWS in geography.py)
+# GEOGRAPHY (static — derived from FALLBACK_ROWS in geography.py)
 # ------------------------------------------------------------------
 geography: {}
 

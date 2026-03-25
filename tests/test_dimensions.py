@@ -20,6 +20,7 @@ from src.exceptions import DimensionError
 # Stores
 # ---------------------------------------------------------------------------
 from src.dimensions.stores import generate_store_table
+from src.dimensions.stores.generator import GeoContext
 
 # ---------------------------------------------------------------------------
 # Dates
@@ -79,10 +80,9 @@ def iso_by_geo():
 def small_stores(geo_keys, iso_by_geo):
     """Generate a small stores DataFrame for downstream tests."""
     return generate_store_table(
-        geo_keys=geo_keys,
+        geo=GeoContext(geo_keys=geo_keys, iso_by_geo=iso_by_geo),
         num_stores=10,
         seed=42,
-        iso_by_geo=iso_by_geo,
     )
 
 
@@ -116,36 +116,36 @@ class TestGenerateStoreTable:
     ]
 
     def test_basic_output_shape(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=20, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=20, seed=1)
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 20
 
     def test_expected_columns(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=10, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=10, seed=1)
         assert list(df.columns) == self.EXPECTED_COLS
 
     def test_store_key_sequential(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=15, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=15, seed=1)
         expected = list(range(1, 16))
         assert list(df["StoreKey"]) == expected
 
     def test_store_key_unique(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=50, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=50, seed=1)
         assert df["StoreKey"].is_unique
 
     def test_determinism(self, geo_keys):
-        df1 = generate_store_table(geo_keys=geo_keys, num_stores=30, seed=99)
-        df2 = generate_store_table(geo_keys=geo_keys, num_stores=30, seed=99)
+        df1 = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=30, seed=99)
+        df2 = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=30, seed=99)
         pd.testing.assert_frame_equal(df1, df2)
 
     def test_different_seeds_differ(self, geo_keys):
-        df1 = generate_store_table(geo_keys=geo_keys, num_stores=20, seed=1)
-        df2 = generate_store_table(geo_keys=geo_keys, num_stores=20, seed=2)
+        df1 = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=20, seed=1)
+        df2 = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=20, seed=2)
         # At least some values should differ
         assert not df1["StoreName"].equals(df2["StoreName"])
 
     def test_no_nan_in_required_columns(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=30, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=30, seed=1)
         required = [
             "StoreKey", "StoreNumber", "StoreName", "StoreType", "Status",
             "GeographyKey", "OpeningDate", "OpenFlag", "SquareFootage",
@@ -155,50 +155,50 @@ class TestGenerateStoreTable:
             assert df[col].notna().all(), f"NaN found in required column {col}"
 
     def test_geography_keys_valid(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=50, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=50, seed=1)
         valid_keys = set(geo_keys.tolist())
         assigned = set(df["GeographyKey"].astype(np.int64).tolist())
         assert assigned.issubset(valid_keys)
 
     def test_open_flag_matches_status(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=100, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=100, seed=1)
         open_flag = df["OpenFlag"].astype(int)
         status_open = (df["Status"] == "Open").astype(int)
         pd.testing.assert_series_equal(open_flag, status_open, check_names=False)
 
     def test_closing_date_only_for_closed(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=100, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=100, seed=1)
         not_closed = df["Status"] != "Closed"
         assert df.loc[not_closed, "ClosingDate"].isna().all()
 
     def test_low_store_count_raised_to_floor(self, geo_keys):
         """num_stores below minimum is silently raised to the floor (6)."""
-        df = generate_store_table(geo_keys=geo_keys, num_stores=1, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=1, seed=1)
         assert len(df) == 6
-        df0 = generate_store_table(geo_keys=geo_keys, num_stores=0, seed=1)
+        df0 = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=0, seed=1)
         assert len(df0) == 6
 
     def test_empty_geo_keys_raises(self):
         with pytest.raises(DimensionError, match="non-empty"):
             generate_store_table(
-                geo_keys=np.array([], dtype=np.int64),
+                geo=GeoContext(geo_keys=np.array([], dtype=np.int64)),
                 num_stores=5,
                 seed=1,
             )
 
     def test_square_footage_positive(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=30, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=30, seed=1)
         assert (df["SquareFootage"] > 0).all()
 
     def test_employee_count_positive(self, geo_keys):
         """All stores get positive EmployeeCount (closed stores keep operational count)."""
-        df = generate_store_table(geo_keys=geo_keys, num_stores=30, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=30, seed=1)
         assert (df["EmployeeCount"] > 0).all()
 
     def test_store_type_distribution(self, geo_keys):
         """Store types should be from the known set."""
         from src.defaults import STORE_TYPES
-        df = generate_store_table(geo_keys=geo_keys, num_stores=200, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=200, seed=1)
         types = set(df["StoreType"].unique())
         valid_types = set(STORE_TYPES)
         assert types.issubset(valid_types)
@@ -206,11 +206,9 @@ class TestGenerateStoreTable:
     def test_iso_coverage(self, geo_keys, iso_by_geo):
         """With ensure_iso_coverage, multiple ISO codes should appear."""
         df = generate_store_table(
-            geo_keys=geo_keys,
+            geo=GeoContext(geo_keys=geo_keys, iso_by_geo=iso_by_geo, ensure_iso_coverage=True),
             num_stores=20,
             seed=1,
-            iso_by_geo=iso_by_geo,
-            ensure_iso_coverage=True,
         )
         geo_used = set(df["GeographyKey"].astype(np.int64).tolist())
         iso_used = {iso_by_geo[gk] for gk in geo_used if gk in iso_by_geo}
@@ -218,7 +216,7 @@ class TestGenerateStoreTable:
         assert len(iso_used) >= 3
 
     def test_analytical_columns_ranges(self, geo_keys):
-        df = generate_store_table(geo_keys=geo_keys, num_stores=50, seed=1)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=50, seed=1)
         assert (df["CustomerSatisfactionScore"] >= 1.0).all()
         assert (df["CustomerSatisfactionScore"] <= 10.0).all()
         assert (df["LastAuditScore"] >= 50).all()
@@ -1282,7 +1280,7 @@ class TestCrossGeneratorQuality:
 
     def test_stores_geography_key_exists_in_geo(self, geo_keys):
         """Every store GeographyKey should be a valid geo key."""
-        df = generate_store_table(geo_keys=geo_keys, num_stores=50, seed=42)
+        df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=50, seed=42)
         store_geos = set(df["GeographyKey"].astype(np.int64).tolist())
         valid_geos = set(geo_keys.tolist())
         assert store_geos.issubset(valid_geos)
