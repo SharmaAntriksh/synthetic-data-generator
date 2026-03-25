@@ -67,7 +67,7 @@ def _rollup_demand_to_warehouse(
         .reset_index()
     )
 
-    info(f"Demand rolled up: {len(sk_to_wk)} stores → {len(set(sk_to_wk.values()))} warehouses")
+    info(f"Demand rolled up: {len(sk_to_wk)} stores -> {len(set(sk_to_wk.values()))} warehouses")
 
     return rolled
 
@@ -79,10 +79,10 @@ def _recompute_abc_from_demand(
     """Recompute ABCClassification from actual sales volume.
 
     Ranks products by total QuantitySold across all stores and months:
-      - Top 20% by volume → A
-      - Next 30% → B
-      - Bottom 50% → C
-      - Products with zero sales → C
+      - Top 20% by volume -> A
+      - Next 30% -> B
+      - Bottom 50% -> C
+      - Products with zero sales -> C
     """
     vol = demand.groupby("ProductKey", sort=False)["QuantitySold"].sum()
     if vol.empty:
@@ -97,7 +97,7 @@ def _recompute_abc_from_demand(
     )
     vol_abc = dict(zip(vol.index, abc))
 
-    # Vectorised override: map product keys → volume-based ABC;
+    # Vectorised override: map product keys -> volume-based ABC;
     # products with no sales default to C
     pa_pk = product_attrs_arrays["ProductKey"]
     vol_abc_series = pd.Series(vol_abc)
@@ -113,7 +113,7 @@ def _recompute_abc_from_demand(
         f"ABC reclassified from sales volume: "
         f"{(pa_abc == 'A').sum()} A, {(pa_abc == 'B').sum()} B, "
         f"{(pa_abc == 'C').sum()} C "
-        f"({updated} from sales, {no_sales} no-sales → C)"
+        f"({updated} from sales, {no_sales} no-sales -> C)"
     )
     return product_attrs_arrays
 
@@ -132,7 +132,7 @@ def _update_product_profile_abc(
     if not pp_path.exists():
         return
 
-    # Build ProductKey → ABC from demand-recomputed attrs (current versions)
+    # Build ProductKey -> ABC from demand-recomputed attrs (current versions)
     new_abc = product_attrs_arrays["ABCClassification"]
     pa_pk = product_attrs_arrays["ProductKey"]
     abc_by_pk: Dict[int, str] = dict(zip(pa_pk, new_abc))
@@ -146,7 +146,7 @@ def _update_product_profile_abc(
             )
             pk_arr = prods["ProductKey"].to_numpy(dtype=np.int64)
             bpk_arr = prods["BaseProductKey"].to_numpy(dtype=np.int64)
-            # Pass 1: build BaseProductKey → ABC from known current-version keys
+            # Pass 1: build BaseProductKey -> ABC from known current-version keys
             abc_by_base: Dict[int, str] = {}
             for pk_int, bpk_int in zip(pk_arr, bpk_arr):
                 if pk_int in abc_by_pk and bpk_int not in abc_by_base:
