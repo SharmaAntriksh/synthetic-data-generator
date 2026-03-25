@@ -176,28 +176,6 @@ def load_config_file(path: str | Path) -> dict:
     )
 
 
-# ---------------------------------------------------------------------------
-# High-level acquisition tuning
-# ---------------------------------------------------------------------------
-
-def apply_acquisition_tuning(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """No-op: the tuning block has been replaced by models.customers.
-
-    .. deprecated:: 1.0
-        This function is a no-op and will be removed in a future release.
-        Use ``customers.profile`` in config.yaml instead.
-
-    If an old-style ``tuning`` block is present it is silently ignored.
-    """
-    import warnings
-    warnings.warn(
-        "apply_acquisition_tuning() is deprecated and has no effect. "
-        "Use customers.profile in config.yaml instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return cfg
-
 
 # ---------------------------------------------------------------------------
 # Load + normalize (shared implementation)

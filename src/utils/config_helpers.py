@@ -109,47 +109,6 @@ def range2(v: Any, default_lo: float, default_hi: float) -> Tuple[float, float]:
     return lo, hi
 
 
-# ---------------------------------------------------------------------------
-# Seed resolution
-# ---------------------------------------------------------------------------
-
-def pick_seed_nested(
-    cfg: Dict[str, Any],
-    local_cfg: Dict[str, Any],
-    fallback: int = 42,
-) -> int:
-    """Resolve seed: ``override.seed → local_cfg.seed → defaults.seed → fallback``.
-
-    .. deprecated:: Use ``resolve_seed`` from ``src.utils.config_precedence`` instead.
-    """
-    import warnings
-    from src.utils.config_precedence import resolve_seed
-    warnings.warn(
-        "pick_seed_nested() is deprecated — use resolve_seed() from config_precedence",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_seed(cfg, local_cfg, fallback=fallback)
-
-
-def pick_seed_flat(
-    cfg: Dict[str, Any],
-    local_cfg: Dict[str, Any],
-    fallback: int = 42,
-) -> int:
-    """Resolve seed: ``local_cfg.seed → cfg.seed → fallback``.
-
-    .. deprecated:: Use ``resolve_seed`` from ``src.utils.config_precedence`` instead.
-    """
-    import warnings
-    from src.utils.config_precedence import resolve_seed
-    warnings.warn(
-        "pick_seed_flat() is deprecated — use resolve_seed() from config_precedence",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_seed(cfg, local_cfg, fallback=fallback)
-
 
 # ---------------------------------------------------------------------------
 # Date window resolution

@@ -244,8 +244,19 @@ class DatesIncludeConfig(_Base):
 
 class DatesTableConfig(_Base):
     fiscal_start_month: int = 5
-    fiscal_month_offset: Optional[int] = None  # deprecated alias for fiscal_start_month
     as_of_date: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_fiscal_offset(cls, data: Any) -> Any:
+        """Migrate removed ``fiscal_month_offset`` to ``fiscal_start_month``."""
+        if isinstance(data, dict) and "fiscal_month_offset" in data:
+            data = dict(data)
+            if "fiscal_start_month" not in data:
+                data["fiscal_start_month"] = data.pop("fiscal_month_offset")
+            else:
+                data.pop("fiscal_month_offset")
+        return data
     buffer_years: int = 1
     include: DatesIncludeConfig = DatesIncludeConfig()
     override: Optional[Dict[str, Any]] = None
@@ -836,7 +847,14 @@ class BrandPopularityConfig(_Base):
     noise_sd: float = 0.15
     min_share: float = 0.02
     year_len_months: int = 12
-    brand_weights: Dict[str, float] = {}  # deprecated: ignored at runtime, kept for schema compat
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_removed_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            data.pop("brand_weights", None)
+        return data
 
 
 # -- Returns (models.yaml) --

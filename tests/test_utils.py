@@ -34,8 +34,6 @@ from src.utils.config_helpers import (
     float_or,
     int_or,
     parse_global_dates,
-    pick_seed_flat,
-    pick_seed_nested,
     rand_dates_between,
     rand_single_date,
     range2,
@@ -217,65 +215,6 @@ class TestRange2:
         lo, hi = range2(None, 10.0, 2.0)
         assert lo == 2.0
         assert hi == 10.0
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-class TestPickSeedNested:
-    def test_override_seed_wins(self):
-        cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
-        local = AppConfig.model_validate({"seed": 2, "override": {"seed": 3}})
-        assert pick_seed_nested(cfg, local) == 3
-
-    def test_local_seed_second(self):
-        cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
-        local = AppConfig.model_validate({"seed": 2})
-        assert pick_seed_nested(cfg, local) == 2
-
-    def test_defaults_seed_third(self):
-        cfg = AppConfig.model_validate({"defaults": {"seed": 10}})
-        local = AppConfig.model_validate({})
-        assert pick_seed_nested(cfg, local) == 10
-
-    def test_underscore_defaults_fallback(self):
-        """_defaults is a legacy normalizer key; Pydantic strips _ prefixed keys.
-        With the Pydantic migration, _defaults is no longer reachable — fall back to 42."""
-        cfg = AppConfig.model_validate({"_defaults": {"seed": 77}})
-        local = AppConfig.model_validate({})
-        assert pick_seed_nested(cfg, local) == 42  # _defaults stripped by Pydantic
-
-    def test_hardcoded_fallback(self):
-        # AppConfig default has defaults.seed=42, so fallback is never reached
-        assert pick_seed_nested(AppConfig.model_validate({}), AppConfig.model_validate({})) == 42
-
-    def test_custom_fallback(self):
-        # defaults.seed=42 wins over custom fallback since AppConfig always has defaults
-        assert pick_seed_nested(AppConfig.model_validate({}), AppConfig.model_validate({}), fallback=99) == 42
-
-    def test_emits_deprecation_warning(self):
-        cfg = AppConfig.model_validate({})
-        with pytest.warns(DeprecationWarning, match="pick_seed_nested.*deprecated"):
-            pick_seed_nested(cfg, cfg)
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-class TestPickSeedFlat:
-    def test_local_wins(self):
-        assert pick_seed_flat(AppConfig.model_validate({"defaults": {"seed": 1}}), AppConfig.model_validate({"seed": 2})) == 2
-
-    def test_defaults_seed_used(self):
-        # pick_seed_flat now delegates to resolve_seed which checks defaults.seed
-        assert pick_seed_flat(AppConfig.model_validate({"defaults": {"seed": 10}}), AppConfig.model_validate({})) == 10
-
-    def test_fallback(self):
-        assert pick_seed_flat(AppConfig.model_validate({}), AppConfig.model_validate({})) == 42
-
-    def test_none_seed_skipped(self):
-        assert pick_seed_flat(AppConfig.model_validate({}), AppConfig.model_validate({"seed": None})) == 42
-
-    def test_emits_deprecation_warning(self):
-        cfg = AppConfig.model_validate({})
-        with pytest.warns(DeprecationWarning, match="pick_seed_flat.*deprecated"):
-            pick_seed_flat(cfg, cfg)
 
 
 class TestParseGlobalDates:

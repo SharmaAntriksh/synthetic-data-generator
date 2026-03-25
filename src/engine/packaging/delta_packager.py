@@ -86,7 +86,7 @@ def find_delta_table_dir(fact_out: Path, sales_cfg: dict, table: str) -> Optiona
 def copy_delta_table_dir(src: Path, dst: Path, skip_dirnames: set[str]) -> None:
     """Copy a delta table directory snapshot, skipping internal scratch dirs."""
     if dst.exists():
-        shutil.rmtree(dst, ignore_errors=True)
+        shutil.rmtree(dst)
     dst.mkdir(parents=True, exist_ok=True)
 
     for item in src.iterdir():

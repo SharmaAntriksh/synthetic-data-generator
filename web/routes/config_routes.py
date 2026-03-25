@@ -93,7 +93,7 @@ def get_config():
         # Dates
         "startDate": str(_g(defaults, "start", default="2023-01-01")),
         "endDate": str(_g(defaults, "end", default="2026-12-31")),
-        "fiscalMonthOffset": int(_g(dates_cfg, "fiscal_month_offset", default=_g(dates_cfg, "fiscal_start_month", default=0)) or 0),
+        "fiscalMonthOffset": int(_g(dates_cfg, "fiscal_start_month", default=0) or 0),
         "asOfDate": str(_g(dates_cfg, "as_of_date", default="") or ""),
         "includeCalendar": True,
         "includeIso": bool(_g(include, "iso", default=False)),

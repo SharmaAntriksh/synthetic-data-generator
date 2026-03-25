@@ -198,29 +198,27 @@ CLI flags > config.yaml values (one-time, not persisted).
 
 12. **Web layer thread safety:** Shared mutable state in `web/shared_state.py` (`_cfg`, `_models_cfg`, etc.) is guarded by `_cfg_lock`. Always acquire the lock when reading or mutating these globals from route handlers. Reads must `copy.deepcopy()` under the lock to avoid races.
 
-13. **Deprecated: `apply_acquisition_tuning()`:** This function in `src/engine/config/config.py` is a no-op and emits `DeprecationWarning`. Use `customers.profile` in config.yaml instead.
+13. **int32 overflow in ID arithmetic:** Order ID math (add, multiply) must use `int64` intermediates before casting back to `int32`. Silent wraparound at 2^31 produces negative/duplicate IDs.
 
-14. **int32 overflow in ID arithmetic:** Order ID math (add, multiply) must use `int64` intermediates before casting back to `int32`. Silent wraparound at 2^31 produces negative/duplicate IDs.
+14. **numpy bincount weights dtype:** `np.bincount(..., weights=...)` requires `float64` weights. Passing `int8` silently overflows at >127 elements, producing wrong counts.
 
-15. **numpy bincount weights dtype:** `np.bincount(..., weights=...)` requires `float64` weights. Passing `int8` silently overflows at >127 elements, producing wrong counts.
+15. **CDF + searchsorted boundary:** After computing a CDF via `np.cumsum(w) / total`, always clamp `cdf[-1] = 1.0`. Floating-point rounding can leave the last element slightly below 1.0, causing `searchsorted` to return out-of-bounds indices.
 
-16. **CDF + searchsorted boundary:** After computing a CDF via `np.cumsum(w) / total`, always clamp `cdf[-1] = 1.0`. Floating-point rounding can leave the last element slightly below 1.0, causing `searchsorted` to return out-of-bounds indices.
+16. **SQL output escaping:** Use `N'...'` (Unicode prefix) for file paths in `BULK INSERT FROM` statements. Escape single quotes in names passed to `OBJECT_ID()`. Without this, non-ASCII paths or names with apostrophes break generated SQL.
 
-17. **SQL output escaping:** Use `N'...'` (Unicode prefix) for file paths in `BULK INSERT FROM` statements. Escape single quotes in names passed to `OBJECT_ID()`. Without this, non-ASCII paths or names with apostrophes break generated SQL.
+17. **TMDL expression injection:** File paths embedded in Power BI M expressions must have `"` escaped to `\"`. Unescaped quotes in paths break the generated `.tmdl` files.
 
-18. **TMDL expression injection:** File paths embedded in Power BI M expressions must have `"` escaped to `\"`. Unescaped quotes in paths break the generated `.tmdl` files.
+18. **CORS allowlist:** `web/api.py` restricts origins to `localhost:8502` and `localhost:3000` (not `*`). A `SecurityHeadersMiddleware` adds `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, and `Referrer-Policy` to all responses.
 
-19. **CORS allowlist:** `web/api.py` restricts origins to `localhost:8502` and `localhost:3000` (not `*`). A `SecurityHeadersMiddleware` adds `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, and `Referrer-Policy` to all responses.
+19. **Web payload size limits:** YAML and models endpoints reject bodies > 1 MB (HTTP 413). This prevents memory exhaustion from oversized payloads.
 
-20. **Web payload size limits:** YAML and models endpoints reject bodies > 1 MB (HTTP 413). This prevents memory exhaustion from oversized payloads.
+20. **Weekly fiscal column guard:** `dates/weekly_fiscal.py` only computes `FWYearWeekOffset` / `FWYearMonthOffset` / `FWYearQuarterOffset` when `FWYearWeekNumber` exists in the DataFrame. Previously, accessing these columns when `include_weekly_fiscal=false` caused a `KeyError`.
 
-21. **Weekly fiscal column guard:** `dates/weekly_fiscal.py` only computes `FWYearWeekOffset` / `FWYearMonthOffset` / `FWYearQuarterOffset` when `FWYearWeekNumber` exists in the DataFrame. Previously, accessing these columns when `include_weekly_fiscal=false` caused a `KeyError`.
+21. **Nested probability validation:** `defaults.py` now validates probability arrays inside nested dicts (`CUSTOMER_HOME_OWNERSHIP_PROBS_BY_INCOME`, `CUSTOMER_OCCUPATION_PROBS_BY_EDUCATION`) and lists (`CUSTOMER_MARITAL_PROBS_BY_AGE`, `CUSTOMER_EDUCATION_PROBS_BY_AGE`) at import time, not just top-level arrays.
 
-22. **Nested probability validation:** `defaults.py` now validates probability arrays inside nested dicts (`CUSTOMER_HOME_OWNERSHIP_PROBS_BY_INCOME`, `CUSTOMER_OCCUPATION_PROBS_BY_EDUCATION`) and lists (`CUSTOMER_MARITAL_PROBS_BY_AGE`, `CUSTOMER_EDUCATION_PROBS_BY_AGE`) at import time, not just top-level arrays.
+22. **Log file descriptor thread safety:** `_ensure_log_file_open()` in `logging_utils.py` is guarded by `_LOG_FD_LOCK` to prevent races when multiple threads open the log file simultaneously.
 
-23. **Log file descriptor thread safety:** `_ensure_log_file_open()` in `logging_utils.py` is guarded by `_LOG_FD_LOCK` to prevent races when multiple threads open the log file simultaneously.
-
-24. **Both configs are Pydantic, not dicts:** `cfg` is `AppConfig` and `models_cfg` (aka `State.models_cfg`) is `ModelsInnerConfig` — both Pydantic models from `src/engine/config/config_schema.py`. Access fields via attribute syntax, not dict syntax. Key rules:
+23. **Both configs are Pydantic, not dicts:** `cfg` is `AppConfig` and `models_cfg` (aka `State.models_cfg`) is `ModelsInnerConfig` — both Pydantic models from `src/engine/config/config_schema.py`. Access fields via attribute syntax, not dict syntax. Key rules:
     - **Read config:** `cfg.sales.file_format` or `models_cfg.pricing.inflation` — attribute access, not `cfg["field"]`
     - **Write config:** `cfg.sales.file_format = "csv"` (attribute assignment) — bracket write (`cfg["key"] = val`) works via `_MutationMixin.__setitem__`
     - **`.get()` shim:** `_MutationMixin.get(key, default)` delegates to `getattr()`, so existing `.get()` chains work on Pydantic models. This is intentional for backward compatibility with code that handles both dicts and models

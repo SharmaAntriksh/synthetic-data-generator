@@ -9,7 +9,6 @@ so adding a new section/table normalizer only requires changing one file.
 """
 
 from .config import (  # noqa: F401
-    apply_acquisition_tuning,
     get_global_dates,
     load_config,
     load_config_file,
@@ -25,7 +24,6 @@ __all__ = [
     "load_config",
     "load_config_file",
     "load_config_typed",
-    "apply_acquisition_tuning",  # deprecated, no-op
     "normalize_defaults",
     "get_global_dates",
     "normalize_sales_config",

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import shutil
-import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence, Union
@@ -321,14 +320,11 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
 def create_final_output_folder(
     final_folder_root: Path,
     parquet_dims: Path,
-    fact_folder: Path,                        # retained for API compatibility
     sales_cfg: dict,
     file_format: str,
-    sales_rows_expected: int = 0,             # deprecated — no longer used
     cfg: dict = {},
     config_yaml_path: Optional[Union[str, Path]] = None,
     model_yaml_path: Optional[Union[str, Path]] = None,
-    package_facts: bool = False,              # deprecated — facts packaged externally
 ) -> Path:
     """
     Create the run output folder and package DIMENSIONS into it.
@@ -340,28 +336,7 @@ def create_final_output_folder(
       - Convert/copy DIMENSIONS from ``parquet_dims`` into the chosen format.
 
     Facts and SQL packaging are handled by ``src.engine.packaging.package_output()``.
-
-    Deprecated parameters (accepted for backward compatibility only):
-      - ``sales_rows_expected`` — no longer read; pass 0 or omit.
-      - ``package_facts``       — no longer honoured; facts are always packaged
-                                  externally.  Passing ``True`` emits a
-                                  ``DeprecationWarning``.
-      - ``fact_folder``         — accepted but ignored.
     """
-    if sales_rows_expected != 0:
-        warnings.warn(
-            "sales_rows_expected is deprecated and no longer used by "
-            "create_final_output_folder. Pass 0 or omit the argument.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-    if package_facts:
-        warnings.warn(
-            "package_facts=True is deprecated. Facts are now packaged exclusively "
-            "by src.engine.packaging.package_output(). This flag has no effect.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
 
     with stage("Creating Final Output Folder"):
         ff = str(file_format).strip().lower()
