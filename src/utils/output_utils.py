@@ -269,7 +269,7 @@ def _ensure_clean_dir(p: Path) -> None:
                 f"({len(non_empty)} file(s) present). "
                 "Pass an explicit empty or non-existent path to avoid data loss."
             )
-        shutil.rmtree(p, ignore_errors=True)
+        shutil.rmtree(p)
     p.mkdir(parents=True, exist_ok=True)
 
 
@@ -322,7 +322,7 @@ def create_final_output_folder(
     parquet_dims: Path,
     sales_cfg: dict,
     file_format: str,
-    cfg: dict = {},
+    cfg,
     config_yaml_path: Optional[Union[str, Path]] = None,
     model_yaml_path: Optional[Union[str, Path]] = None,
 ) -> Path:

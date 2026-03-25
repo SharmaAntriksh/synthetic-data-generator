@@ -287,7 +287,7 @@ class TestInvalidConfig:
 class TestCrossSectionValidation:
     def test_skip_order_cols_warning(self):
         """When skip_order_cols is true, the validate endpoint warns about returns."""
-        from web.validators import validate
+        from tests.validators import validate
         cfg = {
             "defaults": {"dates": {"start": "2024-01-01", "end": "2024-12-31"}},
             "sales": {
@@ -311,7 +311,7 @@ class TestCrossSectionValidation:
                 f"Unexpected warning: {w}"
 
     def test_end_before_start_date_error(self):
-        from web.validators import validate
+        from tests.validators import validate
         cfg = {
             "defaults": {"dates": {"start": "2025-01-01", "end": "2023-01-01"}},
             "sales": {
@@ -327,7 +327,7 @@ class TestCrossSectionValidation:
         assert any("after start" in e.lower() or "end date" in e.lower() for e in errors)
 
     def test_zero_rows_error(self):
-        from web.validators import validate
+        from tests.validators import validate
         cfg = {
             "defaults": {"dates": {"start": "2024-01-01", "end": "2024-12-31"}},
             "sales": {
@@ -343,7 +343,7 @@ class TestCrossSectionValidation:
         assert any("greater than zero" in e.lower() for e in errors)
 
     def test_invalid_format_error(self):
-        from web.validators import validate
+        from tests.validators import validate
         cfg = {
             "defaults": {"dates": {"start": "2024-01-01", "end": "2024-12-31"}},
             "sales": {
@@ -359,7 +359,7 @@ class TestCrossSectionValidation:
         assert any("file_format" in e for e in errors)
 
     def test_customers_exceed_rows_warning(self):
-        from web.validators import validate
+        from tests.validators import validate
         cfg = {
             "defaults": {"dates": {"start": "2024-01-01", "end": "2024-12-31"}},
             "sales": {

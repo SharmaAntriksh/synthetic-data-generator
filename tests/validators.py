@@ -1,7 +1,9 @@
-"""Config and models validation helpers for the web UI.
+"""Config and models validation helpers used by integration tests.
 
 Returns ``(errors, warnings)`` tuples so the frontend can display
 validation feedback before the user starts a generation run.
+
+Moved from web/validators.py — not used by production code.
 """
 from __future__ import annotations
 

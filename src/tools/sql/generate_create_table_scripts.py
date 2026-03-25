@@ -116,8 +116,6 @@ def create_table_from_schema(
 
 
 def generate_all_create_tables(
-    dim_folder,   # kept for backward compat (unused)
-    fact_folder,  # kept for backward compat (unused)
     output_folder,
     cfg,
     skip_order_cols: bool = False,
@@ -135,8 +133,6 @@ def generate_all_create_tables(
       - get_sales_schema(skip_order_cols) for Sales
       - get_dates_schema(cfg['dates']) for Dates
     """
-    _ = dim_folder
-    _ = fact_folder
 
     schema_dir = Path(output_folder) / "schema"
     schema_dir.mkdir(parents=True, exist_ok=True)

@@ -255,7 +255,7 @@ def run_pipeline(
         # ----------------------------
         if clean_scratch:
             info(f"Cleaning scratch fact_out folder: {fact_out}")
-            shutil.rmtree(fact_out, ignore_errors=True)
+            shutil.rmtree(fact_out)
         else:
             info(f"Keeping scratch fact_out folder (packaging.clean_scratch_fact_out=false): {fact_out}")
 

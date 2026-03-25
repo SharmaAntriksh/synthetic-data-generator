@@ -241,8 +241,6 @@ class TestSQLDDLGeneration:
             "dates": {"include": {"calendar": True, "iso": True, "fiscal": True}},
         })
         dim_out, fact_out = generate_all_create_tables(
-            dim_folder=tmp_path / "dims",
-            fact_folder=tmp_path / "facts",
             output_folder=tmp_path / "sql",
             cfg=cfg,
         )
@@ -262,7 +260,6 @@ class TestSQLDDLGeneration:
             "dates": {},
         })
         _, fact_out = generate_all_create_tables(
-            dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
         )
         fact_sql = fact_out.read_text(encoding="utf-8")
@@ -275,7 +272,6 @@ class TestSQLDDLGeneration:
             "dates": {},
         })
         _, fact_out = generate_all_create_tables(
-            dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
         )
         fact_sql = fact_out.read_text(encoding="utf-8")
@@ -290,7 +286,6 @@ class TestSQLDDLGeneration:
             "budget": {"enabled": True},
         })
         _, fact_out = generate_all_create_tables(
-            dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
         )
         fact_sql = fact_out.read_text(encoding="utf-8")
@@ -304,7 +299,6 @@ class TestSQLDDLGeneration:
             "budget": {"enabled": False},
         })
         _, fact_out = generate_all_create_tables(
-            dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
         )
         fact_sql = fact_out.read_text(encoding="utf-8")
@@ -317,7 +311,6 @@ class TestSQLDDLGeneration:
             "inventory": {"enabled": True},
         })
         _, fact_out = generate_all_create_tables(
-            dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
         )
         fact_sql = fact_out.read_text(encoding="utf-8")
@@ -329,7 +322,6 @@ class TestSQLDDLGeneration:
             "dates": {},
         })
         dim_out, _ = generate_all_create_tables(
-            dim_folder=tmp_path, fact_folder=tmp_path,
             output_folder=tmp_path / "sql", cfg=cfg,
         )
         dim_sql = dim_out.read_text(encoding="utf-8")

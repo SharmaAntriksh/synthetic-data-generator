@@ -51,8 +51,10 @@ def _resolve_sales_out_folder(fact_out: Path, fmt: str, *, merge_enabled: bool =
 
 
 def _safe_clean_folder(path: Path) -> None:
-    if path.exists():
-        shutil.rmtree(path, ignore_errors=True)
+    try:
+        shutil.rmtree(path)
+    except FileNotFoundError:
+        pass
 
 
 def _compute_returns_effective(cfg, sales_cfg) -> Tuple[Any, bool]:
