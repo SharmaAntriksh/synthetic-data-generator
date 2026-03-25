@@ -742,6 +742,14 @@ class MacroDemandConfig(_Base):
     year_level_factors: Optional[YearLevelFactorsConfig] = None
     early_month_cap: Optional[EarlyMonthCapConfig] = None
     eligible_blend: float = 0.0
+    # Trend preset system
+    trend: Optional[str] = None
+    monthly_seasonality: Optional[List[float]] = None
+    seasonality: Optional[Any] = None
+    # Derived constants (set by trend resolver, read by chunk_builder)
+    bootstrap_months: Optional[int] = None
+    max_distinct_ratio: Optional[float] = None
+    min_distinct_customers: Optional[int] = None
 
 
 # -- Quantity --

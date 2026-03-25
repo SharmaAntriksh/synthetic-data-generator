@@ -170,14 +170,12 @@ class TestGenerateStoreTable:
         not_closed = df["Status"] != "Closed"
         assert df.loc[not_closed, "ClosingDate"].isna().all()
 
-    def test_minimum_one_store(self, geo_keys):
+    def test_low_store_count_raised_to_floor(self, geo_keys):
+        """num_stores below minimum is silently raised to the floor (6)."""
         df = generate_store_table(geo_keys=geo_keys, num_stores=1, seed=1)
-        assert len(df) == 1
-        assert df["StoreKey"].iloc[0] == 1
-
-    def test_zero_stores_raises(self, geo_keys):
-        with pytest.raises(ValueError, match="num_stores must be > 0"):
-            generate_store_table(geo_keys=geo_keys, num_stores=0, seed=1)
+        assert len(df) == 6
+        df0 = generate_store_table(geo_keys=geo_keys, num_stores=0, seed=1)
+        assert len(df0) == 6
 
     def test_empty_geo_keys_raises(self):
         with pytest.raises(ValueError, match="non-empty"):

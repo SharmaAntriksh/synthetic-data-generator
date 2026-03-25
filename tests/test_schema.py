@@ -134,8 +134,7 @@ class TestModelsConfigFromYAML:
 
     def test_macro_demand(self, raw_models):
         m = ModelsConfig.from_raw_dict(raw_models)
-        assert m.models.macro_demand.year_level_factors.mode == "once"
-        assert len(m.models.macro_demand.year_level_factors.factor_values) == 8
+        assert m.models.macro_demand.trend is not None
 
     def test_pricing_inflation(self, raw_models):
         m = ModelsConfig.from_raw_dict(raw_models)

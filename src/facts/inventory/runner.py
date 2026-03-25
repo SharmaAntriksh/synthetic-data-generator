@@ -35,6 +35,104 @@ from .worker import _inventory_worker_task, _cast_snapshot_date, _prepare_csv as
 from src.defaults import INVENTORY_PARALLEL_THRESHOLD as _PARALLEL_THRESHOLD
 
 
+def _recompute_abc_from_demand(
+    demand: pd.DataFrame,
+    product_attrs_arrays: Dict[str, np.ndarray],
+) -> Dict[str, np.ndarray]:
+    """Recompute ABCClassification from actual sales volume.
+
+    Ranks products by total QuantitySold across all stores and months:
+      - Top 20% by volume → A
+      - Next 30% → B
+      - Bottom 50% → C
+      - Products with zero sales → C
+    """
+    vol = demand.groupby("ProductKey", sort=False)["QuantitySold"].sum()
+    if vol.empty:
+        return product_attrs_arrays
+
+    # Rank: highest volume = 1, lowest = N
+    ranks = vol.rank(method="first", ascending=False)
+    n = len(ranks)
+    abc = np.where(
+        ranks <= n * 0.20, "A",
+        np.where(ranks <= n * 0.50, "B", "C"),
+    )
+    vol_abc = dict(zip(vol.index, abc))
+
+    # Vectorised override: map product keys → volume-based ABC;
+    # products with no sales default to C
+    pa_pk = product_attrs_arrays["ProductKey"]
+    vol_abc_series = pd.Series(vol_abc)
+    mapped = pd.Series(pa_pk).map(vol_abc_series)
+    pa_abc = mapped.fillna("C").to_numpy()
+    updated = int(mapped.notna().sum())
+    no_sales = len(pa_abc) - updated
+
+    product_attrs_arrays = dict(product_attrs_arrays)  # shallow copy
+    product_attrs_arrays["ABCClassification"] = pa_abc
+
+    info(
+        f"ABC reclassified from sales volume: "
+        f"{(pa_abc == 'A').sum()} A, {(pa_abc == 'B').sum()} B, "
+        f"{(pa_abc == 'C').sum()} C "
+        f"({updated} from sales, {no_sales} no-sales → C)"
+    )
+    return product_attrs_arrays
+
+
+def _update_product_profile_abc(
+    parquet_dims: Path,
+    product_attrs_arrays: Dict[str, np.ndarray],
+) -> None:
+    """Write volume-based ABC back to product_profile.parquet.
+
+    ProductProfile now has one row per SCD2 version.  Sales demand only
+    references current-version ProductKeys, so we propagate ABC to all
+    versions of the same product via BaseProductKey from products.parquet.
+    """
+    pp_path = parquet_dims / "product_profile.parquet"
+    if not pp_path.exists():
+        return
+
+    # Build ProductKey → ABC from demand-recomputed attrs (current versions)
+    new_abc = product_attrs_arrays["ABCClassification"]
+    pa_pk = product_attrs_arrays["ProductKey"]
+    abc_by_pk: Dict[int, str] = dict(zip(pa_pk, new_abc))
+
+    # Propagate ABC to historical SCD2 versions via BaseProductKey
+    products_path = parquet_dims / "products.parquet"
+    if products_path.exists():
+        try:
+            prods = pd.read_parquet(
+                str(products_path), columns=["ProductKey", "BaseProductKey"],
+            )
+            pk_arr = prods["ProductKey"].to_numpy(dtype=np.int64)
+            bpk_arr = prods["BaseProductKey"].to_numpy(dtype=np.int64)
+            # Pass 1: build BaseProductKey → ABC from known current-version keys
+            abc_by_base: Dict[int, str] = {}
+            for pk_int, bpk_int in zip(pk_arr, bpk_arr):
+                if pk_int in abc_by_pk and bpk_int not in abc_by_base:
+                    abc_by_base[bpk_int] = abc_by_pk[pk_int]
+            # Pass 2: backfill historical versions from their base product
+            for pk_int, bpk_int in zip(pk_arr, bpk_arr):
+                if pk_int not in abc_by_pk and bpk_int in abc_by_base:
+                    abc_by_pk[pk_int] = abc_by_base[bpk_int]
+        except (KeyError, ValueError, OSError):
+            pass  # fall back to direct ProductKey lookup only
+
+    table = pq.read_table(str(pp_path))
+    pk_arr = np.array(table.column("ProductKey").to_pylist(), dtype=np.int64)
+
+    # Default to C (consistent with _recompute_abc_from_demand)
+    updated_abc = [abc_by_pk.get(int(pk), "C") for pk in pk_arr]
+    idx = table.schema.get_field_index("ABCClassification")
+    table = table.set_column(idx, "ABCClassification", pa.array(updated_abc, type=pa.large_string()))
+
+    pq.write_table(table, str(pp_path), compression="snappy")
+    info("Updated product_profile.parquet with volume-based ABC")
+
+
 def run_inventory_pipeline(
     *,
     accumulator: InventoryAccumulator,
@@ -94,6 +192,16 @@ def run_inventory_pipeline(
             col: product_attrs[col].to_numpy(copy=True)
             for col in product_attrs.columns
         }
+
+    # Recompute ABC classification from actual sales volume instead of the
+    # static price-based formula in product_profile.  This ensures high-volume
+    # low-price products (e.g. Tailspin Toys) are correctly classified as A.
+    if product_attrs_arrays is not None and "ABCClassification" in product_attrs_arrays:
+        product_attrs_arrays = _recompute_abc_from_demand(
+            demand, product_attrs_arrays,
+        )
+        # Write updated ABC back to product_profile so Power BI sees it
+        _update_product_profile_abc(parquet_dims, product_attrs_arrays)
 
     csv_chunk_size = int(getattr(sales_cfg, "chunk_size", 2_000_000))
 

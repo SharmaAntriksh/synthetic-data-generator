@@ -21,7 +21,7 @@ from src.dimensions.employees.generator import (
     STAFF_KEY_BASE,
     STAFF_KEY_STORE_MULT,
 )
-from src.defaults import ONLINE_EMP_KEY_BASE
+from src.defaults import ONLINE_EMP_KEY_BASE, ONLINE_STORE_KEY_BASE
 from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
@@ -232,6 +232,16 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
             except (KeyError, ValueError):
                 stores_df = pd.read_parquet(stores_path)
 
+            _MIN_STORES_FOR_TRANSFERS = 10
+            n_physical = int((stores_df["StoreKey"] < ONLINE_STORE_KEY_BASE).sum())
+            if n_physical < _MIN_STORES_FOR_TRANSFERS:
+                info(
+                    f"Transfers skipped: only {n_physical} physical store(s) "
+                    f"(minimum {_MIN_STORES_FOR_TRANSFERS})"
+                )
+                transfers_enabled = False
+
+        if transfers_enabled:
             df = apply_transfers(
                 df, stores_df,
                 seed=resolve_seed(cfg, as_dict(emp_cfg), fallback=42) ^ 0x7F3A,

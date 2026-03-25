@@ -15,15 +15,13 @@
 models:
 
   macro_demand:
-    yearly_growth: 0.08             # 8% smooth compound growth per year
-    row_share_of_growth: 1.0        # all growth via rows (profile default was 0.5)
-    shock_probability: 0.0          # no random demand shocks (profile default was 0.03)
-    year_level_factors:             # multiplied on top — use to shape dips/peaks per year
-      mode: "once"
-      # 1.0 = follow baseline, <1.0 = dip, >1.0 = extra peak
-      values: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-    seasonality_amplitude: 0.08     # ~8% seasonal swing within each year
-    noise_std: 0.02                 # minimal month-to-month noise
+    trend: new-market-entry          # directional (extend over time):
+                                    #   steady-growth | strong-growth | gradual-growth
+                                    #   hockey-stick | decline | new-market-entry
+                                    # cyclical (repeat every 10 years):
+                                    #   boom-and-bust | recession-recovery | seasonal-dominant
+                                    #   plateau | volatile | double-dip
+                                    #   seasonal-with-growth | slow-decline | stagnation
   # ================================================================
   # QUANTITY — items per order (basket size)
   # ================================================================
@@ -46,7 +44,7 @@ models:
       - 1.06    # Nov
       - 1.05    # Dec
 
-    noise_sigma: 0.03
+    noise_sigma: 0.12
 
 
   # ================================================================
@@ -55,7 +53,7 @@ models:
   pricing:
     inflation:
       annual_rate: 0.10
-      month_volatility_sigma: 0.003
+      month_volatility_sigma: 0.015
       factor_clip: [1.00, 1.50]
       volatility_seed: 123
 

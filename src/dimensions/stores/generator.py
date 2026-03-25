@@ -648,8 +648,16 @@ def generate_store_table(
       LastAuditScore, ShrinkageRatePct
     """
     num_stores = int_or(num_stores, 200)
-    if num_stores <= 0:
-        raise ValueError(f"num_stores must be > 0, got {num_stores}")
+
+    # Floor: guarantee at least _MIN_STORES for a healthy pipeline run
+    # (enough for physical + online mix, store closing, assortment, etc.)
+    _MIN_STORES = 6
+    if num_stores < _MIN_STORES:
+        warn(
+            f"num_stores ({num_stores}) is below minimum ({_MIN_STORES}), "
+            f"raised to {_MIN_STORES}"
+        )
+        num_stores = _MIN_STORES
 
     if not isinstance(geo_keys, np.ndarray) or geo_keys.size == 0:
         raise ValueError("geo_keys must be a non-empty numpy array of GeographyKey values")
@@ -659,9 +667,14 @@ def generate_store_table(
     # --- Key allocation: physical 1..N_phys, online 10_001..10_001+N_online ---
     n_online = int_or(online_stores, 0)
     if n_online < 0:
-        raise ValueError(f"online_stores must be >= 0, got {n_online}")
+        n_online = 0
     if n_online >= num_stores:
-        raise ValueError(f"online_stores ({n_online}) must be < num_stores ({num_stores})")
+        clamped = max(num_stores - 1, 0)
+        warn(
+            f"online_stores ({n_online}) >= num_stores ({num_stores}), "
+            f"clamped to {clamped}"
+        )
+        n_online = clamped
     n_physical = num_stores - n_online
     if n_physical >= _ONLINE_SK_BASE:
         raise ValueError(
