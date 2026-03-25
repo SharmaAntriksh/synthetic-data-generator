@@ -128,6 +128,19 @@ WAREHOUSE_TYPES: Tuple[str, ...] = (
 )
 WAREHOUSE_TYPES_P: Tuple[float, ...] = (0.50, 0.30, 0.20)
 
+# Sub-national region labels for warehouse naming (US states -> region name)
+US_STATE_REGIONS: Dict[str, str] = {
+    "California": "West", "Washington": "West", "Oregon": "West",
+    "Arizona": "West", "Colorado": "West", "Nevada": "West", "Utah": "West",
+    "New York": "Northeast", "Massachusetts": "Northeast",
+    "Pennsylvania": "Northeast", "New Jersey": "Northeast",
+    "Connecticut": "Northeast",
+    "Texas": "South", "Florida": "South", "Georgia": "South",
+    "Virginia": "South", "North Carolina": "South", "Tennessee": "South",
+    "Illinois": "Midwest", "Ohio": "Midwest", "Michigan": "Midwest",
+    "Minnesota": "Midwest", "Wisconsin": "Midwest", "Indiana": "Midwest",
+}
+
 # Transfer share by CloseReason — higher for planned closures, lower for performance
 STORE_CLOSE_TRANSFER_SHARE_BY_REASON: Dict[str, float] = {
     "Lease Ended": 0.80,

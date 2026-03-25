@@ -417,6 +417,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("WarehouseType", VARCHAR(30, not_null=True)),
         ("Zone", VARCHAR(20, not_null=True)),
         ("Country", VARCHAR(100, not_null=True)),
+        ("Territory", VARCHAR(200, not_null=True)),
         ("GeographyKey", INT_NN),
         ("Capacity", INT(not_null=False)),
         ("SquareFootage", INT(not_null=False)),
