@@ -21,14 +21,14 @@ import pyarrow.parquet as pq
 from .engine import InventoryConfig, compute_inventory_snapshots
 
 _INVENTORY_CSV_COLUMNS = [
-    "ProductKey", "StoreKey", "SnapshotDate",
+    "ProductKey", "WarehouseKey", "SnapshotDate",
     "QuantityOnHand", "QuantityOnOrder",
     "QuantitySold", "QuantityReceived",
     "ReorderFlag", "StockoutFlag", "DaysOutOfStock",
 ]
 
 _INVENTORY_CSV_INT_COLS = (
-    "ProductKey", "StoreKey",
+    "ProductKey", "WarehouseKey",
     "QuantityOnHand", "QuantityOnOrder",
     "QuantitySold", "QuantityReceived",
     "ReorderFlag", "StockoutFlag", "DaysOutOfStock",
@@ -71,7 +71,7 @@ def _inventory_worker_task(args: Tuple) -> Dict[str, Any]:
 
     demand = pd.DataFrame({
         "ProductKey": demand_arrays["ProductKey"],
-        "StoreKey": demand_arrays["StoreKey"],
+        "WarehouseKey": demand_arrays["WarehouseKey"],
         "Year": demand_arrays["Year"],
         "Month": demand_arrays["Month"],
         "QuantitySold": demand_arrays["QuantitySold"],

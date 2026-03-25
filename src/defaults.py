@@ -119,6 +119,28 @@ ONLINE_STORE_KEY_BASE: int = 10_000    # Online StoreKeys: 10_001, 10_002, ...
 ONLINE_EMP_KEY_BASE: int = 50_000_000  # Online EmployeeKeys: 50_000_901, 50_000_902, ...
 ONLINE_SALES_REP_ROLE: str = "Online Sales Representative"
 
+# Warehouse dimension
+ONLINE_WAREHOUSE_KEY: int = 9_000      # Dedicated online fulfillment warehouse
+WAREHOUSE_TYPES: Tuple[str, ...] = (
+    "Distribution Center",
+    "Regional Hub",
+    "Fulfillment Center",
+)
+WAREHOUSE_TYPES_P: Tuple[float, ...] = (0.50, 0.30, 0.20)
+
+# Sub-national region labels for warehouse naming (US states -> region name)
+US_STATE_REGIONS: Dict[str, str] = {
+    "California": "West", "Washington": "West", "Oregon": "West",
+    "Arizona": "West", "Colorado": "West", "Nevada": "West", "Utah": "West",
+    "New York": "Northeast", "Massachusetts": "Northeast",
+    "Pennsylvania": "Northeast", "New Jersey": "Northeast",
+    "Connecticut": "Northeast",
+    "Texas": "South", "Florida": "South", "Georgia": "South",
+    "Virginia": "South", "North Carolina": "South", "Tennessee": "South",
+    "Illinois": "Midwest", "Ohio": "Midwest", "Michigan": "Midwest",
+    "Minnesota": "Midwest", "Wisconsin": "Midwest", "Indiana": "Midwest",
+}
+
 # Transfer share by CloseReason — higher for planned closures, lower for performance
 STORE_CLOSE_TRANSFER_SHARE_BY_REASON: Dict[str, float] = {
     "Lease Ended": 0.80,

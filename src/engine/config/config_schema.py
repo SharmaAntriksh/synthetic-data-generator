@@ -539,6 +539,12 @@ class StoreClosingConfig(_Base):
     close_share: float = 0.10
 
 
+class WarehousesConfig(_Base):
+    seed: int = 42
+    min_stores_per_warehouse: int = 15   # split countries above this by state
+    min_stores_for_own_warehouse: int = 5  # merge countries below this into zone hubs
+
+
 class StoresConfig(_Base):
     num_stores: Optional[int] = None
     total_stores: Optional[int] = None  # back-compat alias
@@ -646,6 +652,7 @@ class AppConfig(_Base):
     geography: Optional[GeographyConfig] = None
     promotions: PromotionsConfig = PromotionsConfig()
     stores: StoresConfig = StoresConfig()
+    warehouses: WarehousesConfig = WarehousesConfig()
     employees: EmployeesConfig = EmployeesConfig()
     dates: DatesTableConfig = DatesTableConfig()
 

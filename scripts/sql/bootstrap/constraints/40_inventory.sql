@@ -4,12 +4,12 @@
 
   Design notes
   ────────────
-  • Composite PK on (ProductKey, StoreKey, SnapshotDate) — one row per
-    product per store per snapshot period.
+  • Composite PK on (ProductKey, WarehouseKey, SnapshotDate) — one row per
+    product per warehouse per snapshot period.
 
   • NONCLUSTERED PK to coexist with clustered columnstore index.
 
-  • FK to Products and Stores dimension tables.
+  • FK to Products and Warehouses dimension tables.
 */
 
 SET NOCOUNT ON;
@@ -29,7 +29,7 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.InventorySnapshot
     ADD CONSTRAINT PK_InventorySnapshot
-        PRIMARY KEY NONCLUSTERED ([ProductKey], [StoreKey], [SnapshotDate]);
+        PRIMARY KEY NONCLUSTERED ([ProductKey], [WarehouseKey], [SnapshotDate]);
 END;
 GO
 
@@ -58,21 +58,21 @@ BEGIN
 END;
 GO
 
--- InventorySnapshot -> Stores
+-- InventorySnapshot -> Warehouses
 IF OBJECT_ID(N'dbo.InventorySnapshot', N'U') IS NOT NULL
-AND OBJECT_ID(N'dbo.Stores', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Warehouses', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
     FROM sys.foreign_keys
-    WHERE name = N'FK_InventorySnapshot_Stores'
+    WHERE name = N'FK_InventorySnapshot_Warehouses'
       AND parent_object_id = OBJECT_ID(N'dbo.InventorySnapshot')
 )
 BEGIN
     ALTER TABLE dbo.InventorySnapshot WITH CHECK
-    ADD CONSTRAINT FK_InventorySnapshot_Stores
-        FOREIGN KEY ([StoreKey])
-        REFERENCES dbo.Stores ([StoreKey]);
+    ADD CONSTRAINT FK_InventorySnapshot_Warehouses
+        FOREIGN KEY ([WarehouseKey])
+        REFERENCES dbo.Warehouses ([WarehouseKey]);
 
-    ALTER TABLE dbo.InventorySnapshot CHECK CONSTRAINT FK_InventorySnapshot_Stores;
+    ALTER TABLE dbo.InventorySnapshot CHECK CONSTRAINT FK_InventorySnapshot_Warehouses;
 END;
 GO

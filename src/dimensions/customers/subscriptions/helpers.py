@@ -15,7 +15,7 @@ import pyarrow.parquet as pq
 
 from src.utils.config_precedence import resolve_seed
 
-from .catalog import PLANS_CATALOG, _PLAN_TYPE_WEIGHT
+from .catalog import PAYMENT_METHODS, _PAYMENT_WEIGHTS, PLANS_CATALOG, _PLAN_TYPE_WEIGHT
 
 
 _NS_PER_DAY: int = 86_400_000_000_000
@@ -305,3 +305,231 @@ def expand_subscription_periods(
         ps_list, pe_list, price_list,
         first_list, churn_list, trial_list, cycle_list,
     )
+
+
+# ---------------------------------------------------------------------------
+# Vectorized bulk expansion
+# ---------------------------------------------------------------------------
+
+def _ns_to_year_month_arrays(ns_arr: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Convert nanosecond timestamps to (year, month) arrays without pd.Timestamp loop."""
+    # Convert ns → days since epoch, then to datetime64[D] for year/month extraction
+    dt = ns_arr.astype("datetime64[ns]")
+    years = dt.astype("datetime64[Y]").astype(int) + 1970
+    months = dt.astype("datetime64[M]").astype(int) % 12 + 1
+    return years.astype(np.int32), months.astype(np.int32)
+
+
+def _month_start_dates(years: np.ndarray, months: np.ndarray) -> np.ndarray:
+    """Vectorized month-start dates as datetime64[D]."""
+    # year*12 + (month-1) → months since epoch, then to datetime64[M] → [D]
+    m_since_epoch = (years - 1970).astype("int64") * 12 + (months - 1).astype("int64")
+    return m_since_epoch.astype("datetime64[M]").astype("datetime64[D]")
+
+
+def _month_end_dates(years: np.ndarray, months: np.ndarray) -> np.ndarray:
+    """Vectorized month-end dates as datetime64[D]."""
+    # Start of next month minus 1 day
+    next_m = months + 1
+    next_y = years.copy()
+    wrap = next_m > 12
+    next_m[wrap] = 1
+    next_y[wrap] += 1
+    m_since_epoch = (next_y - 1970).astype("int64") * 12 + (next_m - 1).astype("int64")
+    next_start = m_since_epoch.astype("datetime64[M]").astype("datetime64[D]")
+    return next_start - np.timedelta64(1, "D")
+
+
+def generate_subscriptions_bulk(
+    eligible_ck: np.ndarray,
+    eligible_lo: np.ndarray,
+    eligible_hi: np.ndarray,
+    eligible_span: np.ndarray,
+    plan_keys: np.ndarray,
+    plan_cycle_prices: np.ndarray,
+    plan_cycle_months: np.ndarray,
+    unique_types: np.ndarray,
+    type_members: List[np.ndarray],
+    type_weights: np.ndarray,
+    g_end_ns: int,
+    max_subs: int,
+    avg_subscriptions: float,
+    churn_rate: float,
+    trial_rate: float,
+    trial_conversion_rate: float,
+    trial_days: int,
+    rng: np.random.Generator,
+    sub_key_start: int = 1,
+) -> pa.Table:
+    """Generate all subscription billing-period rows in vectorized bulk.
+
+    Replaces the per-customer Python loop with array operations.
+    Returns a PyArrow Table ready for writing.
+    """
+    n_eligible = len(eligible_ck)
+    if n_eligible == 0:
+        return bridge_schema().empty_table()
+
+    # ------------------------------------------------------------------
+    # 1. Generate subscription counts per customer (vectorized)
+    # ------------------------------------------------------------------
+    n_subs_arr = np.clip(
+        rng.poisson(avg_subscriptions, size=n_eligible),
+        1, max_subs,
+    ).astype(np.int32)
+
+    total_subs = int(n_subs_arr.sum())
+
+    # Customer index for each subscription
+    cust_idx = np.repeat(np.arange(n_eligible, dtype=np.int32), n_subs_arr)
+
+    # ------------------------------------------------------------------
+    # 2. Plan selection — must respect diverse type selection per customer
+    #    Loop over customers but the inner work is minimal (RNG + indexing)
+    # ------------------------------------------------------------------
+    sub_plan_idx = np.empty(total_subs, dtype=np.int32)
+    pos = 0
+    for i in range(n_eligible):
+        ns = int(n_subs_arr[i])
+        chosen = choose_plans_diverse(rng, ns, unique_types, type_members, type_weights)
+        sub_plan_idx[pos:pos + len(chosen)] = chosen
+        pos += len(chosen)
+    # Trim if choose_plans_diverse returned fewer than requested
+    total_subs = pos
+    cust_idx = cust_idx[:total_subs]
+    sub_plan_idx = sub_plan_idx[:total_subs]
+
+    # ------------------------------------------------------------------
+    # 3. Subscription start offsets (vectorized per customer group)
+    # ------------------------------------------------------------------
+    # Generate random offsets then sort within each customer
+    span_days = eligible_span[cust_idx]
+    max_offset = np.maximum(span_days - 30, 1)
+    raw_offsets = (rng.random(total_subs) * max_offset).astype(np.int64)
+
+    # Sort offsets within each customer's contiguous block
+    _starts = np.zeros(n_eligible + 1, dtype=np.int64)
+    np.cumsum(n_subs_arr, out=_starts[1:])
+    for i in range(n_eligible):
+        lo, hi = int(_starts[i]), int(_starts[i + 1])
+        if hi - lo > 1:
+            raw_offsets[lo:hi] = np.sort(raw_offsets[lo:hi])
+
+    # ------------------------------------------------------------------
+    # 4. Subscription attributes (vectorized)
+    # ------------------------------------------------------------------
+    lo_ns = eligible_lo[cust_idx]
+    hi_ns = eligible_hi[cust_idx]
+    sub_ns = lo_ns + raw_offsets * _NS_PER_DAY
+
+    cycle_months = plan_cycle_months[sub_plan_idx]
+    cycle_prices = plan_cycle_prices[sub_plan_idx]
+    pk_arr = plan_keys[sub_plan_idx]
+    ck_arr = eligible_ck[cust_idx]
+
+    # Duration: geometric distribution for number of billing periods
+    n_billing_periods = np.clip(rng.geometric(0.3, size=total_subs), 1, 100).astype(np.int32)
+    base_duration_days = cycle_months.astype(np.int64) * 30 * n_billing_periods.astype(np.int64)
+
+    # Trial / churn decisions (vectorized)
+    has_trial = rng.random(total_subs) < trial_rate
+    converts = np.ones(total_subs, dtype=bool)
+    trial_mask = has_trial
+    converts[trial_mask] = rng.random(int(trial_mask.sum())) < trial_conversion_rate
+
+    is_churned = rng.random(total_subs) < churn_rate
+    end_ns = sub_ns + base_duration_days * _NS_PER_DAY
+
+    # Cancel logic
+    cancel_ns = np.full(total_subs, -1, dtype=np.int64)  # -1 = no cancel
+    no_convert = ~converts
+    cancel_ns[no_convert] = sub_ns[no_convert]
+    churn_ok = is_churned & converts & (end_ns <= hi_ns)
+    cancel_ns[churn_ok] = end_ns[churn_ok]
+    has_cancel = cancel_ns >= 0
+
+    # RNG consumption for payment method (maintain stream compatibility)
+    rng.choice(len(PAYMENT_METHODS), size=total_subs, p=_PAYMENT_WEIGHTS)
+
+    # ------------------------------------------------------------------
+    # 5. Compute number of billing periods per subscription (vectorized)
+    # ------------------------------------------------------------------
+    # end_ref = cancel_ns if has_cancel else g_end_ns
+    end_ref = np.where(has_cancel, cancel_ns, np.int64(g_end_ns))
+
+    sub_y, sub_m = _ns_to_year_month_arrays(sub_ns)
+    end_y, end_m = _ns_to_year_month_arrays(end_ref)
+
+    n_months_span = (end_y - sub_y) * 12 + (end_m - sub_m) + 1
+    n_months_span = np.maximum(n_months_span, 1)
+    n_periods = (n_months_span + cycle_months - 1) // cycle_months  # ceil division
+    n_periods = n_periods.astype(np.int32)
+
+    total_rows = int(n_periods.sum())
+
+    # ------------------------------------------------------------------
+    # 6. Expand to billing-period rows using np.repeat
+    # ------------------------------------------------------------------
+    sub_keys = np.arange(sub_key_start, sub_key_start + total_subs, dtype=np.int64)
+
+    r_sk = np.repeat(sub_keys, n_periods)
+    r_ck = np.repeat(ck_arr, n_periods)
+    r_pk = np.repeat(pk_arr, n_periods)
+    r_price = np.repeat(cycle_prices, n_periods)
+    r_sub_y = np.repeat(sub_y, n_periods)
+    r_sub_m = np.repeat(sub_m, n_periods)
+    r_cycle_months = np.repeat(cycle_months, n_periods)
+    r_has_cancel = np.repeat(has_cancel, n_periods)
+    r_has_trial = np.repeat(has_trial, n_periods)
+    r_n_periods = np.repeat(n_periods, n_periods)
+
+    # Period index within each subscription (0, 1, 2, ...)
+    offsets = np.zeros(total_subs + 1, dtype=np.int64)
+    np.cumsum(n_periods, out=offsets[1:])
+    period_idx = np.arange(total_rows, dtype=np.int32) - np.repeat(offsets[:-1], n_periods).astype(np.int32)
+
+    # Period start/end: advance sub_y/sub_m by period offsets
+    total_month_offset = (period_idx * r_cycle_months).astype(np.int64)
+    base_month = (r_sub_y.astype(np.int64) - 1970) * 12 + (r_sub_m.astype(np.int64) - 1)
+
+    abs_month = base_month + total_month_offset
+    ps_year = (abs_month // 12 + 1970).astype(np.int32)
+    ps_month = (abs_month % 12 + 1).astype(np.int32)
+    period_start = _month_start_dates(ps_year, ps_month)
+
+    abs_end_month = base_month + total_month_offset + (r_cycle_months - 1).astype(np.int64)
+    pe_year = (abs_end_month // 12 + 1970).astype(np.int32)
+    pe_month = (abs_end_month % 12 + 1).astype(np.int32)
+    period_end = _month_end_dates(pe_year, pe_month)
+
+    # Flags
+    billing_cycle = (period_idx + 1).astype(np.int32)
+    is_first = (period_idx == 0).astype(np.int8)
+    is_last = (period_idx == r_n_periods - 1)
+    is_churn = (is_last & r_has_cancel).astype(np.int8)
+    is_trial_period = (is_first.astype(bool) & r_has_trial).astype(np.int8)
+
+    # Trial periods have price = 0
+    r_price = np.where(is_trial_period, 0.0, r_price)
+
+    # ------------------------------------------------------------------
+    # 7. Build Arrow table
+    # ------------------------------------------------------------------
+    schema = bridge_schema()
+    table = pa.Table.from_arrays(
+        [
+            pa.array(r_sk),
+            pa.array(r_ck),
+            pa.array(r_pk.astype(np.int32)),
+            pa.array(period_start),
+            pa.array(period_end),
+            pa.array(r_price),
+            pa.array(is_first),
+            pa.array(is_churn),
+            pa.array(is_trial_period),
+            pa.array(billing_cycle),
+        ],
+        schema=schema,
+    )
+
+    return table

@@ -155,7 +155,7 @@ SELECT
     MONTH(SnapshotDate)                                             AS SnapMonth,
     COUNT(*)                                                        AS SnapshotRows,
     COUNT(DISTINCT ProductKey)                                      AS UniqueProducts,
-    COUNT(DISTINCT StoreKey)                                        AS UniqueStores
+    COUNT(DISTINCT WarehouseKey)                                     AS UniqueWarehouses
 FROM InventorySnapshot
 GROUP BY YEAR(SnapshotDate), MONTH(SnapshotDate)
 ORDER BY SnapYear, SnapMonth;

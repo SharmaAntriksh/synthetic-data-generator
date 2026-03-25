@@ -1,27 +1,23 @@
 """Parallel bridge writer — worker task + orchestrator + chunk merger."""
 from __future__ import annotations
 
-from datetime import date
 from multiprocessing import cpu_count
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.utils.logging_utils import info
 
-from .catalog import PAYMENT_METHODS, _PAYMENT_WEIGHTS
 from .helpers import (
     SubscriptionsCfg,
     _NS_PER_DAY,
     bridge_schema,
     build_type_groups,
-    choose_plans_diverse,
     compute_customer_windows,
-    expand_subscription_periods,
+    generate_subscriptions_bulk,
     write_empty_bridge,
 )
 
@@ -40,7 +36,6 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
         g_end_ns, max_subs,
         avg_subscriptions, churn_rate, trial_rate, trial_conversion_rate,
         trial_days,
-        payment_weights,
         out_chunk_path,
     ) = args
 
@@ -48,115 +43,31 @@ def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
     child_seeds = ss.spawn(n_chunks)
     rng = np.random.default_rng(child_seeds[chunk_idx])
 
-    n_eligible = len(eligible_ck)
-    schema = bridge_schema()
+    table = generate_subscriptions_bulk(
+        eligible_ck=eligible_ck,
+        eligible_lo=eligible_lo,
+        eligible_hi=eligible_hi,
+        eligible_span=eligible_span,
+        plan_keys=plan_keys,
+        plan_cycle_prices=plan_cycle_prices,
+        plan_cycle_months=plan_cycle_months,
+        unique_types=unique_types,
+        type_members=type_members,
+        type_weights=type_weights,
+        g_end_ns=g_end_ns,
+        max_subs=max_subs,
+        avg_subscriptions=avg_subscriptions,
+        churn_rate=churn_rate,
+        trial_rate=trial_rate,
+        trial_conversion_rate=trial_conversion_rate,
+        trial_days=trial_days,
+        rng=rng,
+    )
 
-    all_sk: List[int] = []
-    all_ck: List[int] = []
-    all_pk: List[int] = []
-    all_ps: List[date] = []
-    all_pe: List[date] = []
-    all_price: List[float] = []
-    all_first: List[int] = []
-    all_churn: List[int] = []
-    all_trial: List[int] = []
-    all_cycle: List[int] = []
-
-    local_sub_key = 1
-
-    for i in range(n_eligible):
-        ck = int(eligible_ck[i])
-        lo_ns = int(eligible_lo[i])
-        hi_ns = int(eligible_hi[i])
-        span_days = int(eligible_span[i])
-
-        n_subs = max(1, int(rng.poisson(avg_subscriptions)))
-        n_subs = min(n_subs, max_subs)
-
-        chosen_idx = choose_plans_diverse(
-            rng, n_subs, unique_types, type_members, type_weights,
-        )
-        n_subs = len(chosen_idx)
-        sub_offsets = np.sort(rng.integers(0, max(span_days - 30, 1), size=n_subs))
-
-        for s in range(n_subs):
-            pidx = chosen_idx[s]
-            pk = int(plan_keys[pidx])
-
-            sub_ns = lo_ns + int(sub_offsets[s]) * _NS_PER_DAY
-
-            cycle_months = int(plan_cycle_months[pidx])
-            n_periods = max(1, int(rng.geometric(0.3)))
-            base_duration_days = cycle_months * 30 * n_periods
-
-            cprice = float(plan_cycle_prices[pidx])
-
-            has_trial = rng.random() < trial_rate
-            trial_end_ns: Optional[int] = int(sub_ns + trial_days * _NS_PER_DAY) if has_trial else None
-            converts = rng.random() < trial_conversion_rate if has_trial else True
-
-            is_churned = rng.random() < churn_rate
-            end_ns = sub_ns + int(base_duration_days) * _NS_PER_DAY
-
-            if not converts:
-                cancel_ns: Optional[int] = int(sub_ns)
-            elif is_churned and end_ns <= hi_ns:
-                cancel_ns = int(end_ns)
-            else:
-                cancel_ns = None
-
-            # RNG consumption for payment method (maintain stream compatibility)
-            rng.choice(len(PAYMENT_METHODS), p=payment_weights)
-
-            (
-                sk, ck_l, pk_l, ps, pe, pr,
-                first, churn, trial, cyc,
-            ) = expand_subscription_periods(
-                sub_key=local_sub_key,
-                ck=ck,
-                pk=pk,
-                sub_ns=sub_ns,
-                cancel_ns=cancel_ns,
-                trial_end_ns=trial_end_ns,
-                cycle_months=cycle_months,
-                cycle_price=cprice,
-                g_end_ns=int(g_end_ns),
-            )
-
-            all_sk.extend(sk)
-            all_ck.extend(ck_l)
-            all_pk.extend(pk_l)
-            all_ps.extend(ps)
-            all_pe.extend(pe)
-            all_price.extend(pr)
-            all_first.extend(first)
-            all_churn.extend(churn)
-            all_trial.extend(trial)
-            all_cycle.extend(cyc)
-
-            local_sub_key += 1
-
-    n_rows = len(all_sk)
-
+    n_rows = len(table)
     if n_rows > 0:
         out_path = Path(out_chunk_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        table = pa.Table.from_arrays(
-            [
-                pa.array(all_sk, type=pa.int64()),
-                pa.array(all_ck, type=pa.int64()),
-                pa.array(all_pk, type=pa.int32()),
-                pa.array(all_ps, type=pa.date32()),
-                pa.array(all_pe, type=pa.date32()),
-                pa.array(all_price, type=pa.float64()),
-                pa.array(all_first, type=pa.int8()),
-                pa.array(all_churn, type=pa.int8()),
-                pa.array(all_trial, type=pa.int8()),
-                pa.array(all_cycle, type=pa.int32()),
-            ],
-            schema=schema,
-        )
         pq.write_table(table, out_chunk_path, compression="snappy", row_group_size=500_000)
 
     return {"chunk_idx": chunk_idx, "rows": n_rows}
@@ -288,7 +199,6 @@ def write_bridge_parallel(
             c.trial_rate,
             c.trial_conversion_rate,
             c.trial_days,
-            _PAYMENT_WEIGHTS,
             chunk_path,
         ))
 

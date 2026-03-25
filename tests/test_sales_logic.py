@@ -1492,11 +1492,11 @@ class TestComputeInventorySnapshots:
         """Create minimal demand data for inventory simulation."""
         rows = []
         for pk in [1, 2]:
-            for sk in [1, 2]:
+            for wk in [1, 2]:
                 for month in range(1, 7):
                     rows.append({
                         "ProductKey": pk,
-                        "StoreKey": sk,
+                        "WarehouseKey": wk,
                         "Year": 2023,
                         "Month": month,
                         "QuantitySold": 10 + month,
@@ -1527,7 +1527,7 @@ class TestComputeInventorySnapshots:
         assert "StockoutFlag" in result.columns
 
     def test_empty_demand_returns_empty(self):
-        demand = pd.DataFrame(columns=["ProductKey", "StoreKey", "Year", "Month", "QuantitySold"])
+        demand = pd.DataFrame(columns=["ProductKey", "WarehouseKey", "Year", "Month", "QuantitySold"])
         icfg = InventoryConfig(enabled=True)
         result = compute_inventory_snapshots(demand, ".", icfg)
         assert result.empty
@@ -1570,7 +1570,7 @@ class TestComputeInventorySnapshots:
     def test_min_demand_months_filters(self):
         """Pairs with fewer demand months than threshold are excluded."""
         rows = [
-            {"ProductKey": 1, "StoreKey": 1, "Year": 2023, "Month": 1, "QuantitySold": 10},
+            {"ProductKey": 1, "WarehouseKey": 1, "Year": 2023, "Month": 1, "QuantitySold": 10},
         ]
         demand = pd.DataFrame(rows)
         icfg = InventoryConfig(enabled=True, min_demand_months=3)

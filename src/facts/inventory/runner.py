@@ -3,10 +3,11 @@
 Called from sales_runner.py after sales generation completes.
 Uses the InventoryAccumulator that was populated during sales generation.
 
-For large datasets (many product-store pairs), partitions demand by store
-groups and runs the simulation in parallel across multiple processes.
-Each worker writes its own chunk files directly (CSV + parquet), avoiding
-the need to build a single massive DataFrame in one process.
+For large datasets (many product-warehouse pairs), partitions demand by
+warehouse groups and runs the simulation in parallel across multiple
+processes.  Each worker writes its own chunk files directly (CSV +
+parquet), avoiding the need to build a single massive DataFrame in one
+process.
 
 After parallel chunks are written, they are merged into a single Parquet
 file (like Sales).  For deltaparquet mode, chunks are consolidated into a
@@ -35,6 +36,42 @@ from .worker import _inventory_worker_task, _cast_snapshot_date, _prepare_csv as
 from src.defaults import INVENTORY_PARALLEL_THRESHOLD as _PARALLEL_THRESHOLD
 
 
+def _rollup_demand_to_warehouse(
+    demand: pd.DataFrame,
+    parquet_dims: Path,
+) -> pd.DataFrame:
+    """Aggregate store-level demand to warehouse-level.
+
+    Replaces StoreKey with WarehouseKey and re-sums QuantitySold
+    so the inventory engine operates at warehouse grain.
+    """
+    stores_path = parquet_dims / "stores.parquet"
+    if not stores_path.exists():
+        raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
+
+    stores = pd.read_parquet(str(stores_path), columns=["StoreKey", "WarehouseKey"])
+    sk_to_wk = dict(zip(
+        stores["StoreKey"].astype(np.int32),
+        stores["WarehouseKey"].astype(np.int32),
+    ))
+
+    demand = demand.copy()
+    demand["WarehouseKey"] = demand["StoreKey"].map(sk_to_wk).fillna(-1).astype(np.int32)
+    demand = demand[demand["WarehouseKey"] >= 0]
+
+    # Re-aggregate at warehouse grain
+    rolled = (
+        demand
+        .groupby(["ProductKey", "WarehouseKey", "Year", "Month"], sort=False)["QuantitySold"]
+        .sum()
+        .reset_index()
+    )
+
+    info(f"Demand rolled up: {len(sk_to_wk)} stores -> {len(set(sk_to_wk.values()))} warehouses")
+
+    return rolled
+
+
 def _recompute_abc_from_demand(
     demand: pd.DataFrame,
     product_attrs_arrays: Dict[str, np.ndarray],
@@ -42,10 +79,10 @@ def _recompute_abc_from_demand(
     """Recompute ABCClassification from actual sales volume.
 
     Ranks products by total QuantitySold across all stores and months:
-      - Top 20% by volume → A
-      - Next 30% → B
-      - Bottom 50% → C
-      - Products with zero sales → C
+      - Top 20% by volume -> A
+      - Next 30% -> B
+      - Bottom 50% -> C
+      - Products with zero sales -> C
     """
     vol = demand.groupby("ProductKey", sort=False)["QuantitySold"].sum()
     if vol.empty:
@@ -60,7 +97,7 @@ def _recompute_abc_from_demand(
     )
     vol_abc = dict(zip(vol.index, abc))
 
-    # Vectorised override: map product keys → volume-based ABC;
+    # Vectorised override: map product keys -> volume-based ABC;
     # products with no sales default to C
     pa_pk = product_attrs_arrays["ProductKey"]
     vol_abc_series = pd.Series(vol_abc)
@@ -76,7 +113,7 @@ def _recompute_abc_from_demand(
         f"ABC reclassified from sales volume: "
         f"{(pa_abc == 'A').sum()} A, {(pa_abc == 'B').sum()} B, "
         f"{(pa_abc == 'C').sum()} C "
-        f"({updated} from sales, {no_sales} no-sales → C)"
+        f"({updated} from sales, {no_sales} no-sales -> C)"
     )
     return product_attrs_arrays
 
@@ -95,7 +132,7 @@ def _update_product_profile_abc(
     if not pp_path.exists():
         return
 
-    # Build ProductKey → ABC from demand-recomputed attrs (current versions)
+    # Build ProductKey -> ABC from demand-recomputed attrs (current versions)
     new_abc = product_attrs_arrays["ABCClassification"]
     pa_pk = product_attrs_arrays["ProductKey"]
     abc_by_pk: Dict[int, str] = dict(zip(pa_pk, new_abc))
@@ -109,7 +146,7 @@ def _update_product_profile_abc(
             )
             pk_arr = prods["ProductKey"].to_numpy(dtype=np.int64)
             bpk_arr = prods["BaseProductKey"].to_numpy(dtype=np.int64)
-            # Pass 1: build BaseProductKey → ABC from known current-version keys
+            # Pass 1: build BaseProductKey -> ABC from known current-version keys
             abc_by_base: Dict[int, str] = {}
             for pk_int, bpk_int in zip(pk_arr, bpk_arr):
                 if pk_int in abc_by_pk and bpk_int not in abc_by_base:
@@ -161,16 +198,23 @@ def run_inventory_pipeline(
 
     demand = accumulator.finalize()
 
-    # Single groupby for both metrics (avoids 2 redundant O(n log n) passes)
-    _pair_groups = demand.groupby(["ProductKey", "StoreKey"])
+    # ABC reclassification needs store-level demand (before rollup)
+    # so we save a reference before aggregating to warehouse grain.
+    store_demand = demand
+
+    # Roll up store-level demand to warehouse-level
+    demand = _rollup_demand_to_warehouse(demand, parquet_dims)
+
+    # Single groupby for both metrics
+    _pair_groups = demand.groupby(["ProductKey", "WarehouseKey"])
     n_pairs = _pair_groups.ngroups
     qualified_pairs = int((_pair_groups.size() >= icfg.min_demand_months).sum())
-    n_stores = demand["StoreKey"].nunique()
+    n_warehouses = demand["WarehouseKey"].nunique()
     from src.utils.output_utils import format_number_short
     info(
         f"Inventory demand: {format_number_short(len(demand))} monthly rows "
-        f"({format_number_short(n_pairs)} product-store pairs, "
-        f"{n_stores} stores, {demand['Year'].nunique()} years)"
+        f"({format_number_short(n_pairs)} product-warehouse pairs, "
+        f"{n_warehouses} warehouses, {demand['Year'].nunique()} years)"
     )
 
     inv_out = fact_out / "inventory"
@@ -198,16 +242,16 @@ def run_inventory_pipeline(
     # low-price products (e.g. Tailspin Toys) are correctly classified as A.
     if product_attrs_arrays is not None and "ABCClassification" in product_attrs_arrays:
         product_attrs_arrays = _recompute_abc_from_demand(
-            demand, product_attrs_arrays,
+            store_demand, product_attrs_arrays,
         )
         # Write updated ABC back to product_profile so Power BI sees it
         _update_product_profile_abc(parquet_dims, product_attrs_arrays)
 
     csv_chunk_size = int(getattr(sales_cfg, "chunk_size", 2_000_000))
 
-    if qualified_pairs >= _PARALLEL_THRESHOLD and n_stores >= 2:
+    if qualified_pairs >= _PARALLEL_THRESHOLD and n_warehouses >= 2:
         result = _run_parallel(
-            demand, parquet_dims, icfg, inv_out, file_format, n_stores,
+            demand, parquet_dims, icfg, inv_out, file_format, n_warehouses,
             workers=workers,
             merge_enabled=merge_enabled,
             merge_file=merge_file,
@@ -271,26 +315,26 @@ def _run_single(
     if n_rows > 0:
         stockout_pct = float(snapshots["StockoutFlag"].sum()) / n_rows * 100
 
-    n_pairs = demand.groupby(["ProductKey", "StoreKey"]).ngroups
+    n_pairs = demand.groupby(["ProductKey", "WarehouseKey"]).ngroups
     return {
         "rows": n_rows,
-        "product_store_pairs": n_pairs,
+        "product_warehouse_pairs": n_pairs,
         "stockout_pct": round(stockout_pct, 2),
     }
 
 
 # ------------------------------------------------------------------
-# Parallel path (partitioned by store groups)
+# Parallel path (partitioned by warehouse groups)
 # ------------------------------------------------------------------
 
-def _partition_demand_by_store(
+def _partition_demand_by_warehouse(
     demand: pd.DataFrame,
     n_chunks: int,
 ) -> list[pd.DataFrame]:
-    """Split demand into n_chunks groups by StoreKey (round-robin)."""
-    unique_stores = np.sort(demand["StoreKey"].unique())
-    store_to_chunk = {s: i % n_chunks for i, s in enumerate(unique_stores)}
-    chunk_id = demand["StoreKey"].map(store_to_chunk)
+    """Split demand into n_chunks groups by WarehouseKey (round-robin)."""
+    unique_wh = np.sort(demand["WarehouseKey"].unique())
+    wh_to_chunk = {w: i % n_chunks for i, w in enumerate(unique_wh)}
+    chunk_id = demand["WarehouseKey"].map(wh_to_chunk)
     return [group_df for _, group_df in demand.groupby(chunk_id, sort=False)]
 
 
@@ -298,7 +342,7 @@ def _demand_to_arrays(df: pd.DataFrame) -> Dict[str, np.ndarray]:
     """Convert demand DataFrame to dict of numpy arrays for pickling."""
     return {
         "ProductKey": df["ProductKey"].to_numpy(copy=True),
-        "StoreKey": df["StoreKey"].to_numpy(copy=True),
+        "WarehouseKey": df["WarehouseKey"].to_numpy(copy=True),
         "Year": df["Year"].to_numpy(copy=True),
         "Month": df["Month"].to_numpy(copy=True),
         "QuantitySold": df["QuantitySold"].to_numpy(copy=True),
@@ -311,7 +355,7 @@ def _run_parallel(
     icfg: InventoryConfig,
     inv_out: Path,
     file_format: str,
-    n_stores: int,
+    n_warehouses: int,
     workers: Optional[int] = None,
     merge_enabled: bool = True,
     merge_file: str = "inventory_snapshot.parquet",
@@ -321,23 +365,23 @@ def _run_parallel(
     compression: str = "snappy",
     csv_chunk_size: int = 2_000_000,
 ) -> Dict[str, Any]:
-    """Partition by store groups and run simulation in parallel."""
+    """Partition by warehouse groups and run simulation in parallel."""
     from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
 
     n_cpus = max(1, cpu_count() - 1)
     if workers is not None and workers >= 1:
         n_cpus = min(n_cpus, workers)
 
-    n_chunks = min(n_stores, n_cpus * 2)
+    n_chunks = min(n_warehouses, n_cpus * 2)
     n_chunks = max(2, n_chunks)
 
-    partitions = _partition_demand_by_store(demand, n_chunks)
+    partitions = _partition_demand_by_warehouse(demand, n_chunks)
     partitions = [p for p in partitions if len(p) > 0]
     n_chunks = len(partitions)
 
     n_workers = min(n_chunks, n_cpus)
 
-    info(f"Inventory parallel: {n_chunks} store-group chunks across {n_workers} workers")
+    info(f"Inventory parallel: {n_chunks} warehouse-group chunks across {n_workers} workers")
 
     icfg_dict = dataclasses.asdict(icfg)
     parquet_dims_str = str(parquet_dims)
@@ -414,10 +458,10 @@ def _run_parallel(
             if file_format == "csv":
                 _merge_csv_chunks(inv_out, chunk_size=csv_chunk_size, delete_chunks=delete_chunks)
 
-    n_pairs = demand.groupby(["ProductKey", "StoreKey"]).ngroups
+    n_pairs = demand.groupby(["ProductKey", "WarehouseKey"]).ngroups
     return {
         "rows": total_rows,
-        "product_store_pairs": n_pairs,
+        "product_warehouse_pairs": n_pairs,
         "stockout_pct": round(stockout_pct, 2),
         "chunks": completed,
     }
