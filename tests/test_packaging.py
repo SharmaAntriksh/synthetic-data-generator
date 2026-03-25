@@ -222,7 +222,7 @@ class TestSQLDDLGeneration:
     def test_create_table_drop_uses_object_id(self):
         cols = (("Id", "INT NOT NULL"),)
         sql = create_table_from_schema("Products", cols, schema="dbo")
-        assert "OBJECT_ID(N'dbo.Products'" in sql
+        assert "OBJECT_ID(N'[dbo].[Products]'" in sql
 
     def test_all_static_schemas_generate_valid_sql(self):
         """Every table in STATIC_SCHEMAS should produce valid-looking SQL."""

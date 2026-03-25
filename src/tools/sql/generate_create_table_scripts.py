@@ -92,12 +92,11 @@ def create_table_from_schema(
     _validate_sql_identifier(table_name, "table name")
     _validate_sql_identifier(schema, "schema name")
     fq_table = _qualify(schema, table_name)
-    object_id_name = _sql_escape_literal(f"{schema}.{table_name}")
 
     lines: list[str] = []
     if drop_existing:
         lines.append(
-            f"IF OBJECT_ID(N'{object_id_name}', N'U') IS NOT NULL\n"
+            f"IF OBJECT_ID(N'{_sql_escape_literal(fq_table)}', N'U') IS NOT NULL\n"
             f"    DROP TABLE {fq_table};"
         )
         if include_go:

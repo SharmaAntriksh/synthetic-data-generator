@@ -8,7 +8,10 @@ import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-import pyodbc
+try:
+    import pyodbc
+except ImportError:
+    pyodbc = None  # type: ignore[assignment]
 
 def _find_project_root() -> Path:
     """Walk up from this file to find the repo root (contains main.py)."""
@@ -124,7 +127,7 @@ def _fast_rowcount(cursor: "pyodbc.Cursor", schema: str, table: str) -> int:
         "SELECT COALESCE(SUM(row_count),0) "
         "FROM sys.dm_db_partition_stats "
         "WHERE object_id = OBJECT_ID(?) AND index_id IN (0,1);",
-        f"{schema}.{table}",
+        f"[{schema}].[{table}]",
     )
     return int(cursor.fetchone()[0])
 
@@ -699,6 +702,11 @@ def import_sql_server(
     drop_pk: bool = False,
     verify: bool = False,
 ) -> None:
+    if pyodbc is None:
+        raise SqlServerImportError(
+            "pyodbc is required for SQL Server import. "
+            "Install it with: pip install pyodbc"
+        )
     import time as _time
 
     run_dir = Path(run_dir)
