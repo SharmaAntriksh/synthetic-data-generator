@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import info
 
 from .helpers import (
@@ -131,7 +132,7 @@ def write_bridge_parallel(
     from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
 
     if "CustomerKey" not in customers.columns:
-        raise KeyError("customers must include CustomerKey")
+        raise DimensionError("customers must include CustomerKey")
 
     plan_keys = dim_plans["PlanKey"].astype(np.int32).to_numpy()
     plan_types = dim_plans["PlanType"].astype(str).to_numpy()

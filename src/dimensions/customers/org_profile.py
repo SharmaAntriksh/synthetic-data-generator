@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from src.exceptions import ValidationError
 from src.utils.name_pools import PeopleNamePools, slugify_domain_label
 from src.defaults import (
     CUSTOMER_STREET_NAMES as _STREET_NAMES,
@@ -38,7 +39,7 @@ for _pname, _parr in [
     ("_ORG_SIZE_PROBS", _ORG_SIZE_PROBS),
 ]:
     if abs(float(_parr.sum()) - 1.0) > 1e-6:
-        raise ValueError(f"org_profile.{_pname} sums to {float(_parr.sum())}, expected 1.0")
+        raise ValidationError(f"org_profile.{_pname} sums to {float(_parr.sum())}, expected 1.0")
 del _pname, _parr
 
 _ORG_REVENUE_PARAMS = {

@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils.config_helpers import as_dict as _as_dict, int_or as _int_or
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
@@ -54,7 +55,7 @@ def _maybe_override_rows(dim_cfg: Dict[str, Any], required_cols: Sequence[str]) 
 
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        raise ValueError(f"Override rows missing required columns: {missing}")
+        raise DimensionError(f"Override rows missing required columns: {missing}")
     return df[required_cols].copy()
 
 
@@ -267,7 +268,7 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         df = pd.DataFrame(override_rows)
         missing = [c for c in base_required if c not in df.columns]
         if missing:
-            raise ValueError(f"Override rows missing required columns: {missing}")
+            raise DimensionError(f"Override rows missing required columns: {missing}")
 
         df = _derive_flags(df)
 

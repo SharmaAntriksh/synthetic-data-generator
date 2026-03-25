@@ -5,6 +5,7 @@ from typing import Optional
 
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils import warn
 
 from .helpers import _clamp_month, _safe_parse_as_of
@@ -25,7 +26,7 @@ def generate_date_table(
     start_date = pd.to_datetime(start_date).normalize()
     end_date = pd.to_datetime(end_date).normalize()
     if end_date < start_date:
-        raise ValueError(
+        raise DimensionError(
             f"end_date ({end_date}) must be >= start_date ({start_date}); "
             "check defaults.dates.start/end in config.yaml"
         )

@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from src.engine.config.config_schema import AppConfig
+from src.exceptions import DimensionError
 
 # ---------------------------------------------------------------------------
 # Stores
@@ -178,7 +179,7 @@ class TestGenerateStoreTable:
         assert len(df0) == 6
 
     def test_empty_geo_keys_raises(self):
-        with pytest.raises(ValueError, match="non-empty"):
+        with pytest.raises(DimensionError, match="non-empty"):
             generate_store_table(
                 geo_keys=np.array([], dtype=np.int64),
                 num_stores=5,
@@ -288,7 +289,7 @@ class TestGenerateDateTable:
         assert int(df["FiscalMonthNumber"].iloc[0]) == 1
 
     def test_end_before_start_raises(self):
-        with pytest.raises(ValueError, match="end_date"):
+        with pytest.raises(DimensionError, match="end_date"):
             self._make("2024-03-01", "2024-01-01")
 
     def test_single_day(self):
@@ -373,19 +374,19 @@ class TestBuildDimCurrency:
         assert list(df["CurrencyCode"]) == ["USD", "JPY"]
 
     def test_duplicate_raises(self):
-        with pytest.raises(ValueError, match="Duplicate"):
+        with pytest.raises(DimensionError, match="Duplicate"):
             build_dim_currency(["USD", "USD"])
 
     def test_invalid_code_raises(self):
-        with pytest.raises(ValueError, match="3 letters"):
+        with pytest.raises(DimensionError, match="3 letters"):
             build_dim_currency(["US"])
 
     def test_empty_list_raises(self):
-        with pytest.raises(ValueError, match="non-empty"):
+        with pytest.raises(DimensionError, match="non-empty"):
             build_dim_currency([])
 
     def test_non_alpha_raises(self):
-        with pytest.raises(ValueError, match="3 letters"):
+        with pytest.raises(DimensionError, match="3 letters"):
             build_dim_currency(["U1D"])
 
     def test_currency_key_unique(self):
@@ -508,7 +509,7 @@ class TestGeneratePromotionsCatalog:
             assert df[col].notna().all(), f"NaN in {col}"
 
     def test_empty_years_raises(self):
-        with pytest.raises(ValueError, match="No years"):
+        with pytest.raises(DimensionError, match="No years"):
             generate_promotions_catalog(years=[], year_windows={}, seed=42)
 
     def test_multi_year_span(self):
@@ -803,7 +804,7 @@ class TestGenerateEmployeeDimension:
         empty = pd.DataFrame(columns=[
             "StoreKey", "GeographyKey", "EmployeeCount", "StoreType",
         ])
-        with pytest.raises(ValueError, match="empty"):
+        with pytest.raises(DimensionError, match="empty"):
             generate_employee_dimension(
                 stores=empty,
                 seed=42,
@@ -1032,7 +1033,7 @@ class TestCustomerGenerator:
              patch("src.dimensions.customers.generator.resolve_org_names_file", return_value="fake_org.csv"), \
              patch("src.dimensions.customers.generator.load_org_names", return_value=self._fake_org_names()), \
              patch("src.dimensions.customers.generator.load_people_pools", return_value=None):
-            with pytest.raises(ValueError, match="must be > 0"):
+            with pytest.raises(DimensionError, match="must be > 0"):
                 generate_synthetic_customers(cfg, Path("/tmp/fake"))
 
     def test_geography_distribution(self):
@@ -1106,7 +1107,7 @@ class TestBuildYearWindows:
         assert windows[2024][1] == pd.Timestamp("2024-03-15")
 
     def test_end_before_start_raises(self):
-        with pytest.raises(ValueError, match="end < start"):
+        with pytest.raises(DimensionError, match="end < start"):
             _build_year_windows(
                 pd.Timestamp("2024-12-31"), pd.Timestamp("2024-01-01")
             )

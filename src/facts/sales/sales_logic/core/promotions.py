@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from src.exceptions import SalesError
+
 
 # ----------------------------------------------------------------
 # Helpers
@@ -95,9 +97,9 @@ def apply_promotions(
     if promo_start_all is None or promo_end_all is None or order_dates is None:
         return promo_keys
     if order_dates.shape[0] != n:
-        raise ValueError("order_dates length must match n")
+        raise SalesError("order_dates length must match n")
     if promo_start_all.shape[0] != P or promo_end_all.shape[0] != P:
-        raise ValueError("promo_start_all/promo_end_all must align with promo_keys_all length")
+        raise SalesError("promo_start_all/promo_end_all must align with promo_keys_all length")
 
     promo_valid_glob = (promo_keys_all != int(no_discount_key))
     if not promo_valid_glob.any():

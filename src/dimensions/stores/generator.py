@@ -7,6 +7,7 @@ from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import debug, info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
@@ -78,7 +79,7 @@ def _build_location_maps(geo: pd.DataFrame) -> tuple[dict[int, str], dict[int, s
     """
     geo = geo.copy()
     if "GeographyKey" not in geo.columns:
-        raise ValueError("geography.parquet missing required column: GeographyKey")
+        raise DimensionError("geography.parquet missing required column: GeographyKey")
 
     def col(name: str) -> pd.Series | None:
         return geo[name].astype(str) if name in geo.columns else None
@@ -132,7 +133,7 @@ def _build_location_maps(geo: pd.DataFrame) -> tuple[dict[int, str], dict[int, s
 def _require_cfg(cfg: Dict) -> Dict:
     stores_cfg = cfg.stores if hasattr(cfg, "stores") else None
     if not isinstance(stores_cfg, Mapping):
-        raise ValueError("config missing required block: stores")
+        raise DimensionError("config missing required block: stores")
     return stores_cfg
 
 
@@ -264,9 +265,9 @@ def _sample_geography_keys(
     """
     keys = np.asarray(geo_keys, dtype=np.int64)
     if keys.size == 0:
-        raise ValueError("geo_keys empty")
+        raise DimensionError("geo_keys empty")
     if n <= 0:
-        raise ValueError(f"n must be > 0, got {n}")
+        raise DimensionError(f"n must be > 0, got {n}")
 
     # Build population weights (uniform fallback if no data)
     pop_arr = np.array(
@@ -660,7 +661,7 @@ def generate_store_table(
         num_stores = _MIN_STORES
 
     if not isinstance(geo_keys, np.ndarray) or geo_keys.size == 0:
-        raise ValueError("geo_keys must be a non-empty numpy array of GeographyKey values")
+        raise DimensionError("geo_keys must be a non-empty numpy array of GeographyKey values")
 
     rng = np.random.default_rng(int_or(seed, 42))
 
@@ -677,7 +678,7 @@ def generate_store_table(
         n_online = clamped
     n_physical = num_stores - n_online
     if n_physical >= _ONLINE_SK_BASE:
-        raise ValueError(
+        raise DimensionError(
             f"Physical store count ({n_physical}) exceeds ONLINE_STORE_KEY_BASE "
             f"({_ONLINE_SK_BASE}). Max physical stores is {_ONLINE_SK_BASE - 1}."
         )

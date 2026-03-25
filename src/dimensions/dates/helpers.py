@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils import warn
 
 
@@ -55,7 +56,7 @@ def _normalize_override_dates(dates_cfg: Dict[str, Any]) -> Dict[str, Any]:
 def _require_start_end(raw_start: Any, raw_end: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
     """Parse and validate the start/end date pair, swapping if inverted."""
     if raw_start is None or raw_end is None or raw_start == "" or raw_end == "":
-        raise ValueError("Missing required start/end dates (defaults.dates or dates.override).")
+        raise DimensionError("Missing required start/end dates (defaults.dates or dates.override).")
 
     start_ts = pd.to_datetime(raw_start).normalize()
     end_ts = pd.to_datetime(raw_end).normalize()
@@ -72,10 +73,10 @@ def _safe_parse_as_of(as_of_date: Any, fallback: pd.Timestamp) -> pd.Timestamp:
     try:
         ts = pd.to_datetime(as_of_date).normalize()
     except (ValueError, TypeError) as exc:
-        raise ValueError(
+        raise DimensionError(
             f"Unable to parse as_of_date={as_of_date!r} as a date. "
             "Provide an ISO-format string like '2025-12-31'."
         ) from exc
     if pd.isna(ts):
-        raise ValueError(f"as_of_date={as_of_date!r} parsed to NaT.")
+        raise DimensionError(f"as_of_date={as_of_date!r} parsed to NaT.")
     return ts

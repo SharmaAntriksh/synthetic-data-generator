@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from src.exceptions import SalesError
 from src.facts.sales.sales_models.quantity_model import (
     _DEFAULTS,
     _load_cfg,
@@ -66,13 +67,13 @@ class TestLoadCfg:
     def test_negative_lambda_raises(self):
         State.models_cfg = {"quantity": {"base_poisson_lambda": -1.0}}
 
-        with pytest.raises(ValueError, match="must be >= 0"):
+        with pytest.raises(SalesError, match="must be >= 0"):
             _load_cfg()
 
     def test_wrong_monthly_factors_length_raises(self):
         State.models_cfg = {"quantity": {"monthly_factors": [1.0, 1.0]}}
 
-        with pytest.raises(ValueError, match="12 floats"):
+        with pytest.raises(SalesError, match="12 floats"):
             _load_cfg()
 
     def test_min_max_swap_if_inverted(self):

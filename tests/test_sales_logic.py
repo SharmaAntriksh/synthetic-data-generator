@@ -19,6 +19,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from src.exceptions import SalesError
 from src.facts.sales.sales_logic.core.orders import (
     _reset_month_demand,
     _safe_normalized_prob,
@@ -436,7 +437,7 @@ class TestApplyPromotions:
         promo_start = np.array(["2023-01-01"], dtype="datetime64[D]")  # wrong length
         promo_end = np.array(["2023-01-31", "2023-01-31"], dtype="datetime64[D]")
 
-        with pytest.raises(ValueError, match="must align"):
+        with pytest.raises(SalesError, match="must align"):
             apply_promotions(_rng(), 5, dates, promo_keys, promo_start, promo_end)
 
 
@@ -558,15 +559,15 @@ class TestSchedModeAndValues:
         assert mode == "once"
 
     def test_invalid_mode_raises(self):
-        with pytest.raises(ValueError, match="mode"):
+        with pytest.raises(SalesError, match="mode"):
             _sched_mode_and_values({"mode": "bad", "values": [1]}, "test")
 
     def test_empty_values_raises(self):
-        with pytest.raises(ValueError, match="non-empty"):
+        with pytest.raises(SalesError, match="non-empty"):
             _sched_mode_and_values({"mode": "repeat", "values": []}, "test")
 
     def test_non_dict_raises(self):
-        with pytest.raises(ValueError, match="mapping"):
+        with pytest.raises(SalesError, match="mapping"):
             _sched_mode_and_values("not a dict", "test")
 
 
@@ -590,7 +591,7 @@ class TestMacroMonthWeights:
         assert seasonal.std() > flat.std()
 
     def test_both_schedules_raises(self):
-        with pytest.raises(ValueError, match="only one"):
+        with pytest.raises(SalesError, match="only one"):
             macro_month_weights(_rng(), 12, {
                 "yoy_growth_schedule": {"mode": "repeat", "values": [0.05]},
                 "year_level_factors": {"mode": "repeat", "values": [1.0]},

@@ -1,6 +1,7 @@
 import pandas as pd
 from pathlib import Path
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import warn
 
 
@@ -42,7 +43,7 @@ def load_contoso_products(output_folder: Path):
     required = ["ProductKey", "SubcategoryKey", "ListPrice", "UnitCost"]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"Contoso products file missing required fields: {missing}")
+        raise DimensionError(f"Contoso products file missing required fields: {missing}")
 
     # Normalize dtypes (be conservative; don't over-normalize other columns)
     df["ProductKey"] = pd.to_numeric(df["ProductKey"], errors="raise").astype("int64")

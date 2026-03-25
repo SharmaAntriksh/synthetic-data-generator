@@ -9,6 +9,8 @@ from typing import Any, Dict, Tuple
 
 import pandas as pd
 
+from src.exceptions import ConfigError
+
 try:
     import numpy as _np
     _HAS_NUMPY = True
@@ -202,7 +204,7 @@ def parse_global_dates(
         return gs, ge
 
     label = f" for {dimension_name}" if dimension_name else ""
-    raise KeyError(
+    raise ConfigError(
         f"defaults.dates.start and defaults.dates.end are required{label}."
     )
 

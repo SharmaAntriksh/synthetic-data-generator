@@ -11,6 +11,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError, ValidationError
 from src.utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
 from src.utils.config_precedence import resolve_seed
@@ -104,7 +105,7 @@ for _pname, _parr in [
     ("_PAYMENT_METHOD_PROBS", _PAYMENT_METHOD_PROBS),
 ]:
     if abs(float(_parr.sum()) - 1.0) > 1e-6:
-        raise ValueError(f"generator.{_pname} sums to {float(_parr.sum())}, expected 1.0")
+        raise ValidationError(f"generator.{_pname} sums to {float(_parr.sum())}, expected 1.0")
 del _pname, _parr
 
 
@@ -144,7 +145,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     cust_cfg = cfg.customers
     total_customers = int(cust_cfg.total_customers)
     if total_customers <= 0:
-        raise ValueError("customers.total_customers must be > 0")
+        raise DimensionError("customers.total_customers must be > 0")
 
     seed = resolve_seed(cfg, cust_cfg, fallback=42)
     rng = np.random.default_rng(seed)
@@ -154,7 +155,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
 
     active_ratio = getattr(cust_cfg, "active_ratio", 1.0)
     if not isinstance(active_ratio, (int, float)) or not (0 < float(active_ratio) <= 1):
-        raise ValueError("customers.active_ratio must be a number in the range (0, 1]")
+        raise DimensionError("customers.active_ratio must be a number in the range (0, 1]")
 
     pct_india = float(cust_cfg.pct_india)
     pct_us = float(cust_cfg.pct_us)
@@ -163,7 +164,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     pct_org = float(cust_cfg.pct_org)
 
     if not np.isfinite(pct_org) or pct_org < 0 or pct_org > 100:
-        raise ValueError("customers.pct_org must be a finite number in [0, 100]")
+        raise DimensionError("customers.pct_org must be a finite number in [0, 100]")
 
     p_in, p_us, p_eu, p_as = validate_percentages(pct_india, pct_us, pct_eu, pct_asia)
 
@@ -202,12 +203,12 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
 
     N = int(total_customers)
     if N <= 0:
-        raise ValueError("Customer count must be positive")
+        raise DimensionError("Customer count must be positive")
     CustomerKey = np.arange(1, N + 1, dtype="int64")
 
     active_count = int(np.floor(N * float(active_ratio)))
     if active_count <= 0:
-        raise ValueError(
+        raise DimensionError(
             "customers.active_ratio results in zero active customers; "
             "increase active_ratio or total_customers"
         )
@@ -567,7 +568,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     else:
         tier_probs = normalize_probs(np.array(probs, dtype="float64"))
         if len(tier_probs) != len(tier_keys):
-            raise ValueError(
+            raise DimensionError(
                 f"customers.enrichment.loyalty_tier.probs_low_to_high length must match tiers "
                 f"({len(tier_keys)}), got {len(tier_probs)}"
             )

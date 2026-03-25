@@ -6,6 +6,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
@@ -107,7 +108,7 @@ def _apply_deterministic_names(
     Assigns deterministic Gender (M/F/O) and region-aware first/last/middle names.
     """
     if people_pools is None:
-        raise ValueError(
+        raise DimensionError(
             "people_pools is required for employee name generation. "
             "Ensure name pool CSV files exist under the configured people folder."
         )
@@ -355,12 +356,12 @@ def generate_employee_dimension(
         covering any date in ``[global_start, global_end]``.
     """
     if stores.empty:
-        raise ValueError("stores dataframe is empty; cannot generate employees")
+        raise DimensionError("stores dataframe is empty; cannot generate employees")
 
     required_cols = {"StoreKey", "GeographyKey", "EmployeeCount", "StoreType"}
     missing = [c for c in required_cols if c not in stores.columns]
     if missing:
-        raise ValueError(f"stores.parquet missing required columns: {missing}")
+        raise DimensionError(f"stores.parquet missing required columns: {missing}")
 
     stores = stores.copy()
     stores["StoreKey"] = stores["StoreKey"].astype(np.int32)

@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from src.exceptions import DimensionError
+
 from .helpers import (
     SubscriptionsCfg,
     _NS_PER_DAY,
@@ -28,7 +30,7 @@ def write_bridge_streaming(
     Returns number of rows written.
     """
     if "CustomerKey" not in customers.columns:
-        raise KeyError("customers must include CustomerKey")
+        raise DimensionError("customers must include CustomerKey")
 
     plan_keys = dim_plans["PlanKey"].astype(np.int32).to_numpy()
     plan_types = dim_plans["PlanType"].astype(str).to_numpy()

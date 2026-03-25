@@ -7,6 +7,7 @@ from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 from src.dimensions.geography import normalize_geography_config
+from src.exceptions import ConfigError
 
 # ---------------------------------------------------------------------------
 # Lazy YAML import (resolved once, avoids per-call try/except overhead)
@@ -82,7 +83,7 @@ def _parse_date(value: Any, label: str) -> _date:
             return _datetime.strptime(text, fmt).date()
         except ValueError:
             continue
-    raise ValueError(f"Cannot parse {label} date '{value}' (expected YYYY-MM-DD)")
+    raise ConfigError(f"Cannot parse {label} date '{value}' (expected YYYY-MM-DD)")
 
 
 def _coerce_optional_int(cfg: Dict[str, Any], key: str, section: str = "") -> None:
@@ -91,7 +92,7 @@ def _coerce_optional_int(cfg: Dict[str, Any], key: str, section: str = "") -> No
         try:
             val = int(cfg[key])
         except (ValueError, TypeError) as exc:
-            raise ValueError(f"{section}.{key} must be an integer, got {cfg[key]!r}") from exc
+            raise ConfigError(f"{section}.{key} must be an integer, got {cfg[key]!r}") from exc
         cfg[key] = val
 
 
@@ -103,9 +104,9 @@ def _coerce_optional_ratio(
         try:
             val = float(cfg[key])
         except (ValueError, TypeError) as exc:
-            raise ValueError(f"{section}.{key} must be a number, got {cfg[key]!r}") from exc
+            raise ConfigError(f"{section}.{key} must be a number, got {cfg[key]!r}") from exc
         if not 0.0 <= val <= 1.0:
-            raise ValueError(f"{section}.{key} must be between 0 and 1, got {val}")
+            raise ConfigError(f"{section}.{key} must be between 0 and 1, got {val}")
         cfg[key] = val
 
 
@@ -117,9 +118,9 @@ def _coerce_optional_positive_int(
         try:
             val = int(cfg[key])
         except (ValueError, TypeError) as exc:
-            raise ValueError(f"{section}.{key} must be an integer, got {cfg[key]!r}") from exc
+            raise ConfigError(f"{section}.{key} must be an integer, got {cfg[key]!r}") from exc
         if val <= 0:
-            raise ValueError(f"{section}.{key} must be a positive integer, got {val}")
+            raise ConfigError(f"{section}.{key} must be a positive integer, got {val}")
         cfg[key] = val
 
 
@@ -399,7 +400,7 @@ def _expand_region_mix(cfg: Dict[str, Any]) -> Dict[str, Any]:
         else:
             unknown_regions.append(name)
     if unknown_regions:
-        raise ValueError(
+        raise ConfigError(
             f"Unknown region(s) in customers.region_mix: {unknown_regions}. "
             f"Valid regions: Americas, Europe, India, Asia-Pacific "
             f"(aliases: us, usa, eu, apac)"
@@ -523,26 +524,26 @@ def _expand_products_pricing(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     pr = products.get("price_range", [10, 3000])
     if not isinstance(pr, (list, tuple)) or len(pr) < 2:
-        raise ValueError(f"products.price_range must be a 2-element list, got {pr!r}")
+        raise ConfigError(f"products.price_range must be a 2-element list, got {pr!r}")
     min_price, max_price = float(pr[0]), float(pr[1])
     if min_price < 0:
-        raise ValueError(f"products.price_range minimum must be >= 0, got {min_price}")
+        raise ConfigError(f"products.price_range minimum must be >= 0, got {min_price}")
     if max_price <= min_price:
-        raise ValueError(
+        raise ConfigError(
             f"products.price_range maximum ({max_price}) must be > minimum ({min_price})"
         )
 
     mr = products.get("margin_range", [0.20, 0.35])
     if not isinstance(mr, (list, tuple)) or len(mr) < 2:
-        raise ValueError(f"products.margin_range must be a 2-element list, got {mr!r}")
+        raise ConfigError(f"products.margin_range must be a 2-element list, got {mr!r}")
     min_margin, max_margin = float(mr[0]), float(mr[1])
     if not (0.0 <= min_margin <= 1.0) or not (0.0 <= max_margin <= 1.0):
-        raise ValueError(
+        raise ConfigError(
             f"products.margin_range values must be between 0 and 1, "
             f"got [{min_margin}, {max_margin}]"
         )
     if max_margin < min_margin:
-        raise ValueError(
+        raise ConfigError(
             f"products.margin_range maximum ({max_margin}) must be >= minimum ({min_margin})"
         )
 
@@ -612,7 +613,7 @@ def _normalize_sections(
     mapping_keys = _SECTION_MAPPING_ONLY_KEYS | _SECTION_NORMALIZERS.keys()
     for key in mapping_keys:
         if key in cfg and not isinstance(cfg[key], Mapping):
-            raise KeyError(f"Invalid '{key}' section in config (expected mapping)")
+            raise ConfigError(f"Invalid '{key}' section in config (expected mapping)")
 
     # Decide which normalizers to run
     if normalize_keys is None:
@@ -671,23 +672,22 @@ def _load_any(path: Path) -> dict:
         if isinstance(cfg, Mapping):
             return cfg
     except (json.JSONDecodeError, ValueError) as exc:
-        raise ValueError(
+        raise ConfigError(
             f"Unable to parse config file as YAML or JSON: {path}"
         ) from exc
 
-    raise ValueError(f"Unsupported or invalid config format: {path}")
+    raise ConfigError(f"Unsupported or invalid config format: {path}")
 
 
 def _load_yaml(path: Path) -> dict:
     if _yaml is None:
-        from src.exceptions import ConfigError
         raise ConfigError(
             "PyYAML is required to load .yaml/.yml config files"
         )
     with path.open("r", encoding="utf-8") as fh:
         cfg = _yaml.safe_load(fh) or {}
     if not isinstance(cfg, Mapping):
-        raise ValueError("Top-level YAML config must be a mapping/object")
+        raise ConfigError("Top-level YAML config must be a mapping/object")
     return cfg
 
 
@@ -695,7 +695,7 @@ def _load_json(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as fh:
         cfg = json.load(fh) or {}
     if not isinstance(cfg, Mapping):
-        raise ValueError("Top-level JSON config must be an object")
+        raise ConfigError("Top-level JSON config must be an object")
     return cfg
 
 
@@ -723,29 +723,29 @@ def normalize_defaults(cfg: Dict[str, Any]) -> Dict[str, Any]:
     cfg.pop("_defaults", None)
 
     if defaults_section is None:
-        raise KeyError("Missing 'defaults' (or '_defaults') section in config")
+        raise ConfigError("Missing 'defaults' (or '_defaults') section in config")
     if not isinstance(defaults_section, Mapping):
-        raise KeyError("Invalid defaults section in config (expected mapping)")
+        raise ConfigError("Invalid defaults section in config (expected mapping)")
 
     dates = defaults_section.get("dates")
     if not isinstance(dates, Mapping):
-        raise KeyError("Missing or invalid defaults.dates section in config")
+        raise ConfigError("Missing or invalid defaults.dates section in config")
 
     raw_start = dates.get("start")
     raw_end = dates.get("end")
     if raw_start is None or raw_end is None:
-        raise KeyError("Missing defaults.dates.start or defaults.dates.end in config")
+        raise ConfigError("Missing defaults.dates.start or defaults.dates.end in config")
 
     try:
         start_date = _parse_date(raw_start, "defaults.dates.start")
         end_date = _parse_date(raw_end, "defaults.dates.end")
-    except (ValueError, TypeError) as exc:
-        raise ValueError(
+    except (ValueError, TypeError, ConfigError) as exc:
+        raise ConfigError(
             "Missing or invalid defaults.dates.start/end in config.yaml"
         ) from exc
 
     if start_date >= end_date:
-        raise ValueError("Invalid defaults.dates range (start must be < end)")
+        raise ConfigError("Invalid defaults.dates range (start must be < end)")
 
     # Rebuild with canonical ISO strings
     cfg_defaults = dict(defaults_section)
@@ -767,16 +767,16 @@ def get_global_dates(cfg: Dict[str, Any]) -> Dict[str, str]:
     """
     defaults_section = cfg.get("defaults") or cfg.get("_defaults")
     if not isinstance(defaults_section, Mapping):
-        raise KeyError("Missing defaults section")
+        raise ConfigError("Missing defaults section")
 
     dates = defaults_section.get("dates")
     if not isinstance(dates, Mapping):
-        raise KeyError("Missing defaults.dates section")
+        raise ConfigError("Missing defaults.dates section")
 
     raw_start = dates.get("start")
     raw_end = dates.get("end")
     if raw_start is None or raw_end is None:
-        raise KeyError("Missing defaults.dates.start/end")
+        raise ConfigError("Missing defaults.dates.start/end")
 
     return {
         "start": _parse_date(raw_start, "defaults.dates.start").isoformat(),
@@ -794,13 +794,13 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
     # --- file_format ---
     file_format = sales_cfg.get("file_format")
     if not file_format:
-        raise KeyError("sales.file_format is required")
+        raise ConfigError("sales.file_format is required")
     file_format = str(file_format).lower()
     if file_format == "delta":
         file_format = "deltaparquet"
         sales_cfg["file_format"] = file_format
     if file_format not in _VALID_FILE_FORMATS:
-        raise ValueError(
+        raise ConfigError(
             f"sales.file_format must be one of: {', '.join(sorted(_VALID_FILE_FORMATS))}"
         )
     sales_cfg["file_format"] = file_format
@@ -811,7 +811,7 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
     )
     total_rows = int(sales_cfg["total_rows"])
     if total_rows <= 0:
-        raise ValueError(f"sales.total_rows must be a positive integer, got {total_rows}")
+        raise ConfigError(f"sales.total_rows must be a positive integer, got {total_rows}")
     sales_cfg["total_rows"] = total_rows
     sales_cfg["skip_order_cols"] = bool(sales_cfg["skip_order_cols"])
 
@@ -833,7 +833,7 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
                 sales_cfg["partition_cols"] = None
             else:
                 if not isinstance(cols, list):
-                    raise ValueError(
+                    raise ConfigError(
                         "sales.partitioning.columns must be a list of column names"
                     )
                 sales_cfg["partition_cols"] = [str(c) for c in cols]
@@ -846,7 +846,7 @@ def normalize_sales_config(sales_cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     if "partition_cols" in sales_cfg and sales_cfg["partition_cols"] is not None:
         if not isinstance(sales_cfg["partition_cols"], list):
-            raise ValueError("sales.partition_cols must be a list of column names")
+            raise ConfigError("sales.partition_cols must be a list of column names")
         sales_cfg["partition_cols"] = [str(c) for c in sales_cfg["partition_cols"]]
 
     # --- ignored keys per format (built as a set, sorted once) ---
@@ -878,7 +878,7 @@ def _validate_required_keys(
 ) -> None:
     missing = [k for k in required if k not in cfg]
     if missing:
-        raise KeyError(f"Missing required keys in '{section}' config: {missing}")
+        raise ConfigError(f"Missing required keys in '{section}' config: {missing}")
 
 
 # ---------------------------------------------------------------------------
@@ -892,13 +892,13 @@ def prepare_paths(
 ) -> Tuple[Path, Path]:
     sales_cfg = cfg.get("sales") or {}
     if not isinstance(sales_cfg, Mapping):
-        raise KeyError("Invalid sales section in config")
+        raise ConfigError("Invalid sales section in config")
 
     parquet_folder = parquet_folder_override or sales_cfg.get("parquet_folder")
     out_folder = out_folder_override or sales_cfg.get("out_folder")
 
     if not parquet_folder or not out_folder:
-        raise KeyError(
+        raise ConfigError(
             "Missing parquet/out folders. Provide overrides or set "
             "sales.parquet_folder and sales.out_folder."
         )
@@ -933,7 +933,7 @@ def normalize_customers_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         if v is not None:
             v = float(v)
             if v < 0:
-                raise ValueError(f"customers.{pct_key} must be >= 0, got {v}")
+                raise ConfigError(f"customers.{pct_key} must be >= 0, got {v}")
             cfg[pct_key] = v
     _coerce_optional_ratio(cfg, "active_ratio", "customers")
     return cfg
@@ -959,7 +959,7 @@ def normalize_promotions_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         _coerce_optional_int(cfg, k, "promotions")
         v = cfg.get(k)
         if v is not None and v < 0:
-            raise ValueError(f"promotions.{k} must be non-negative, got {v}")
+            raise ConfigError(f"promotions.{k} must be non-negative, got {v}")
     return cfg
 
 

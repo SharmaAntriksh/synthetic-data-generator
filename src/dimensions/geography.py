@@ -165,15 +165,15 @@ def _validate_cfg(cfg: Dict) -> Dict:
         raise TypeError("cfg must be a dict")
 
     if not hasattr(cfg, "geography") or not isinstance(cfg.geography, Mapping):
-        raise KeyError("Missing required config section: 'geography'")
+        raise DimensionError("Missing required config section: 'geography'")
 
     if not hasattr(cfg, "exchange_rates") or not isinstance(cfg.exchange_rates, Mapping):
-        raise KeyError("Missing required config section: 'exchange_rates'")
+        raise DimensionError("Missing required config section: 'exchange_rates'")
 
     er = cfg.exchange_rates
     currencies = list(er.from_currencies or []) + list(er.to_currencies or [])
     if not currencies:
-        raise ValueError("exchange_rates.from_currencies/to_currencies must contain at least one currency code")
+        raise DimensionError("exchange_rates.from_currencies/to_currencies must contain at least one currency code")
 
     return cfg.geography
 

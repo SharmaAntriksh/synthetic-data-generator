@@ -16,6 +16,7 @@ from ..output_paths import (
 from ..sales_logic import bind_globals, State
 from ..sales_logic.chunk_builder import reset_worker_cdf_cache
 from .schemas import build_worker_schemas
+from src.exceptions import SalesError
 from src.utils.config_helpers import int_or, float_or, str_or
 from src.utils.shared_arrays import resolve_array
 
@@ -200,12 +201,12 @@ def build_buckets_from_key(
     if key_np.size == 0:
         return []
     if key_np.min() < 0:
-        raise RuntimeError("Key values must be non-negative integers")
+        raise SalesError("Key values must be non-negative integers")
 
     max_k = int(key_np.max()) if max_key is None else int(max_key)
     K = max_k + 1
     if K > int(max_buckets):
-        raise RuntimeError(
+        raise SalesError(
             f"Refusing to allocate {K:,} buckets (max_key={max_k:,}); "
             f"set max_key/max_buckets explicitly if this is intended."
         )
@@ -306,17 +307,17 @@ def _normalize_assignment_arrays(
     if a_store.size == 0 or a_emp.size == 0:
         return None
     if a_store.shape[0] != a_emp.shape[0]:
-        raise RuntimeError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
+        raise SalesError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
 
     start_raw = np.asarray(assign_start, dtype="datetime64[D]")
     end_raw = np.asarray(assign_end, dtype="datetime64[D]")
     if start_raw.shape[0] != a_store.shape[0] or end_raw.shape[0] != a_store.shape[0]:
-        raise RuntimeError("employee assignment arrays must align (dates vs keys)")
+        raise SalesError("employee assignment arrays must align (dates vs keys)")
 
     # Optional aligned arrays
     fte = np.ones(a_store.shape[0], dtype=np.float64) if assign_fte is None else np.asarray(assign_fte, dtype=np.float64)
     if fte.shape[0] != a_store.shape[0]:
-        raise RuntimeError("employee_assign_fte must align with employee assignments")
+        raise SalesError("employee_assign_fte must align with employee assignments")
 
     is_primary = (
         np.zeros(a_store.shape[0], dtype=bool)
@@ -324,7 +325,7 @@ def _normalize_assignment_arrays(
         else np.asarray(assign_is_primary, dtype=bool)
     )
     if is_primary.shape[0] != a_store.shape[0]:
-        raise RuntimeError("employee_assign_is_primary must align with employee assignments")
+        raise SalesError("employee_assign_is_primary must align with employee assignments")
 
     FAR_FUTURE = np.datetime64("2262-04-11", "D")
     FAR_PAST = np.datetime64("1900-01-01", "D")
@@ -561,7 +562,7 @@ def _build_brand_prob_by_month_rotate_winner(
     brand_product_counts: np.ndarray | None = None,
 ) -> np.ndarray:
     if T <= 0 or B <= 0:
-        raise RuntimeError(f"Invalid T/B for brand_prob_by_month: T={T}, B={B}")
+        raise SalesError(f"Invalid T/B for brand_prob_by_month: T={T}, B={B}")
 
     year_len = max(1, int(year_len_months))
 

@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from src.exceptions import ConfigError
+from src.exceptions import ConfigError, DimensionError
 from src.utils import info, warn, skip, stage
 from src.utils.config_helpers import int_or as _int_or, bool_or as _bool_or, as_dict
 from src.utils.output_utils import write_parquet_with_date32
@@ -95,7 +95,7 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
         cols = resolve_date_columns(dates_cfg)
         missing = [c for c in cols if c not in df.columns]
         if missing:
-            raise RuntimeError(f"Dates: requested columns missing from generator: {missing}")
+            raise DimensionError(f"Dates: requested columns missing from generator: {missing}")
 
         df = df[cols]
 

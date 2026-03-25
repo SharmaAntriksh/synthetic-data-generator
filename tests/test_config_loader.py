@@ -17,6 +17,7 @@ from src.engine.config.config import (
     normalize_defaults,
     normalize_sales_config,
 )
+from src.exceptions import ConfigError
 
 
 # ===================================================================
@@ -42,11 +43,11 @@ class TestParseDate:
         assert _parse_date(dt, "test") == date(2024, 6, 1)
 
     def test_invalid_raises_valueerror(self):
-        with pytest.raises(ValueError, match="Cannot parse"):
+        with pytest.raises(ConfigError, match="Cannot parse"):
             _parse_date("not-a-date", "test")
 
     def test_empty_string_raises(self):
-        with pytest.raises(ValueError, match="Cannot parse"):
+        with pytest.raises(ConfigError, match="Cannot parse"):
             _parse_date("", "test")
 
 
@@ -83,7 +84,7 @@ class TestNormalizeDefaults:
         assert result["defaults"]["dates"]["end"] == "2025-12-31"
 
     def test_missing_defaults_raises(self):
-        with pytest.raises(KeyError, match="Missing 'defaults'"):
+        with pytest.raises(ConfigError, match="Missing 'defaults'"):
             normalize_defaults({})
 
     def test_underscore_alias(self):
@@ -97,31 +98,31 @@ class TestNormalizeDefaults:
     def test_start_after_end_raises(self):
         cfg = {"defaults": {"dates": {"start": "2025-01-01", "end": "2020-01-01"}}}
 
-        with pytest.raises(ValueError, match="start must be < end"):
+        with pytest.raises(ConfigError, match="start must be < end"):
             normalize_defaults(cfg)
 
     def test_equal_start_end_raises(self):
         cfg = {"defaults": {"dates": {"start": "2023-01-01", "end": "2023-01-01"}}}
 
-        with pytest.raises(ValueError, match="start must be < end"):
+        with pytest.raises(ConfigError, match="start must be < end"):
             normalize_defaults(cfg)
 
     def test_missing_dates_section_raises(self):
         cfg = {"defaults": {"seed": 42}}
 
-        with pytest.raises(KeyError, match="defaults.dates"):
+        with pytest.raises(ConfigError, match="defaults.dates"):
             normalize_defaults(cfg)
 
     def test_missing_start_raises(self):
         cfg = {"defaults": {"dates": {"end": "2025-12-31"}}}
 
-        with pytest.raises(KeyError, match="start or defaults.dates.end"):
+        with pytest.raises(ConfigError, match="start or defaults.dates.end"):
             normalize_defaults(cfg)
 
     def test_non_dict_defaults_raises(self):
         cfg = {"defaults": "not a dict"}
 
-        with pytest.raises(KeyError, match="Invalid defaults"):
+        with pytest.raises(ConfigError, match="Invalid defaults"):
             normalize_defaults(cfg)
 
 
@@ -164,11 +165,11 @@ class TestNormalizeSalesConfig:
         cfg = self._base()
         del cfg["file_format"]
 
-        with pytest.raises(KeyError, match="file_format is required"):
+        with pytest.raises(ConfigError, match="file_format is required"):
             normalize_sales_config(cfg)
 
     def test_invalid_format_raises(self):
-        with pytest.raises(ValueError, match="file_format must be one of"):
+        with pytest.raises(ConfigError, match="file_format must be one of"):
             normalize_sales_config(self._base(file_format="excel"))
 
     def test_format_case_insensitive(self):
@@ -177,11 +178,11 @@ class TestNormalizeSalesConfig:
         assert result["file_format"] == "parquet"
 
     def test_zero_rows_raises(self):
-        with pytest.raises(ValueError, match="positive integer"):
+        with pytest.raises(ConfigError, match="positive integer"):
             normalize_sales_config(self._base(total_rows=0))
 
     def test_negative_rows_raises(self):
-        with pytest.raises(ValueError, match="positive integer"):
+        with pytest.raises(ConfigError, match="positive integer"):
             normalize_sales_config(self._base(total_rows=-100))
 
     def test_csv_ignores_parquet_keys(self):
@@ -212,7 +213,7 @@ class TestNormalizeSalesConfig:
         assert isinstance(cfg["chunk_size"], int)
 
     def test_negative_chunk_size_raises(self):
-        with pytest.raises(ValueError, match="positive integer"):
+        with pytest.raises(ConfigError, match="positive integer"):
             normalize_sales_config(self._base(chunk_size=-1))
 
     def test_partitioning_block_expanded(self):

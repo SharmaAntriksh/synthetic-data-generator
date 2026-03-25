@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import done, skip
 from src.versioning.version_store import should_regenerate, save_version
 
@@ -75,9 +76,9 @@ def _normalize_reasons(reasons: Iterable[Any]) -> list[ReturnReason]:
     for i, item in enumerate(reasons, start=1):
         rr = _parse_reason_item(item, i)
         if rr.key in seen:
-            raise ValueError(f"Duplicate ReturnReasonKey detected: {rr.key}")
+            raise DimensionError(f"Duplicate ReturnReasonKey detected: {rr.key}")
         if not rr.reason or not rr.reason.strip():
-            raise ValueError(f"Empty ReturnReason for key={rr.key}")
+            raise DimensionError(f"Empty ReturnReason for key={rr.key}")
         if not rr.category or not rr.category.strip():
             rr = ReturnReason(rr.key, rr.reason, "Other")
 

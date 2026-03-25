@@ -27,6 +27,7 @@ import pytest
 # ===================================================================
 
 from src.engine.config.config_schema import AppConfig
+from src.exceptions import ConfigError
 from src.utils.config_helpers import (
     as_dict,
     bool_or,
@@ -287,7 +288,7 @@ class TestParseGlobalDates:
     def test_missing_dates_raises(self):
         # Create an AppConfig with empty date strings so parse_global_dates raises
         cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "", "end": ""}}})
-        with pytest.raises(KeyError, match="defaults.dates"):
+        with pytest.raises(ConfigError, match="defaults.dates"):
             parse_global_dates(cfg, AppConfig.model_validate({}))
 
     def test_swapped_dates_corrected(self):
@@ -446,7 +447,7 @@ class TestResolveDates:
 
     def test_raises_when_missing(self):
         cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "", "end": ""}}})
-        with pytest.raises(KeyError):
+        with pytest.raises(ConfigError):
             resolve_dates(cfg, AppConfig.model_validate({}))
 
 

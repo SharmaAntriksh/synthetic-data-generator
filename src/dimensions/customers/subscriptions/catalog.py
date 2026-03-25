@@ -5,6 +5,8 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
+from src.exceptions import ValidationError
+
 
 # Billing-cycle discount rates (off monthly price)
 _CYCLE_DISCOUNT = {
@@ -111,7 +113,7 @@ _PLAN_TYPE_WEIGHT = {
 PAYMENT_METHODS = ["Credit Card", "Debit Card", "PayPal", "Bank Transfer"]
 _PAYMENT_WEIGHTS = np.array([0.45, 0.25, 0.20, 0.10])
 if abs(_PAYMENT_WEIGHTS.sum() - 1.0) > 1e-9:
-    raise ValueError(
+    raise ValidationError(
         f"_PAYMENT_WEIGHTS must sum to 1.0, got {_PAYMENT_WEIGHTS.sum()}"
     )
 

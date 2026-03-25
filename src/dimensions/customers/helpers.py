@@ -12,6 +12,7 @@ from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.defaults import (
     CUSTOMER_EDUCATION_INCOME_PARAMS as EDUCATION_INCOME_PARAMS,
     CUSTOMER_OCCUPATION_INCOME_MULT as OCCUPATION_INCOME_MULT,
@@ -45,7 +46,7 @@ def parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
             start = pd.to_datetime(gd.start).normalize()
             end = pd.to_datetime(gd.end).normalize()
             if end < start:
-                raise ValueError("defaults.dates.end must be >= defaults.dates.start")
+                raise DimensionError("defaults.dates.end must be >= defaults.dates.start")
             return start, end
 
     try:
@@ -56,10 +57,10 @@ def parse_cfg_dates(cfg: Dict) -> Tuple[pd.Timestamp, pd.Timestamp]:
         start = pd.to_datetime(dcfg.start).normalize()
         end = pd.to_datetime(dcfg.end).normalize()
     except (KeyError, TypeError, ValueError) as e:
-        raise ValueError("Missing or invalid defaults.dates.start/end in config.yaml") from e
+        raise DimensionError("Missing or invalid defaults.dates.start/end in config.yaml") from e
 
     if end < start:
-        raise ValueError("defaults.dates.end must be >= defaults.dates.start")
+        raise DimensionError("defaults.dates.end must be >= defaults.dates.start")
 
     return start, end
 
@@ -77,7 +78,7 @@ def month_index_space(start_date: pd.Timestamp, end_date: pd.Timestamp):
     ep = end_date.to_period("M")
 
     if ep < sp:
-        raise ValueError("defaults.dates.end must be >= defaults.dates.start")
+        raise DimensionError("defaults.dates.end must be >= defaults.dates.start")
 
     T = int(ep.ordinal - sp.ordinal) + 1
     start_month0 = sp.to_timestamp(how="start")
@@ -206,10 +207,10 @@ def validate_percentages(
 ) -> Tuple[float, float, float, float]:
     p = np.array([pct_india, pct_us, pct_eu, pct_asia], dtype="float64")
     if np.any(~np.isfinite(p)) or np.any(p < 0):
-        raise ValueError("pct_india/pct_us/pct_eu/pct_asia must be finite and >= 0")
+        raise DimensionError("pct_india/pct_us/pct_eu/pct_asia must be finite and >= 0")
     s = float(p.sum())
     if s <= 0:
-        raise ValueError("pct_india/pct_us/pct_eu/pct_asia must sum to > 0")
+        raise DimensionError("pct_india/pct_us/pct_eu/pct_asia must sum to > 0")
     p = p / s
     return float(p[0]), float(p[1]), float(p[2]), float(p[3])
 
@@ -228,7 +229,7 @@ def first_existing_col(df: pd.DataFrame, candidates) -> str:
     for c in candidates:
         if c in df.columns:
             return c
-    raise KeyError(f"None of the expected columns found. candidates={candidates}, cols={list(df.columns)}")
+    raise DimensionError(f"None of the expected columns found. candidates={candidates}, cols={list(df.columns)}")
 
 
 def normalize_probs(p: np.ndarray) -> np.ndarray:
@@ -264,7 +265,7 @@ def assign_tier_by_score(
 ) -> np.ndarray:
     k = int(len(tier_keys_sorted_low_to_high))
     if k == 0:
-        raise ValueError("No tiers available")
+        raise DimensionError("No tiers available")
     if k == 1:
         return np.full(score.shape[0], tier_keys_sorted_low_to_high[0], dtype=tier_keys_sorted_low_to_high.dtype)
 

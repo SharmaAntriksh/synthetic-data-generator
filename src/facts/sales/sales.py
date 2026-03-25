@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from src.defaults import ONLINE_SALES_REP_ROLE
+from src.exceptions import SalesError
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
 from src.utils.logging_utils import debug, done, info, skip, work
 from src.utils.shared_arrays import SharedArrayGroup
@@ -308,7 +309,7 @@ def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional
     defaults_section = getattr(cfg, "defaults", None) or getattr(cfg, "_defaults", None)
     defaults_dates = getattr(defaults_section, "dates", None) if defaults_section is not None else None
     if not isinstance(defaults_dates, Mapping):
-        raise KeyError("Missing defaults.dates in config")
+        raise SalesError("Missing defaults.dates in config")
 
     ov_sales_dates = _cfg_get(cfg, ["sales", "override", "dates"], default={})
     ov_sales_dates = ov_sales_dates if isinstance(ov_sales_dates, Mapping) else {}
@@ -330,7 +331,7 @@ def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional
         )
 
     if not start_date or not end_date:
-        raise KeyError("Could not resolve start/end dates from config")
+        raise SalesError("Could not resolve start/end dates from config")
 
     return str(start_date), str(end_date)
 
@@ -369,7 +370,7 @@ def build_weighted_date_pool(start: str, end: str, seed: int = 42) -> Tuple[np.n
     dates = pd.date_range(start, end, freq="D")
     n = len(dates)
     if n <= 0:
-        raise ValueError("Date range produced an empty pool")
+        raise SalesError("Date range produced an empty pool")
 
     weekdays = _as_np(dates.weekday)
 
@@ -629,7 +630,7 @@ def generate_sales_fact(
 
     sales_output = _str_or(getattr(sales_cfg, "sales_output", None), "sales").lower()
     if sales_output not in {"sales", "sales_order", "both"}:
-        raise ValueError(f"Invalid sales_output: {sales_output}")
+        raise SalesError(f"Invalid sales_output: {sales_output}")
 
     # ------------------------------------------------------------
     # Returns (optional)
@@ -772,7 +773,7 @@ def generate_sales_fact(
     cust_df_full = load_parquet_df(customers_path, _cust_all_cols)
 
     if cust_df_full.empty:
-        raise RuntimeError("customers.parquet is empty; cannot generate sales")
+        raise SalesError("customers.parquet is empty; cannot generate sales")
 
     # --- SCD2 customer deduplication ---
     _cust_scd2_detected = False
@@ -1185,7 +1186,7 @@ def generate_sales_fact(
         emp_assign_df = emp_assign_df[emp_assign_df["RoleAtStore"].isin(salesperson_roles)].copy()
 
     if emp_assign_df.empty:
-        raise RuntimeError(
+        raise SalesError(
             f"No employee assignments with role in {salesperson_roles} found in "
             f"{emp_assign_path}. Check employees.store_assignments.primary_sales_role "
             f"and ensure the bridge has been regenerated."
@@ -2059,7 +2060,7 @@ def generate_sales_fact(
 
         if wrote == 0:
             msg = " | ".join([f"{t} -> {p}" for t, p in missing_parts]) if missing_parts else "no parts found"
-            raise RuntimeError(f"No delta parts found for any table. {msg}")
+            raise SalesError(f"No delta parts found for any table. {msg}")
 
         manifest = _build_sales_manifest()
         return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
@@ -2137,4 +2138,4 @@ def generate_sales_fact(
         manifest = _build_sales_manifest()
         return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 
-    raise ValueError(f"Unknown file_format: {file_format}")
+    raise SalesError(f"Unknown file_format: {file_format}")

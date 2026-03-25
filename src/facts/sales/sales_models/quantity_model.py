@@ -13,6 +13,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from src.exceptions import SalesError
 from src.facts.sales.sales_logic import State
 
 
@@ -65,12 +66,12 @@ def _load_cfg() -> dict:
 
     raw = models.get("quantity", {}) or {}
     if not isinstance(raw, Mapping):
-        raise ValueError("models.quantity must be a mapping")
+        raise SalesError("models.quantity must be a mapping")
 
     # --- scalar parameters ---
     lam = float(raw.get("base_poisson_lambda", _DEFAULTS["base_poisson_lambda"]))
     if lam < 0:
-        raise ValueError("models.quantity.base_poisson_lambda must be >= 0")
+        raise SalesError("models.quantity.base_poisson_lambda must be >= 0")
 
     # Support both "noise_sigma" (current) and "noise_sd" (legacy)
     noise = max(0.0, float(raw.get("noise_sigma", raw.get("noise_sd", _DEFAULTS["noise_sigma"]))))
@@ -87,7 +88,7 @@ def _load_cfg() -> dict:
     if factors is None:
         factors = list(_DEFAULTS["monthly_factors"])
     if len(factors) != 12:
-        raise ValueError("models.quantity.monthly_factors must be a list of 12 floats")
+        raise SalesError("models.quantity.monthly_factors must be a list of 12 floats")
     factors_arr = np.asarray(factors, dtype=np.float64)
     factors_arr = np.where(np.isfinite(factors_arr), factors_arr, 1.0)
     factors_arr = np.clip(factors_arr, 0.01, None)  # Prevent zero-factor months

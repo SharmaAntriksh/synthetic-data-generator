@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.exceptions import ConfigError, DimensionError
 from src.utils import info, skip, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
@@ -41,12 +42,12 @@ def _load_supplier_keys(output_folder: Path) -> np.ndarray:
             key_col = c
             break
     if key_col is None:
-        raise KeyError(f"suppliers.parquet missing SupplierKey/Key. Available: {list(sup.columns)}")
+        raise DimensionError(f"suppliers.parquet missing SupplierKey/Key. Available: {list(sup.columns)}")
 
     keys = pd.to_numeric(sup[key_col], errors="coerce").dropna().astype("int64").to_numpy()
     keys = np.unique(keys)
     if keys.size == 0:
-        raise ValueError("suppliers.parquet has zero valid SupplierKey values")
+        raise DimensionError("suppliers.parquet has zero valid SupplierKey values")
     return np.sort(keys)
 
 
@@ -192,7 +193,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     target_n = int(target_n)
 
     if target_n <= 0:
-        raise ValueError("products.num_products must be a positive integer")
+        raise DimensionError("products.num_products must be a positive integer")
 
     if "num_products" in p and "use_contoso_products" in p:
         info("products.use_contoso_products is deprecated; ignoring (num_products is set)")
@@ -276,7 +277,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
 
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"Missing required field(s) in Products: {missing}")
+        raise DimensionError(f"Missing required field(s) in Products: {missing}")
 
     # -----------------------------------------------------------------
     # SCD Type 2 metadata (always present for consistent schema)
@@ -288,7 +289,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     # Resolve date range for SCD2 effective dates
     try:
         start_date, end_date = resolve_dates(config, p, section_name="products")
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, ConfigError):
         warn("Could not resolve dates for products; using fallback 2020-01-01 to 2025-12-31")
         start_date = pd.Timestamp("2020-01-01")
         end_date = pd.Timestamp("2025-12-31")

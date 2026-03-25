@@ -13,6 +13,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from src.exceptions import DimensionError
 from src.utils.config_precedence import resolve_seed
 
 from .catalog import PAYMENT_METHODS, _PAYMENT_WEIGHTS, PLANS_CATALOG, _PLAN_TYPE_WEIGHT
@@ -98,21 +99,21 @@ def parse_global_dates(cfg: Any) -> Tuple[pd.Timestamp, pd.Timestamp]:
         start = pd.to_datetime(gd["start"]).normalize()
         end = pd.to_datetime(gd["end"]).normalize()
         if end < start:
-            raise ValueError("subscriptions.global_dates.end must be >= subscriptions.global_dates.start")
+            raise DimensionError("subscriptions.global_dates.end must be >= subscriptions.global_dates.start")
         return start, end
 
     defaults = cfg.defaults if hasattr(cfg, "defaults") else getattr(cfg, "_defaults", None)
     if defaults is None:
-        raise ValueError("Missing defaults.dates.start/end (or _defaults.dates.start/end)")
+        raise DimensionError("Missing defaults.dates.start/end (or _defaults.dates.start/end)")
     d = defaults.dates
     d_start = d.start if hasattr(d, "start") else None
     d_end = d.end if hasattr(d, "end") else None
     if not d_start or not d_end:
-        raise ValueError("Missing defaults.dates.start/end (or _defaults.dates.start/end)")
+        raise DimensionError("Missing defaults.dates.start/end (or _defaults.dates.start/end)")
     start = pd.to_datetime(d_start).normalize()
     end = pd.to_datetime(d_end).normalize()
     if end < start:
-        raise ValueError("defaults.dates.end must be >= defaults.dates.start")
+        raise DimensionError("defaults.dates.end must be >= defaults.dates.start")
     return start, end
 
 
