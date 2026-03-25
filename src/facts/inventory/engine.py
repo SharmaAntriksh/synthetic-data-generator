@@ -1,6 +1,6 @@
 """Inventory snapshot engine.
 
-Simulates monthly inventory levels for each (ProductKey, StoreKey) pair
+Simulates monthly inventory levels for each (ProductKey, WarehouseKey) pair
 using accumulated sales demand and ProductProfile replenishment attributes.
 
 Vectorized: loops only over months (sequential dependency), processes all
@@ -143,7 +143,7 @@ def compute_inventory_snapshots(
     """
     Simulate monthly inventory snapshots from accumulated sales demand.
 
-    Fully vectorized across all (ProductKey, StoreKey) pairs. Loops only
+    Fully vectorized across all (ProductKey, WarehouseKey) pairs. Loops only
     over the month axis (sequential dependency).
     """
     if demand.empty:
@@ -166,26 +166,35 @@ def compute_inventory_snapshots(
     # ------------------------------------------------------------------
     # 2. Build unique pairs and demand matrix (N_pairs × N_months)
     # ------------------------------------------------------------------
-    pair_df = demand[["ProductKey", "StoreKey"]].drop_duplicates().reset_index(drop=True)
+    pair_df = demand[["ProductKey", "WarehouseKey"]].drop_duplicates().reset_index(drop=True)
     n_pairs = len(pair_df)
 
     pair_pk = pair_df["ProductKey"].to_numpy(dtype=np.int32)
-    pair_sk = pair_df["StoreKey"].to_numpy(dtype=np.int32)
+    pair_wk = pair_df["WarehouseKey"].to_numpy(dtype=np.int32)
+
+    # Remap warehouse keys to dense 0..N indices to avoid a sparse
+    # lookup array (ONLINE_WAREHOUSE_KEY=9000 would waste ~200MB).
+    unique_wk = np.unique(pair_wk)
+    wk_to_dense = np.full(int(unique_wk.max()) + 1, -1, dtype=np.int32)
+    wk_to_dense[unique_wk] = np.arange(len(unique_wk), dtype=np.int32)
+
+    pair_wk_dense = wk_to_dense[pair_wk]
 
     max_pk = int(pair_pk.max()) + 1
-    max_sk = int(pair_sk.max()) + 1
-    pair_lookup = np.full((max_pk, max_sk), -1, dtype=np.int32)
-    pair_lookup[pair_pk, pair_sk] = np.arange(n_pairs, dtype=np.int32)
+    max_wk = len(unique_wk)
+    pair_lookup = np.full((max_pk, max_wk), -1, dtype=np.int32)
+    pair_lookup[pair_pk, pair_wk_dense] = np.arange(n_pairs, dtype=np.int32)
 
     demand_matrix = np.zeros((n_pairs, n_months), dtype=np.int32)
 
     d_pk = demand["ProductKey"].to_numpy(dtype=np.int32)
-    d_sk = demand["StoreKey"].to_numpy(dtype=np.int32)
+    d_wk = demand["WarehouseKey"].to_numpy(dtype=np.int32)
     d_yr = demand["Year"].to_numpy(dtype=np.int32)
     d_mo = demand["Month"].to_numpy(dtype=np.int32)
     d_qty = demand["QuantitySold"].to_numpy(dtype=np.int32)
 
-    d_pair_idx = pair_lookup[d_pk, d_sk]
+    d_wk_dense = wk_to_dense[d_wk]
+    d_pair_idx = pair_lookup[d_pk, d_wk_dense]
     # Vectorized month-index mapping: encode year*12+month as a single int, then searchsorted
     month_keys_encoded = years_arr.astype(np.int32) * 12 + months_arr.astype(np.int32)
     d_encoded = d_yr * np.int32(12) + d_mo
@@ -203,7 +212,7 @@ def compute_inventory_snapshots(
 
     demand_matrix = demand_matrix[keep_mask]
     pair_pk = pair_pk[keep_mask]
-    pair_sk = pair_sk[keep_mask]
+    pair_wk = pair_wk[keep_mask]
     n_pairs = int(keep_mask.sum())
 
     # ------------------------------------------------------------------
@@ -241,7 +250,7 @@ def compute_inventory_snapshots(
 
             demand_matrix = demand_matrix[abc_keep]
             pair_pk = pair_pk[abc_keep]
-            pair_sk = pair_sk[abc_keep]
+            pair_wk = pair_wk[abc_keep]
             n_pairs = int(abc_keep.sum())
 
     # ------------------------------------------------------------------
@@ -479,7 +488,7 @@ def compute_inventory_snapshots(
     # Build DataFrame with correct dtypes directly (avoids 9 separate .astype() passes)
     result = pd.DataFrame({
         "ProductKey": pair_pk[row_idx].astype(np.int32),
-        "StoreKey": pair_sk[row_idx].astype(np.int32),
+        "WarehouseKey": pair_wk[row_idx].astype(np.int32),
         "SnapshotDate": snapshot_dates[col_idx],
         "QuantityOnHand": out_qoh[row_idx, col_idx].astype(np.int32),
         "QuantityOnOrder": out_on_order[row_idx, col_idx].astype(np.int32),
@@ -509,7 +518,7 @@ def _aggregate_quarterly(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["_Quarter"] = dates.dt.to_period("Q")
 
-    group_keys = ["ProductKey", "StoreKey", "_Quarter"]
+    group_keys = ["ProductKey", "WarehouseKey", "_Quarter"]
     agg = df.groupby(group_keys, sort=True).agg(
         QuantityOnHand=("QuantityOnHand", "last"),
         QuantityOnOrder=("QuantityOnOrder", "sum"),
@@ -528,13 +537,13 @@ def _aggregate_quarterly(df: pd.DataFrame) -> pd.DataFrame:
     agg["ReorderFlag"] = agg["ReorderFlag"].astype(np.int8)
     agg["StockoutFlag"] = agg["StockoutFlag"].astype(np.int8)
     agg["ProductKey"] = agg["ProductKey"].astype(np.int32)
-    agg["StoreKey"] = agg["StoreKey"].astype(np.int32)
+    agg["WarehouseKey"] = agg["WarehouseKey"].astype(np.int32)
     agg["QuantityOnHand"] = agg["QuantityOnHand"].astype(np.int32)
     agg["QuantityOnOrder"] = agg["QuantityOnOrder"].astype(np.int32)
     agg["QuantitySold"] = agg["QuantitySold"].astype(np.int32)
     agg["QuantityReceived"] = agg["QuantityReceived"].astype(np.int32)
 
-    return agg[["ProductKey", "StoreKey", "SnapshotDate",
+    return agg[["ProductKey", "WarehouseKey", "SnapshotDate",
                 "QuantityOnHand", "QuantityOnOrder",
                 "QuantitySold", "QuantityReceived",
                 "ReorderFlag", "StockoutFlag", "DaysOutOfStock"]]
@@ -542,7 +551,7 @@ def _aggregate_quarterly(df: pd.DataFrame) -> pd.DataFrame:
 
 def _empty_snapshot() -> pd.DataFrame:
     return pd.DataFrame(columns=[
-        "ProductKey", "StoreKey", "SnapshotDate",
+        "ProductKey", "WarehouseKey", "SnapshotDate",
         "QuantityOnHand", "QuantityOnOrder",
         "QuantitySold", "QuantityReceived",
         "ReorderFlag", "StockoutFlag", "DaysOutOfStock",

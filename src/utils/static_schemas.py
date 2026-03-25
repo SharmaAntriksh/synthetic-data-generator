@@ -411,6 +411,16 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("StartDate", DATE_NULL),
         ("EndDate", DATE_NULL),
     ),
+    "Warehouses": (
+        ("WarehouseKey", INT_NN),
+        ("WarehouseName", VARCHAR(100, not_null=True)),
+        ("WarehouseType", VARCHAR(30, not_null=True)),
+        ("Zone", VARCHAR(20, not_null=True)),
+        ("Country", VARCHAR(100, not_null=True)),
+        ("GeographyKey", INT_NN),
+        ("Capacity", INT(not_null=False)),
+        ("SquareFootage", INT(not_null=False)),
+    ),
     "Stores": (
         ("StoreKey", INT_NN),
         ("StoreNumber", VARCHAR(10, not_null=True)),
@@ -421,6 +431,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("RevenueClass", CHAR(1, not_null=True)),
         ("Status", VARCHAR(12, not_null=False)),
         ("GeographyKey", INT_NN),
+        ("WarehouseKey", INT_NN),
         ("StoreZone", VARCHAR(20, not_null=True)),
         ("StoreDistrict", VARCHAR(20, not_null=True)),
         ("StoreRegion", VARCHAR(20, not_null=True)),
@@ -777,7 +788,7 @@ FACT_SCHEMAS: Dict[str, Schema] = {
     ),
     "InventorySnapshot": (
         ("ProductKey", INT_NN),
-        ("StoreKey", INT_NN),
+        ("WarehouseKey", INT_NN),
         ("SnapshotDate", DATE_NN),
         ("QuantityOnHand", INT_NN),
         ("QuantityOnOrder", INT_NN),

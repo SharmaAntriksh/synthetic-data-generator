@@ -539,6 +539,10 @@ class StoreClosingConfig(_Base):
     close_share: float = 0.10
 
 
+class WarehousesConfig(_Base):
+    seed: int = 42
+
+
 class StoresConfig(_Base):
     num_stores: Optional[int] = None
     total_stores: Optional[int] = None  # back-compat alias
@@ -646,6 +650,7 @@ class AppConfig(_Base):
     geography: Optional[GeographyConfig] = None
     promotions: PromotionsConfig = PromotionsConfig()
     stores: StoresConfig = StoresConfig()
+    warehouses: WarehousesConfig = WarehousesConfig()
     employees: EmployeesConfig = EmployeesConfig()
     dates: DatesTableConfig = DatesTableConfig()
 

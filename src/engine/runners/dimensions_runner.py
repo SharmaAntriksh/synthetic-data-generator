@@ -24,6 +24,7 @@ from src.dimensions.dates import run_dates
 from src.dimensions.exchange_rates import run_currency, run_exchange_rates
 from src.dimensions.products import run_suppliers, generate_product_dimension as run_products
 from src.dimensions.employees import run_employees, run_employee_store_assignments
+from src.dimensions.warehouses import run_warehouses
 from src.dimensions.dates import run_time_table
 from src.dimensions.return_reasons import run_return_reasons
 
@@ -174,12 +175,21 @@ DIM_SPECS: List[DimensionSpec] = [
         outputs_all=("stores.parquet",),
     ),
 
-    # 3.5) Employees (depends on stores)
+    # 3.25) Warehouses (depends on stores + geography; modifies stores.parquet)
+    DimensionSpec(
+        name="warehouses",
+        cfg_key="warehouses",
+        run_fn=run_warehouses,
+        deps=("stores", "geography"),
+        outputs_all=("warehouses.parquet",),
+    ),
+
+    # 3.5) Employees (depends on stores + warehouses)
     DimensionSpec(
         name="employees",
         cfg_key="employees",
         run_fn=run_employees,
-        deps=("stores",),
+        deps=("stores", "warehouses"),
         date_dependent=True,
         inject_global_dates=True,
         outputs_all=("employees.parquet",),

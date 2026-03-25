@@ -175,6 +175,12 @@ stores:
     close_share: 0.20                  # fraction of physical stores that close
 
 # ------------------------------------------------------------------
+# WAREHOUSES — distribution centers derived from store geography
+# ------------------------------------------------------------------
+warehouses:
+  seed: 42
+
+# ------------------------------------------------------------------
 # EMPLOYEES
 # ------------------------------------------------------------------
 employees:

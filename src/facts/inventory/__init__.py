@@ -1,6 +1,6 @@
 """Inventory snapshot fact table generation.
 
-Generates monthly periodic snapshots at the (ProductKey, StoreKey) grain,
+Generates monthly periodic snapshots at the (ProductKey, WarehouseKey) grain,
 simulating realistic stock levels driven by actual sales demand and
 ProductProfile replenishment attributes.
 """
