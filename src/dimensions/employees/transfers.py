@@ -62,25 +62,45 @@ def _build_region_store_map(
 
 
 def _build_store_sp_index(
-    df: pd.DataFrame,
-    sp_roles_set: set,
-) -> Tuple[Dict[int, List[int]], np.ndarray, np.ndarray]:
-    """Build store_key -> [df indices] plus StartDate/EndDate numpy arrays.
-
-    Returns (store_sp_idx, start_ns, end_ns).  Callers mutate ``end_ns``
-    in-place when ending assignments so the guard check sees updates
-    without rebuilding the index mid-year.
-    """
+    sp_mask: np.ndarray,
+    skeys: np.ndarray,
+) -> Dict[int, List[int]]:
+    """Build store_key -> [row indices] for salesperson assignments."""
     store_sp_idx: Dict[int, List[int]] = defaultdict(list)
-    roles = df["RoleAtStore"].values
-    skeys = df["StoreKey"].values
-    for i in df.index:
-        if roles[i] in sp_roles_set:
-            store_sp_idx[int(skeys[i])].append(i)
+    idxs = np.where(sp_mask)[0]
+    for i in idxs:
+        store_sp_idx[int(skeys[i])].append(i)
+    return store_sp_idx
 
-    start_ns = df["StartDate"].values.astype("datetime64[ns]")
-    end_ns = df["EndDate"].values.astype("datetime64[ns]")
-    return store_sp_idx, start_ns, end_ns
+
+def _build_open_store_candidates(
+    region_stores: Dict[str, List[int]],
+    all_physical_keys: List[int],
+    year_start: pd.Timestamp,
+    year_end: pd.Timestamp,
+    open_dates: Dict[int, pd.Timestamp],
+    close_dates: Dict[int, pd.Timestamp],
+) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
+    """Pre-compute open store arrays for the year.
+
+    Returns (region_open, all_open).  A store is included only if open on
+    both year_start and year_end — stores that close mid-year are excluded
+    entirely (they will never appear as transfer destinations).
+    """
+    all_open = np.array([
+        sk for sk in all_physical_keys
+        if _store_is_open(sk, year_start, open_dates, close_dates)
+        and _store_is_open(sk, year_end, open_dates, close_dates)
+    ], dtype=np.int32)
+    all_open_set = set(all_open)
+
+    region_open: Dict[str, np.ndarray] = {}
+    for region, sks in region_stores.items():
+        arr = np.array([sk for sk in sks if sk in all_open_set], dtype=np.int32)
+        if len(arr) > 0:
+            region_open[region] = arr
+
+    return region_open, all_open
 
 
 def _count_salespeople_fast(
@@ -214,17 +234,32 @@ def apply_transfers(
             t_earliest + pd.Timedelta(days=int(rng.integers(0, t_range_days + 1)))
             for _ in chosen_idx
         ]
-        # Sort by date so earlier transfers are processed first
         chronological = sorted(zip(transfer_dates, chosen_idx))
 
-        store_sp_idx, start_ns, end_ns = _build_store_sp_index(df, sp_roles_set)
+        # Writable copies for columns mutated in the transfer loop
+        col_emp_key = df["EmployeeKey"].values
+        col_store_key = df["StoreKey"].values
+        col_fte = df["FTE"].values
+        col_role = df["RoleAtStore"].values
+        col_is_primary = np.array(df["IsPrimary"].values, copy=True)
+        col_status = np.array(df["Status"].values, copy=True)
+
+        start_ns = df["StartDate"].values.astype("datetime64[ns]")
+        end_ns = df["EndDate"].values.astype("datetime64[ns]").copy()
+
+        sp_mask = np.isin(col_role, list(sp_roles_set))
+        store_sp_idx = _build_store_sp_index(sp_mask, col_store_key)
+
+        region_open, all_open = _build_open_store_candidates(
+            region_stores, all_physical_keys, year_start, year_end,
+            open_dates, close_dates,
+        )
 
         year_new_rows: list[dict] = []
 
         for transfer_date, idx in chronological:
-            row = df.loc[idx]
-            emp_key = int(row["EmployeeKey"])
-            source_sk = int(row["StoreKey"])
+            emp_key = int(col_emp_key[idx])
+            source_sk = int(col_store_key[idx])
             source_region = store_region.get(source_sk)
 
             # Guard: source store must retain >= 1 salesperson
@@ -241,27 +276,20 @@ def apply_transfers(
                 rng=rng,
                 source_sk=source_sk,
                 source_region=source_region,
-                region_stores=region_stores,
-                all_physical_keys=all_physical_keys,
+                region_open=region_open,
+                all_open=all_open,
                 same_region_pref=same_region_pref,
-                transfer_date=transfer_date,
-                open_dates=open_dates,
-                close_dates=close_dates,
             )
             if dest_sk is None:
                 skipped_no_dest += 1
                 continue
 
             # --- Execute transfer ---
-            # End current assignment
-            new_end_date = transfer_date - pd.Timedelta(days=1)
-            df.at[idx, "EndDate"] = new_end_date
-            end_ns[idx] = np.datetime64(new_end_date, "ns")
-            df.at[idx, "IsPrimary"] = np.int8(0)
-            df.at[idx, "Status"] = "Transferred"
-
-            # Preserve original end date (e.g. termination) for the new assignment
-            original_end = row["EndDate"]
+            original_end_ns = end_ns[idx]
+            new_end_ns = np.datetime64(transfer_date - pd.Timedelta(days=1), "ns")
+            end_ns[idx] = new_end_ns
+            col_is_primary[idx] = np.int8(0)
+            col_status[idx] = "Transferred"
 
             reason = rng.choice(
                 EMPLOYEE_TRANSFER_REASON_LABELS,
@@ -270,7 +298,7 @@ def apply_transfers(
 
             # Clamp EndDate to day before destination store closes (last open day),
             # matching the convention used by generate_employee_store_assignments
-            new_end = original_end
+            new_end = pd.Timestamp(original_end_ns)
             new_status = "Active"
             dest_close = close_dates.get(dest_sk)
             if dest_close is not None:
@@ -284,15 +312,19 @@ def apply_transfers(
                 "StoreKey": np.int32(dest_sk),
                 "StartDate": transfer_date,
                 "EndDate": new_end,
-                "FTE": row["FTE"],
-                "RoleAtStore": row["RoleAtStore"],
+                "FTE": col_fte[idx],
+                "RoleAtStore": col_role[idx],
                 "IsPrimary": np.int8(1),
                 "TransferReason": str(reason),
                 "Status": new_status,
             })
             transfer_count += 1
 
-        # Append this year's new rows into df so they're visible in subsequent years
+        df["EndDate"] = end_ns
+        df["IsPrimary"] = col_is_primary
+        df["Status"] = col_status
+
+        # Concat inside the year loop so subsequent years see earlier transfers
         if year_new_rows:
             df = pd.concat([df, pd.DataFrame(year_new_rows)], ignore_index=True)
 
@@ -339,35 +371,26 @@ def _pick_destination(
     rng: np.random.Generator,
     source_sk: int,
     source_region: Optional[str],
-    region_stores: Dict[str, List[int]],
-    all_physical_keys: List[int],
+    region_open: Dict[str, np.ndarray],
+    all_open: np.ndarray,
     same_region_pref: float,
-    transfer_date: pd.Timestamp,
-    open_dates: Dict[int, pd.Timestamp],
-    close_dates: Dict[int, pd.Timestamp],
 ) -> Optional[int]:
-    """Pick a destination store for a transfer."""
-    # Decide: same region or cross-region?
+    """Pick a destination store from pre-built open-store arrays."""
     use_same_region = rng.random() < same_region_pref
 
-    if use_same_region and source_region and source_region in region_stores:
-        candidates = [
-            sk for sk in region_stores[source_region]
-            if sk != source_sk
-            and _store_is_open(sk, transfer_date, open_dates, close_dates)
-        ]
-    else:
-        candidates = []
+    candidates = None
+    if use_same_region and source_region and source_region in region_open:
+        arr = region_open[source_region]
+        filtered = arr[arr != source_sk]
+        if len(filtered) > 0:
+            candidates = filtered
 
-    # Fallback to all physical stores if no same-region candidates
-    if not candidates:
-        candidates = [
-            sk for sk in all_physical_keys
-            if sk != source_sk
-            and _store_is_open(sk, transfer_date, open_dates, close_dates)
-        ]
+    if candidates is None:
+        filtered = all_open[all_open != source_sk]
+        if len(filtered) > 0:
+            candidates = filtered
 
-    if not candidates:
+    if candidates is None:
         return None
 
     return int(rng.choice(candidates))
