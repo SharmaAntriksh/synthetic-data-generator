@@ -12,6 +12,7 @@ Design invariants:
 """
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -50,7 +51,7 @@ def _store_is_open(
 def _build_region_store_map(
     stores: pd.DataFrame,
 ) -> Dict[str, List[int]]:
-    """Map StoreRegion → list of physical StoreKeys."""
+    """Map StoreRegion -> list of physical StoreKeys."""
     physical = stores[stores["StoreKey"] <= ONLINE_STORE_KEY_BASE]
     if "StoreRegion" not in physical.columns:
         return {}
@@ -60,24 +61,41 @@ def _build_region_store_map(
     return result
 
 
-def _count_salespeople_at_store(
-    store_key: int,
-    on_date: pd.Timestamp,
-    active_assignments: pd.DataFrame,
-    salesperson_roles: List[str],
-) -> int:
-    """Count salespeople actively assigned to *store_key* on *on_date*.
+def _build_store_sp_index(
+    df: pd.DataFrame,
+    sp_roles_set: set,
+) -> Tuple[Dict[int, List[int]], np.ndarray, np.ndarray]:
+    """Build store_key -> [df indices] plus StartDate/EndDate numpy arrays.
 
-    Uses date range as source of truth — a "Transferred" row was active
-    during its [StartDate, EndDate] window.
+    Returns (store_sp_idx, start_ns, end_ns).  Callers mutate ``end_ns``
+    in-place when ending assignments so the guard check sees updates
+    without rebuilding the index mid-year.
     """
-    mask = (
-        (active_assignments["StoreKey"] == store_key)
-        & (active_assignments["StartDate"] <= on_date)
-        & (active_assignments["EndDate"] >= on_date)
-        & (active_assignments["RoleAtStore"].isin(salesperson_roles))
-    )
-    return int(mask.sum())
+    store_sp_idx: Dict[int, List[int]] = defaultdict(list)
+    roles = df["RoleAtStore"].values
+    skeys = df["StoreKey"].values
+    for i in df.index:
+        if roles[i] in sp_roles_set:
+            store_sp_idx[int(skeys[i])].append(i)
+
+    start_ns = df["StartDate"].values.astype("datetime64[ns]")
+    end_ns = df["EndDate"].values.astype("datetime64[ns]")
+    return store_sp_idx, start_ns, end_ns
+
+
+def _count_salespeople_fast(
+    store_key: int,
+    on_date_ns: np.datetime64,
+    start_ns: np.ndarray,
+    end_ns: np.ndarray,
+    store_sp_idx: Dict[int, List[int]],
+) -> int:
+    """Count salespeople actively assigned to *store_key* on *on_date_ns*."""
+    count = 0
+    for i in store_sp_idx.get(store_key, []):
+        if start_ns[i] <= on_date_ns <= end_ns[i]:
+            count += 1
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +131,8 @@ def apply_transfers(
 
     if salesperson_roles is None:
         salesperson_roles = ["Sales Associate"]
+
+    sp_roles_set = set(salesperson_roles)
 
     # --- Store metadata ---------------------------------------------------
     sk_arr = stores["StoreKey"].astype(np.int32).to_numpy()
@@ -197,6 +217,8 @@ def apply_transfers(
         # Sort by date so earlier transfers are processed first
         chronological = sorted(zip(transfer_dates, chosen_idx))
 
+        store_sp_idx, start_ns, end_ns = _build_store_sp_index(df, sp_roles_set)
+
         year_new_rows: list[dict] = []
 
         for transfer_date, idx in chronological:
@@ -206,8 +228,9 @@ def apply_transfers(
             source_region = store_region.get(source_sk)
 
             # Guard: source store must retain >= 1 salesperson
-            source_count = _count_salespeople_at_store(
-                source_sk, transfer_date, df, salesperson_roles,
+            td_ns = np.datetime64(transfer_date, "ns")
+            source_count = _count_salespeople_fast(
+                source_sk, td_ns, start_ns, end_ns, store_sp_idx,
             )
             if source_count <= 1:
                 skipped_guard += 1
@@ -231,7 +254,9 @@ def apply_transfers(
 
             # --- Execute transfer ---
             # End current assignment
-            df.at[idx, "EndDate"] = transfer_date - pd.Timedelta(days=1)
+            new_end_date = transfer_date - pd.Timedelta(days=1)
+            df.at[idx, "EndDate"] = new_end_date
+            end_ns[idx] = np.datetime64(new_end_date, "ns")
             df.at[idx, "IsPrimary"] = np.int8(0)
             df.at[idx, "Status"] = "Transferred"
 
@@ -361,31 +386,31 @@ def _check_coverage_invariant(
 
     Returns a list of (StoreKey, 'YYYY-MM') violations, empty if OK.
     """
-    sp = assignments[assignments["RoleAtStore"].isin(salesperson_roles)].copy()
+    sp = assignments[assignments["RoleAtStore"].isin(salesperson_roles)]
     if sp.empty:
         return []
 
     physical_stores = stores[stores["StoreKey"] <= ONLINE_STORE_KEY_BASE]
-    violations: List[Tuple[int, str]] = []
+    physical_sks = physical_stores["StoreKey"].astype(int).to_numpy()
 
-    # Check monthly: first day of each month in the range
+    sp_start = sp["StartDate"].values.astype("datetime64[ns]")
+    sp_end = sp["EndDate"].values.astype("datetime64[ns]")
+    sp_sk = sp["StoreKey"].astype(int).values
+
+    violations: List[Tuple[int, str]] = []
     month_starts = pd.date_range(global_start, global_end, freq="MS")
 
     for check_date in month_starts:
-        for _, store in physical_stores.iterrows():
-            sk = int(store["StoreKey"])
+        cd_ns = np.datetime64(check_date, "ns")
+        active_mask = (sp_start <= cd_ns) & (sp_end >= cd_ns)
+        covered_stores = set(sp_sk[active_mask])
+
+        for sk in physical_sks:
             if not _store_is_open(sk, check_date, open_dates, close_dates):
                 continue
-
-            count = (
-                (sp["StoreKey"] == sk)
-                & (sp["StartDate"] <= check_date)
-                & (sp["EndDate"] >= check_date)
-            ).sum()
-
-            if count == 0:
+            if sk not in covered_stores:
                 violations.append((sk, check_date.strftime("%Y-%m")))
                 if len(violations) >= 10:
-                    return violations  # early exit, enough to report
+                    return violations
 
     return violations

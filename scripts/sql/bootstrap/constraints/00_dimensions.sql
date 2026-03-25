@@ -251,6 +251,19 @@ BEGIN
     ADD CONSTRAINT PK_Stores PRIMARY KEY NONCLUSTERED ([StoreKey]);
 END;
 
+-- Warehouses
+IF OBJECT_ID(N'dbo.Warehouses', N'U') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_Warehouses'
+      AND parent_object_id = OBJECT_ID(N'dbo.Warehouses')
+)
+BEGIN
+    ALTER TABLE dbo.Warehouses
+    ADD CONSTRAINT PK_Warehouses PRIMARY KEY NONCLUSTERED ([WarehouseKey]);
+END;
+
 -- Promotions (schema may vary)
 IF OBJECT_ID(N'dbo.Promotions', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.Promotions', N'PromotionKey') IS NOT NULL
@@ -610,6 +623,25 @@ BEGIN
         REFERENCES dbo.Geography ([GeographyKey]);
 
     ALTER TABLE dbo.Stores CHECK CONSTRAINT FK_Stores_Geography;
+END;
+
+-- Stores -> Warehouses
+IF OBJECT_ID(N'dbo.Stores', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Warehouses', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Stores', N'WarehouseKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Stores_Warehouses'
+      AND parent_object_id = OBJECT_ID(N'dbo.Stores')
+)
+BEGIN
+    ALTER TABLE dbo.Stores WITH CHECK
+    ADD CONSTRAINT FK_Stores_Warehouses
+        FOREIGN KEY ([WarehouseKey])
+        REFERENCES dbo.Warehouses ([WarehouseKey]);
+
+    ALTER TABLE dbo.Stores CHECK CONSTRAINT FK_Stores_Warehouses;
 END;
 
 -- ExchangeRates -> Currency (FromCurrencyKey)

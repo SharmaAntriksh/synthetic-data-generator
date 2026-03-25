@@ -431,7 +431,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("RevenueClass", CHAR(1, not_null=True)),
         ("Status", VARCHAR(12, not_null=False)),
         ("GeographyKey", INT_NN),
-        ("WarehouseKey", INT_NN),
         ("StoreZone", VARCHAR(20, not_null=True)),
         ("StoreDistrict", VARCHAR(20, not_null=True)),
         ("StoreRegion", VARCHAR(20, not_null=True)),
@@ -450,6 +449,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("InventoryTurnoverTarget", FLOAT(not_null=False)),
         ("LastAuditScore", INT(not_null=False)),
         ("ShrinkageRatePct", FLOAT(not_null=False)),
+        ("WarehouseKey", INT_NN),
     ),
     "Dates": (
         ("Date", DATE_NN),
