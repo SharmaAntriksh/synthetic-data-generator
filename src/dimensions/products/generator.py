@@ -326,13 +326,11 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     ]
 
     core_cols = [c for c in _PRODUCTS_CORE_COLS if c in df.columns]
-    # Profile links to IsCurrent=1 version's ProductKey
-    current_mask = df["IsCurrent"] == 1
-    profile_source = df.loc[current_mask]
+    # All SCD2 versions share identical analytical attributes → 1:1 with Products
     profile_cols = ["ProductKey"] + [c for c in df.columns if c not in core_cols]
 
     products_df = df[core_cols].copy()
-    profile_df = profile_source[profile_cols].copy()
+    profile_df = df[profile_cols].copy()
 
     # Reorder profile columns to match static_schemas.py (SQL CREATE TABLE order).
     # BULK INSERT is positional — CSV column order must match the schema exactly.

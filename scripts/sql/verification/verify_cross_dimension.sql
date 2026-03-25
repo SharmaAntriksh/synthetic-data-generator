@@ -113,8 +113,8 @@ WHERE pc.CategoryKey IS NULL;
 SELECT p.ProductKey
 FROM Products p
 LEFT JOIN ProductProfile pp ON pp.ProductKey = p.ProductKey
-WHERE p.IsCurrent = 1 AND pp.ProductKey IS NULL;
--- EXPECTED: zero rows
+WHERE pp.ProductKey IS NULL;
+-- EXPECTED: zero rows (profile covers all SCD2 versions)
 
 -- 4d. No orphan ProductProfile rows (profile without a product)
 SELECT pp.ProductKey
@@ -261,11 +261,11 @@ WHERE c.CustomerType <> 'Organization'
 
 UNION ALL
 
-SELECT 'ProductProfile: covers all current products',
-    'Every IsCurrent=1 product must have a ProductProfile row; FAIL = missing profile for active product',
+SELECT 'ProductProfile: covers all products',
+    'Every product (all SCD2 versions) must have a ProductProfile row; FAIL = missing profile',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM Products p LEFT JOIN ProductProfile pp ON pp.ProductKey = p.ProductKey
-WHERE p.IsCurrent = 1 AND pp.ProductKey IS NULL
+WHERE pp.ProductKey IS NULL
 
 UNION ALL
 
