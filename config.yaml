@@ -46,7 +46,8 @@ sales:
 
   partition_by: ["Year", "Month"]     # null or [] to disable
 
-  optimize: false                      # sort merged files for better query perf
+  sort_merged_parquet: false            # sort merged parquet for better read perf (parquet only)
+  sort_delta_parts: false               # sort each delta partition part for better read perf (deltaparquet only)
   quality_report: false                  # generate HTML data quality report after packaging
 
   advanced:

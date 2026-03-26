@@ -1,4 +1,5 @@
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -94,15 +95,28 @@ def copy_csv_facts(*, fact_out: Path, facts_out: Path, tables: list[str]) -> Non
     else:
         info("Copy CSV facts: " + ", ".join(f"{name}={n}" for name, n in counts) + f" (total={total})")
 
-    # Execute copy
+    # Pre-validate: check for duplicates before copying
+    copy_pairs: list[tuple[Path, Path]] = []
+    seen_targets: set[str] = set()
     for _t, _src_dir, csv_files, dst_dir in plan:
         dst_dir.mkdir(parents=True, exist_ok=True)
-
         for f in csv_files:
             target = dst_dir / f.name
-            if target.exists():
+            key = str(target)
+            if key in seen_targets or target.exists():
                 raise RuntimeError(f"Duplicate CSV filename during packaging: {target}")
-            shutil.copy2(f, target)
-            copied_files += 1
+            seen_targets.add(key)
+            copy_pairs.append((f, target))
 
-    done(f"Copied {copied_files} CSV fact file(s).")
+    # Parallel copy (IO-bound, benefits from threading)
+    def _copy(pair: tuple[Path, Path]) -> None:
+        shutil.copy2(pair[0], pair[1])
+
+    if len(copy_pairs) > 4:
+        with ThreadPoolExecutor(max_workers=min(8, len(copy_pairs))) as pool:
+            list(pool.map(_copy, copy_pairs))
+    else:
+        for pair in copy_pairs:
+            _copy(pair)
+
+    done(f"Copied {len(copy_pairs)} CSV fact file(s).")

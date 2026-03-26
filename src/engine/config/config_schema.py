@@ -484,7 +484,16 @@ class SalesConfig(_Base):
     partition_cols: Optional[List[str]] = None
     partitioning: Optional[Dict[str, Any]] = None
 
-    optimize: bool = False
+    # Parquet: sort the merged parquet file for better downstream query perf
+    # (predicate pushdown, row group skipping). Adds O(N log N) post-merge overhead.
+    sort_merged_parquet: bool = False
+
+    # Delta Lake: sort each partition part before writing. Improves downstream
+    # query performance (predicate pushdown, row group skipping) but adds
+    # O(N log N) overhead per part during generation. Disable for faster
+    # generation when the consuming tool (Power BI, SQL Server, etc.) applies
+    # its own indexes or columnstore compression.
+    sort_delta_parts: bool = False
 
     # Performance (promoted from sales.advanced)
     chunk_size: int = 1_000_000
@@ -502,6 +511,18 @@ class SalesConfig(_Base):
     parquet_folder: str = "./data/parquet_dims"
     out_folder: str = "./data/fact_out"
     delta_output_folder: str = "./data/fact_out/delta"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_optimize(cls, data: Any) -> Any:
+        """Migrate removed ``optimize`` to ``sort_merged_parquet``."""
+        if isinstance(data, dict) and "optimize" in data:
+            data = dict(data)
+            if "sort_merged_parquet" not in data:
+                data["sort_merged_parquet"] = data.pop("optimize")
+            else:
+                data.pop("optimize")
+        return data
 
 
 # -- Scale --

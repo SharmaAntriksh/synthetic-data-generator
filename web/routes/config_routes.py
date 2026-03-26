@@ -81,7 +81,7 @@ def get_config():
         "mergeParquet": bool(getattr(sales, "merge_parquet", True)),
         "partitionEnabled": bool(_g(sales, "partitioning", "enabled", default=True)),
         "maxLinesPerOrder": int(getattr(sales, "max_lines_per_order", 5)),
-        "salesOptimize": bool(getattr(sales, "optimize", True)),
+        "salesOptimize": bool(getattr(sales, "sort_merged_parquet", False)),
         "qualityReport": bool(getattr(sales, "quality_report", True)),
         # Dates
         "startDate": str(_g(defaults, "start", default="2023-01-01")),
@@ -264,7 +264,7 @@ def update_config(body: ConfigUpdate):
                 cfg.sales.partitioning = {}
             cfg.sales.partitioning["enabled"] = bool(v["partitionEnabled"])
         if "maxLinesPerOrder" in v: cfg.sales.max_lines_per_order = int(v["maxLinesPerOrder"])
-        if "salesOptimize" in v: cfg.sales.optimize = bool(v["salesOptimize"])
+        if "salesOptimize" in v: cfg.sales.sort_merged_parquet = bool(v["salesOptimize"])
         if "qualityReport" in v: cfg.sales.quality_report = bool(v["qualityReport"])
 
         # Dates

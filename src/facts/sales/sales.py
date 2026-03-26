@@ -604,7 +604,7 @@ def generate_sales_fact(
     )
 
     start_date, end_date = _resolve_date_range(cfg, start_date, end_date)
-    optimize_after_merge = _bool_or(getattr(sales_cfg, "optimize", None), False)
+    optimize_after_merge = _bool_or(getattr(sales_cfg, "sort_merged_parquet", None), False)
 
     seed = _resolve_seed(cfg, seed, default_seed=42)
     partition_enabled, partition_cols = _resolve_partitioning(cfg, partition_enabled, partition_cols)
@@ -2090,6 +2090,7 @@ def generate_sales_fact(
                 delta_output_folder=delta_dir,
                 partition_cols=partition_cols,
                 table_name=t,
+                sort_small_parts=_bool_or(getattr(sales_cfg, "sort_delta_parts", False), False),
             )
             wrote += 1
 

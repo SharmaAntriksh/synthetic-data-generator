@@ -59,10 +59,17 @@ def add_year_month_from_date(
     year = pc.cast(pc.year(col), year_type)
     month = pc.cast(pc.month(col), month_type)
 
-    if year_col not in names:
-        table = table.append_column(year_col, year)
-    if month_col not in names:
-        table = table.append_column(month_col, month)
+    need_year = year_col not in names
+    need_month = month_col not in names
+    if need_year and need_month:
+        # Single table reconstruction instead of two sequential append_column calls
+        new_names = table.schema.names + [year_col, month_col]
+        new_cols = [table.column(i) for i in range(table.num_columns)] + [year, month]
+        return pa.table(dict(zip(new_names, new_cols)))
+    if need_year:
+        return table.append_column(year_col, year)
+    if need_month:
+        return table.append_column(month_col, month)
     return table
 
 
