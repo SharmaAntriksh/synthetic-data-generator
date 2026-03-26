@@ -14,7 +14,7 @@ table Complaints
 		dataType: int64
 		formatString: 0
 		lineageTag: 66eee978-1234-42b9-b39d-4e163cece1f6
-		summarizeBy: count
+		summarizeBy: none
 		sourceColumn: CustomerKey
 
 		annotation SummarizationSetBy = Automatic

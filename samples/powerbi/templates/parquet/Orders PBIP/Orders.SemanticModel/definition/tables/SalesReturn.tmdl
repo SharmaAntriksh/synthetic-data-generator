@@ -36,7 +36,7 @@ table SalesReturn
 		dataType: int64
 		formatString: 0
 		lineageTag: 99ccab24-f966-468c-9864-201e93c32ddc
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ReturnReasonKey
 
 		annotation SummarizationSetBy = Automatic

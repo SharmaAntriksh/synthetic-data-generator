@@ -5,7 +5,7 @@ table MeasureTable
 			
 			CALCULATE ( 
 			    DISTINCTCOUNT ( SalesOrderHeader[CustomerKey] ),
-			    CROSSFILTER ( SalesOrderDetail[SalesOrderNumber], SalesOrderHeader[SalesOrderNumber], Both )
+			    SalesOrderDetail
 			)
 			```
 		formatString: 0
@@ -81,6 +81,32 @@ table MeasureTable
 		lineageTag: 1eb2d978-22a6-4e76-b3df-ceb15774abba
 
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'New Customers' = ```
+			
+			VAR CustomersFirstPurchaseDate = 
+			    CALCULATETABLE ( 
+			        ADDCOLUMNS ( 
+			            VALUES ( SalesOrderHeader[CustomerKey] ),
+			            "FirstPurchaseDate", CALCULATE ( MIN ( SalesOrderHeader[OrderDate] ) )
+			        ),
+			        REMOVEFILTERS ( Dates )
+			    )
+			VAR Result = 
+			    CALCULATE ( 
+			        [# Customers],
+			        TREATAS ( 
+			            CustomersFirstPurchaseDate,
+			            SalesOrderHeader[CustomerKey],
+			            SalesOrderHeader[OrderDate]
+			        )
+			    )
+			RETURN
+			    Result
+			```
+		formatString: 0
+		displayFolder: 01 - Base Measures
+		lineageTag: f8b1a56d-3cf7-4f55-a112-8c72978e317c
 
 	column Column1
 		dataType: string

@@ -37,7 +37,7 @@ table CustomerProfile
 	column NumberOfCars
 		dataType: double
 		lineageTag: 13f31f87-394b-43bf-b888-66cfd710660f
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: NumberOfCars
 
 		annotation SummarizationSetBy = Automatic
@@ -47,7 +47,7 @@ table CustomerProfile
 	column CreditScore
 		dataType: double
 		lineageTag: 5502e7b5-a8fa-43af-8500-215de08df96d
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: CreditScore
 
 		annotation SummarizationSetBy = Automatic
@@ -89,7 +89,7 @@ table CustomerProfile
 	column DistanceToNearestStoreKm
 		dataType: double
 		lineageTag: e0dbec86-de7e-4aef-bf54-3028c07b1746
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: DistanceToNearestStoreKm
 
 		annotation SummarizationSetBy = Automatic
@@ -230,7 +230,7 @@ table CustomerProfile
 		dataType: int64
 		formatString: 0
 		lineageTag: 2bb525ba-3a82-4944-82ee-f5f0bac3bac6
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: RewardPointsBalance
 
 		annotation SummarizationSetBy = Automatic
@@ -239,7 +239,7 @@ table CustomerProfile
 		dataType: int64
 		formatString: 0
 		lineageTag: d0e62fd6-a444-40d8-ab80-c23c9873a506
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: AvgOrderFrequencyDays
 
 		annotation SummarizationSetBy = Automatic
@@ -248,7 +248,7 @@ table CustomerProfile
 		dataType: int64
 		formatString: 0
 		lineageTag: d6eafcf4-e5be-4dff-b870-4f270a269e9f
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: CustomerSatisfactionScore
 
 		annotation SummarizationSetBy = Automatic
@@ -257,7 +257,7 @@ table CustomerProfile
 		dataType: int64
 		formatString: 0
 		lineageTag: 6a503a6a-5434-4f88-b636-5e846879e3a3
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: NPS
 
 		annotation SummarizationSetBy = Automatic
@@ -265,7 +265,7 @@ table CustomerProfile
 	column CustomerLifetimeValue
 		dataType: double
 		lineageTag: b0a2fa60-f8b7-4376-92f2-91296038b368
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: CustomerLifetimeValue
 
 		annotation SummarizationSetBy = Automatic

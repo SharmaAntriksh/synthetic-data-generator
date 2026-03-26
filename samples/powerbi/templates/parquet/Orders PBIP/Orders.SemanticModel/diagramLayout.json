@@ -456,6 +456,16 @@
             "width": 234
           },
           "zIndex": 0
+        },
+        {
+          "location": {},
+          "nodeIndex": "Table",
+          "nodeLineageTag": "8520b5e2-6bf2-4568-89bf-74578b07eadc",
+          "size": {
+            "height": 200,
+            "width": 234
+          },
+          "zIndex": 0
         }
       ],
       "name": "All tables",
@@ -572,7 +582,7 @@
         }
       ],
       "name": "Sales",
-      "zoomValue": 70.955543900968848,
+      "zoomValue": 63.287087723234059,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,
@@ -770,10 +780,36 @@
             "width": 234
           },
           "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 1128.2907855577928,
+            "y": 124.14062899865377
+          },
+          "nodeIndex": "SalesOrderHeader",
+          "nodeLineageTag": "5eef46cf-46bc-42a2-bd57-f3576ed2f418",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 761.24072857625924,
+            "y": 550.27064651983585
+          },
+          "nodeIndex": "SalesOrderDetail",
+          "nodeLineageTag": "b5d9ca22-fe9a-4d5c-a566-8dde89571287",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
         }
       ],
       "name": "Products",
-      "zoomValue": 79.553182037699813,
+      "zoomValue": 70.95554390096882,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,
@@ -788,8 +824,8 @@
       "nodes": [
         {
           "location": {
-            "x": 702.61049184281171,
-            "y": 438.23137679145032
+            "x": 255.11110730368216,
+            "y": 560.1623888709322
           },
           "nodeIndex": "OrganizationProfile",
           "nodeLineageTag": "7db111d9-3709-453f-8a59-9be2d3d0d438",
@@ -797,7 +833,7 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 1
+          "zIndex": 2
         },
         {
           "location": {
@@ -823,7 +859,7 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 2
+          "zIndex": 7
         },
         {
           "location": {
@@ -864,12 +900,64 @@
             "width": 234
           },
           "zIndex": 5
+        },
+        {
+          "location": {
+            "x": 732.93167302125357,
+            "y": 445.6194496673902
+          },
+          "nodeIndex": "SalesOrderHeader",
+          "nodeLineageTag": "5eef46cf-46bc-42a2-bd57-f3576ed2f418",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 8
+        },
+        {
+          "location": {
+            "x": 1134.2315620088655,
+            "y": 544.94096516360321
+          },
+          "nodeIndex": "SalesOrderDetail",
+          "nodeLineageTag": "b5d9ca22-fe9a-4d5c-a566-8dde89571287",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 1
+        },
+        {
+          "location": {
+            "x": 1462.8926009077034,
+            "y": 225.76053315607754
+          },
+          "nodeIndex": "Products",
+          "nodeLineageTag": "709af7c6-3c93-4a41-980a-b1edae7a2b62",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 672.84202663165024,
+            "y": 781.956137446419
+          },
+          "nodeIndex": "Complaints",
+          "nodeLineageTag": "a451593d-f046-4dd1-95b2-f8b2568f7db0",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
         }
       ],
       "name": "Customers",
-      "zoomValue": 79.553182037699813,
+      "zoomValue": 55.0344269078726,
       "pinKeyFieldsToTop": false,
-      "showExtraHeaderInfo": false,
+      "showExtraHeaderInfo": true,
       "hideKeyFieldsWhenCollapsed": false,
       "tablesLocked": false
     },
@@ -1032,6 +1120,99 @@
       ],
       "name": "ExchangeRates",
       "zoomValue": 70.955543900968848,
+      "pinKeyFieldsToTop": false,
+      "showExtraHeaderInfo": false,
+      "hideKeyFieldsWhenCollapsed": false,
+      "tablesLocked": false
+    },
+    {
+      "ordinal": 8,
+      "scrollPosition": {
+        "x": 0,
+        "y": 0
+      },
+      "nodes": [
+        {
+          "location": {
+            "x": 350.46689118789976,
+            "y": 353.75441512853757
+          },
+          "nodeIndex": "Customer",
+          "nodeLineageTag": "dbb05d43-2c7a-4482-bb97-3c7ff62ad985",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 5
+        },
+        {
+          "location": {
+            "x": 0,
+            "y": 303.68378059007938
+          },
+          "nodeIndex": "AcquisitionChannel",
+          "nodeLineageTag": "af9a6576-c7d6-4459-8628-0d3a0e4bd5db",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 4
+        },
+        {
+          "location": {
+            "x": 185.68555240119531,
+            "y": 0
+          },
+          "nodeIndex": "PlanSubscription",
+          "nodeLineageTag": "8e7638d9-caf6-4a4d-9b9e-f83c3e21f65a",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 1
+        },
+        {
+          "location": {
+            "x": 727.889243821909,
+            "y": 546.94192736174568
+          },
+          "nodeIndex": "SalesOrderHeader",
+          "nodeLineageTag": "5eef46cf-46bc-42a2-bd57-f3576ed2f418",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 2
+        },
+        {
+          "location": {
+            "x": 636.07641625933911,
+            "y": 134.30460972706464
+          },
+          "nodeIndex": "CustomerProfile",
+          "nodeLineageTag": "e02d81bc-ab02-4df1-a28f-695bd7c941de",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 3
+        },
+        {
+          "location": {
+            "x": 1154.3829315368316,
+            "y": 244.64928848457379
+          },
+          "nodeIndex": "Complaints",
+          "nodeLineageTag": "a451593d-f046-4dd1-95b2-f8b2568f7db0",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 6
+        }
+      ],
+      "name": "Layout 1",
+      "zoomValue": 70.95554390096882,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,

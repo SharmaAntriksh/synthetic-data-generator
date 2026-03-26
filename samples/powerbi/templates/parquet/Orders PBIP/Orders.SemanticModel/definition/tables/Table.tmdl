@@ -1,0 +1,21 @@
+table Table
+	lineageTag: 8520b5e2-6bf2-4568-89bf-74578b07eadc
+
+	column CustomerKey
+		formatString: 0
+		lineageTag: 1e15708c-bfb1-4440-868e-699f9a5749ff
+		summarizeBy: count
+		isNameInferred
+		sourceColumn: Customer[CustomerKey]
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Table = calculated
+		mode: import
+		source = ```
+				
+				    EXCEPT ( VALUES ( Customer[CustomerKey] ), VALUES ( SalesOrderHeader[CustomerKey] ) )
+				```
+
+	annotation PBI_Id = b464249287ad424b83f17ef44db37db9
+

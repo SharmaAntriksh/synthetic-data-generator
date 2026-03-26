@@ -18,7 +18,7 @@ table ExchangeRate
 		dataType: int64
 		formatString: 0
 		lineageTag: 0492e7e4-d7df-464e-a2c6-1850e587d955
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: FromCurrencyKey
 
 		annotation SummarizationSetBy = Automatic

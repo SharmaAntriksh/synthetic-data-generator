@@ -196,7 +196,7 @@ table Customer
 		dataType: int64
 		formatString: 0
 		lineageTag: 2f013250-7b88-4895-a09d-cb56d67c01db
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: LoyaltyTierKey
 
 		annotation SummarizationSetBy = Automatic

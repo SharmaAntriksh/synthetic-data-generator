@@ -67,6 +67,7 @@ ref table Inventory
 ref table Wishlist
 ref table Complaints
 ref table MeasureTable
+ref table Table
 
 ref cultureInfo en-US
 

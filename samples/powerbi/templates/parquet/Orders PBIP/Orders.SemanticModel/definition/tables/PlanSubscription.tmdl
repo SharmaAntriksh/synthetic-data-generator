@@ -14,7 +14,7 @@ table PlanSubscription
 		dataType: int64
 		formatString: 0
 		lineageTag: 05fb3414-f05b-4ffc-8f61-9912b906f065
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CustomerKey
 
 		annotation SummarizationSetBy = Automatic
@@ -23,7 +23,7 @@ table PlanSubscription
 		dataType: int64
 		formatString: 0
 		lineageTag: d8d345aa-00f7-494f-8578-5a603772ab88
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: PlanKey
 
 		annotation SummarizationSetBy = Automatic
