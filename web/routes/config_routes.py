@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from web.shared_state import (
+    ConfigUpdate,
     _config_path,
     _base_config,
     _g,
@@ -29,14 +30,6 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 from src.engine.config.config import _VALID_FILE_FORMATS as _VALID_FORMATS
 
 _VALID_SALES_OUTPUTS = {"sales", "sales_order", "both"}
-
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
-
-class ConfigUpdate(BaseModel):
-    values: Dict[str, Any]
 
 
 class ConfigYamlUpdate(BaseModel):

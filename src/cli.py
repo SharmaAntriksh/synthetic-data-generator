@@ -251,7 +251,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 1
 
     try:
-        result = run_pipeline(
+        run_pipeline(
             config_path=args.config,
             models_config_path=args.models_config,
             only=args.only,

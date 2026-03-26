@@ -128,7 +128,7 @@ def _coerce_optional_positive_int(
 # Public API
 # ---------------------------------------------------------------------------
 
-def load_pipeline_config(path: str | Path = "config.yaml"):
+def load_config(path: str | Path = "config.yaml"):
     """Load the *pipeline* config (config.yaml) and normalize safely.
 
     This loader REQUIRES defaults (or _defaults) to exist because the pipeline
@@ -148,18 +148,9 @@ def load_pipeline_config(path: str | Path = "config.yaml"):
     return AppConfig.from_raw_dict(raw)
 
 
-def load_config(path: str | Path = "config.yaml"):
-    """Backward-compatible alias of :func:`load_pipeline_config`."""
-    return load_pipeline_config(path)
-
-
-def load_config_typed(path: str | Path = "config.yaml"):
-    """Load and return a typed :class:`AppConfig` Pydantic model.
-
-    Alias of :func:`load_pipeline_config` (both now return ``AppConfig``).
-    Kept for call-site clarity during the migration period.
-    """
-    return load_pipeline_config(path)
+# Backward-compatible aliases
+load_pipeline_config = load_config
+load_config_typed = load_config
 
 
 def load_config_file(path: str | Path) -> dict:

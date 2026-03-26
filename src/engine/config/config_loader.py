@@ -8,7 +8,7 @@ existed in config.py. It now re-exports the single source of truth from config.p
 so adding a new section/table normalizer only requires changing one file.
 """
 
-from .config import (  # noqa: F401
+from .config import (
     get_global_dates,
     load_config,
     load_config_file,
