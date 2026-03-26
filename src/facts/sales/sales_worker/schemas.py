@@ -52,6 +52,9 @@ class WorkerSchemaBundle:
     schema_with_order_delta: pa.Schema
 
 
+_INT32_MAX = 2_147_483_647
+
+
 def build_worker_schemas(
     *,
     file_format: str,
@@ -60,6 +63,7 @@ def build_worker_schemas(
     returns_enabled: bool,
     parquet_dict_exclude: Optional[Set[str]] = None,
     models_cfg: Optional[dict] = None,
+    total_rows: int = 0,
 ) -> WorkerSchemaBundle:
     """
     Single source of truth for Sales / Order / Returns schemas & date-col policy.
@@ -120,8 +124,10 @@ def build_worker_schemas(
         pa.field("IsOrderDelayed", pa.int8()),
     ]
 
+    # Promote SalesOrderNumber to int64 if total_rows approaches int32 limit
+    order_num_type = pa.int64() if total_rows > _INT32_MAX // 2 else pa.int32()
     order_fields = [
-        pa.field("SalesOrderNumber", pa.int32()),
+        pa.field("SalesOrderNumber", order_num_type),
         pa.field("SalesOrderLineNumber", pa.int32()),
     ]
     delta_fields = [pa.field("Year", pa.int16()), pa.field("Month", pa.int16())]
@@ -200,7 +206,13 @@ def build_worker_schemas(
     # ---------------------------------------------------------------------
     if returns_enabled:
         base_return_fields = list(_RETURNS_SCHEMA_BASE)
-        return_schema = pa.schema(base_return_fields + delta_fields) if is_delta else _RETURNS_SCHEMA_BASE
+        # Promote SalesOrderNumber in returns schema to match sales schema
+        if order_num_type != pa.int32():
+            base_return_fields = [
+                pa.field(f.name, order_num_type) if f.name == "SalesOrderNumber" else f
+                for f in base_return_fields
+            ]
+        return_schema = pa.schema(base_return_fields + delta_fields) if is_delta else pa.schema(base_return_fields)
         schema_by_table[TABLE_SALES_RETURN] = return_schema
 
     # ---------------------------------------------------------------------

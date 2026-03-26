@@ -1032,9 +1032,22 @@ DATE_COLUMN_GROUPS = {
     "base_calendar": frozenset(_DATES_BASE_INTERNAL + _DATES_CALENDAR_INTERNAL),
 }
 
-def get_sales_schema(skip_order_cols: bool) -> List[SchemaCol]:
-    """Return the Sales schema with or without order number columns."""
-    return list(_SALES_SCHEMA_NO_ORDER if skip_order_cols else _SALES_SCHEMA)
+_INT32_HALF = 1_073_741_823  # int32_max // 2
+
+
+def get_sales_schema(skip_order_cols: bool, total_rows: int = 0) -> List[SchemaCol]:
+    """Return the Sales schema with or without order number columns.
+
+    When *total_rows* exceeds half of int32 max, ``SalesOrderNumber`` is
+    promoted to BIGINT to prevent overflow in both parquet and SQL output.
+    """
+    cols = list(_SALES_SCHEMA_NO_ORDER if skip_order_cols else _SALES_SCHEMA)
+    if total_rows > _INT32_HALF:
+        cols = [
+            ("SalesOrderNumber", BIGINT_NN) if name == "SalesOrderNumber" else (name, dtype)
+            for name, dtype in cols
+        ]
+    return cols
 
 
 def get_sales_order_header_schema() -> List[SchemaCol]:

@@ -752,6 +752,11 @@ def generate_sales_fact(
     # Optional auto chunk sizing
     # ------------------------------------------------------------
     total_rows = _int_or(total_rows, 0)
+    if total_rows > 1_073_741_823:  # > int32_max / 2
+        warn(
+            f"total_rows={total_rows:,} exceeds half of int32 max. "
+            "SalesOrderNumber will use int64 in parquet output."
+        )
     if total_rows <= 0:
         skip("No sales rows to generate (total_rows <= 0).")
         if return_manifest:
@@ -1607,6 +1612,7 @@ def generate_sales_fact(
         # Optional alias (safe to add): lets us rename later without breaking older workers.
         # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
         order_id_stride_orders=int(chunk_size),
+        total_rows=int(total_rows),
         order_id_run_id=int(order_id_run_id),
         max_lines_per_order=int(getattr(sales_cfg, "max_lines_per_order", 5) or 5),
 
