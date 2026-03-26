@@ -251,6 +251,7 @@ SELECT
     ReturnEventKey,
     SalesOrderNumber,
     SalesOrderLineNumber,
+    ReturnSequence,
     ReturnDate,
     ReturnReasonKey,
     ReturnQuantity,

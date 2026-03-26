@@ -668,6 +668,36 @@ def generate_sales_fact(
     if returns_min_lag_days > returns_max_lag_days:
         returns_min_lag_days = returns_max_lag_days
 
+    # Extract multi-event returns config from models.yaml
+    _models_returns = getattr(State.models_cfg, "returns", None)
+    _ret_qty_cfg = getattr(_models_returns, "quantity", None)
+    _ret_lag_cfg = getattr(_models_returns, "lag_days", None)
+
+    returns_full_line_prob = _float_or(getattr(_ret_qty_cfg, "full_line_probability", 0.85), 0.85)
+    returns_split_rate = _float_or(getattr(_ret_qty_cfg, "split_return_rate", 0.0), 0.0)
+    returns_max_splits = _int_or(getattr(_ret_qty_cfg, "max_splits", 3), 3)
+    returns_split_min_gap = _int_or(getattr(_ret_lag_cfg, "split_min_gap", 3), 3)
+    returns_split_max_gap = _int_or(getattr(_ret_lag_cfg, "split_max_gap", 20), 20)
+
+    # Merge models.yaml weight overrides with defaults.py canonical reasons
+    from src.defaults import (
+        RETURN_REASON_KEYS as _RR_KEYS,
+        RETURN_REASON_DEFAULT_WEIGHTS as _RR_DEFAULTS,
+        RETURN_REASON_LOGISTICS_KEYS as _RR_LOGISTICS,
+    )
+    _models_reasons = getattr(_models_returns, "reasons", None)
+    if _models_reasons and len(_models_reasons) > 0:
+        _weight_overrides = {int(r.key): float(r.weight) for r in _models_reasons}
+    else:
+        _weight_overrides = {}
+    returns_reason_keys = list(_RR_KEYS)
+    returns_reason_probs = [_weight_overrides.get(k, _RR_DEFAULTS[k]) for k in _RR_KEYS]
+    returns_logistics_keys = list(_RR_LOGISTICS)
+
+    # Event key capacity per chunk (for globally unique sequential keys)
+    _chunk_size = _int_or(sales_cfg.chunk_size, 1_000_000)
+    returns_event_key_capacity = int(_chunk_size * max(returns_rate, 0.01) * max(returns_max_splits, 1)) + 1000
+
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
 
     # Keep "requested" vs "effective" separate so we can warn+continue.
@@ -1605,6 +1635,15 @@ def generate_sales_fact(
         returns_rate=float(returns_rate),
         returns_min_lag_days=int(returns_min_lag_days),
         returns_max_lag_days=int(returns_max_lag_days),
+        returns_reason_keys=returns_reason_keys,
+        returns_reason_probs=returns_reason_probs,
+        returns_full_line_probability=float(returns_full_line_prob),
+        returns_split_return_rate=float(returns_split_rate),
+        returns_max_splits=int(returns_max_splits),
+        returns_split_min_gap=int(returns_split_min_gap),
+        returns_split_max_gap=int(returns_split_max_gap),
+        returns_logistics_keys=returns_logistics_keys,
+        returns_event_key_capacity=int(returns_event_key_capacity),
 
         # deterministic employee assignment lookup
         seed_master=int(seed),

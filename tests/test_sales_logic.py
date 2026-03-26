@@ -1162,6 +1162,7 @@ def _make_detail_table(n: int = 50) -> pa.Table:
         ),
         "Quantity": pa.array(rng.integers(1, 10, size=n, dtype=np.int32), type=pa.int32()),
         "NetPrice": pa.array(rng.uniform(10.0, 100.0, size=n), type=pa.float64()),
+        "IsOrderDelayed": pa.array(rng.integers(0, 2, size=n, dtype=np.int32), type=pa.int32()),
     })
 
 

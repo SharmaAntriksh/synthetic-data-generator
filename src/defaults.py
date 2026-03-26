@@ -649,4 +649,36 @@ SALES_CHANNEL_CORE_KEYS = np.array([1, 2, 3, 4, 5], dtype=np.int16)
 SALES_CHANNEL_CORE_KEYS.flags.writeable = False
 
 
+# =================================================================
+#  RETURN REASONS — single source of truth
+#  (key, label, category, default_weight)
+# =================================================================
+
+RETURN_REASONS: tuple[tuple[int, str, str, float], ...] = (
+    (1, "Defective",            "Quality",     0.20),
+    (2, "Damaged in shipping",  "Logistics",   0.12),
+    (3, "Wrong item",           "Fulfillment", 0.14),
+    (4, "Not as described",     "Customer",    0.10),
+    (5, "No longer needed",     "Customer",    0.14),
+    (6, "Late delivery",        "Logistics",   0.08),
+    (7, "Better price found",   "Customer",    0.07),
+    (8, "Other",                "Other",       0.15),
+)
+
+RETURN_REASON_KEYS: tuple[int, ...] = tuple(r[0] for r in RETURN_REASONS)
+RETURN_REASON_LABELS: dict[int, str] = {r[0]: r[1] for r in RETURN_REASONS}
+RETURN_REASON_CATEGORIES: dict[int, str] = {r[0]: r[2] for r in RETURN_REASONS}
+RETURN_REASON_DEFAULT_WEIGHTS: dict[int, float] = {r[0]: r[3] for r in RETURN_REASONS}
+RETURN_REASON_LOGISTICS_KEYS: frozenset[int] = frozenset(
+    r[0] for r in RETURN_REASONS if r[2] == "Logistics"
+)
+
+_rr_weights = np.array([r[3] for r in RETURN_REASONS])
+if abs(float(_rr_weights.sum()) - 1.0) > 1e-6:
+    raise ValidationError(
+        f"defaults.RETURN_REASONS weights sum to {_rr_weights.sum()}, expected 1.0"
+    )
+del _rr_weights
+
+
 _validate_probability_arrays()

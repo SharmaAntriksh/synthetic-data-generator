@@ -861,17 +861,21 @@ class BrandPopularityConfig(_Base):
 
 class ReturnReasonEntry(_Base):
     key: int
-    label: str
+    label: Optional[str] = None
     weight: float
 
 
 class LagDaysConfig(_Base):
     distribution: str = "triangular"
     mode: int = 7
+    split_min_gap: int = 3
+    split_max_gap: int = 20
 
 
 class ReturnQuantityConfig(_Base):
     full_line_probability: float = 0.85
+    split_return_rate: float = 0.0
+    max_splits: int = 3
 
 
 class ReturnsModelsConfig(_Base):
@@ -879,6 +883,19 @@ class ReturnsModelsConfig(_Base):
     reasons: List[ReturnReasonEntry] = []
     lag_days: LagDaysConfig = LagDaysConfig()
     quantity: ReturnQuantityConfig = ReturnQuantityConfig()
+
+    @model_validator(mode="after")
+    def _validate_reason_keys(self) -> "ReturnsModelsConfig":
+        if self.reasons:
+            from src.defaults import RETURN_REASON_KEYS
+            valid = set(RETURN_REASON_KEYS)
+            invalid = [r.key for r in self.reasons if r.key not in valid]
+            if invalid:
+                raise ValueError(
+                    f"models.yaml returns.reasons contains keys not in "
+                    f"defaults.RETURN_REASONS: {invalid}. Valid: {sorted(valid)}"
+                )
+        return self
 
 
 # -- Customers (models.yaml: injected by resolve_customer_profile) --

@@ -708,6 +708,13 @@ def init_sales_worker(worker_cfg: dict) -> None:
             returns_min_lag_days = returns_max_lag_days
         returns_reason_keys = worker_cfg.get("returns_reason_keys")
         returns_reason_probs = worker_cfg.get("returns_reason_probs")
+        returns_full_line_probability = float(worker_cfg.get("returns_full_line_probability", 0.85))
+        returns_split_return_rate = float(worker_cfg.get("returns_split_return_rate", 0.0))
+        returns_max_splits = int(worker_cfg.get("returns_max_splits", 3))
+        returns_split_min_gap = int(worker_cfg.get("returns_split_min_gap", 3))
+        returns_split_max_gap = int(worker_cfg.get("returns_split_max_gap", 20))
+        returns_event_key_capacity = int(worker_cfg.get("returns_event_key_capacity", 100000))
+        returns_logistics_keys = worker_cfg.get("returns_logistics_keys", [])
 
         if sales_output in {"sales_order", "both"}:
             skip_order_cols = False
@@ -1096,6 +1103,13 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "returns_max_lag_days": int(returns_max_lag_days),
             "returns_reason_keys": returns_reason_keys,
             "returns_reason_probs": returns_reason_probs,
+            "returns_full_line_probability": returns_full_line_probability,
+            "returns_split_return_rate": returns_split_return_rate,
+            "returns_max_splits": returns_max_splits,
+            "returns_split_min_gap": returns_split_min_gap,
+            "returns_split_max_gap": returns_split_max_gap,
+            "returns_event_key_capacity": returns_event_key_capacity,
+            "returns_logistics_keys": returns_logistics_keys,
             # EMPLOYEE assignment (canonical + optional legacy)
             "salesperson_effective_by_store": salesperson_effective_by_store,
             "salesperson_by_store_month": salesperson_by_store_month,

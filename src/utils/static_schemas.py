@@ -746,6 +746,7 @@ FACT_SCHEMAS: Dict[str, Schema] = {
         ("ReturnReasonKey", INT_NN),
         ("ReturnQuantity", INT_NN),
         ("ReturnNetPrice", DECIMAL(8, 2, not_null=True)),
+        ("ReturnSequence", INT_NN),
         ("ReturnEventKey", BIGINT_NN),
     ),
     "ExchangeRates": (

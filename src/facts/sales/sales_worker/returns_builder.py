@@ -6,6 +6,8 @@ from typing import Sequence
 import numpy as np
 import pyarrow as pa
 
+from src.defaults import RETURN_REASON_KEYS, RETURN_REASON_DEFAULT_WEIGHTS
+
 
 # Columns required from SalesOrderDetail to produce a returns fact table.
 RETURNS_REQUIRED_DETAIL_COLS: tuple[str, ...] = (
@@ -14,6 +16,7 @@ RETURNS_REQUIRED_DETAIL_COLS: tuple[str, ...] = (
     "DeliveryDate",
     "Quantity",
     "NetPrice",
+    "IsOrderDelayed",
 )
 
 # Output schema for the SalesReturn fact table.
@@ -28,6 +31,7 @@ RETURNS_SCHEMA = pa.schema(
         ("ReturnReasonKey", pa.int32()),
         ("ReturnQuantity", pa.int32()),
         ("ReturnNetPrice", pa.float64()),
+        ("ReturnSequence", pa.int32()),
         ("ReturnEventKey", pa.int64()),
     ]
 )
@@ -35,11 +39,18 @@ RETURNS_SCHEMA = pa.schema(
 @dataclass(frozen=True)
 class ReturnsConfig:
     enabled: bool = False
-    return_rate: float = 0.0  # probability per SalesOrderDetail line
-    min_lag_days: int = 0  # minimum lag days after delivery (0 allows same-day)
-    max_lag_days: int = 60    # return date = delivery date + lag_days (allows 0 for same-day)
-    reason_keys: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8)
-    reason_probs: Sequence[float] = (0.20, 0.12, 0.14, 0.10, 0.14, 0.08, 0.07, 0.15)
+    return_rate: float = 0.0
+    min_lag_days: int = 0
+    max_lag_days: int = 60
+    reason_keys: Sequence[int] = RETURN_REASON_KEYS
+    reason_probs: Sequence[float] = tuple(RETURN_REASON_DEFAULT_WEIGHTS[k] for k in RETURN_REASON_KEYS)
+    full_line_probability: float = 0.85
+    split_return_rate: float = 0.0
+    max_splits: int = 3
+    split_min_gap: int = 3
+    split_max_gap: int = 20
+    event_key_offset: int = 0
+    logistics_keys: frozenset = frozenset()
 
 
 def _empty_returns_table() -> pa.Table:
@@ -162,25 +173,13 @@ def build_sales_returns_from_detail(
     cfg: ReturnsConfig,
 ) -> pa.Table:
     """
-    Build SalesReturn event rows (thin) from SalesOrderDetail lines.
+    Build SalesReturn event rows from SalesOrderDetail lines.
 
-    Output columns:
-      - SalesOrderNumber
-      - SalesOrderLineNumber
-      - ReturnDate
-      - ReturnReasonKey
-      - ReturnQuantity
-      - ReturnNetPrice
-      - ReturnEventKey
+    Supports multi-event returns: a single line item can produce multiple
+    return events on different dates (e.g., return 5 of 10 on day 3, then
+    2 more on day 8, keeping 3).
 
-    Determinism:
-      - Uses a RNG seeded from chunk_seed, so the output is deterministic per chunk.
-
-    ReturnEventKey:
-      - Packed into a signed int64 but guaranteed NON-NEGATIVE by using only 31 bits
-        of the chunk seed:
-          (chunk_seed_u31 << 32) | ordinal_u32
-        This stays within [0, 2^63 - 1].
+    Determinism: seeded from chunk_seed.
     """
     if not cfg.enabled:
         return _empty_returns_table()
@@ -194,8 +193,6 @@ def build_sales_returns_from_detail(
         return _empty_returns_table()
 
     _ensure_required_columns(detail)
-
-    # Avoid repeated combine_chunks() work per-column.
     detail_cc = detail.combine_chunks()
 
     rng = np.random.default_rng(int(chunk_seed) ^ 0xA5A5_F00D)
@@ -209,58 +206,158 @@ def build_sales_returns_from_detail(
     if not bool(mask.any()):
         return _empty_returns_table()
 
-    # Extract masked arrays (alignment-safe).
     so = _as_np_i32(_col_np(detail_cc, "SalesOrderNumber"))[mask]
     line = _as_np_i32(_col_np(detail_cc, "SalesOrderLineNumber"))[mask]
-
     delivery_raw = _col_np(detail_cc, "DeliveryDate")[mask]
     delivery = _to_np_date_days(delivery_raw)
-
     qty = qty_all[mask]
     net_price = _as_np_f64(_col_np(detail_cc, "NetPrice"))[mask]
+    is_delayed = _as_np_i32(_col_np(detail_cc, "IsOrderDelayed"))[mask]
 
     m = int(qty.size)
     if m == 0:
         return _empty_returns_table()
-    if m >= (1 << 32):
-        raise RuntimeError("SalesReturn chunk too large for ReturnEventKey packing (>= 2^32 rows).")
 
-    # ReturnQuantity: integer in [1, qty]
+    # --- Determine return quantity per line ---
+    full_line = rng.random(m) < cfg.full_line_probability
     u = rng.random(m)
-    ret_qty = (np.floor(u * qty).astype(np.int32) + 1).clip(1, qty)
+    ret_qty = np.where(
+        full_line,
+        qty,
+        (np.floor(u * qty).astype(np.int32) + 1).clip(1, qty),
+    ).astype(np.int32)
 
-    frac = ret_qty.astype(np.float64) / qty.astype(np.float64)
+    # --- Determine number of events per line (vectorized) ---
+    max_splits = max(1, cfg.max_splits)
+    num_events = np.ones(m, dtype=np.int32)
+    if cfg.split_return_rate > 0:
+        is_split = rng.random(m) < cfg.split_return_rate
+        can_split = is_split & (ret_qty >= 2)
+        n_can = int(can_split.sum())
+        if n_can > 0:
+            k_max = np.minimum(ret_qty[can_split], max_splits)
+            # Draw uniform in [2, k_max] for each splittable line
+            u = rng.random(n_can)
+            num_events[can_split] = np.where(
+                k_max >= 2,
+                (2 + np.floor(u * (k_max - 1))).astype(np.int32),
+                1,
+            )
 
-    # Lag is in [min_lag, max_lag] days.
-    # Note: min_lag==0 allows same-day returns; config can enforce min>=1.
-    if max_lag <= 0:
-        lag_days = np.full(m, max(0, int(min_lag)), dtype=np.int32)
+    total_events = int(num_events.sum())
+
+    # --- Expand parent arrays by num_events ---
+    so_exp = np.repeat(so, num_events)
+    line_exp = np.repeat(line, num_events)
+    delivery_exp = np.repeat(delivery, num_events)
+    qty_exp = np.repeat(qty, num_events)  # original line qty (for pro-rating)
+    net_price_exp = np.repeat(net_price, num_events)
+
+    # --- ReturnSequence: 1, 2, 3... per group ---
+    if total_events == m:
+        seq = np.ones(total_events, dtype=np.int32)
     else:
-        lo = max(0, int(min_lag))
-        hi = max(lo, int(max_lag))
-        lag_days = rng.integers(lo, hi + 1, size=m, dtype=np.int32)
+        seq = np.ones(total_events, dtype=np.int32)
+        group_starts = np.cumsum(num_events)[:-1]
+        seq[group_starts] -= num_events[:-1]
+        np.cumsum(seq, out=seq)
 
-    lag = lag_days.astype("timedelta64[D]")
-    ret_date = (delivery + lag).astype("datetime64[D]", copy=False)
+    # --- Partition return quantities across events ---
+    # Single-event lines: event_qty = ret_qty (vectorized assignment)
+    # Multi-event lines: random partition via cut points (loop only over splits)
+    event_qty = np.zeros(total_events, dtype=np.int32)
+    offsets = np.zeros(m + 1, dtype=np.int64)
+    np.cumsum(num_events, out=offsets[1:])
 
-    reason = rng.choice(reason_keys, size=m, p=reason_probs).astype(np.int32)
+    single_mask = num_events == 1
+    if single_mask.any():
+        event_qty[offsets[:-1][single_mask]] = ret_qty[single_mask]
 
-    # ReturnEventKey: (chunk_seed_u31 << 32) | ordinal
-    seed31 = np.int64(int(chunk_seed) & 0x7FFF_FFFF)
-    ordinal = np.arange(m, dtype=np.int64)  # < 2^32 by check above
-    return_event_key = (seed31 << 32) | ordinal
+    multi_idx = np.flatnonzero(~single_mask)
+    for i in multi_idx:
+        k = int(num_events[i])
+        rq = int(ret_qty[i])
+        p = int(offsets[i])
+        cuts = np.sort(rng.choice(np.arange(1, rq), size=k - 1, replace=False))
+        parts = np.diff(np.concatenate([[0], cuts, [rq]]))
+        event_qty[p:p + k] = parts.astype(np.int32)
 
-    return_net_price = np.round(net_price * frac, 2).astype(np.float64, copy=False)
+    # --- Compute dates ---
+    lo = max(0, int(min_lag))
+    hi = max(lo, int(max_lag))
+    if hi <= 0:
+        base_lag = np.full(total_events, lo, dtype=np.int32)
+    else:
+        base_lag = rng.integers(lo, hi + 1, size=total_events, dtype=np.int32)
 
-    # Build table using explicit schema to keep empty/non-empty consistent.
+    # For split events (seq > 1), add cumulative incremental gaps
+    # Each subsequent event adds an independent gap, accumulated via cumsum
+    # within each group to guarantee non-decreasing dates.
+    if total_events > m:
+        per_event_gap = np.where(
+            seq > 1,
+            rng.integers(
+                max(1, cfg.split_min_gap), max(2, cfg.split_max_gap + 1),
+                size=total_events, dtype=np.int32,
+            ),
+            0,
+        ).astype(np.int32)
+        # Segmented cumsum within groups (vectorized reset trick)
+        # Full cumsum minus the cumsum value at each group start gives within-group cumsum
+        extra_lag = np.cumsum(per_event_gap)
+        group_starts = offsets[:-1]  # reuse offsets from partition step
+        correction = np.repeat(
+            np.concatenate([[0], extra_lag[group_starts[1:] - 1]]),
+            num_events,
+        )
+        extra_lag = (extra_lag - correction).astype(np.int32)
+    else:
+        extra_lag = np.zeros(total_events, dtype=np.int32)
+
+    lag = (base_lag + extra_lag).astype("timedelta64[D]")
+    ret_date = (delivery_exp + lag).astype("datetime64[D]", copy=False)
+
+    # --- Reason keys (category-aware per event) ---
+    # Logistics reasons (e.g., "Late delivery", "Damaged in shipping") are only
+    # valid for delayed orders. On-time orders get those weights redistributed.
+    reason = np.empty(total_events, dtype=np.int32)
+    if cfg.logistics_keys:
+        logistics_mask = np.array([k in cfg.logistics_keys for k in reason_keys], dtype=bool)
+        probs_ontime = reason_probs.copy()
+        probs_ontime[logistics_mask] = 0.0
+        s = float(probs_ontime.sum())
+        if s > 0:
+            probs_ontime /= s
+        else:
+            probs_ontime = np.full_like(probs_ontime, 1.0 / max(1, probs_ontime.size))
+        probs_ontime[-1] = 1.0 - probs_ontime[:-1].sum()  # CDF boundary guard
+
+        is_delayed_exp = np.repeat(is_delayed, num_events) > 0
+        n_delayed = int(is_delayed_exp.sum())
+        n_ontime = total_events - n_delayed
+        if n_delayed > 0:
+            reason[is_delayed_exp] = rng.choice(reason_keys, size=n_delayed, p=reason_probs).astype(np.int32)
+        if n_ontime > 0:
+            reason[~is_delayed_exp] = rng.choice(reason_keys, size=n_ontime, p=probs_ontime).astype(np.int32)
+    else:
+        reason[:] = rng.choice(reason_keys, size=total_events, p=reason_probs).astype(np.int32)
+
+    # --- ReturnNetPrice: pro-rated by event quantity ---
+    unit_price = net_price_exp / np.maximum(qty_exp.astype(np.float64), 1.0)
+    return_net_price = np.round(unit_price * event_qty.astype(np.float64), 2)
+
+    # --- ReturnEventKey: sequential, globally unique via offset ---
+    return_event_key = cfg.event_key_offset + np.arange(1, total_events + 1, dtype=np.int64)
+
     return pa.table(
         {
-            "SalesOrderNumber": pa.array(so, type=pa.int32()),
-            "SalesOrderLineNumber": pa.array(line, type=pa.int32()),
+            "SalesOrderNumber": pa.array(so_exp, type=pa.int32()),
+            "SalesOrderLineNumber": pa.array(line_exp, type=pa.int32()),
             "ReturnDate": pa.array(ret_date, type=pa.date32()),
             "ReturnReasonKey": pa.array(reason, type=pa.int32()),
-            "ReturnQuantity": pa.array(ret_qty, type=pa.int32()),
+            "ReturnQuantity": pa.array(event_qty, type=pa.int32()),
             "ReturnNetPrice": pa.array(return_net_price, type=pa.float64()),
+            "ReturnSequence": pa.array(seq, type=pa.int32()),
             "ReturnEventKey": pa.array(return_event_key, type=pa.int64()),
         },
         schema=RETURNS_SCHEMA,

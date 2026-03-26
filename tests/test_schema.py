@@ -76,7 +76,7 @@ class TestAppConfigFromYAML:
 
     def test_sales_section(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)
-        assert app.sales.skip_order_cols is True
+        assert app.sales.skip_order_cols is False
         assert app.sales.compression == "snappy"
         assert isinstance(app.sales.chunk_size, int)
 

@@ -1,0 +1,260 @@
+"""Tests for multi-event returns (split returns across multiple dates)."""
+from __future__ import annotations
+
+import numpy as np
+import pyarrow as pa
+import pytest
+
+from src.facts.sales.sales_worker.returns_builder import (
+    ReturnsConfig,
+    RETURNS_SCHEMA,
+    build_sales_returns_from_detail,
+)
+
+
+def _rng():
+    return np.random.default_rng(12345)
+
+
+def _make_detail(n: int = 100) -> pa.Table:
+    rng = _rng()
+    return pa.table({
+        "SalesOrderNumber": pa.array(np.arange(1, n + 1, dtype=np.int32)),
+        "SalesOrderLineNumber": pa.array(np.ones(n, dtype=np.int32)),
+        "DeliveryDate": pa.array(
+            np.array(["2024-03-15"] * n, dtype="datetime64[D]"), type=pa.date32(),
+        ),
+        "Quantity": pa.array(rng.integers(2, 10, size=n, dtype=np.int32)),
+        "NetPrice": pa.array(rng.uniform(20.0, 200.0, size=n)),
+        "IsOrderDelayed": pa.array(rng.integers(0, 2, size=n, dtype=np.int32)),
+    })
+
+
+class TestBackwardCompat:
+    def test_no_splits_when_rate_zero(self):
+        detail = _make_detail()
+        cfg = ReturnsConfig(enabled=True, return_rate=1.0, split_return_rate=0.0)
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        assert result.num_rows > 0
+        seq = result.column("ReturnSequence").to_numpy()
+        assert np.all(seq == 1)
+
+    def test_schema_includes_return_sequence(self):
+        assert "ReturnSequence" in RETURNS_SCHEMA.names
+        assert "ReturnEventKey" in RETURNS_SCHEMA.names
+
+    def test_empty_table_has_return_sequence(self):
+        detail = _make_detail(10)
+        cfg = ReturnsConfig(enabled=False)
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        assert result.num_rows == 0
+        assert "ReturnSequence" in result.schema.names
+
+
+class TestMultiEventReturns:
+    def test_splits_produce_multiple_rows(self):
+        detail = _make_detail(200)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            split_return_rate=1.0, max_splits=3,
+        )
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        seq = result.column("ReturnSequence").to_numpy()
+        # With split_rate=1.0, some rows should have seq > 1
+        assert np.any(seq > 1)
+
+    def test_quantity_sums_match(self):
+        detail = _make_detail(100)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            split_return_rate=1.0, max_splits=3,
+            full_line_probability=1.0,
+        )
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+
+        so = result.column("SalesOrderNumber").to_numpy()
+        line = result.column("SalesOrderLineNumber").to_numpy()
+        ret_qty = result.column("ReturnQuantity").to_numpy()
+        orig_qty = detail.column("Quantity").to_numpy()
+
+        # For each (so, line) group, sum of ReturnQuantity should equal original Quantity
+        for order_num in np.unique(so):
+            mask = so == order_num
+            total_returned = ret_qty[mask].sum()
+            orig = orig_qty[order_num - 1]  # 1-indexed
+            assert total_returned == orig, (
+                f"Order {order_num}: returned {total_returned} != original {orig}"
+            )
+
+    def test_return_sequence_starts_at_1(self):
+        detail = _make_detail(100)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            split_return_rate=0.5, max_splits=3,
+        )
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+
+        so = result.column("SalesOrderNumber").to_numpy()
+        line = result.column("SalesOrderLineNumber").to_numpy()
+        seq = result.column("ReturnSequence").to_numpy()
+
+        # Every group should start at 1
+        seen = set()
+        for i in range(len(so)):
+            key = (int(so[i]), int(line[i]))
+            if key not in seen:
+                assert seq[i] == 1, f"Group {key} starts at {seq[i]}, expected 1"
+                seen.add(key)
+
+    def test_dates_non_decreasing_within_group(self):
+        detail = _make_detail(100)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            split_return_rate=1.0, max_splits=3,
+            min_lag_days=1, max_lag_days=5,
+            split_min_gap=3, split_max_gap=10,
+        )
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+
+        so = result.column("SalesOrderNumber").to_numpy()
+        dates = result.column("ReturnDate").to_numpy(zero_copy_only=False)
+        seq = result.column("ReturnSequence").to_numpy()
+
+        prev_date = {}
+        for i in range(len(so)):
+            key = int(so[i])
+            if seq[i] == 1:
+                prev_date[key] = dates[i]
+            else:
+                assert dates[i] >= prev_date[key], (
+                    f"Order {key} seq {seq[i]}: date {dates[i]} < prev {prev_date[key]}"
+                )
+                prev_date[key] = dates[i]
+
+    def test_each_event_has_positive_quantity(self):
+        detail = _make_detail(100)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            split_return_rate=1.0, max_splits=3,
+        )
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        ret_qty = result.column("ReturnQuantity").to_numpy()
+        assert np.all(ret_qty >= 1)
+
+
+class TestReturnEventKey:
+    def test_sequential_keys(self):
+        detail = _make_detail(50)
+        cfg = ReturnsConfig(enabled=True, return_rate=1.0, event_key_offset=0)
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        keys = result.column("ReturnEventKey").to_numpy()
+        assert keys[0] == 1
+        assert np.all(np.diff(keys) == 1)
+
+    def test_offset_applied(self):
+        detail = _make_detail(50)
+        cfg = ReturnsConfig(enabled=True, return_rate=1.0, event_key_offset=100000)
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        keys = result.column("ReturnEventKey").to_numpy()
+        assert keys[0] == 100001
+
+    def test_no_overlap_across_chunks(self):
+        detail = _make_detail(50)
+        cfg1 = ReturnsConfig(enabled=True, return_rate=1.0, event_key_offset=0)
+        cfg2 = ReturnsConfig(enabled=True, return_rate=1.0, event_key_offset=10000)
+        r1 = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg1)
+        r2 = build_sales_returns_from_detail(detail, chunk_seed=99, cfg=cfg2)
+        keys1 = set(r1.column("ReturnEventKey").to_numpy().tolist())
+        keys2 = set(r2.column("ReturnEventKey").to_numpy().tolist())
+        assert keys1.isdisjoint(keys2)
+
+
+class TestDeterminism:
+    def test_same_seed_same_output(self):
+        detail = _make_detail(100)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=0.5,
+            split_return_rate=0.3, max_splits=3,
+        )
+        r1 = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        r2 = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        assert r1.equals(r2)
+
+
+class TestCategoryAwareSampling:
+    """Logistics reasons should only appear on delayed orders."""
+
+    from src.defaults import RETURN_REASON_LOGISTICS_KEYS
+    LOGISTICS_KEYS = RETURN_REASON_LOGISTICS_KEYS
+
+    def _make_all_ontime(self, n: int = 200) -> pa.Table:
+        rng = _rng()
+        return pa.table({
+            "SalesOrderNumber": pa.array(np.arange(1, n + 1, dtype=np.int32)),
+            "SalesOrderLineNumber": pa.array(np.ones(n, dtype=np.int32)),
+            "DeliveryDate": pa.array(
+                np.array(["2024-03-15"] * n, dtype="datetime64[D]"), type=pa.date32(),
+            ),
+            "Quantity": pa.array(rng.integers(1, 5, size=n, dtype=np.int32)),
+            "NetPrice": pa.array(rng.uniform(10.0, 100.0, size=n)),
+            "IsOrderDelayed": pa.array(np.zeros(n, dtype=np.int32)),
+        })
+
+    def _make_all_delayed(self, n: int = 200) -> pa.Table:
+        rng = _rng()
+        return pa.table({
+            "SalesOrderNumber": pa.array(np.arange(1, n + 1, dtype=np.int32)),
+            "SalesOrderLineNumber": pa.array(np.ones(n, dtype=np.int32)),
+            "DeliveryDate": pa.array(
+                np.array(["2024-03-15"] * n, dtype="datetime64[D]"), type=pa.date32(),
+            ),
+            "Quantity": pa.array(rng.integers(1, 5, size=n, dtype=np.int32)),
+            "NetPrice": pa.array(rng.uniform(10.0, 100.0, size=n)),
+            "IsOrderDelayed": pa.array(np.ones(n, dtype=np.int32)),
+        })
+
+    def test_ontime_orders_no_logistics_reasons(self):
+        detail = self._make_all_ontime(500)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            logistics_keys=self.LOGISTICS_KEYS,
+        )
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        reasons = set(result.column("ReturnReasonKey").to_numpy().tolist())
+        assert not reasons & self.LOGISTICS_KEYS, (
+            f"On-time orders should not get Logistics reasons, got: {reasons & self.LOGISTICS_KEYS}"
+        )
+
+    def test_delayed_orders_can_get_logistics_reasons(self):
+        detail = self._make_all_delayed(500)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            logistics_keys=self.LOGISTICS_KEYS,
+        )
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        reasons = set(result.column("ReturnReasonKey").to_numpy().tolist())
+        assert reasons & self.LOGISTICS_KEYS, (
+            f"Delayed orders should include Logistics reasons, got: {reasons}"
+        )
+
+    def test_no_logistics_keys_falls_back_to_uniform(self):
+        detail = self._make_all_ontime(200)
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            logistics_keys=frozenset(),  # empty — no category filtering
+        )
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        reasons = set(result.column("ReturnReasonKey").to_numpy().tolist())
+        # Without logistics filtering, all reason keys can appear
+        assert len(reasons) > 1
+
+
+class TestDefaultsConsistency:
+    def test_dimension_matches_defaults(self):
+        from src.defaults import RETURN_REASONS as canonical
+        from src.dimensions.return_reasons import RETURN_REASONS as dim_reasons
+        assert len(dim_reasons) == len(canonical)
+        for (dk, dl, dc), (ck, cl, cc, _w) in zip(dim_reasons, canonical):
+            assert dk == ck
+            assert dl == cl
+            assert dc == cc
