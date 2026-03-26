@@ -76,7 +76,7 @@ def _normalize_prob(w: np.ndarray) -> np.ndarray:
     w = np.where(np.isfinite(w) & (w > 0), w, 0.0)
     s = float(w.sum())
     if s <= 1e-12:
-        return np.full(w.shape[0], 1.0 / w.shape[0], dtype=np.float64)
+        return np.full(w.shape[0], 1.0 / max(1, w.shape[0]), dtype=np.float64)
     return w / s
 
 

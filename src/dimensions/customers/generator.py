@@ -989,7 +989,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
 def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
     """Generate customers in parallel: chunk → merge → households → SCD2."""
     from multiprocessing import cpu_count
-    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from src.utils.pool import PoolRunSpec, iter_imap_unordered
     from src.dimensions.customers.worker import customer_chunk_worker, scd2_chunk_worker
     from src.dimensions.customers.scd2 import expand_changed_customers, _build_geo_cache
 

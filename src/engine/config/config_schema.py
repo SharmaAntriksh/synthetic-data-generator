@@ -470,7 +470,7 @@ class ReturnsConfig(_Base):
 class SalesConfig(_Base):
     total_rows: int = 1_000_000
     max_lines_per_order: int = 5
-    file_format: str = "csv"
+    file_format: str = "parquet"
     sales_output: str = "sales"
     skip_order_cols: bool = False
 
@@ -484,14 +484,14 @@ class SalesConfig(_Base):
     partition_cols: Optional[List[str]] = None
     partitioning: Optional[Dict[str, Any]] = None
 
-    optimize: bool = True
+    optimize: bool = False
 
     # Performance (promoted from sales.advanced)
     chunk_size: int = 1_000_000
     workers: Optional[int] = None
     row_group_size: int = 1_000_000
     compression: str = "snappy"
-    quality_report: bool = True
+    quality_report: bool = False
 
     # Order ID run identifier (0..999)
     order_id_run_id: Optional[int] = None

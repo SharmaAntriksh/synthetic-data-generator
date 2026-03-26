@@ -63,7 +63,7 @@ def _generate_parallel_enrichment(
 ) -> pd.DataFrame:
     """Enrich products in parallel: chunk -> enrich -> merge -> rank columns."""
     import shutil
-    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from src.utils.pool import PoolRunSpec, iter_imap_unordered
     from .worker import product_enrich_chunk_worker
 
     N = len(df)

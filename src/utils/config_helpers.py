@@ -11,12 +11,6 @@ import pandas as pd
 
 from src.exceptions import ConfigError
 
-try:
-    import numpy as _np
-    _HAS_NUMPY = True
-except ImportError:
-    _HAS_NUMPY = False
-
 import numpy as np
 
 from src.utils.logging_utils import warn
@@ -70,7 +64,7 @@ def bool_or(value: Any, default: bool) -> bool:
         return bool(default)
     if isinstance(value, bool):
         return value
-    if _HAS_NUMPY and isinstance(value, _np.integer):
+    if isinstance(value, np.integer):
         return bool(int(value))
     elif isinstance(value, (int, float)):
         return bool(int(value))

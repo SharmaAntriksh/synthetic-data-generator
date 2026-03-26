@@ -1,3 +1,12 @@
+"""Generic multiprocessing pool utilities.
+
+Provides ``PoolRunSpec`` (frozen dataclass describing pool configuration) and
+``iter_imap_unordered`` (high-level runner that yields results in completion
+order with optional per-task timeout).
+
+These are layer-agnostic — used by both dimension generators and fact
+generators for parallel chunk processing.
+"""
 from __future__ import annotations
 
 import os

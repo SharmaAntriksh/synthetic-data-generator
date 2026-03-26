@@ -255,7 +255,13 @@ def run_pipeline(
         # ----------------------------
         if clean_scratch:
             info(f"Cleaning scratch fact_out folder: {fact_out}")
-            shutil.rmtree(fact_out)
+            try:
+                shutil.rmtree(fact_out)
+            except OSError as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Could not fully remove %s: %s", fact_out, e
+                )
         else:
             info(f"Keeping scratch fact_out folder (packaging.clean_scratch_fact_out=false): {fact_out}")
 

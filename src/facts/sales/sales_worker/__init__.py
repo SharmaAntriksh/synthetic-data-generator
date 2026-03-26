@@ -17,7 +17,7 @@ from .io import (
     write_parquet_table,
     write_csv_table,
 )
-from .pool import PoolRunSpec, iter_imap_unordered
+from src.utils.pool import PoolRunSpec, iter_imap_unordered
 from .returns_builder import ReturnsConfig, build_sales_returns_from_detail
 from .schemas import schema_dict_cols
 from .task import _worker_task, normalize_tasks, derive_chunk_seed, write_table_by_format

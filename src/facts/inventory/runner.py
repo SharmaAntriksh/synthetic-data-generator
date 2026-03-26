@@ -366,7 +366,7 @@ def _run_parallel(
     csv_chunk_size: int = 2_000_000,
 ) -> Dict[str, Any]:
     """Partition by warehouse groups and run simulation in parallel."""
-    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from src.utils.pool import PoolRunSpec, iter_imap_unordered
 
     n_cpus = max(1, cpu_count() - 1)
     if workers is not None and workers >= 1:

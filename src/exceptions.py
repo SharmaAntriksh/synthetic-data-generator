@@ -35,3 +35,7 @@ class ValidationError(ConfigError):
     Separate from ``ConfigError`` so callers can distinguish "bad YAML
     syntax" from "valid YAML but logically inconsistent settings".
     """
+
+
+class SqlServerImportError(PipelineError):
+    """Raised when SQL Server import fails."""

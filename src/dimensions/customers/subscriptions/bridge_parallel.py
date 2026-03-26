@@ -129,7 +129,7 @@ def write_bridge_parallel(
     workers: Optional[int] = None,
 ) -> int:
     """Parallel bridge writer for large datasets. Returns total rows written."""
-    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from src.utils.pool import PoolRunSpec, iter_imap_unordered
 
     if "CustomerKey" not in customers.columns:
         raise DimensionError("customers must include CustomerKey")

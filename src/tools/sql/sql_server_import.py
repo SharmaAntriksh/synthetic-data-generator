@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
+from src.exceptions import SqlServerImportError
+
 try:
     import pyodbc
 except ImportError:
@@ -26,9 +28,6 @@ def _find_project_root() -> Path:
 PROJECT_ROOT = _find_project_root()
 _GO_SPLIT_RE = re.compile(r"^\s*GO\s*$", flags=re.MULTILINE | re.IGNORECASE)
 
-
-class SqlServerImportError(RuntimeError):
-    """Raised when SQL Server import fails."""
 
 
 # -------------------------

@@ -102,8 +102,10 @@ src/
       suppliers.py               # Supplier dimension generation
       worker.py                  # Multiprocessing chunk worker for parallel product enrichment
     stores/                      # Store dimension package
-      __init__.py                # Re-exports run_stores
+      __init__.py                # Re-exports run_stores, generate_store_table, GeoContext
       generator.py               # Store generation with geography, staffing, assortment
+    warehouses/                  # Warehouse dimension package
+      generator.py               # Warehouse generation (capacity, location, type)
     geography.py                 # Geography dimension (countries, states, cities, population weighting)
     promotions.py                # Promotions dimension (seasonal, clearance, BOGO, etc.)
     lookups.py                   # Lookup dimensions (sales channels, loyalty tiers, acquisition channels)
@@ -121,6 +123,10 @@ src/
     inventory/                   # Inventory snapshots (monthly grain, ABC classification, shrinkage)
     wishlists/                   # Customer wishlists (streamed from sales worker accumulators)
     complaints/                  # Customer complaints (streamed from sales worker accumulators)
+    shared/                      # Shared fact utilities
+      base_accumulator.py        # Base class for streamed fact accumulators
+      micro_agg_helpers.py       # Micro-aggregation helpers for fact generation
+      writers.py                 # Shared output writers for fact tables
   engine/
     config/                      # config_loader.py, config.py (normalizer registry), config_schema.py (Pydantic models)
     packaging/                   # csv_packager, parquet_packager, delta_packager, SQL script gen
@@ -128,6 +134,8 @@ src/
       pipeline_runner.py         # Main orchestrator (override precedence, config injection)
       dimensions_runner.py       # Dependency-aware dim generation with version tracking
       sales_runner.py            # Sales pipeline coordinator
+    quality_report.py            # Post-generation quality report (FK checks, stats, warnings)
+    dimension_loader.py          # Load dimension parquet files for pipeline use
     powerbi_packaging.py         # Auto-generates .pbip project
   integrations/
     fx_yahoo.py                  # Yahoo Finance FX rate downloader
@@ -138,6 +146,7 @@ src/
     customer_profiles.py         # Acquisition profiles (steady/gradual/aggressive/instant)
     config_helpers.py            # Canonical type coercion helpers (bool_or, int_or, float_or, etc.)
     config_precedence.py         # Standardized config resolution (resolve_seed, resolve_dates)
+    pool.py                      # Generic multiprocessing pool (PoolRunSpec, iter_imap_unordered)
     name_pools.py, output_utils.py, logging_utils.py
   versioning/
     version_checker.py           # Hash-based dimension version tracking (.version files)

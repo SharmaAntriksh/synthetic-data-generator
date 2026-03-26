@@ -359,7 +359,7 @@ def _run_parallel(
     scd2_lookup: Optional[Tuple[np.ndarray, np.ndarray]] = None,
 ) -> int:
     """Parallel wishlist generation: distribute customers across worker pool."""
-    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from src.utils.pool import PoolRunSpec, iter_imap_unordered
     from src.facts.wishlists.worker import _wishlist_worker_task
 
     n_cpus = max(1, cpu_count() - 1)
