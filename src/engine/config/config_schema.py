@@ -200,7 +200,7 @@ class CustomersConfig(_Base):
     total_customers: Optional[int] = None
     active_ratio: float = 0.98
     profile: str = "steady"
-    first_year_pct: float = 0.27
+    first_year_pct: Optional[float] = None
     # Flattened from region_mix by _expand_region_mix
     pct_us: float = 0.0
     pct_eu: float = 0.0

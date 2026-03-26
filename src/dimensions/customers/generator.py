@@ -1275,7 +1275,7 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
                 n_versions = len(customers_df) - N
                 info(f"SCD2: {n_change} customers expanded, {n_versions} version rows added ({len(customers_df)} total)")
 
-                # Remap profile/org-profile CustomerKey
+                # Remap profile/org-profile CustomerKey → IsCurrent=1 version's CustomerKey
                 current_map = (
                     customers_df.loc[customers_df["IsCurrent"] == 1, ["CustomerID", "CustomerKey"]]
                     .set_index("CustomerID")["CustomerKey"]

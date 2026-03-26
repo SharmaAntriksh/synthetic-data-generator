@@ -93,8 +93,8 @@ customers:
   region_mix: { Americas: 41, Europe: 39, India: 2, APAC: 18 }
   org_pct: 1
 
-  profile: gradual                   # gradual | steady | aggressive | instant
-  first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
+  profile: steady                     # gradual | steady | aggressive | instant | decline
+  # first_year_pct: 0.27             # override: % of customers in year 1 (omit to let profile decide)
 
   scd2:
     enabled: true                    # enable SCD Type 2 history tracking
