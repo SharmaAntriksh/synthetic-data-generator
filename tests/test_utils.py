@@ -1,7 +1,7 @@
 """Comprehensive tests for utility modules that previously had no tests.
 
 Covers:
-  - config_helpers (bool_or, int_or, float_or, str_or, range2, as_dict, pick_seed_*)
+  - config_helpers (bool_or, int_or, float_or, str_or, range2, as_dict)
   - config_precedence (resolve_seed, resolve_dates)
   - shared_arrays (SharedArrayGroup publish/resolve, _is_shareable)
   - name_pools (load_list, normalize_name_ascii, hash_u64, pick_from_pool, etc.)
