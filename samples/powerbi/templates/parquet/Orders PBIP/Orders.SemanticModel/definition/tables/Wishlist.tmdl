@@ -1,0 +1,81 @@
+table Wishlist
+	lineageTag: 5930d4e6-3e72-4e58-8604-a76bd6c3c044
+
+	column WishlistKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 7a906a10-f565-4d4a-a165-e480c9028583
+		summarizeBy: count
+		sourceColumn: WishlistKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 1f46769f-5c25-4da5-94de-d352eb1b43c8
+		summarizeBy: count
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ProductKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8a920dd7-889a-4b50-8d16-ab4b28440268
+		summarizeBy: count
+		sourceColumn: ProductKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column AddedDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 27e35550-e213-400a-b52e-d4fbfb97f478
+		summarizeBy: none
+		sourceColumn: AddedDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column Priority
+		dataType: string
+		lineageTag: 30dfbe4d-7811-4ac1-b303-20147394c71f
+		summarizeBy: none
+		sourceColumn: Priority
+
+		annotation SummarizationSetBy = Automatic
+
+	column Quantity
+		dataType: int64
+		formatString: 0
+		lineageTag: 804102ca-e9e8-4489-be60-7ea008c6de1f
+		summarizeBy: sum
+		sourceColumn: Quantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column NetPrice
+		dataType: double
+		lineageTag: a871c130-ce78-4da3-bc8d-ca7d7cf4c69f
+		summarizeBy: sum
+		sourceColumn: NetPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition Wishlist = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source      = FxReadParquetFile ( "facts\customer_wishlists" )
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
+

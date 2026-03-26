@@ -4,7 +4,7 @@
     {
       "ordinal": 0,
       "scrollPosition": {
-        "x": 1133.5107164036795,
+        "x": 1134.2287816054679,
         "y": 0
       },
       "nodes": [
@@ -1010,6 +1010,6 @@
       "tablesLocked": false
     }
   ],
-  "selectedDiagram": "All tables",
+  "selectedDiagram": "ExchangeRates",
   "defaultDiagram": "All tables"
 }

@@ -1,0 +1,108 @@
+table Inventory
+	lineageTag: 69ac4f0c-9972-4288-b1a4-c6d40dfd588e
+
+	column ProductKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8cc47b21-16aa-4e89-a74c-28f690e09e7a
+		summarizeBy: none
+		sourceColumn: ProductKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarehouseKey
+		dataType: int64
+		formatString: 0
+		lineageTag: b95f8415-d745-44be-9113-7dcc5b5d7849
+		summarizeBy: none
+		sourceColumn: WarehouseKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SnapshotDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 04d9ea7d-b0c4-4b68-a990-9bc28091b267
+		summarizeBy: none
+		sourceColumn: SnapshotDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column QuantityOnHand
+		dataType: int64
+		formatString: 0
+		lineageTag: 7ef67b82-cf05-45fa-aacb-f39b384bbb46
+		summarizeBy: sum
+		sourceColumn: QuantityOnHand
+
+		annotation SummarizationSetBy = Automatic
+
+	column QuantityOnOrder
+		dataType: int64
+		formatString: 0
+		lineageTag: 2b946b40-90e0-44e4-94dd-09f334c66c82
+		summarizeBy: sum
+		sourceColumn: QuantityOnOrder
+
+		annotation SummarizationSetBy = Automatic
+
+	column QuantitySold
+		dataType: int64
+		formatString: 0
+		lineageTag: ed419e38-1b42-4292-9051-fa9c9f1e526a
+		summarizeBy: sum
+		sourceColumn: QuantitySold
+
+		annotation SummarizationSetBy = Automatic
+
+	column QuantityReceived
+		dataType: int64
+		formatString: 0
+		lineageTag: 385f3d9c-9bc9-4e7b-9d94-1a26f5bf0def
+		summarizeBy: sum
+		sourceColumn: QuantityReceived
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReorderFlag
+		dataType: int64
+		formatString: 0
+		lineageTag: e831b661-450f-490d-8196-07734c832725
+		summarizeBy: sum
+		sourceColumn: ReorderFlag
+
+		annotation SummarizationSetBy = Automatic
+
+	column StockoutFlag
+		dataType: int64
+		formatString: 0
+		lineageTag: 5860f206-c834-4cd0-8d02-aebf087b03da
+		summarizeBy: sum
+		sourceColumn: StockoutFlag
+
+		annotation SummarizationSetBy = Automatic
+
+	column DaysOutOfStock
+		dataType: int64
+		formatString: 0
+		lineageTag: 8b090573-5bf7-4249-a093-4e143acbb5a2
+		summarizeBy: sum
+		sourceColumn: DaysOutOfStock
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Inventory = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source      = FxReadParquetFile ( "facts\inventory_snapshot" )
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
+

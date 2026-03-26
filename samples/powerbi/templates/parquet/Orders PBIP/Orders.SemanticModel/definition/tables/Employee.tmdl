@@ -1,10 +1,10 @@
 table Employee
-	lineageTag: 2556e787-e4c3-42b2-a0da-ec2d1318fe4b
+	lineageTag: eb2c1c06-19de-4198-af4f-bc502969041c
 
 	column EmployeeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 8de46213-aa0d-4e5d-8280-4930cbaf1720
+		lineageTag: b40f50e4-207c-43e2-a1f5-32e805e6164f
 		summarizeBy: count
 		sourceColumn: EmployeeKey
 
@@ -13,7 +13,7 @@ table Employee
 	column ParentEmployeeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 4519b2d0-bb8b-40b0-9bdd-37a472cfbdab
+		lineageTag: 8f7ebef0-f141-4249-9993-d95c92c5ec42
 		summarizeBy: count
 		sourceColumn: ParentEmployeeKey
 
@@ -21,7 +21,7 @@ table Employee
 
 	column EmployeeName
 		dataType: string
-		lineageTag: da54f952-cc08-45a4-b2c0-771ff25eb535
+		lineageTag: 3684f5c5-dcb1-4470-948f-287df0369c1b
 		summarizeBy: none
 		sourceColumn: EmployeeName
 
@@ -29,7 +29,7 @@ table Employee
 
 	column Title
 		dataType: string
-		lineageTag: 0577b551-18fb-4aaa-82c6-cd3b64f86786
+		lineageTag: 5767cc39-a895-46a8-81a2-760af4f2c1d5
 		summarizeBy: none
 		sourceColumn: Title
 
@@ -38,7 +38,7 @@ table Employee
 	column OrgLevel
 		dataType: int64
 		formatString: 0
-		lineageTag: 6ce9d103-3bb1-4664-9c29-51dfa9e75710
+		lineageTag: 22436d44-af09-4faa-91d8-9d5494d967c8
 		summarizeBy: sum
 		sourceColumn: OrgLevel
 
@@ -46,7 +46,7 @@ table Employee
 
 	column OrgUnitType
 		dataType: string
-		lineageTag: d299bc1e-1af5-473b-af11-c94f854b0fca
+		lineageTag: 671e0d9a-4cb8-469f-889d-924eeb2dc05b
 		summarizeBy: none
 		sourceColumn: OrgUnitType
 
@@ -55,7 +55,7 @@ table Employee
 	column RegionId
 		dataType: int64
 		formatString: 0
-		lineageTag: a51da05e-5b08-49ac-8f05-4e2665f5667e
+		lineageTag: 2565810e-843d-42a2-8328-62127668ea15
 		summarizeBy: count
 		sourceColumn: RegionId
 
@@ -64,16 +64,34 @@ table Employee
 	column DistrictId
 		dataType: int64
 		formatString: 0
-		lineageTag: 94493163-d065-44c5-8db8-8c14bd94ffe9
+		lineageTag: 0323bd8b-2078-468a-ac94-4fecad96c765
 		summarizeBy: count
 		sourceColumn: DistrictId
 
 		annotation SummarizationSetBy = Automatic
 
+	column StoreKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 4fb15251-0764-4422-aa73-afb6b61ac2e2
+		summarizeBy: count
+		sourceColumn: StoreKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column GeographyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 87e303df-dd16-49c8-8cd5-904e64e23103
+		summarizeBy: count
+		sourceColumn: GeographyKey
+
+		annotation SummarizationSetBy = Automatic
+
 	column HireDate
 		dataType: dateTime
-		formatString: Short Date
-		lineageTag: 22eb2561-e16c-4d14-a28e-0de24deefbf8
+		formatString: yyyy-mm-dd
+		lineageTag: d325ddf3-5140-4e32-8973-5bb3208de944
 		summarizeBy: none
 		sourceColumn: HireDate
 
@@ -81,10 +99,12 @@ table Employee
 
 		annotation UnderlyingDateTimeDataType = Date
 
+		annotation PBI_FormatHint = {"isCustom":true}
+
 	column TerminationDate
 		dataType: dateTime
-		formatString: Long Date
-		lineageTag: dc133a01-092d-40e5-8427-0a8b2ba039ee
+		formatString: yyyy-mm-dd
+		lineageTag: 1033a77e-9a74-4ffe-a763-b79e533d7071
 		summarizeBy: none
 		sourceColumn: TerminationDate
 
@@ -92,18 +112,46 @@ table Employee
 
 		annotation UnderlyingDateTimeDataType = Date
 
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column TerminationReason
+		dataType: string
+		lineageTag: fa0ffd6f-e9f8-4dc3-93ef-a98c9ccdcbcc
+		summarizeBy: none
+		sourceColumn: TerminationReason
+
+		annotation SummarizationSetBy = Automatic
+
 	column IsActive
 		dataType: int64
 		formatString: 0
-		lineageTag: 2825e59e-f4e0-4560-a632-502224773ef7
+		lineageTag: 92ddbede-c993-4b4d-a33f-e6b38924a848
 		summarizeBy: sum
 		sourceColumn: IsActive
 
 		annotation SummarizationSetBy = Automatic
 
+	column EmploymentType
+		dataType: string
+		lineageTag: 4ea9be41-6370-4edf-8ebb-574030f69865
+		summarizeBy: none
+		sourceColumn: EmploymentType
+
+		annotation SummarizationSetBy = Automatic
+
+	column FTE
+		dataType: double
+		lineageTag: bd0a9efe-0378-4533-83b8-804fc9b69b00
+		summarizeBy: sum
+		sourceColumn: FTE
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
 	column Gender
 		dataType: string
-		lineageTag: 090823b0-6e61-43bb-9cde-8898573c146e
+		lineageTag: a6624b3a-622a-4d2f-90c9-23061f226921
 		summarizeBy: none
 		sourceColumn: Gender
 
@@ -111,7 +159,7 @@ table Employee
 
 	column FirstName
 		dataType: string
-		lineageTag: ddadbbec-aaaf-45fb-8975-f02a8b7a0b5f
+		lineageTag: 4a8e05b0-4906-4b4f-9b9a-fd15ffc35ee0
 		summarizeBy: none
 		sourceColumn: FirstName
 
@@ -119,7 +167,7 @@ table Employee
 
 	column LastName
 		dataType: string
-		lineageTag: 9d19f4c1-e08d-4ac8-af19-b35f2a5110cb
+		lineageTag: a1caee98-5956-4b28-8522-8201e6fc0c33
 		summarizeBy: none
 		sourceColumn: LastName
 
@@ -127,7 +175,7 @@ table Employee
 
 	column MiddleName
 		dataType: string
-		lineageTag: 78d6a2b7-954d-430b-9fcc-2de167d7bc1f
+		lineageTag: 759b9e1e-7952-4281-ab70-3b49d7529f48
 		summarizeBy: none
 		sourceColumn: MiddleName
 
@@ -135,8 +183,8 @@ table Employee
 
 	column BirthDate
 		dataType: dateTime
-		formatString: Short Date
-		lineageTag: 8ef372d4-d61b-4d5d-a54c-deb54a70b106
+		formatString: yyyy-mm-dd
+		lineageTag: cfd162e7-7a95-4373-877b-7098392d9de1
 		summarizeBy: none
 		sourceColumn: BirthDate
 
@@ -144,9 +192,11 @@ table Employee
 
 		annotation UnderlyingDateTimeDataType = Date
 
+		annotation PBI_FormatHint = {"isCustom":true}
+
 	column MaritalStatus
 		dataType: string
-		lineageTag: d5fe4945-7580-401e-bb66-f9cdc93642ca
+		lineageTag: e8e9a7da-f634-4686-bca3-0c2318057bef
 		summarizeBy: none
 		sourceColumn: MaritalStatus
 
@@ -154,7 +204,7 @@ table Employee
 
 	column EmailAddress
 		dataType: string
-		lineageTag: 1ffae3ae-4647-41a8-abe7-b0383f4216f1
+		lineageTag: 924a093c-a2b2-47e3-b1d0-910842b1e86b
 		summarizeBy: none
 		sourceColumn: EmailAddress
 
@@ -162,7 +212,7 @@ table Employee
 
 	column Phone
 		dataType: string
-		lineageTag: 4f63891c-02b2-4f90-83a2-bff2f7f91e8f
+		lineageTag: 9c0ba682-b483-4fc1-a508-39167e09d104
 		summarizeBy: none
 		sourceColumn: Phone
 
@@ -170,7 +220,7 @@ table Employee
 
 	column EmergencyContactName
 		dataType: string
-		lineageTag: 824b2548-b10b-4e18-bb30-f5e15a50b21a
+		lineageTag: 65f43cea-d4c5-43c7-a132-c5769b75e34b
 		summarizeBy: none
 		sourceColumn: EmergencyContactName
 
@@ -178,7 +228,7 @@ table Employee
 
 	column EmergencyContactPhone
 		dataType: string
-		lineageTag: 65d013c1-8d32-44a0-b417-3052f23c23e7
+		lineageTag: bc990207-6026-47de-ab4d-a97d0191becc
 		summarizeBy: none
 		sourceColumn: EmergencyContactPhone
 
@@ -187,7 +237,7 @@ table Employee
 	column SalariedFlag
 		dataType: int64
 		formatString: 0
-		lineageTag: 04ce2d19-92d8-49d1-a3e6-d8f4679e2df9
+		lineageTag: b007c7b8-7b56-4262-bb3e-266f199c802e
 		summarizeBy: sum
 		sourceColumn: SalariedFlag
 
@@ -196,7 +246,7 @@ table Employee
 	column PayFrequency
 		dataType: int64
 		formatString: 0
-		lineageTag: a3606035-c119-4a52-b499-1b645bd77628
+		lineageTag: 934daccf-b174-4a7c-bc20-f004b3b30cf4
 		summarizeBy: sum
 		sourceColumn: PayFrequency
 
@@ -204,7 +254,7 @@ table Employee
 
 	column BaseRate
 		dataType: double
-		lineageTag: 7d96ce74-8faf-4fb8-a6fb-67807e76bf7b
+		lineageTag: 58a6f258-42da-4aa2-8e3e-d5c3b2703a24
 		summarizeBy: sum
 		sourceColumn: BaseRate
 
@@ -215,46 +265,15 @@ table Employee
 	column VacationHours
 		dataType: int64
 		formatString: 0
-		lineageTag: aea90708-42bc-4e23-abf9-55c85c63ec22
+		lineageTag: 84e109eb-ecc6-44c0-8a5f-df242df31664
 		summarizeBy: sum
 		sourceColumn: VacationHours
 
 		annotation SummarizationSetBy = Automatic
 
-	column CurrentFlag
-		dataType: int64
-		formatString: 0
-		lineageTag: 9ed71f07-efac-4800-9561-9b5600a25c6b
-		summarizeBy: sum
-		sourceColumn: CurrentFlag
-
-		annotation SummarizationSetBy = Automatic
-
-	column StartDate
-		dataType: dateTime
-		formatString: Short Date
-		lineageTag: 24ee7de1-3bd6-4f94-a9df-7221e4b14a51
-		summarizeBy: none
-		sourceColumn: StartDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-	column EndDate
-		dataType: dateTime
-		formatString: Short Date
-		lineageTag: c958de52-68df-4c12-be0d-20dc2b6d885d
-		summarizeBy: none
-		sourceColumn: EndDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
 	column Status
 		dataType: string
-		lineageTag: 673a9d41-abc2-45a1-b428-1881be78d2da
+		lineageTag: 83c16cd0-4d67-40bb-99d0-a587327a5725
 		summarizeBy: none
 		sourceColumn: Status
 
@@ -263,24 +282,15 @@ table Employee
 	column SalesPersonFlag
 		dataType: int64
 		formatString: 0
-		lineageTag: 6d73111e-83c4-45ac-93c2-e0bc140b34f4
+		lineageTag: 0586e3c7-e1f3-48f1-b322-9c2ba4c4ad07
 		summarizeBy: sum
 		sourceColumn: SalesPersonFlag
 
 		annotation SummarizationSetBy = Automatic
 
-	column IsSalesPerson
-		dataType: int64
-		formatString: 0
-		lineageTag: 2139c33f-a4cc-4dd5-a7db-557b733bc706
-		summarizeBy: sum
-		sourceColumn: IsSalesPerson
-
-		annotation SummarizationSetBy = Automatic
-
 	column DepartmentName
 		dataType: string
-		lineageTag: 0abe66f1-66d2-449c-8fe9-df1a4b6ae61e
+		lineageTag: e66d312a-6baf-44af-b848-19a551f1ec14
 		summarizeBy: none
 		sourceColumn: DepartmentName
 
@@ -295,8 +305,6 @@ table Employee
 				    ChangedType = Table.TransformColumnTypes ( Source, { { "ParentEmployeeKey", Int64.Type } } )
 				in
 				    ChangedType
-
-	annotation PBI_NavigationStepName = Navigation
 
 	annotation PBI_ResultType = Table
 

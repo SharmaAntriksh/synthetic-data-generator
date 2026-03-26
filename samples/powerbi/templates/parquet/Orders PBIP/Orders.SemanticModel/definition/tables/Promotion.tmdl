@@ -1,55 +1,44 @@
-table Promotions
-	lineageTag: 398acef2-142d-4969-aba2-44201a493192
+table Promotion
+	lineageTag: 2dc4603b-84ad-46e7-b2de-ff2f57da07e2
 
 	column PromotionKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 7e6df572-b676-4cca-a951-71240f847fa4
+		lineageTag: 62271f58-af16-4947-ad65-d50a99247c04
 		summarizeBy: count
 		sourceColumn: PromotionKey
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column PromotionLabel
-		dataType: int64
-		formatString: 0
-		lineageTag: 954fe7fd-37b0-4a45-bf0d-5efa7a04e569
-		summarizeBy: sum
+		dataType: string
+		lineageTag: 9c838079-8ea7-4650-8c5c-d1d13e2f808f
+		summarizeBy: none
 		sourceColumn: PromotionLabel
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column PromotionName
 		dataType: string
-		lineageTag: 0c57aabe-5173-4e4a-8bff-2811e9658c4d
+		lineageTag: 1325d73f-43b3-4fe2-8db7-fe24ac61f85a
 		summarizeBy: none
 		sourceColumn: PromotionName
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column PromotionDescription
 		dataType: string
-		lineageTag: 7f871e60-ba9d-4abe-9a2f-76c5e1886ff5
+		lineageTag: b6a15f2b-bb49-4a2b-9b58-c22de50a32e0
 		summarizeBy: none
 		sourceColumn: PromotionDescription
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column DiscountPct
 		dataType: double
-		lineageTag: d32f03db-d535-422f-96c3-f7673b9335c8
+		lineageTag: 53a8b9e5-987e-45df-9c2b-81e8cf8cd2f8
 		summarizeBy: sum
 		sourceColumn: DiscountPct
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
@@ -57,51 +46,65 @@ table Promotions
 
 	column PromotionType
 		dataType: string
-		lineageTag: 02af240f-9a14-43d5-ac36-ff6f3084481e
+		lineageTag: a627fad7-ddd9-4149-b965-0172f0988249
 		summarizeBy: none
 		sourceColumn: PromotionType
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column PromotionCategory
 		dataType: string
-		lineageTag: 9e6cd0b7-b5a6-4770-916f-da1fef33d433
+		lineageTag: 27ca47bb-4c4a-42b0-af12-37b9b0337097
 		summarizeBy: none
 		sourceColumn: PromotionCategory
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionYear
+		dataType: int64
+		formatString: 0
+		lineageTag: f8a4c658-e19e-481d-b4c7-4bd6eaab5e50
+		summarizeBy: sum
+		sourceColumn: PromotionYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionSequence
+		dataType: int64
+		formatString: 0
+		lineageTag: a6e651e9-ecc4-477e-8c1e-4922207e359f
+		summarizeBy: sum
+		sourceColumn: PromotionSequence
 
 		annotation SummarizationSetBy = Automatic
 
 	column StartDate
 		dataType: dateTime
-		formatString: Short Date
-		lineageTag: 8a50adea-bf23-4ecd-9453-ac764a1a7571
+		formatString: yyyy-mm-dd
+		lineageTag: 0b93e8d0-6f98-48a3-b60a-ead9a2e60c1d
 		summarizeBy: none
 		sourceColumn: StartDate
 
-		changedProperty = IsHidden
-
 		annotation SummarizationSetBy = Automatic
 
 		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
 
 	column EndDate
 		dataType: dateTime
-		formatString: Short Date
-		lineageTag: 40dc50b6-653b-4693-b181-3c93c2e2e70f
+		formatString: yyyy-mm-dd
+		lineageTag: c2cf563b-adec-4935-8f2b-e5a53921fcbd
 		summarizeBy: none
 		sourceColumn: EndDate
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 		annotation UnderlyingDateTimeDataType = Date
 
-	partition Promotions = m
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	partition Promotion = m
 		mode: import
 		queryGroup: Dimensions
 		source =
@@ -110,9 +113,5 @@ table Promotions
 				in
 				    Source
 
-	changedProperty = IsHidden
-
 	annotation PBI_ResultType = Table
-
-	annotation PBI_NavigationStepName = Navigation
 

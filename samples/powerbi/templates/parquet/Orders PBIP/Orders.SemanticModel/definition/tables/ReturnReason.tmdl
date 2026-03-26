@@ -1,10 +1,10 @@
 table ReturnReason
-	lineageTag: 92e7f62e-a5e0-41f9-bff9-b7a023b9a0a4
+	lineageTag: 2515a63f-92f2-4f55-85c5-b3856e68e5c6
 
 	column ReturnReasonKey
 		dataType: int64
 		formatString: 0
-		lineageTag: e8ede8d8-a4aa-49bc-a066-f9721d750917
+		lineageTag: 5adbee91-ab03-4b44-962b-317732c66f45
 		summarizeBy: count
 		sourceColumn: ReturnReasonKey
 
@@ -12,7 +12,7 @@ table ReturnReason
 
 	column ReturnReason
 		dataType: string
-		lineageTag: f1ef18ab-3835-4344-a28d-f90653141c13
+		lineageTag: 8cb29902-6c51-4c42-be94-39eec16784cd
 		summarizeBy: none
 		sourceColumn: ReturnReason
 
@@ -20,7 +20,7 @@ table ReturnReason
 
 	column ReturnReasonCategory
 		dataType: string
-		lineageTag: 5325789a-c44b-40ab-958a-71d72c9427df
+		lineageTag: dbbbd7f3-8e8b-4c4d-8d34-21861debe264
 		summarizeBy: none
 		sourceColumn: ReturnReasonCategory
 
@@ -34,8 +34,6 @@ table ReturnReason
 				    Source = FxReadParquetFile ( "dimensions\return_reason" )
 				in
 				    Source
-
-	annotation PBI_NavigationStepName = Navigation
 
 	annotation PBI_ResultType = Table
 

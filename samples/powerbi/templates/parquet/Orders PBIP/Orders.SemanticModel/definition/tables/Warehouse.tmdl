@@ -1,0 +1,90 @@
+table Warehouse
+	lineageTag: 2a5da76a-3008-41dc-b8ea-99d3a0bc0dea
+
+	column WarehouseKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 105a4566-90e3-4173-bf82-aa8f958c1dfc
+		summarizeBy: count
+		sourceColumn: WarehouseKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarehouseName
+		dataType: string
+		lineageTag: df0bf64d-2620-47c9-acc7-02dcbaadd6ae
+		summarizeBy: none
+		sourceColumn: WarehouseName
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarehouseType
+		dataType: string
+		lineageTag: ff0d3423-4385-4858-b698-b894ebbb83c2
+		summarizeBy: none
+		sourceColumn: WarehouseType
+
+		annotation SummarizationSetBy = Automatic
+
+	column Zone
+		dataType: string
+		lineageTag: ea2efbec-fcd5-4689-b2bd-a54b1267e4e2
+		summarizeBy: none
+		sourceColumn: Zone
+
+		annotation SummarizationSetBy = Automatic
+
+	column Country
+		dataType: string
+		lineageTag: 67c076bd-30a0-4ddf-a99f-f9b02fb8d74e
+		summarizeBy: none
+		sourceColumn: Country
+
+		annotation SummarizationSetBy = Automatic
+
+	column Territory
+		dataType: string
+		lineageTag: 6837ed82-c234-443a-b7dc-570579f8c970
+		summarizeBy: none
+		sourceColumn: Territory
+
+		annotation SummarizationSetBy = Automatic
+
+	column GeographyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: aa1f1a3e-3d31-4c97-9184-b7cf9b1198ca
+		summarizeBy: count
+		sourceColumn: GeographyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column Capacity
+		dataType: int64
+		formatString: 0
+		lineageTag: cb36957a-7907-4b88-8956-caab439b7117
+		summarizeBy: sum
+		sourceColumn: Capacity
+
+		annotation SummarizationSetBy = Automatic
+
+	column SquareFootage
+		dataType: int64
+		formatString: 0
+		lineageTag: 76672117-127e-4843-8153-706c66e74e6e
+		summarizeBy: sum
+		sourceColumn: SquareFootage
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Warehouse = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\warehouses" )
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
+

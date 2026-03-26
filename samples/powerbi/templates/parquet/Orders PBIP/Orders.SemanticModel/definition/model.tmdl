@@ -17,32 +17,56 @@ queryGroup Dimensions
 
 queryGroup Fact
 
-	annotation PBI_QueryGroupOrder = 2
+	annotation PBI_QueryGroupOrder = 4
+
+queryGroup Dimensions\Products
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup Dimensions\Customer
+
+	annotation PBI_QueryGroupOrder = 1
 
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBI_QueryOrder = ["ContosoFolder","FxReadParquetFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRates","MeasureTable","SalesOrderDetail","SalesReturns","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel"]
+annotation PBI_QueryOrder = ["ContosoFolder","FxReadParquetFile","Products","ProductSubcategory","ProductCategory","Supplier","ProductProfile","Customer","PlanSubscription","Plan","CustomerProfile","OrganizationProfile","LoyaltyTiers","AcquisitionChannel","Dates","Store","Promotion","Geography","Currency","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel","Time","Warehouse","ExchangeRate","ExchangeRateMonthly","SalesOrderHeader","SalesOrderDetail","SalesReturn","Budget","BudgetMonthly","Inventory","Wishlist","Complaints","MeasureTable"]
 
 annotation PBI_ProTooling = ["TMDLView_Desktop","DevMode"]
 
-ref table Customers
-ref table Dates
-ref table Store
-ref table Promotions
 ref table Products
 ref table ProductSubcategory
 ref table ProductCategory
+ref table Supplier
+ref table ProductProfile
+ref table Customer
+ref table PlanSubscription
+ref table Plan
+ref table CustomerProfile
+ref table OrganizationProfile
+ref table LoyaltyTiers
+ref table AcquisitionChannel
+ref table Dates
+ref table Store
+ref table Promotion
 ref table Geography
 ref table Currency
-ref table ExchangeRates
-ref table SalesOrderHeader
-ref table MeasureTable
-ref table SalesOrderDetail
-ref table SalesReturns
 ref table Employee
 ref table EmployeeStoreAssignment
 ref table ReturnReason
 ref table SalesChannel
+ref table Time
+ref table Warehouse
+ref table ExchangeRate
+ref table ExchangeRateMonthly
+ref table SalesOrderHeader
+ref table SalesOrderDetail
+ref table SalesReturn
+ref table Budget
+ref table BudgetMonthly
+ref table Inventory
+ref table Wishlist
+ref table Complaints
+ref table MeasureTable
 
 ref cultureInfo en-US
 

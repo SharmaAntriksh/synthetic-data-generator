@@ -1,0 +1,293 @@
+table CustomerProfile
+	lineageTag: e02d81bc-ab02-4df1-a28f-695bd7c941de
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 40c5a88a-a8ca-4b62-9725-a452ba99c960
+		summarizeBy: none
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column AgeGroup
+		dataType: string
+		lineageTag: b14bbde3-9507-413a-885c-dbb0ec358901
+		summarizeBy: none
+		sourceColumn: AgeGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	column Education
+		dataType: string
+		lineageTag: 110469dd-f3a3-4ecf-a625-58598834b2e0
+		summarizeBy: none
+		sourceColumn: Education
+
+		annotation SummarizationSetBy = Automatic
+
+	column Occupation
+		dataType: string
+		lineageTag: 6b986395-9253-4dbf-930d-017b249c1ad2
+		summarizeBy: none
+		sourceColumn: Occupation
+
+		annotation SummarizationSetBy = Automatic
+
+	column NumberOfCars
+		dataType: double
+		lineageTag: 13f31f87-394b-43bf-b888-66cfd710660f
+		summarizeBy: sum
+		sourceColumn: NumberOfCars
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column CreditScore
+		dataType: double
+		lineageTag: 5502e7b5-a8fa-43af-8500-215de08df96d
+		summarizeBy: sum
+		sourceColumn: CreditScore
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column UrbanRural
+		dataType: string
+		lineageTag: 9f4e41d7-c4cc-44a3-8bd2-8dfcb9432e26
+		summarizeBy: none
+		sourceColumn: UrbanRural
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeZone
+		dataType: string
+		lineageTag: ac6a1ada-d516-4361-9498-837e8de2b549
+		summarizeBy: none
+		sourceColumn: TimeZone
+
+		annotation SummarizationSetBy = Automatic
+
+	column BirthCity
+		dataType: string
+		lineageTag: 67316d7d-7b07-414b-a7b6-99395db4365f
+		summarizeBy: none
+		sourceColumn: BirthCity
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrentCity
+		dataType: string
+		lineageTag: 1f1bade8-c782-4c14-8037-a97c2ea157a5
+		summarizeBy: none
+		sourceColumn: CurrentCity
+
+		annotation SummarizationSetBy = Automatic
+
+	column DistanceToNearestStoreKm
+		dataType: double
+		lineageTag: e0dbec86-de7e-4aef-bf54-3028c07b1746
+		summarizeBy: sum
+		sourceColumn: DistanceToNearestStoreKm
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column PreferredLanguage
+		dataType: string
+		lineageTag: 4eb22b49-fc58-4ddc-9d4c-4fc0dbcd24c7
+		summarizeBy: none
+		sourceColumn: PreferredLanguage
+
+		annotation SummarizationSetBy = Automatic
+
+	column HasOnlineAccount
+		dataType: string
+		lineageTag: c7e33acb-18c7-4f3a-af5f-80de2101aa79
+		summarizeBy: none
+		sourceColumn: HasOnlineAccount
+
+		annotation SummarizationSetBy = Automatic
+
+	column OptInMarketing
+		dataType: string
+		lineageTag: 8939d37a-ce43-46d4-86ef-84727c5f58ea
+		summarizeBy: none
+		sourceColumn: OptInMarketing
+
+		annotation SummarizationSetBy = Automatic
+
+	column SocialMediaFollower
+		dataType: string
+		lineageTag: c0db0ddc-1a24-4793-a870-f2b7c161f507
+		summarizeBy: none
+		sourceColumn: SocialMediaFollower
+
+		annotation SummarizationSetBy = Automatic
+
+	column AppInstalled
+		dataType: string
+		lineageTag: 1560f11b-1ccd-40aa-a0fc-65afbd814a87
+		summarizeBy: none
+		sourceColumn: AppInstalled
+
+		annotation SummarizationSetBy = Automatic
+
+	column NewsletterFrequency
+		dataType: string
+		lineageTag: 82d9db3d-321a-42bf-ade0-4583f43e63bb
+		summarizeBy: none
+		sourceColumn: NewsletterFrequency
+
+		annotation SummarizationSetBy = Automatic
+
+	column DevicePreference
+		dataType: string
+		lineageTag: 5ba908db-c084-498d-82a6-c6228b3a939e
+		summarizeBy: none
+		sourceColumn: DevicePreference
+
+		annotation SummarizationSetBy = Automatic
+
+	column LastWebVisitDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: be36e2e8-d357-473b-95aa-056f5bd4e599
+		summarizeBy: none
+		sourceColumn: LastWebVisitDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column PreferredPaymentMethod
+		dataType: string
+		lineageTag: a68bb41c-32b1-4ecc-93f1-506a8ed549ee
+		summarizeBy: none
+		sourceColumn: PreferredPaymentMethod
+
+		annotation SummarizationSetBy = Automatic
+
+	column PreferredContactMethod
+		dataType: string
+		lineageTag: 8697cadb-8ceb-47c3-a7b8-578ae4869972
+		summarizeBy: none
+		sourceColumn: PreferredContactMethod
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReferralSource
+		dataType: string
+		lineageTag: e00db208-b1ff-4f43-a320-d109949b45c2
+		summarizeBy: none
+		sourceColumn: ReferralSource
+
+		annotation SummarizationSetBy = Automatic
+
+	column MemberSinceDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 3590d9bd-e798-4ffc-b97f-2f0d357c860e
+		summarizeBy: none
+		sourceColumn: MemberSinceDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column IsEmployee
+		dataType: string
+		lineageTag: 9e6bea64-8560-4f8c-8f09-05ae402b9847
+		summarizeBy: none
+		sourceColumn: IsEmployee
+
+		annotation SummarizationSetBy = Automatic
+
+	column AnnualSpendBucket
+		dataType: string
+		lineageTag: 4704c3c7-13fd-42dc-8cc9-44f939bcc2f1
+		summarizeBy: none
+		sourceColumn: AnnualSpendBucket
+
+		annotation SummarizationSetBy = Automatic
+
+	column HasGiftCardBalance
+		dataType: string
+		lineageTag: 56046f3c-7d34-46ae-906e-060d186b38b0
+		summarizeBy: none
+		sourceColumn: HasGiftCardBalance
+
+		annotation SummarizationSetBy = Automatic
+
+	column RewardPointsBalance
+		dataType: int64
+		formatString: 0
+		lineageTag: 2bb525ba-3a82-4944-82ee-f5f0bac3bac6
+		summarizeBy: sum
+		sourceColumn: RewardPointsBalance
+
+		annotation SummarizationSetBy = Automatic
+
+	column AvgOrderFrequencyDays
+		dataType: int64
+		formatString: 0
+		lineageTag: d0e62fd6-a444-40d8-ab80-c23c9873a506
+		summarizeBy: sum
+		sourceColumn: AvgOrderFrequencyDays
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerSatisfactionScore
+		dataType: int64
+		formatString: 0
+		lineageTag: d6eafcf4-e5be-4dff-b870-4f270a269e9f
+		summarizeBy: sum
+		sourceColumn: CustomerSatisfactionScore
+
+		annotation SummarizationSetBy = Automatic
+
+	column NPS
+		dataType: int64
+		formatString: 0
+		lineageTag: 6a503a6a-5434-4f88-b636-5e846879e3a3
+		summarizeBy: sum
+		sourceColumn: NPS
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerLifetimeValue
+		dataType: double
+		lineageTag: b0a2fa60-f8b7-4376-92f2-91296038b368
+		summarizeBy: sum
+		sourceColumn: CustomerLifetimeValue
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column ChurnRisk
+		dataType: string
+		lineageTag: f96897d3-1850-42f3-871e-7ea077766b44
+		summarizeBy: none
+		sourceColumn: ChurnRisk
+
+		annotation SummarizationSetBy = Automatic
+
+	partition CustomerProfile = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\customer_profile" )
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
+

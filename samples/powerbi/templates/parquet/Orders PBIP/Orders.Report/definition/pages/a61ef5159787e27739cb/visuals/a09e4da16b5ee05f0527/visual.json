@@ -1,13 +1,13 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.5.0/schema.json",
-  "name": "4f088ca81ed3614c10e5",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
+  "name": "a09e4da16b5ee05f0527",
   "position": {
-    "x": 1067.3212178428134,
-    "y": 0,
-    "z": 1,
-    "height": 103.11698528833294,
-    "width": 212.67878215718667,
-    "tabOrder": 1
+    "x": 993.28367585030969,
+    "y": 348.73911872924708,
+    "z": 3,
+    "height": 371.26088127075292,
+    "width": 286.71632414969037,
+    "tabOrder": 2
   },
   "visual": {
     "visualType": "slicer",
@@ -20,14 +20,14 @@
                 "Column": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Employee"
+                      "Entity": "EmployeeStoreAssignment"
                     }
                   },
-                  "Property": "IsSalesPerson"
+                  "Property": "EmployeeKey"
                 }
               },
-              "queryRef": "Employee.IsSalesPerson",
-              "nativeQueryRef": "IsSalesPerson",
+              "queryRef": "EmployeeStoreAssignment.EmployeeKey",
+              "nativeQueryRef": "EmployeeKey",
               "active": true
             }
           ]
@@ -64,7 +64,7 @@
                 "From": [
                   {
                     "Name": "e",
-                    "Entity": "Employee",
+                    "Entity": "EmployeeStoreAssignment",
                     "Type": 0
                   }
                 ],
@@ -80,7 +80,7 @@
                                   "Source": "e"
                                 }
                               },
-                              "Property": "IsSalesPerson"
+                              "Property": "EmployeeKey"
                             }
                           }
                         ],
@@ -88,7 +88,7 @@
                           [
                             {
                               "Literal": {
-                                "Value": "1L"
+                                "Value": "40002001L"
                               }
                             }
                           ]

@@ -5,12 +5,7 @@
     "Tables",
     "Relationships",
     "Expressions",
-    "Measures",
-    "SalesOrderHeader",
-    "SalesOrderDetail",
-    "Dates",
-    "Products",
-    "Customers"
+    "Measures"
   ],
   "defaultTab": "Relationships"
 }
