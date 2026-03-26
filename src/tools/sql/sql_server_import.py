@@ -971,3 +971,7 @@ def import_sql_server(
     except pyodbc.Error as exc:
         _log("WARN", f"  Verification failed: {exc.args}")
         # Non-fatal — data is already loaded
+
+    # Grand total (import + drop-pk + CCI + verify)
+    _log("INFO", "=" * 60)
+    _log("DONE", f"Total pipeline time: {_time.time() - _t_total:.1f}s")
