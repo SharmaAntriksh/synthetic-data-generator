@@ -255,11 +255,23 @@ def _write_chunk_row_groups(
     schema_same_fields = (
         schema_exact or _pm_schema_equals(reader.schema_arrow, schema, check_metadata=False)
     )
+    # Check if field types match (common case: same schema, different metadata)
+    _reader_names = set(reader.schema_arrow.names)
+    schema_types_match = schema_same_fields and all(
+        reader.schema_arrow.field(f.name).type == f.type
+        for f in schema
+        if f.name in _reader_names
+    )
     schema_names = schema.names
 
     for rg in range(reader.num_row_groups):
         if schema_exact and not expected_cols:
             writer.write_table(reader.read_row_group(rg))
+            continue
+
+        if schema_types_match:
+            # Fields and types match — read in schema order, skip per-field cast loop
+            writer.write_table(reader.read_row_group(rg, columns=schema_names))
             continue
 
         if schema_same_fields:

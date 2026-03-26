@@ -100,6 +100,15 @@ def normalize_to_schema(
             f"Expected:\n{expected}\n\nGot:\n{table.schema}"
         )
 
+    # Fast path: if the incoming schema already matches expected (common case),
+    # just reorder columns without per-field type checking.
+    got_schema = table.schema.remove_metadata()
+    if got_schema.equals(expected):
+        if list(got_schema.names) == list(expected.names):
+            return table
+        return table.select(expected.names)
+
+    # Slow path: per-field cast (first chunk typically; result is cached by caller)
     cast_safe = bool(getattr(State, "cast_safe", True))
     arrays = []
     for field in expected:
