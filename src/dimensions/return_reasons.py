@@ -20,7 +20,7 @@ RETURN_REASONS: list[tuple[int, str, str]] = [
 
 RETURN_REASON_SCHEMA = pa.schema(
     [
-        pa.field("ReturnReasonKey", pa.int64()),
+        pa.field("ReturnReasonKey", pa.int32()),
         pa.field("ReturnReason", pa.string()),
         pa.field("ReturnReasonCategory", pa.string()),
     ]

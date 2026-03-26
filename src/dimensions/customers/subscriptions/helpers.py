@@ -140,9 +140,9 @@ def build_dim_plans(g_start: pd.Timestamp) -> pd.DataFrame:
         "AnnualPrice":      pd.array([r[8] for r in PLANS_CATALOG], dtype="Float64"),
         "Tier":             [r[9] for r in PLANS_CATALOG],
         "MaxUsers":         np.array([r[10] for r in PLANS_CATALOG], dtype=np.int32),
-        "HasFreeTrial":     np.array([r[11] for r in PLANS_CATALOG], dtype=np.int8),
+        "HasFreeTrial":     np.array([r[11] for r in PLANS_CATALOG], dtype=np.int32),
         "LaunchDate":       launch_dates,
-        "IsActiveFlag":     np.ones(k, dtype=np.int8),
+        "IsActiveFlag":     np.ones(k, dtype=np.int32),
     })
 
 
@@ -218,8 +218,8 @@ def compute_customer_windows(
 
 def bridge_schema() -> pa.Schema:
     return pa.schema([
-        pa.field("SubscriptionKey", pa.int64()),
-        pa.field("CustomerKey", pa.int64()),
+        pa.field("SubscriptionKey", pa.int32()),
+        pa.field("CustomerKey", pa.int32()),
         pa.field("PlanKey", pa.int32()),
         pa.field("PeriodStartDate", pa.date32()),
         pa.field("PeriodEndDate", pa.date32()),
@@ -505,10 +505,10 @@ def generate_subscriptions_bulk(
 
     # Flags
     billing_cycle = (period_idx + 1).astype(np.int32)
-    is_first = (period_idx == 0).astype(np.int8)
+    is_first = (period_idx == 0).astype(np.int32)
     is_last = (period_idx == r_n_periods - 1)
-    is_churn = (is_last & r_has_cancel).astype(np.int8)
-    is_trial_period = (is_first.astype(bool) & r_has_trial).astype(np.int8)
+    is_churn = (is_last & r_has_cancel).astype(np.int32)
+    is_trial_period = (is_first.astype(bool) & r_has_trial).astype(np.int32)
 
     # Trial periods have price = 0
     r_price = np.where(is_trial_period, 0.0, r_price)

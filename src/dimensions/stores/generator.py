@@ -497,7 +497,7 @@ def _build_hierarchy(
         countries[:] = "Unknown"
 
     # Assign districts: iterate zone → country within zone → sequential IDs
-    district_id = np.zeros(n, dtype=np.int16)
+    district_id = np.zeros(n, dtype=np.int32)
     next_did = 1
     for z in sorted(np.unique(zones)):
         z_mask = zones == z
@@ -508,10 +508,10 @@ def _build_hierarchy(
             c_local = z_countries == c
             idx = z_idx[c_local]
             local_did = np.arange(len(idx)) // district_size
-            district_id[idx] = (local_did + next_did).astype(np.int16)
+            district_id[idx] = (local_did + next_did).astype(np.int32)
             next_did += int(local_did.max()) + 1 if len(idx) > 0 else 1
 
-    region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int16)
+    region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int32)
 
     store_districts = np.char.add("District ", district_id.astype(str))
     store_regions   = np.char.add("Region ", region_id.astype(str))

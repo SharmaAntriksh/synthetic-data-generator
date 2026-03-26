@@ -48,7 +48,7 @@ def _df_time_table(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     include_labels = bool(dim_cfg.get("include_labels", True))
 
     # Vectorised construction of 1440-row time dimension
-    t_arr = np.arange(24 * 60, dtype=np.int16)
+    t_arr = np.arange(24 * 60, dtype=np.int32)
     hour = t_arr // 60
     minute = t_arr % 60
     k15 = t_arr // 15
@@ -121,7 +121,7 @@ def _df_time_table(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     ]
     for c in int_cols:
         if c in df.columns:
-            df[c] = df[c].astype(np.int16)
+            df[c] = df[c].astype(np.int32)
 
     return df
 

@@ -377,7 +377,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
 
     income_raw = generate_correlated_income(rng, Education, Occupation, person_mask, N)
     YearlyIncome = pd.array(
-        np.where(IsOrg, pd.NA, income_raw), dtype="Int64"
+        np.where(IsOrg, pd.NA, income_raw), dtype="Int32"
     )
 
     children_raw = np.zeros(N, dtype="int64")
@@ -398,7 +398,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             rng.poisson(lam=_per_person_lam), 0, MAX_CHILDREN - 1,
         )
     TotalChildren = pd.array(
-        np.where(IsOrg, pd.NA, children_raw), dtype="Int64",
+        np.where(IsOrg, pd.NA, children_raw), dtype="Int32",
     )
 
     # -----------------------------------------------------
@@ -873,8 +873,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "GeographyKey": GeographyKey,
             "HouseholdKey": HouseholdKey,
             "HouseholdRole": HouseholdRole,
-            "LoyaltyTierKey": pd.Series(LoyaltyTierKey, dtype="Int64"),
-            "CustomerAcquisitionChannelKey": pd.Series(CustomerAcquisitionChannelKey, dtype="Int64"),
+            "LoyaltyTierKey": pd.Series(LoyaltyTierKey, dtype="int32"),
+            "CustomerAcquisitionChannelKey": pd.Series(CustomerAcquisitionChannelKey, dtype="int32"),
             # --- Columns moved from CustomerProfile (SCD2 tracked) ---
             "YearlyIncome": YearlyIncome,
             "IncomeGroup": IncomeGroup,
@@ -896,8 +896,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "AgeGroup": AgeGroup,
             "Education": Education,
             "Occupation": Occupation,
-            "NumberOfCars": pd.Series(NumberOfCars, dtype="Int64"),
-            "CreditScore": pd.Series(CreditScore, dtype="Int64"),
+            "NumberOfCars": pd.Series(NumberOfCars, dtype="Int32"),
+            "CreditScore": pd.Series(CreditScore, dtype="Int32"),
             "UrbanRural": UrbanRural,
             "TimeZone": TimeZone,
             "BirthCity": BirthCity,
@@ -918,10 +918,10 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "IsEmployee": IsEmployee,
             "AnnualSpendBucket": AnnualSpendBucket,
             "HasGiftCardBalance": HasGiftCardBalance,
-            "RewardPointsBalance": pd.array(RewardPointsBalance, dtype="Int64"),
-            "AvgOrderFrequencyDays": pd.array(AvgOrderFrequencyDays, dtype="Int64"),
-            "CustomerSatisfactionScore": pd.array(CustomerSatisfactionScore, dtype="Int64"),
-            "NPS": pd.array(NPS, dtype="Int64"),
+            "RewardPointsBalance": pd.array(RewardPointsBalance, dtype="Int32"),
+            "AvgOrderFrequencyDays": pd.array(AvgOrderFrequencyDays, dtype="Int32"),
+            "CustomerSatisfactionScore": pd.array(CustomerSatisfactionScore, dtype="Int32"),
+            "NPS": pd.array(NPS, dtype="Int32"),
             "CustomerLifetimeValue": CustomerLifetimeValue,
             "ChurnRisk": ChurnRisk,
         }
