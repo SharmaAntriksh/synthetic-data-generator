@@ -1001,6 +1001,8 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
 
     # Serialize config for workers (must be picklable plain dict)
     cfg_dump = cfg.model_dump() if hasattr(cfg, "model_dump") else dict(cfg)
+    cfg_dump.pop("_config_snapshot", None)
+    cfg_dump.pop("_models_snapshot", None)
 
     # Chunk partitioning
     n_chunks = min(n_workers * 2, max(2, N // 50_000))

@@ -230,25 +230,35 @@ def _copy_config_files_into_run_folder(
     final_folder: Path,
     config_yaml_path: Optional[Union[str, Path]] = None,
     model_yaml_path: Optional[Union[str, Path]] = None,
+    config_snapshot: Optional[bytes] = None,
+    models_snapshot: Optional[bytes] = None,
 ) -> None:
     """
-    Copy config/model YAMLs into ``<final_folder>/config/`` for traceability.
-    Logs a warning when an expected file is not found rather than silently skipping.
+    Write config/model YAMLs into ``<final_folder>/config/`` for traceability.
+
+    When ``config_snapshot`` / ``models_snapshot`` bytes are provided (snapshotted
+    at pipeline start), those are written directly — guaranteeing the packaged
+    config matches the run even if the user edits the files mid-pipeline.
+    Falls back to copying from *_yaml_path when no snapshot is available.
     """
     config_dir = final_folder / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    def _copy(src: Optional[Union[str, Path]], dest_name: str) -> None:
+    def _write(snapshot: Optional[bytes], src: Optional[Union[str, Path]], dest_name: str) -> None:
+        dest = config_dir / dest_name
+        if snapshot is not None:
+            dest.write_bytes(snapshot)
+            return
         if not src:
             return
         p = Path(str(src))
         if not p.exists():
             info(f"WARNING: config file not found, skipping copy: {p}")
             return
-        shutil.copy2(p, config_dir / dest_name)
+        shutil.copy2(p, dest)
 
-    _copy(config_yaml_path, "config.yaml")
-    _copy(model_yaml_path, "models.yaml")
+    _write(config_snapshot, config_yaml_path, "config.yaml")
+    _write(models_snapshot, model_yaml_path, "models.yaml")
 
 
 def _ensure_clean_dir(p: Path) -> None:
@@ -365,6 +375,8 @@ def create_final_output_folder(
             final_folder,
             config_yaml_path=config_yaml_path,
             model_yaml_path=model_yaml_path,
+            config_snapshot=getattr(cfg, "_config_snapshot", None),
+            models_snapshot=getattr(cfg, "_models_snapshot", None),
         )
 
         # --------------------------------------------------------

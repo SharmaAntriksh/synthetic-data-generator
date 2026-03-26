@@ -143,10 +143,14 @@ def run_pipeline(
         cfg = cfg_raw.model_copy(deep=True) if hasattr(cfg_raw, "model_copy") else dict(cfg_raw)
         sales_cfg = cfg.sales
 
-        # Attach run spec paths (useful for downstream packaging/metadata)
-        cfg.config_yaml_path = str(_resolve_input_path(config_path))
-        cfg.model_yaml_path = str(_resolve_input_path(models_config_path))
-        info(f"Attached run spec paths: config={cfg.config_yaml_path} model={cfg.model_yaml_path}")
+        # Snapshot config files at pipeline start so packaging preserves the
+        # exact config that was used, even if the user edits the files mid-run.
+        _config_resolved = _resolve_input_path(config_path)
+        _models_resolved = _resolve_input_path(models_config_path)
+        cfg.config_yaml_path = str(_config_resolved)
+        cfg.model_yaml_path = str(_models_resolved)
+        cfg["_config_snapshot"] = Path(_config_resolved).read_bytes()
+        cfg["_models_snapshot"] = Path(_models_resolved).read_bytes()
 
         # ----------------------------
         # Apply overrides (copy-on-write)
@@ -160,7 +164,10 @@ def run_pipeline(
         # ----------------------------
         if dry_run:
             info("Dry run enabled. Resolved configuration:")
-            pprint(cfg)
+            _display = cfg.model_dump() if hasattr(cfg, "model_dump") else dict(cfg)
+            _display.pop("_config_snapshot", None)
+            _display.pop("_models_snapshot", None)
+            pprint(_display)
             return {
                 "ok": True,
                 "dry_run": True,
