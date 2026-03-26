@@ -1,54 +1,81 @@
 table Geography
-	lineageTag: e1efdba3-1f8e-4419-a2cc-15ee8ccae934
+	lineageTag: 4330ae12-f317-4db0-8dd8-29e43a55142b
 
 	column GeographyKey
 		dataType: int64
 		formatString: 0
-		lineageTag: b6c43b13-0208-43d9-849c-703285b7fe7d
+		lineageTag: cf8b3284-f9c8-4611-8694-5c2d33d8850c
 		summarizeBy: count
 		sourceColumn: GeographyKey
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column City
 		dataType: string
-		lineageTag: dc69bb8a-690d-4e9a-b19c-5af57549fc39
+		lineageTag: cf8dabb5-4244-4db7-a2d1-47193667a81c
 		summarizeBy: none
 		sourceColumn: City
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column State
 		dataType: string
-		lineageTag: 894c16d4-2c79-4475-9d53-01cd2e5c9da4
+		lineageTag: 0fc50462-fed4-44f8-8d39-0b77d745a632
 		summarizeBy: none
 		sourceColumn: State
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column Country
 		dataType: string
-		lineageTag: 4bc0780d-695c-4c3a-ab2a-e1e4a5b6310a
+		lineageTag: 65ff1fe5-0e1b-427c-86ee-85be6f767377
 		summarizeBy: none
 		sourceColumn: Country
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column Continent
 		dataType: string
-		lineageTag: f536c8db-4899-43c1-84c7-992733e0937d
+		lineageTag: bc09acba-8bf1-462c-a473-ada903d242d5
 		summarizeBy: none
 		sourceColumn: Continent
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column Latitude
+		dataType: double
+		lineageTag: 82af160f-febe-4aa6-b543-5d37d5c6b365
+		summarizeBy: sum
+		sourceColumn: Latitude
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Longitude
+		dataType: double
+		lineageTag: 49b1112e-603c-4c98-811e-c2d3eb421584
+		summarizeBy: sum
+		sourceColumn: Longitude
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Timezone
+		dataType: string
+		lineageTag: ccf1fd13-5683-4375-951b-d93c08dfd4c2
+		summarizeBy: none
+		sourceColumn: Timezone
+
+		annotation SummarizationSetBy = Automatic
+
+	column Population
+		dataType: int64
+		formatString: 0
+		lineageTag: a1735978-82ce-46e9-845c-5576259d3b58
+		summarizeBy: sum
+		sourceColumn: Population
 
 		annotation SummarizationSetBy = Automatic
 
@@ -61,8 +88,6 @@ table Geography
 				    #"Removed Columns" = Table.RemoveColumns ( Source,{"ISOCode"} )
 				in
 				    #"Removed Columns"
-
-	changedProperty = IsHidden
 
 	annotation PBI_NavigationStepName = Navigation
 

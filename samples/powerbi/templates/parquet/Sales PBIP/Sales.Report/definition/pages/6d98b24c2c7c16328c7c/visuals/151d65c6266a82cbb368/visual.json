@@ -1,13 +1,13 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.5.0/schema.json",
-  "name": "3799eb7114d0309d3e09",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
+  "name": "151d65c6266a82cbb368",
   "position": {
-    "x": 1067.3212178428134,
-    "y": 148.23066635197858,
-    "z": 2,
-    "height": 372.72493640678675,
-    "width": 212.67878215718667,
-    "tabOrder": 2
+    "x": 993.70486703161919,
+    "y": 0,
+    "z": 1,
+    "height": 93.121541176822518,
+    "width": 286.71632414969037,
+    "tabOrder": 3000
   },
   "visual": {
     "visualType": "slicer",
@@ -20,14 +20,14 @@
                 "Column": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Employee"
+                      "Entity": "EmployeeStoreAssignment"
                     }
                   },
-                  "Property": "EmployeeKey"
+                  "Property": "RoleAtStore"
                 }
               },
-              "queryRef": "Employee.EmployeeKey",
-              "nativeQueryRef": "EmployeeKey",
+              "queryRef": "EmployeeStoreAssignment.RoleAtStore",
+              "nativeQueryRef": "RoleAtStore",
               "active": true
             }
           ]
@@ -41,7 +41,7 @@
             "mode": {
               "expr": {
                 "Literal": {
-                  "Value": "'Basic'"
+                  "Value": "'Dropdown'"
                 }
               }
             }
@@ -51,20 +51,13 @@
       "general": [
         {
           "properties": {
-            "orientation": {
-              "expr": {
-                "Literal": {
-                  "Value": "0D"
-                }
-              }
-            },
             "filter": {
               "filter": {
                 "Version": 2,
                 "From": [
                   {
                     "Name": "e",
-                    "Entity": "Employee",
+                    "Entity": "EmployeeStoreAssignment",
                     "Type": 0
                   }
                 ],
@@ -80,7 +73,7 @@
                                   "Source": "e"
                                 }
                               },
-                              "Property": "EmployeeKey"
+                              "Property": "RoleAtStore"
                             }
                           }
                         ],
@@ -88,7 +81,7 @@
                           [
                             {
                               "Literal": {
-                                "Value": "40003001L"
+                                "Value": "'Sales Associate'"
                               }
                             }
                           ]
@@ -101,8 +94,52 @@
             }
           }
         }
+      ],
+      "selection": [
+        {
+          "properties": {
+            "strictSingleSelect": {
+              "expr": {
+                "Literal": {
+                  "Value": "true"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "items": [
+        {
+          "properties": {
+            "textSize": {
+              "expr": {
+                "Literal": {
+                  "Value": "13D"
+                }
+              }
+            }
+          }
+        }
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "f3b8d5e1f62645bb088d",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "EmployeeStoreAssignment"
+              }
+            },
+            "Property": "RoleAtStore"
+          }
+        },
+        "type": "Categorical"
+      }
+    ]
   }
 }

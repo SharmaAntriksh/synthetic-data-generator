@@ -1,0 +1,103 @@
+table ExchangeRateMonthly
+	lineageTag: 7fd74185-95db-4444-a688-0c950ca3b2e2
+
+	column Date
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 9c6404df-5672-4195-aa2a-022ff9b71cf1
+		summarizeBy: none
+		sourceColumn: Date
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column FromCurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 3c58923f-0326-44ea-9d16-03ceabd66bd4
+		summarizeBy: none
+		sourceColumn: FromCurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ToCurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: adb6716d-516a-44f0-8b2e-e751c2ba70bf
+		summarizeBy: count
+		sourceColumn: ToCurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column FromCurrency
+		dataType: string
+		lineageTag: 0d3e4535-7343-48e1-a7bc-fd3edcc8f29e
+		summarizeBy: none
+		sourceColumn: FromCurrency
+
+		annotation SummarizationSetBy = Automatic
+
+	column ToCurrency
+		dataType: string
+		lineageTag: a3b9dae8-9ea9-48f1-a3d1-37be8625d764
+		summarizeBy: none
+		sourceColumn: ToCurrency
+
+		annotation SummarizationSetBy = Automatic
+
+	column AvgRate
+		dataType: double
+		lineageTag: 717ae484-d4a9-4748-87e4-05f9772f76d8
+		summarizeBy: sum
+		sourceColumn: AvgRate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column MinRate
+		dataType: double
+		lineageTag: e22a4cff-32a2-45bb-940c-721af0037c92
+		summarizeBy: sum
+		sourceColumn: MinRate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column MaxRate
+		dataType: double
+		lineageTag: 16e68748-282a-4376-aa86-17a79fe9085c
+		summarizeBy: sum
+		sourceColumn: MaxRate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column EndOfMonthRate
+		dataType: double
+		lineageTag: d1268818-6a77-4580-8031-6471f6495e01
+		summarizeBy: sum
+		sourceColumn: EndOfMonthRate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition ExchangeRateMonthly = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\exchange_rates_monthly" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

@@ -1,7 +1,7 @@
 createOrReplace
 
-	expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-26 04_53_47 PM Customers 80 Sales 10K PARQUET" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
-		lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
+	expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-03-26 07_36_14 PM Customers 29K Sales 1M PARQUET" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+		lineageTag: 819ee60d-e5bf-4012-8883-6091aa697a93
 		queryGroup: 'Parameters & Functions'
 
 		annotation PBI_NavigationStepName = Navigation
@@ -18,7 +18,7 @@ createOrReplace
 			in
 			    Source
 			```
-		lineageTag: d2ba962f-2339-4f99-977a-ef51cbe9f4db
+		lineageTag: fe2edbb7-15b6-4c8b-99ce-7dadb0b88b6c
 		queryGroup: 'Parameters & Functions'
 
 		annotation PBI_NavigationStepName = Navigation

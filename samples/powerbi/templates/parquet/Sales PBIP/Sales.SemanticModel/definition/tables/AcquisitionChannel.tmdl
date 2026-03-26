@@ -1,0 +1,41 @@
+table AcquisitionChannel
+	lineageTag: fe956eda-8fe1-47ea-90ae-37512bfe1f0b
+
+	column CustomerAcquisitionChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 6e6100ac-6af4-4ff7-b22e-f8d798c9ffeb
+		summarizeBy: count
+		sourceColumn: CustomerAcquisitionChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column AcquisitionChannel
+		dataType: string
+		lineageTag: 25220189-e2b7-49bd-89f1-223b2255ce7e
+		summarizeBy: none
+		sourceColumn: AcquisitionChannel
+
+		annotation SummarizationSetBy = Automatic
+
+	column ChannelGroup
+		dataType: string
+		lineageTag: e3307383-b834-4242-8c67-1e047d35f27b
+		summarizeBy: none
+		sourceColumn: ChannelGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	partition AcquisitionChannel = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\customer_acquisition_channels" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

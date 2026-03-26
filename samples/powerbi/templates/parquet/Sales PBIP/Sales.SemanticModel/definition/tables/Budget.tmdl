@@ -1,0 +1,85 @@
+table Budget
+	lineageTag: b833d6db-8722-455d-b0fa-f5c1f0fa0610
+
+	column Country
+		dataType: string
+		lineageTag: 8cf5991d-9244-41fa-83ec-65d80c87f25c
+		summarizeBy: none
+		sourceColumn: Country
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: 703986d1-6688-4096-9987-962ad779dc7b
+		summarizeBy: none
+		sourceColumn: Category
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetYear
+		dataType: int64
+		formatString: 0
+		lineageTag: 2fa16846-c6bb-4c31-8b95-cba129c3b724
+		summarizeBy: sum
+		sourceColumn: BudgetYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column Scenario
+		dataType: string
+		lineageTag: 0e334f22-210e-47c3-b854-76949523d190
+		summarizeBy: none
+		sourceColumn: Scenario
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetGrowthPct
+		dataType: double
+		lineageTag: 50aad7e5-4369-4190-89d4-084318ba5d36
+		summarizeBy: sum
+		sourceColumn: BudgetGrowthPct
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column BudgetSalesAmount
+		dataType: double
+		lineageTag: 102902de-5597-439f-8c2c-1be834625f5e
+		summarizeBy: sum
+		sourceColumn: BudgetSalesAmount
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column BudgetSalesQuantity
+		dataType: double
+		lineageTag: b7bad7de-beaa-48dd-8b25-8e6fd5dcd12d
+		summarizeBy: sum
+		sourceColumn: BudgetSalesQuantity
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column BudgetMethod
+		dataType: string
+		lineageTag: 859465cc-456c-45e7-b6fc-6d6e671e6f06
+		summarizeBy: none
+		sourceColumn: BudgetMethod
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Budget = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source      = FxReadParquetFile ( "facts\budget_yearly" )
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
+

@@ -1,10 +1,10 @@
-table SalesReturns
-	lineageTag: 4a949687-eb34-495f-a48b-dde0b86dc905
+table SalesReturn
+	lineageTag: d8f35106-f551-4dcd-b8cb-422debfa82c6
 
 	column SalesOrderNumber
 		dataType: int64
 		formatString: 0
-		lineageTag: 110ef704-2484-449d-a346-4ad3602e3567
+		lineageTag: 9765951b-8f6c-47e0-8fd8-f0504a627df3
 		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
 
@@ -13,7 +13,7 @@ table SalesReturns
 	column SalesOrderLineNumber
 		dataType: int64
 		formatString: 0
-		lineageTag: c80f95c1-1969-46ac-acbd-b8ebc667e640
+		lineageTag: 63a28ddd-6e03-49e0-a23d-64143209a8f0
 		summarizeBy: sum
 		sourceColumn: SalesOrderLineNumber
 
@@ -21,8 +21,8 @@ table SalesReturns
 
 	column ReturnDate
 		dataType: dateTime
-		formatString: Long Date
-		lineageTag: 48cd0135-d434-4c2b-a75d-c13f21eec047
+		formatString: yyyy-mm-dd
+		lineageTag: 2546108f-63e0-4554-9d4b-02f2e034e9e9
 		summarizeBy: none
 		sourceColumn: ReturnDate
 
@@ -30,11 +30,13 @@ table SalesReturns
 
 		annotation UnderlyingDateTimeDataType = Date
 
+		annotation PBI_FormatHint = {"isCustom":true}
+
 	column ReturnReasonKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 33bf21ab-e611-4fe4-8cf5-f1228fd43623
-		summarizeBy: count
+		lineageTag: 9d078336-ea66-41f7-ab8e-cd31a2c56201
+		summarizeBy: none
 		sourceColumn: ReturnReasonKey
 
 		annotation SummarizationSetBy = Automatic
@@ -42,7 +44,7 @@ table SalesReturns
 	column ReturnQuantity
 		dataType: int64
 		formatString: 0
-		lineageTag: d1630e8f-a347-45c3-9f08-9f9d10a51a68
+		lineageTag: 34605e09-8abc-4937-82ee-b53541c7016d
 		summarizeBy: sum
 		sourceColumn: ReturnQuantity
 
@@ -51,7 +53,7 @@ table SalesReturns
 	column ReturnNetPrice
 		dataType: decimal
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
-		lineageTag: e6d8d2a7-34d0-48db-b00e-b4d7a38e1aa7
+		lineageTag: b1e2351f-57c7-4783-a669-82d58d182208
 		summarizeBy: sum
 		sourceColumn: ReturnNetPrice
 
@@ -59,16 +61,25 @@ table SalesReturns
 
 		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
 
+	column ReturnSequence
+		dataType: int64
+		formatString: 0
+		lineageTag: f314e34b-47cc-4682-b3a3-be264a625e95
+		summarizeBy: sum
+		sourceColumn: ReturnSequence
+
+		annotation SummarizationSetBy = Automatic
+
 	column ReturnEventKey
 		dataType: int64
 		formatString: 0
-		lineageTag: d9e043db-8398-49bd-ba69-57064feb4ae4
+		lineageTag: 4c08e6f2-1543-4bdb-9d70-277e2b8f3ffa
 		summarizeBy: count
 		sourceColumn: ReturnEventKey
 
 		annotation SummarizationSetBy = Automatic
 
-	partition SalesReturns = m
+	partition SalesReturn = m
 		mode: import
 		queryGroup: Fact
 		source =
@@ -77,8 +88,6 @@ table SalesReturns
 				    ChangedType = Table.TransformColumnTypes ( Source, { { "ReturnNetPrice", Currency.Type } } )
 				in
 				    ChangedType
-
-	annotation PBI_NavigationStepName = Navigation
 
 	annotation PBI_ResultType = Table
 

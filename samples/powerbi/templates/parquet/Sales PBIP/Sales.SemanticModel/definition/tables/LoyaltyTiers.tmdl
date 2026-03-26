@@ -1,0 +1,52 @@
+table LoyaltyTiers
+	lineageTag: 3dd0f0d7-6996-4986-8858-6380e32978d9
+
+	column LoyaltyTierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: e6062440-ae2f-4e52-bccd-e53bb4d6f82f
+		summarizeBy: none
+		sourceColumn: LoyaltyTierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column LoyaltyTier
+		dataType: string
+		lineageTag: 69490b4b-c233-4543-a10f-061380aef995
+		summarizeBy: none
+		sourceColumn: LoyaltyTier
+
+		annotation SummarizationSetBy = Automatic
+
+	column TierRank
+		dataType: int64
+		formatString: 0
+		lineageTag: 1b5619ae-46a2-40da-8647-fe147b980fba
+		summarizeBy: none
+		sourceColumn: TierRank
+
+		annotation SummarizationSetBy = Automatic
+
+	column PointsMultiplier
+		dataType: double
+		lineageTag: eda169e2-a12c-4496-8182-56801f0598d7
+		summarizeBy: none
+		sourceColumn: PointsMultiplier
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition LoyaltyTiers = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\loyalty_tiers" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

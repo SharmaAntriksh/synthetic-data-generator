@@ -1,10 +1,10 @@
 table SalesChannel
-	lineageTag: 1e916f6e-f23b-4d8b-9ebd-41b929a8d13a
+	lineageTag: 58345d4a-ca8f-4681-a02c-ddf07824b262
 
 	column SalesChannelKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 5bb274ae-d070-4c57-b8c6-0831c334d923
+		lineageTag: 7fa10691-46f2-4382-badb-a7f8ba6d81e2
 		summarizeBy: count
 		sourceColumn: SalesChannelKey
 
@@ -12,23 +12,39 @@ table SalesChannel
 
 	column SalesChannel
 		dataType: string
-		lineageTag: a09e2414-06db-4bc3-9d09-fb721f911d71
+		lineageTag: 09c6eb7e-015f-4741-ab4a-87d0f3303f56
 		summarizeBy: none
 		sourceColumn: SalesChannel
 
 		annotation SummarizationSetBy = Automatic
 
+	column SalesChannelDescription
+		dataType: string
+		lineageTag: 9ec33bc8-a141-4fcd-82c6-3877146ced6c
+		summarizeBy: none
+		sourceColumn: SalesChannelDescription
+
+		annotation SummarizationSetBy = Automatic
+
 	column ChannelGroup
 		dataType: string
-		lineageTag: e1af1cb4-c37e-4d37-81c9-d5993779a309
+		lineageTag: d3f6b063-8e5d-4d69-b7f9-0aa1368abc42
 		summarizeBy: none
 		sourceColumn: ChannelGroup
 
 		annotation SummarizationSetBy = Automatic
 
+	column ChannelGroupDescription
+		dataType: string
+		lineageTag: 3b79f79d-dd1d-4b5c-8444-67e948a04e0b
+		summarizeBy: none
+		sourceColumn: ChannelGroupDescription
+
+		annotation SummarizationSetBy = Automatic
+
 	column SalesChannelCode
 		dataType: string
-		lineageTag: 4580c49a-a74e-4698-b4a7-258c64ec16a2
+		lineageTag: 7779561a-d3d1-4bde-a5ea-bfa1c56d23f6
 		summarizeBy: none
 		sourceColumn: SalesChannelCode
 
@@ -37,7 +53,7 @@ table SalesChannel
 	column SortOrder
 		dataType: int64
 		formatString: 0
-		lineageTag: 8fb60b6a-22ed-4efa-b6ae-2240228b74fa
+		lineageTag: c38a78ee-e00c-4f5b-a6e3-afcd7f9997b3
 		summarizeBy: sum
 		sourceColumn: SortOrder
 
@@ -46,7 +62,7 @@ table SalesChannel
 	column IsDigital
 		dataType: boolean
 		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: ea16c44a-30e1-4993-b3dc-0fae23ca9288
+		lineageTag: 48fb3608-cbcb-49c6-a429-1e7348b1f146
 		summarizeBy: none
 		sourceColumn: IsDigital
 
@@ -55,7 +71,7 @@ table SalesChannel
 	column IsPhysical
 		dataType: boolean
 		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: 6a4b6afd-e804-4d71-8716-63333ff894f8
+		lineageTag: efe98a8f-647f-4342-b390-d58551f76470
 		summarizeBy: none
 		sourceColumn: IsPhysical
 
@@ -64,7 +80,7 @@ table SalesChannel
 	column IsThirdParty
 		dataType: boolean
 		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: d54ed2ab-a2ab-4662-85f6-e40c5e34e854
+		lineageTag: 19c195f8-cca0-418a-a870-5c5244cf6d4d
 		summarizeBy: none
 		sourceColumn: IsThirdParty
 
@@ -73,7 +89,7 @@ table SalesChannel
 	column IsB2B
 		dataType: boolean
 		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: a0c7260c-161d-48f3-bbe9-8e3f467a9426
+		lineageTag: a81534bb-f960-4075-80a7-2b252936f279
 		summarizeBy: none
 		sourceColumn: IsB2B
 
@@ -82,7 +98,7 @@ table SalesChannel
 	column IsAssisted
 		dataType: boolean
 		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: 4437ecfa-65a8-4da1-b36c-c64063bea4e5
+		lineageTag: b54fcc26-7ea4-425e-8018-af1cb9924992
 		summarizeBy: none
 		sourceColumn: IsAssisted
 
@@ -91,44 +107,53 @@ table SalesChannel
 	column IsOwnedChannel
 		dataType: boolean
 		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: 3a29a47d-20a5-4862-9ae1-489eac2713ee
+		lineageTag: 43a16a1a-45dd-4815-bdbe-0f1405b0b23c
 		summarizeBy: none
 		sourceColumn: IsOwnedChannel
-
-		annotation SummarizationSetBy = Automatic
-
-	column TimeProfile
-		dataType: string
-		lineageTag: 608c41ea-46ba-45c5-8e3f-1beed173c464
-		summarizeBy: none
-		sourceColumn: TimeProfile
 
 		annotation SummarizationSetBy = Automatic
 
 	column Is24x7
 		dataType: boolean
 		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: 26c0363c-2280-47aa-bfe2-01adcc3188d1
+		lineageTag: 36c67edb-5f85-4a02-bd10-6420273b0966
 		summarizeBy: none
 		sourceColumn: Is24x7
 
 		annotation SummarizationSetBy = Automatic
 
-	column OpenMinute
-		dataType: int64
-		formatString: 0
-		lineageTag: d5e3ccda-9cd3-4b98-9f6f-0159e4808f14
-		summarizeBy: sum
-		sourceColumn: OpenMinute
+	column OpenTime
+		dataType: string
+		lineageTag: 797f21fa-722f-4153-8988-ad0fbc45dd69
+		summarizeBy: none
+		sourceColumn: OpenTime
 
 		annotation SummarizationSetBy = Automatic
 
-	column CloseMinute
+	column CloseTime
+		dataType: string
+		lineageTag: d7302ce4-4a5d-45c0-8797-70d2f90be576
+		summarizeBy: none
+		sourceColumn: CloseTime
+
+		annotation SummarizationSetBy = Automatic
+
+	column CommissionRate
+		dataType: double
+		lineageTag: 967dff71-12dd-48c1-a019-67310deb335c
+		summarizeBy: sum
+		sourceColumn: CommissionRate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column TypicalFulfillmentDays
 		dataType: int64
 		formatString: 0
-		lineageTag: 0f9efc8a-ee16-44ba-9467-ed5c202a15e9
+		lineageTag: 7002e91f-eb71-46f7-a446-32a9ef750207
 		summarizeBy: sum
-		sourceColumn: CloseMinute
+		sourceColumn: TypicalFulfillmentDays
 
 		annotation SummarizationSetBy = Automatic
 

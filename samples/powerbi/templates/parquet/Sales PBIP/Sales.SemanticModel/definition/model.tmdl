@@ -17,31 +17,55 @@ queryGroup Dimensions
 
 queryGroup Fact
 
-	annotation PBI_QueryGroupOrder = 2
+	annotation PBI_QueryGroupOrder = 4
+
+queryGroup Dimensions\Products
+
+	annotation PBI_QueryGroupOrder = 1
+
+queryGroup Dimensions\Customer
+
+	annotation PBI_QueryGroupOrder = 0
 
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBI_QueryOrder = ["ContosoFolder","FxReadParquetFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","ExchangeRates","MeasureTable","Sales","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel","SalesReturns"]
+annotation PBI_QueryOrder = ["ContosoFolder","FxReadParquetFile","Customer","Dates","Store","Promotion","Products","ProductSubcategory","ProductCategory","Geography","Currency","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel","Time","PlanSubscription","Plan","ExchangeRate","ExchangeRateMonthly","Sales","SalesReturn","Budget","BudgetMonthly","Inventory","Wishlist","Complaints","MeasureTable","CustomerProfile","OrganizationProfile","LoyaltyTiers","Warehouse","Supplier","AcquisitionChannel","ProductProfile"]
 
 annotation PBI_ProTooling = ["TMDLView_Desktop","DevMode"]
 
-ref table Customers
+ref table Customer
 ref table Dates
 ref table Store
-ref table Promotions
+ref table Promotion
 ref table Products
 ref table ProductSubcategory
 ref table ProductCategory
 ref table Geography
 ref table Currency
-ref table ExchangeRates
-ref table MeasureTable
-ref table Sales
 ref table Employee
 ref table EmployeeStoreAssignment
 ref table ReturnReason
 ref table SalesChannel
-ref table SalesReturns
+ref table Time
+ref table PlanSubscription
+ref table Plan
+ref table ExchangeRate
+ref table ExchangeRateMonthly
+ref table Sales
+ref table SalesReturn
+ref table Budget
+ref table BudgetMonthly
+ref table Inventory
+ref table Wishlist
+ref table Complaints
+ref table MeasureTable
+ref table CustomerProfile
+ref table OrganizationProfile
+ref table LoyaltyTiers
+ref table Warehouse
+ref table Supplier
+ref table AcquisitionChannel
+ref table ProductProfile
 
 ref cultureInfo en-US
 
