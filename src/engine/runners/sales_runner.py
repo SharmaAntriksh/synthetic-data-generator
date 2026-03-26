@@ -72,11 +72,7 @@ def _compute_returns_effective(cfg, sales_cfg) -> Tuple[Any, bool]:
 
     effective = requested
     if requested and sales_output == "sales" and skip_order_cols:
-        info(
-            "WARNING: returns.enabled=true but sales_output='sales' with skip_order_cols=true "
-            "removes order identifiers. SalesReturn will be skipped. "
-            "Set skip_order_cols=false or use sales_output='sales_order'/'both' to generate returns."
-        )
+        info("Disabling returns: skip_order_cols removes order IDs needed by returns")
         effective = False
 
     # If we changed effective value, deep-copy cfg and override returns.enabled

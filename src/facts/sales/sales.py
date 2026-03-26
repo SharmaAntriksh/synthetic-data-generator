@@ -678,11 +678,7 @@ def generate_sales_fact(
     # but if sales_output == "sales" and skip_order_cols == True, we cannot derive returns
     # (no order identifiers), so disable returns and warn.
     if returns_enabled_requested and sales_output == "sales" and bool(skip_order_cols):
-        info(
-            "WARNING: returns.enabled=true with sales_output='sales' and skip_order_cols=true "
-            "=> SalesReturn will be skipped (needs SalesOrderNumber/SalesOrderLineNumber). "
-            "Sales generation will continue."
-        )
+        info("Disabling returns: skip_order_cols removes order IDs needed by returns")
         returns_enabled_effective = False
 
     tables: list[str] = []

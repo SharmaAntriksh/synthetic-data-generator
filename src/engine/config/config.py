@@ -981,40 +981,15 @@ def apply_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
     sales_cfg = cfg.get("sales")
     returns_cfg = cfg.get("returns")
 
-    # Rule 1: Returns require order columns
-    if isinstance(sales_cfg, Mapping) and isinstance(returns_cfg, Mapping):
-        returns_enabled = bool(returns_cfg.get("enabled", False))
-        skip_order = bool(sales_cfg.get("skip_order_cols", False))
-        sales_output = str(sales_cfg.get("sales_output", "sales")).strip().lower()
-
-        if returns_enabled and skip_order and sales_output == "sales":
-            _warn(
-                "returns.enabled=true but sales_output='sales' with "
-                "skip_order_cols=true removes order identifiers. "
-                "Returns will be disabled. Set skip_order_cols=false or "
-                "use sales_output='sales_order'/'both' to generate returns."
-            )
-            returns_cfg = dict(returns_cfg)
-            returns_cfg["enabled"] = False
-            cfg["returns"] = returns_cfg
-
-    # Rule 2: Complaints require order columns
-    complaints_cfg = cfg.get("complaints")
-    if isinstance(sales_cfg, Mapping) and isinstance(complaints_cfg, Mapping):
-        complaints_enabled = bool(complaints_cfg.get("enabled", False))
-        skip_order_c = bool(sales_cfg.get("skip_order_cols", False))
-        sales_output_c = str(sales_cfg.get("sales_output", "sales")).strip().lower()
-
-        if complaints_enabled and skip_order_c and sales_output_c == "sales":
-            _warn(
-                "complaints.enabled=true but sales_output='sales' with "
-                "skip_order_cols=true removes order identifiers. "
-                "Complaints will be disabled. Set skip_order_cols=false or "
-                "use sales_output='sales_order'/'both' to generate complaints."
-            )
-            complaints_cfg = dict(complaints_cfg)
-            complaints_cfg["enabled"] = False
-            cfg["complaints"] = complaints_cfg
+    # Rules 1-2: Returns and complaints require order columns
+    if skip_order_blocks_feature(cfg):
+        for section in ("returns", "complaints"):
+            sec_cfg = cfg.get(section)
+            if isinstance(sec_cfg, Mapping) and bool(sec_cfg.get("enabled", False)):
+                _warn(f"Disabling {section}: skip_order_cols removes order IDs needed by {section}")
+                sec_cfg = dict(sec_cfg)
+                sec_cfg["enabled"] = False
+                cfg[section] = sec_cfg
 
     # Rule 3: FX dates always follow global dates.
     # Also migrate old ``currencies`` key → ``to_currencies`` at raw-dict level
