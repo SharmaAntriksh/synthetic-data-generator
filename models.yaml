@@ -15,7 +15,7 @@
 models:
 
   macro_demand:
-    trend: new-market-entry          # directional (extend over time):
+    trend: gradual-growth          # directional (extend over time):
                                     #   steady-growth | strong-growth | gradual-growth
                                     #   hockey-stick | decline | new-market-entry
                                     # cyclical (repeat every 10 years):

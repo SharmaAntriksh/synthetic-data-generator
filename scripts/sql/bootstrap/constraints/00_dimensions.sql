@@ -264,6 +264,25 @@ BEGIN
     ADD CONSTRAINT PK_Warehouses PRIMARY KEY NONCLUSTERED ([WarehouseKey]);
 END;
 
+-- Warehouses -> Geography
+IF OBJECT_ID(N'dbo.Warehouses', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Geography', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.Warehouses', N'GeographyKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_Warehouses_Geography'
+      AND parent_object_id = OBJECT_ID(N'dbo.Warehouses')
+)
+BEGIN
+    ALTER TABLE dbo.Warehouses WITH CHECK
+    ADD CONSTRAINT FK_Warehouses_Geography
+        FOREIGN KEY ([GeographyKey])
+        REFERENCES dbo.Geography ([GeographyKey]);
+
+    ALTER TABLE dbo.Warehouses CHECK CONSTRAINT FK_Warehouses_Geography;
+END;
+
 -- Promotions (schema may vary)
 IF OBJECT_ID(N'dbo.Promotions', N'U') IS NOT NULL
 AND COL_LENGTH(N'dbo.Promotions', N'PromotionKey') IS NOT NULL
@@ -290,6 +309,58 @@ AND NOT EXISTS (
 BEGIN
     ALTER TABLE dbo.Employees
     ADD CONSTRAINT PK_Employees PRIMARY KEY NONCLUSTERED ([EmployeeKey]);
+END;
+
+-- EmployeeStoreAssignments PK
+IF OBJECT_ID(N'dbo.EmployeeStoreAssignments', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.EmployeeStoreAssignments', N'AssignmentKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.key_constraints
+    WHERE name = N'PK_EmployeeStoreAssignments'
+      AND parent_object_id = OBJECT_ID(N'dbo.EmployeeStoreAssignments')
+)
+BEGIN
+    ALTER TABLE dbo.EmployeeStoreAssignments
+    ADD CONSTRAINT PK_EmployeeStoreAssignments PRIMARY KEY NONCLUSTERED ([AssignmentKey]);
+END;
+
+-- EmployeeStoreAssignments -> Employees
+IF OBJECT_ID(N'dbo.EmployeeStoreAssignments', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.EmployeeStoreAssignments', N'EmployeeKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_EmployeeStoreAssignments_Employees'
+      AND parent_object_id = OBJECT_ID(N'dbo.EmployeeStoreAssignments')
+)
+BEGIN
+    ALTER TABLE dbo.EmployeeStoreAssignments WITH CHECK
+    ADD CONSTRAINT FK_EmployeeStoreAssignments_Employees
+        FOREIGN KEY ([EmployeeKey])
+        REFERENCES dbo.Employees ([EmployeeKey]);
+
+    ALTER TABLE dbo.EmployeeStoreAssignments CHECK CONSTRAINT FK_EmployeeStoreAssignments_Employees;
+END;
+
+-- EmployeeStoreAssignments -> Stores
+IF OBJECT_ID(N'dbo.EmployeeStoreAssignments', N'U') IS NOT NULL
+AND OBJECT_ID(N'dbo.Stores', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.EmployeeStoreAssignments', N'StoreKey') IS NOT NULL
+AND NOT EXISTS (
+    SELECT 1
+    FROM sys.foreign_keys
+    WHERE name = N'FK_EmployeeStoreAssignments_Stores'
+      AND parent_object_id = OBJECT_ID(N'dbo.EmployeeStoreAssignments')
+)
+BEGIN
+    ALTER TABLE dbo.EmployeeStoreAssignments WITH CHECK
+    ADD CONSTRAINT FK_EmployeeStoreAssignments_Stores
+        FOREIGN KEY ([StoreKey])
+        REFERENCES dbo.Stores ([StoreKey]);
+
+    ALTER TABLE dbo.EmployeeStoreAssignments CHECK CONSTRAINT FK_EmployeeStoreAssignments_Stores;
 END;
 
 -- Suppliers (schema may vary)
