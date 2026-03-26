@@ -246,17 +246,19 @@ inventory:
   partition_by: ["Year", "Month"]      # null or [] to disable (used by deltaparquet)
   abc_filter: ["A", "B"]                     # null = all classes; ["A", "B"] = skip C-class products
 
-  min_demand_months: 6
-  initial_stock_multiplier: 1.5        # was 3.0 — start with 1.5 months of avg demand, not 3
-  reorder_compliance: 0.65             # was 0.85 — 35% of reorders are late/missed (realistic)
-  lead_time_variance: 0.40             # was 0.20 — wider delivery jitter (±40%)
-  overstock_bias: 1.0                  # was 1.15 — no systematic over-ordering
+  min_demand_months: 6                  # months of sales history needed before stocking a product
+  initial_stock_multiplier: 1.5        # starting stock = multiplier × avg monthly demand
+  reorder_compliance: 0.65             # fraction of reorders fulfilled on time (rest are late/missed)
+  lead_time_variance: 0.40             # delivery jitter as fraction of lead time (±40%)
+  overstock_bias: 1.0                  # >1 = systematic over-ordering, 1.0 = neutral
 
-  abc_stock_multiplier:
-    A: 1.20                            # was 1.30
-    B: 1.00
-    C: 0.60                            # C-class products are more neglected
+  abc_stock_multiplier:                # safety stock multiplier by ABC classification
+    A: 1.20                            # high-value: keep more buffer
+    B: 1.00                            # mid-value: baseline
+    C: 0.60                            # low-value: minimal buffer
 
   shrinkage:
     enabled: true
     rate: 0.02
+
+  write_chunk_rows: 3_000_000           # rows per CSV chunk (inventory compresses well, use larger chunks)

@@ -247,7 +247,7 @@ def run_inventory_pipeline(
         # Write updated ABC back to product_profile so Power BI sees it
         _update_product_profile_abc(parquet_dims, product_attrs_arrays)
 
-    csv_chunk_size = int(getattr(sales_cfg, "chunk_size", 2_000_000))
+    csv_chunk_size = int(getattr(icfg, "write_chunk_rows", 2_000_000))
 
     if qualified_pairs >= _PARALLEL_THRESHOLD and n_warehouses >= 2:
         result = _run_parallel(
