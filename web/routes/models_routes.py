@@ -4,14 +4,12 @@ web/routes/models_routes.py -- All /api/models/* endpoints.
 
 from __future__ import annotations
 
-from typing import Any, Dict
-
 import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from web.shared_state import _g, _models_path, _load_yaml
+from web.shared_state import ConfigUpdate, _g, _models_path, _load_yaml
 import web.shared_state as _state
 
 router = APIRouter(prefix="/api/models", tags=["models"])
@@ -25,16 +23,12 @@ class ModelsUpdate(BaseModel):
     yaml_text: str
 
 
-class ConfigUpdate(BaseModel):
-    values: Dict[str, Any]
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _models_root() -> dict:
-    """Return the 'models' sub-dict (models.yaml wraps everything under 'models:')."""
+    """Return the 'models' sub-dict. Caller must hold ``_state._cfg_lock``."""
     m = _state._models_cfg.get("models")
     return m if isinstance(m, dict) else _state._models_cfg
 

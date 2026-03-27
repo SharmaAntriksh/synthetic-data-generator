@@ -6,6 +6,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
@@ -107,7 +108,7 @@ def _apply_deterministic_names(
     Assigns deterministic Gender (M/F/O) and region-aware first/last/middle names.
     """
     if people_pools is None:
-        raise ValueError(
+        raise DimensionError(
             "people_pools is required for employee name generation. "
             "Ensure name pool CSV files exist under the configured people folder."
         )
@@ -229,8 +230,8 @@ def _enrich_employee_hr_columns(
 
     # Compensation
     salaried = (df["OrgLevel"].astype(int) <= 5).to_numpy()
-    df["SalariedFlag"] = salaried.astype(np.int8)
-    df["PayFrequency"] = np.where(salaried, 1, 2).astype(np.int16)
+    df["SalariedFlag"] = salaried.astype(np.int32)
+    df["PayFrequency"] = np.where(salaried, 1, 2).astype(np.int32)
 
     hourly_staff = np.clip(rng.normal(loc=18.0, scale=4.0, size=n), 10.0, 40.0)
     annual_salary = np.clip(rng.normal(loc=70000.0, scale=18000.0, size=n), 38000.0, 160000.0)
@@ -242,7 +243,7 @@ def _enrich_employee_hr_columns(
     base_vac = np.where(salaried, 80, 40) + (tenure_days / 365.0 * np.where(salaried, 6.0, 3.0))
     df["VacationHours"] = np.clip(
         base_vac + rng.normal(0, 10, size=n), 0, 240,
-    ).round(0).astype(np.int16)
+    ).round(0).astype(np.int32)
 
     # Status
     df["Status"] = np.where(
@@ -265,7 +266,7 @@ def _enrich_employee_hr_columns(
         df.loc[needs_reason, "TerminationReason"] = reasons
 
     # SalesPersonFlag
-    df["SalesPersonFlag"] = title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE]).astype(np.int8)
+    df["SalesPersonFlag"] = title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE]).astype(np.int32)
 
     # DepartmentName
     dept = np.where(
@@ -306,7 +307,7 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
             return
         s = df[col]
         if pd.api.types.is_bool_dtype(s):
-            s = s.astype(np.int8)
+            s = s.astype(np.int32)
         s = pd.to_numeric(s, errors="coerce")
         df[col] = s.fillna(0).astype(dtype)
 
@@ -315,15 +316,15 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
         df["ParentEmployeeKey"] = pd.to_numeric(
             df["ParentEmployeeKey"], errors="coerce",
         ).astype("Int32")
-    _to_int("OrgLevel", np.int16)
-    _to_int("SalesPersonFlag", np.int8)
-    _to_int("SalariedFlag", np.int8)
-    _to_int("IsActive", np.int8)
-    _to_int("RegionId", np.int16)
-    _to_int("DistrictId", np.int16)
+    _to_int("OrgLevel", np.int32)
+    _to_int("SalesPersonFlag", np.int32)
+    _to_int("SalariedFlag", np.int32)
+    _to_int("IsActive", np.int32)
+    _to_int("RegionId", np.int32)
+    _to_int("DistrictId", np.int32)
     _to_int("StoreKey", np.int32)
     _to_int("GeographyKey", np.int32)
-    _to_int("PayFrequency", np.int16)
+    _to_int("PayFrequency", np.int32)
 
     return df
 
@@ -355,12 +356,12 @@ def generate_employee_dimension(
         covering any date in ``[global_start, global_end]``.
     """
     if stores.empty:
-        raise ValueError("stores dataframe is empty; cannot generate employees")
+        raise DimensionError("stores dataframe is empty; cannot generate employees")
 
     required_cols = {"StoreKey", "GeographyKey", "EmployeeCount", "StoreType"}
     missing = [c for c in required_cols if c not in stores.columns]
     if missing:
-        raise ValueError(f"stores.parquet missing required columns: {missing}")
+        raise DimensionError(f"stores.parquet missing required columns: {missing}")
 
     stores = stores.copy()
     stores["StoreKey"] = stores["StoreKey"].astype(np.int32)
@@ -378,13 +379,13 @@ def generate_employee_dimension(
         district_id = (
             stores["StoreDistrict"].astype(str)
             .str.extract(r"(\d+)", expand=False)
-            .astype(np.int16)
+            .astype(np.int32)
             .to_numpy()
         )
         region_id = (
             stores["StoreRegion"].astype(str)
             .str.extract(r"(\d+)", expand=False)
-            .astype(np.int16)
+            .astype(np.int32)
             .to_numpy()
         )
         stores = stores.drop(
@@ -412,18 +413,18 @@ def generate_employee_dimension(
         districts_per_region = 8
 
         if has_continent:
-            district_id = np.zeros(n_stores, dtype=np.int16)
+            district_id = np.zeros(n_stores, dtype=np.int32)
             next_did = 1
             for _, grp_idx in stores.groupby("Continent", sort=False):
                 idx = grp_idx.index.to_numpy()
                 n_grp = len(idx)
                 local_did = np.arange(n_grp) // district_size
-                district_id[idx] = (local_did + next_did).astype(np.int16)
+                district_id[idx] = (local_did + next_did).astype(np.int32)
                 next_did += int(local_did.max()) + 1
         else:
-            district_id = (np.arange(n_stores) // district_size + 1).astype(np.int16)
+            district_id = (np.arange(n_stores) // district_size + 1).astype(np.int32)
 
-        region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int16)
+        region_id = ((district_id - 1) // districts_per_region + 1).astype(np.int32)
         stores = stores.drop(columns=["Continent", "Country"], errors="ignore")
 
     stores["DistrictId"] = district_id
@@ -449,7 +450,7 @@ def generate_employee_dimension(
         ParentEmployeeKey=pd.NA,
         EmployeeName="",
         Title="Chief Executive Officer",
-        OrgLevel=np.int16(1),
+        OrgLevel=np.int32(1),
         OrgUnitType="Corporate",
         RegionId=pd.NA, DistrictId=pd.NA,
         StoreKey=pd.NA, GeographyKey=pd.NA,
@@ -459,7 +460,7 @@ def generate_employee_dimension(
         ParentEmployeeKey=CEO_KEY,
         EmployeeName="",
         Title="VP Operations",
-        OrgLevel=np.int16(2),
+        OrgLevel=np.int32(2),
         OrgUnitType="Corporate",
         RegionId=pd.NA, DistrictId=pd.NA,
         StoreKey=pd.NA, GeographyKey=pd.NA,
@@ -472,9 +473,9 @@ def generate_employee_dimension(
             ParentEmployeeKey=VP_OPS_KEY,
             EmployeeName="",
             Title="Regional Manager",
-            OrgLevel=np.int16(3),
+            OrgLevel=np.int32(3),
             OrgUnitType="Region",
-            RegionId=np.int16(rid),
+            RegionId=np.int32(rid),
             DistrictId=pd.NA,
             StoreKey=pd.NA, GeographyKey=pd.NA,
         ))
@@ -490,10 +491,10 @@ def generate_employee_dimension(
             ParentEmployeeKey=_region_mgr_key(rid),
             EmployeeName="",
             Title="District Manager",
-            OrgLevel=np.int16(4),
+            OrgLevel=np.int32(4),
             OrgUnitType="District",
-            RegionId=np.int16(rid),
-            DistrictId=np.int16(did),
+            RegionId=np.int32(rid),
+            DistrictId=np.int32(did),
             StoreKey=pd.NA, GeographyKey=pd.NA,
         ))
 
@@ -503,8 +504,8 @@ def generate_employee_dimension(
     # Store managers — vectorized (physical stores only)
     # ---------------------------------------------------------------
     sk_arr = stores["StoreKey"].to_numpy(dtype=np.int32)
-    did_arr = stores["DistrictId"].to_numpy(dtype=np.int16)
-    rid_arr = stores["RegionId"].to_numpy(dtype=np.int16)
+    did_arr = stores["DistrictId"].to_numpy(dtype=np.int32)
+    rid_arr = stores["RegionId"].to_numpy(dtype=np.int32)
     gk_arr = stores["GeographyKey"].to_numpy(dtype=np.int32)
 
     _is_online_store = sk_arr > ONLINE_STORE_KEY_BASE
@@ -521,7 +522,7 @@ def generate_employee_dimension(
         "ParentEmployeeKey": mgr_parent_keys[_phys_idx],
         "EmployeeName": "",
         "Title": "Store Manager",
-        "OrgLevel": np.int16(5),
+        "OrgLevel": np.int32(5),
         "OrgUnitType": "Store",
         "RegionId": rid_arr[_phys_idx],
         "DistrictId": did_arr[_phys_idx],
@@ -605,7 +606,7 @@ def generate_employee_dimension(
             "ParentEmployeeKey": staff_parent,
             "EmployeeName": "",
             "Title": pd.Series(all_titles, dtype="object"),
-            "OrgLevel": np.int16(6),
+            "OrgLevel": np.int32(6),
             "OrgUnitType": "Store",
             "RegionId": staff_rid,
             "DistrictId": staff_did,
@@ -629,7 +630,7 @@ def generate_employee_dimension(
             "ParentEmployeeKey": mgr_parent_keys[_online_idx],
             "EmployeeName": "",
             "Title": ONLINE_SALES_REP_ROLE,
-            "OrgLevel": np.int16(5),
+            "OrgLevel": np.int32(5),
             "OrgUnitType": "Store",
             "RegionId": rid_arr[_online_idx],
             "DistrictId": did_arr[_online_idx],
@@ -727,7 +728,7 @@ def generate_employee_dimension(
     # No random termination. No attrition. Store closures terminate.
     # ------------------------------------------------------------------
     df["TerminationDate"] = pd.NaT
-    df["IsActive"] = np.int8(1)
+    df["IsActive"] = np.int32(1)
     df["TerminationReason"] = pd.array([pd.NA] * n, dtype="object")
 
     # Store closures: terminate all employees at the closing store (vectorized)
@@ -740,7 +741,7 @@ def generate_employee_dimension(
             last_day = (close_date - pd.Timedelta(days=1)).normalize()
             mask = sk_all_np == int(close_sk)
             df.loc[mask, "TerminationDate"] = last_day
-            df.loc[mask, "IsActive"] = np.int8(0)
+            df.loc[mask, "IsActive"] = np.int32(0)
             df.loc[mask, "TerminationReason"] = "Store Closure"
 
     # Names
@@ -793,9 +794,9 @@ def generate_employee_dimension(
     # Final integer casts (single consolidated pass)
     df["EmployeeKey"] = pd.to_numeric(df["EmployeeKey"], errors="coerce").fillna(0).astype(np.int32)
     df["ParentEmployeeKey"] = pd.to_numeric(df["ParentEmployeeKey"], errors="coerce").astype("Int32")
-    df["OrgLevel"] = pd.to_numeric(df["OrgLevel"], errors="coerce").fillna(0).astype(np.int16)
-    df["RegionId"] = pd.to_numeric(df["RegionId"], errors="coerce").fillna(0).astype(np.int16)
-    df["DistrictId"] = pd.to_numeric(df["DistrictId"], errors="coerce").fillna(0).astype(np.int16)
+    df["OrgLevel"] = pd.to_numeric(df["OrgLevel"], errors="coerce").fillna(0).astype(np.int32)
+    df["RegionId"] = pd.to_numeric(df["RegionId"], errors="coerce").fillna(0).astype(np.int32)
+    df["DistrictId"] = pd.to_numeric(df["DistrictId"], errors="coerce").fillna(0).astype(np.int32)
     df["StoreKey"] = pd.to_numeric(df["StoreKey"], errors="coerce").fillna(0).astype(np.int32)
     df["GeographyKey"] = pd.to_numeric(df["GeographyKey"], errors="coerce").fillna(0).astype(np.int32)
 

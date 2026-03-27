@@ -478,6 +478,7 @@ _PROFILE_TO_TREND: Dict[str, Optional[str]] = {
     "gradual": "gradual-growth",
     "aggressive": "hockey-stick",
     "instant": None,  # instant = flat, no trend needed
+    "decline": "decline",
 }
 
 

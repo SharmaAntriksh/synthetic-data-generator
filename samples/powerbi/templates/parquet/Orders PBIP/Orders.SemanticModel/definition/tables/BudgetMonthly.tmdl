@@ -1,0 +1,86 @@
+table BudgetMonthly
+	lineageTag: 4c64a588-bc19-4b2b-a2aa-5952ef8ce613
+
+	column Country
+		dataType: string
+		lineageTag: 96a6f09b-0a1d-49a8-bf3a-5726222bc3c1
+		summarizeBy: none
+		sourceColumn: Country
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: b9054f4e-ed85-499d-b663-29eeb5a9b87c
+		summarizeBy: none
+		sourceColumn: Category
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetYear
+		dataType: int64
+		formatString: 0
+		lineageTag: 5ef0061f-0f3f-401d-8da4-d7dd5c17e044
+		summarizeBy: sum
+		sourceColumn: BudgetYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetMonthStart
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: c6d8ded0-8d4c-481f-bbe0-0f63b35c73ad
+		summarizeBy: none
+		sourceColumn: BudgetMonthStart
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column Scenario
+		dataType: string
+		lineageTag: da5c07fb-773a-44d1-824f-8b863717177a
+		summarizeBy: none
+		sourceColumn: Scenario
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetAmount
+		dataType: double
+		lineageTag: 8a8d39e0-28ea-4276-999e-d4815cfd5832
+		summarizeBy: sum
+		sourceColumn: BudgetAmount
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column BudgetQuantity
+		dataType: double
+		lineageTag: 0b763986-0dee-442a-85b6-7f657a31039b
+		summarizeBy: sum
+		sourceColumn: BudgetQuantity
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column BudgetMethod
+		dataType: string
+		lineageTag: 2fce6e57-f2b4-4311-9d22-18d657d077a6
+		summarizeBy: none
+		sourceColumn: BudgetMethod
+
+		annotation SummarizationSetBy = Automatic
+
+	partition BudgetMonthly = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source      = FxReadParquetFile ( "facts\budget_monthly" )
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
+

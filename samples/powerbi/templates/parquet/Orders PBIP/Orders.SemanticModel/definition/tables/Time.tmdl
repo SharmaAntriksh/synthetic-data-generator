@@ -1,0 +1,172 @@
+table Time
+	lineageTag: e74f5926-3fd7-4ca1-b857-dd78fcd49aa5
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 7d8713ab-8b1c-4c7a-b443-a01610b669c5
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column Hour
+		dataType: int64
+		formatString: 0
+		lineageTag: 54eb4d0c-fcb5-42f1-ab9e-0ca696be2b6f
+		summarizeBy: sum
+		sourceColumn: Hour
+
+		annotation SummarizationSetBy = Automatic
+
+	column Minute
+		dataType: int64
+		formatString: 0
+		lineageTag: 64b18775-1bbf-4254-88eb-be9beb2dd062
+		summarizeBy: sum
+		sourceColumn: Minute
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeText
+		dataType: string
+		lineageTag: dff54a84-bb90-4ce4-a44c-fd3280e22257
+		summarizeBy: none
+		sourceColumn: TimeText
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey15
+		dataType: int64
+		formatString: 0
+		lineageTag: 762be406-e8e4-45cc-a6de-bc9db4982872
+		summarizeBy: sum
+		sourceColumn: TimeKey15
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin15Label
+		dataType: string
+		lineageTag: 9394b5f6-25d7-4847-9879-b63ace4c11b8
+		summarizeBy: none
+		sourceColumn: Bin15Label
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey30
+		dataType: int64
+		formatString: 0
+		lineageTag: 6faf26d6-20e8-4a4d-80c2-1ec4dafddb9a
+		summarizeBy: sum
+		sourceColumn: TimeKey30
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin30Label
+		dataType: string
+		lineageTag: 7d2407fb-7109-4d71-abfc-76a2362d7216
+		summarizeBy: none
+		sourceColumn: Bin30Label
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey60
+		dataType: int64
+		formatString: 0
+		lineageTag: 150a0f26-d2f8-402e-be24-f5ff64740576
+		summarizeBy: sum
+		sourceColumn: TimeKey60
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin60Label
+		dataType: string
+		lineageTag: 6d08f537-b9a8-41cc-8681-cbc18b336f08
+		summarizeBy: none
+		sourceColumn: Bin60Label
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey360
+		dataType: int64
+		formatString: 0
+		lineageTag: 2d0cba72-20af-481c-9a96-ee69dfc20f51
+		summarizeBy: sum
+		sourceColumn: TimeKey360
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin6hLabel
+		dataType: string
+		lineageTag: 74e000d8-8f9b-46e2-adb2-abf70c3d6f29
+		summarizeBy: none
+		sourceColumn: Bin6hLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey720
+		dataType: int64
+		formatString: 0
+		lineageTag: 46b6e3c8-ac4c-44ed-96cd-8a2a046f06a6
+		summarizeBy: sum
+		sourceColumn: TimeKey720
+
+		annotation SummarizationSetBy = Automatic
+
+	column Bin12hLabel
+		dataType: string
+		lineageTag: 3b40c1d2-682e-4e38-a012-1a7732dbc290
+		summarizeBy: none
+		sourceColumn: Bin12hLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeBucketKey4
+		dataType: int64
+		formatString: 0
+		lineageTag: b32b7354-3c69-4442-8b32-0c9d9c3fc6df
+		summarizeBy: sum
+		sourceColumn: TimeBucketKey4
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeBucket4
+		dataType: string
+		lineageTag: bc7de22e-a2b7-4684-85b9-0ee526267c16
+		summarizeBy: none
+		sourceColumn: TimeBucket4
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeSeconds
+		dataType: int64
+		formatString: 0
+		lineageTag: dfc2be53-a072-46ed-93f8-ccfcfb13f085
+		summarizeBy: sum
+		sourceColumn: TimeSeconds
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeOfDay
+		dataType: dateTime
+		formatString: Long Time
+		lineageTag: f11d2264-2838-4c09-a400-0fcdab629158
+		summarizeBy: none
+		sourceColumn: TimeOfDay
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Time
+
+	partition Time = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source     = FxReadParquetFile ( "dimensions\time" ),
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"TimeOfDay", type time}})
+				in
+				    #"Changed Type"
+
+	annotation PBI_ResultType = Table
+

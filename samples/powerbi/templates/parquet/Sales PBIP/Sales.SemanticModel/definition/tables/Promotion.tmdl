@@ -1,0 +1,119 @@
+table Promotion
+	lineageTag: 950d4f23-f973-4b92-9303-c67a973e54f9
+
+	column PromotionKey
+		dataType: int64
+		formatString: 0
+		lineageTag: a54ce7d6-e0fb-4c46-821a-e32ddf4785e3
+		summarizeBy: count
+		sourceColumn: PromotionKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionLabel
+		dataType: string
+		lineageTag: bde743ef-109e-44a2-8603-c9c48daeefcd
+		summarizeBy: none
+		sourceColumn: PromotionLabel
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionName
+		dataType: string
+		lineageTag: e2464e18-b02e-44b8-a9e6-7a81575a8059
+		summarizeBy: none
+		sourceColumn: PromotionName
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionDescription
+		dataType: string
+		lineageTag: b2b35a86-0e6d-45fe-b12a-92aa5bf164a2
+		summarizeBy: none
+		sourceColumn: PromotionDescription
+
+		annotation SummarizationSetBy = Automatic
+
+	column DiscountPct
+		dataType: double
+		lineageTag: aadfe0b9-a235-4b8a-8f88-8db22c80b57c
+		summarizeBy: sum
+		sourceColumn: DiscountPct
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column PromotionType
+		dataType: string
+		lineageTag: e76c0234-c9d4-4205-a231-14a7fb514d62
+		summarizeBy: none
+		sourceColumn: PromotionType
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionCategory
+		dataType: string
+		lineageTag: ef6ed003-0cc1-492a-9213-742816169729
+		summarizeBy: none
+		sourceColumn: PromotionCategory
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionYear
+		dataType: int64
+		formatString: 0
+		lineageTag: 858dff43-71cb-4a09-90ae-122ec02cc067
+		summarizeBy: sum
+		sourceColumn: PromotionYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column PromotionSequence
+		dataType: int64
+		formatString: 0
+		lineageTag: 55c23c39-186e-4e87-8008-7193705cc3b2
+		summarizeBy: sum
+		sourceColumn: PromotionSequence
+
+		annotation SummarizationSetBy = Automatic
+
+	column StartDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: c1da8833-b143-4d6d-a8f6-09095bdbc9a5
+		summarizeBy: none
+		sourceColumn: StartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column EndDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 51fd3141-98bf-4e82-95cc-cd3b05aa60b9
+		summarizeBy: none
+		sourceColumn: EndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	partition Promotion = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\promotions" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

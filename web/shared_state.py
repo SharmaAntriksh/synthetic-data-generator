@@ -16,6 +16,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+from pydantic import BaseModel
+
+
+class ConfigUpdate(BaseModel):
+    """Partial config update payload used by config and models form endpoints."""
+    values: Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------

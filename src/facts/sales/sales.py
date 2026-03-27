@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from src.defaults import ONLINE_SALES_REP_ROLE
+from src.exceptions import SalesError
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
 from src.utils.logging_utils import debug, done, info, skip, work
 from src.utils.shared_arrays import SharedArrayGroup
@@ -308,7 +309,7 @@ def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional
     defaults_section = getattr(cfg, "defaults", None) or getattr(cfg, "_defaults", None)
     defaults_dates = getattr(defaults_section, "dates", None) if defaults_section is not None else None
     if not isinstance(defaults_dates, Mapping):
-        raise KeyError("Missing defaults.dates in config")
+        raise SalesError("Missing defaults.dates in config")
 
     ov_sales_dates = _cfg_get(cfg, ["sales", "override", "dates"], default={})
     ov_sales_dates = ov_sales_dates if isinstance(ov_sales_dates, Mapping) else {}
@@ -330,7 +331,7 @@ def _resolve_date_range(cfg: dict, start_date: Optional[str], end_date: Optional
         )
 
     if not start_date or not end_date:
-        raise KeyError("Could not resolve start/end dates from config")
+        raise SalesError("Could not resolve start/end dates from config")
 
     return str(start_date), str(end_date)
 
@@ -369,7 +370,7 @@ def build_weighted_date_pool(start: str, end: str, seed: int = 42) -> Tuple[np.n
     dates = pd.date_range(start, end, freq="D")
     n = len(dates)
     if n <= 0:
-        raise ValueError("Date range produced an empty pool")
+        raise SalesError("Date range produced an empty pool")
 
     weekdays = _as_np(dates.weekday)
 
@@ -603,7 +604,7 @@ def generate_sales_fact(
     )
 
     start_date, end_date = _resolve_date_range(cfg, start_date, end_date)
-    optimize_after_merge = _bool_or(getattr(sales_cfg, "optimize", None), False)
+    optimize_after_merge = _bool_or(getattr(sales_cfg, "sort_merged_parquet", None), False)
 
     seed = _resolve_seed(cfg, seed, default_seed=42)
     partition_enabled, partition_cols = _resolve_partitioning(cfg, partition_enabled, partition_cols)
@@ -629,7 +630,7 @@ def generate_sales_fact(
 
     sales_output = _str_or(getattr(sales_cfg, "sales_output", None), "sales").lower()
     if sales_output not in {"sales", "sales_order", "both"}:
-        raise ValueError(f"Invalid sales_output: {sales_output}")
+        raise SalesError(f"Invalid sales_output: {sales_output}")
 
     # ------------------------------------------------------------
     # Returns (optional)
@@ -667,6 +668,36 @@ def generate_sales_fact(
     if returns_min_lag_days > returns_max_lag_days:
         returns_min_lag_days = returns_max_lag_days
 
+    # Extract multi-event returns config from models.yaml
+    _models_returns = getattr(State.models_cfg, "returns", None)
+    _ret_qty_cfg = getattr(_models_returns, "quantity", None)
+    _ret_lag_cfg = getattr(_models_returns, "lag_days", None)
+
+    returns_full_line_prob = _float_or(getattr(_ret_qty_cfg, "full_line_probability", 0.85), 0.85)
+    returns_split_rate = _float_or(getattr(_ret_qty_cfg, "split_return_rate", 0.0), 0.0)
+    returns_max_splits = _int_or(getattr(_ret_qty_cfg, "max_splits", 3), 3)
+    returns_split_min_gap = _int_or(getattr(_ret_lag_cfg, "split_min_gap", 3), 3)
+    returns_split_max_gap = _int_or(getattr(_ret_lag_cfg, "split_max_gap", 20), 20)
+
+    # Merge models.yaml weight overrides with defaults.py canonical reasons
+    from src.defaults import (
+        RETURN_REASON_KEYS as _RR_KEYS,
+        RETURN_REASON_DEFAULT_WEIGHTS as _RR_DEFAULTS,
+        RETURN_REASON_LOGISTICS_KEYS as _RR_LOGISTICS,
+    )
+    _models_reasons = getattr(_models_returns, "reasons", None)
+    if _models_reasons and len(_models_reasons) > 0:
+        _weight_overrides = {int(r.key): float(r.weight) for r in _models_reasons}
+    else:
+        _weight_overrides = {}
+    returns_reason_keys = list(_RR_KEYS)
+    returns_reason_probs = [_weight_overrides.get(k, _RR_DEFAULTS[k]) for k in _RR_KEYS]
+    returns_logistics_keys = list(_RR_LOGISTICS)
+
+    # Event key capacity per chunk (for globally unique sequential keys)
+    _chunk_size = _int_or(sales_cfg.chunk_size, 1_000_000)
+    returns_event_key_capacity = int(_chunk_size * max(returns_rate, 0.01) * max(returns_max_splits, 1)) + 1000
+
     # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
 
     # Keep "requested" vs "effective" separate so we can warn+continue.
@@ -677,11 +708,7 @@ def generate_sales_fact(
     # but if sales_output == "sales" and skip_order_cols == True, we cannot derive returns
     # (no order identifiers), so disable returns and warn.
     if returns_enabled_requested and sales_output == "sales" and bool(skip_order_cols):
-        info(
-            "WARNING: returns.enabled=true with sales_output='sales' and skip_order_cols=true "
-            "=> SalesReturn will be skipped (needs SalesOrderNumber/SalesOrderLineNumber). "
-            "Sales generation will continue."
-        )
+        info("Disabling returns: skip_order_cols removes order IDs needed by returns")
         returns_enabled_effective = False
 
     tables: list[str] = []
@@ -725,6 +752,11 @@ def generate_sales_fact(
     # Optional auto chunk sizing
     # ------------------------------------------------------------
     total_rows = _int_or(total_rows, 0)
+    if total_rows > 1_073_741_823:  # > int32_max / 2
+        warn(
+            f"total_rows={total_rows:,} exceeds half of int32 max. "
+            "SalesOrderNumber will use int64 in parquet output."
+        )
     if total_rows <= 0:
         skip("No sales rows to generate (total_rows <= 0).")
         if return_manifest:
@@ -772,7 +804,7 @@ def generate_sales_fact(
     cust_df_full = load_parquet_df(customers_path, _cust_all_cols)
 
     if cust_df_full.empty:
-        raise RuntimeError("customers.parquet is empty; cannot generate sales")
+        raise SalesError("customers.parquet is empty; cannot generate sales")
 
     # --- SCD2 customer deduplication ---
     _cust_scd2_detected = False
@@ -825,18 +857,15 @@ def generate_sales_fact(
     else:
         customer_end_month = np.full(len(customer_keys), -1, dtype=np.int64)
 
-    # --- Derive is_active_in_sales from churn status ---
+    # --- Derive is_active_in_sales ---
+    # All customers participate in sales during their active window
+    # (customer_start_month..customer_end_month). Churned customers are
+    # time-bounded by customer_end_month, not excluded entirely — this
+    # ensures they appear in sales for the months they were active.
     if "IsActiveInSales" in cust_df.columns:
-        # Legacy path
         is_active_in_sales = _as_np(cust_df["IsActiveInSales"], np.int32)
     else:
-        # Active = not churned (no end date, or end date in the future)
-        config_end = pd.to_datetime(end_date)
-        cust_end_for_active = pd.to_datetime(cust_df.get("CustomerEndDate"), errors="coerce")
-        is_active_in_sales = np.where(
-            cust_end_for_active.isna() | (cust_end_for_active >= config_end),
-            1, 0,
-        ).astype(np.int32)
+        is_active_in_sales = np.ones(len(customer_keys), dtype=np.int32)
 
     # Extract customer weight from the already-loaded DataFrame (no extra parquet open)
     customer_base_weight = None
@@ -1185,7 +1214,7 @@ def generate_sales_fact(
         emp_assign_df = emp_assign_df[emp_assign_df["RoleAtStore"].isin(salesperson_roles)].copy()
 
     if emp_assign_df.empty:
-        raise RuntimeError(
+        raise SalesError(
             f"No employee assignments with role in {salesperson_roles} found in "
             f"{emp_assign_path}. Check employees.store_assignments.primary_sales_role "
             f"and ensure the bridge has been regenerated."
@@ -1530,6 +1559,28 @@ def generate_sales_fact(
                 State.models_cfg = _models_copy
 
     # ------------------------------------------------------------
+    # Derive distinct_ratio / max_distinct_ratio from active_ratio
+    # so customer participation matches the user's intent.
+    # Passed as explicit worker_cfg overrides (plain floats survive pickling).
+    # ------------------------------------------------------------
+    _cust_active_ratio = float(getattr(getattr(cfg, "customers", None), "active_ratio", 0.98) or 0.98)
+    _override_distinct_ratio = None
+    _override_max_distinct_ratio = None
+    if _cust_active_ratio > 0:
+        _m = State.models_cfg
+        _cd = _m.get("customers", {}) or {}
+        _cur_dr = float(_cd.get("distinct_ratio", 0.55) if isinstance(_cd, dict) else getattr(_cd, "distinct_ratio", 0.55))
+        if _cur_dr < _cust_active_ratio:
+            _override_distinct_ratio = min(_cust_active_ratio * 0.97, 0.99)
+            debug(f"distinct_ratio raised from {_cur_dr:.2f} to {_override_distinct_ratio:.2f} (active_ratio={_cust_active_ratio:.2f})")
+
+        _md = _m.get("macro_demand", {}) or {}
+        _cur_mdr = float(_md.get("max_distinct_ratio", 0.70) if isinstance(_md, dict) else getattr(_md, "max_distinct_ratio", 0.70))
+        if _cur_mdr < _cust_active_ratio:
+            _override_max_distinct_ratio = min(_cust_active_ratio, 0.99)
+            debug(f"max_distinct_ratio raised from {_cur_mdr:.2f} to {_override_max_distinct_ratio:.2f} (active_ratio={_cust_active_ratio:.2f})")
+
+    # ------------------------------------------------------------
     # Worker configuration (keep keys stable for compatibility)
     # ------------------------------------------------------------
     worker_cfg = dict(
@@ -1580,6 +1631,7 @@ def generate_sales_fact(
         # Optional alias (safe to add): lets us rename later without breaking older workers.
         # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
         order_id_stride_orders=int(chunk_size),
+        total_rows=int(total_rows),
         order_id_run_id=int(order_id_run_id),
         max_lines_per_order=int(getattr(sales_cfg, "max_lines_per_order", 5) or 5),
 
@@ -1603,11 +1655,23 @@ def generate_sales_fact(
         partition_cols=partition_cols,
 
         models_cfg=State.models_cfg,
+        # Active ratio overrides (plain floats, survive pickling)
+        override_distinct_ratio=_override_distinct_ratio,
+        override_max_distinct_ratio=_override_max_distinct_ratio,
         # Returns (optional)
         returns_enabled=bool(returns_enabled_effective),
         returns_rate=float(returns_rate),
         returns_min_lag_days=int(returns_min_lag_days),
         returns_max_lag_days=int(returns_max_lag_days),
+        returns_reason_keys=returns_reason_keys,
+        returns_reason_probs=returns_reason_probs,
+        returns_full_line_probability=float(returns_full_line_prob),
+        returns_split_return_rate=float(returns_split_rate),
+        returns_max_splits=int(returns_max_splits),
+        returns_split_min_gap=int(returns_split_min_gap),
+        returns_split_max_gap=int(returns_split_max_gap),
+        returns_logistics_keys=returns_logistics_keys,
+        returns_event_key_capacity=int(returns_event_key_capacity),
 
         # deterministic employee assignment lookup
         seed_master=int(seed),
@@ -2054,12 +2118,13 @@ def generate_sales_fact(
                 delta_output_folder=delta_dir,
                 partition_cols=partition_cols,
                 table_name=t,
+                sort_small_parts=_bool_or(getattr(sales_cfg, "sort_delta_parts", False), False),
             )
             wrote += 1
 
         if wrote == 0:
             msg = " | ".join([f"{t} -> {p}" for t, p in missing_parts]) if missing_parts else "no parts found"
-            raise RuntimeError(f"No delta parts found for any table. {msg}")
+            raise SalesError(f"No delta parts found for any table. {msg}")
 
         manifest = _build_sales_manifest()
         return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
@@ -2137,4 +2202,4 @@ def generate_sales_fact(
         manifest = _build_sales_manifest()
         return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
 
-    raise ValueError(f"Unknown file_format: {file_format}")
+    raise SalesError(f"Unknown file_format: {file_format}")

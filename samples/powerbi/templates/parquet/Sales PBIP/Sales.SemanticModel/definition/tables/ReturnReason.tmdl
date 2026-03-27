@@ -1,10 +1,10 @@
 table ReturnReason
-	lineageTag: 404b0313-1b9d-41e3-b543-cf077f6937f4
+	lineageTag: 6fc44008-f62a-4860-ba99-8e495348a387
 
 	column ReturnReasonKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 8347816a-050f-4127-b899-8960da554843
+		lineageTag: adcb3efb-4e5b-43df-aedd-a6fade9d7854
 		summarizeBy: count
 		sourceColumn: ReturnReasonKey
 
@@ -12,7 +12,7 @@ table ReturnReason
 
 	column ReturnReason
 		dataType: string
-		lineageTag: 59497e2e-54ff-4264-a99d-d030aa545af7
+		lineageTag: c5c6ab9b-9e49-4829-af97-87385f54bf74
 		summarizeBy: none
 		sourceColumn: ReturnReason
 
@@ -20,7 +20,7 @@ table ReturnReason
 
 	column ReturnReasonCategory
 		dataType: string
-		lineageTag: 5ddcbe0d-f122-457b-8e5d-06c6701fe4fc
+		lineageTag: 0f6df28c-8a5c-42eb-95ce-964b471f37c2
 		summarizeBy: none
 		sourceColumn: ReturnReasonCategory
 

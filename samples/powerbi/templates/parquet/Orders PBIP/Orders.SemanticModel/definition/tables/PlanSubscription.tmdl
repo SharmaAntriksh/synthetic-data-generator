@@ -1,0 +1,113 @@
+table PlanSubscription
+	lineageTag: 8e7638d9-caf6-4a4d-9b9e-f83c3e21f65a
+
+	column SubscriptionKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 94b7b595-45a3-4d5b-9c8f-2e04460adc39
+		summarizeBy: count
+		sourceColumn: SubscriptionKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 05fb3414-f05b-4ffc-8f61-9912b906f065
+		summarizeBy: count
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PlanKey
+		dataType: int64
+		formatString: 0
+		lineageTag: d8d345aa-00f7-494f-8578-5a603772ab88
+		summarizeBy: count
+		sourceColumn: PlanKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PeriodStartDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 7f699446-cf30-4ae3-8ed3-fd2829ed22e4
+		summarizeBy: none
+		sourceColumn: PeriodStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column PeriodEndDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 2d9353b3-b85e-4736-9b1c-28ae0184b32e
+		summarizeBy: none
+		sourceColumn: PeriodEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column PeriodPrice
+		dataType: double
+		lineageTag: ceacbc98-720f-4055-9e98-21dd11296fdd
+		summarizeBy: sum
+		sourceColumn: PeriodPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column IsFirstPeriod
+		dataType: int64
+		formatString: 0
+		lineageTag: 2d7ba9ef-888b-4311-8a5b-07eae54cd5ea
+		summarizeBy: sum
+		sourceColumn: IsFirstPeriod
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsChurnPeriod
+		dataType: int64
+		formatString: 0
+		lineageTag: d659e586-86d5-4cc0-93f5-46cf8af891a6
+		summarizeBy: sum
+		sourceColumn: IsChurnPeriod
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsTrialPeriod
+		dataType: int64
+		formatString: 0
+		lineageTag: 6dd5dd03-4353-4f95-8924-cfc05942aef1
+		summarizeBy: sum
+		sourceColumn: IsTrialPeriod
+
+		annotation SummarizationSetBy = Automatic
+
+	column BillingCycleNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 2d818fde-af3f-4f4d-8acf-7ffa941fbb74
+		summarizeBy: sum
+		sourceColumn: BillingCycleNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	partition PlanSubscription = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source     = FxReadParquetFile ( "dimensions\customer_subscriptions" )
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
+

@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils.config_helpers import as_dict as _as_dict, int_or as _int_or, bool_or as _bool_or
 from src.utils.config_precedence import resolve_seed
 from src.utils.logging_utils import info, skip, stage
@@ -85,9 +86,9 @@ def generate_suppliers_table(
     num_suppliers = _int_or(num_suppliers, 250)
     start_key = _int_or(start_key, 1)
     if num_suppliers <= 0:
-        raise ValueError(f"num_suppliers must be > 0, got {num_suppliers}")
+        raise DimensionError(f"num_suppliers must be > 0, got {num_suppliers}")
     if start_key <= 0:
-        raise ValueError(f"start_key must be > 0, got {start_key}")
+        raise DimensionError(f"start_key must be > 0, got {start_key}")
 
     rng = np.random.default_rng(int(seed))
 
@@ -175,9 +176,9 @@ def run_suppliers(cfg: Dict[str, Any], parquet_folder: Path) -> None:
 
     # Validate early (avoid weird sig math)
     if num_suppliers <= 0:
-        raise ValueError(f"num_suppliers must be > 0, got {num_suppliers}")
+        raise DimensionError(f"num_suppliers must be > 0, got {num_suppliers}")
     if start_key <= 0:
-        raise ValueError(f"start_key must be > 0, got {start_key}")
+        raise DimensionError(f"start_key must be > 0, got {start_key}")
 
     # Build version cfg BEFORE generation so we can skip cheaply.
     version_cfg = dict(sup_cfg)

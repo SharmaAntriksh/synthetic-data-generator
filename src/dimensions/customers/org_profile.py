@@ -4,6 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from src.exceptions import ValidationError
 from src.utils.name_pools import PeopleNamePools, slugify_domain_label
 from src.defaults import (
     CUSTOMER_STREET_NAMES as _STREET_NAMES,
@@ -38,7 +39,7 @@ for _pname, _parr in [
     ("_ORG_SIZE_PROBS", _ORG_SIZE_PROBS),
 ]:
     if abs(float(_parr.sum()) - 1.0) > 1e-6:
-        raise ValueError(f"org_profile.{_pname} sums to {float(_parr.sum())}, expected 1.0")
+        raise ValidationError(f"org_profile.{_pname} sums to {float(_parr.sum())}, expected 1.0")
 del _pname, _parr
 
 _ORG_REVENUE_PARAMS = {
@@ -334,7 +335,7 @@ def generate_org_profile(
         "Industry": Industry,
         "CompanySize": CompanySize,
         "AnnualRevenue": AnnualRevenue,
-        "FoundedYear": pd.array(FoundedYear, dtype="Int64"),
+        "FoundedYear": pd.array(FoundedYear, dtype="Int32"),
         "IsPubliclyTraded": IsPubliclyTraded,
         "HeadquarterCountry": HeadquarterCountry,
         "Website": Website,
@@ -342,8 +343,8 @@ def generate_org_profile(
         "OrgAddress": OrgAddress,
         "PrimaryContactName": PrimaryContactName,
         "PrimaryContactRole": PrimaryContactRole,
-        "NumberOfEmployees": pd.array(NumberOfEmployees, dtype="Int64"),
-        "NumberOfLocations": pd.array(NumberOfLocations, dtype="Int64"),
+        "NumberOfEmployees": pd.array(NumberOfEmployees, dtype="Int32"),
+        "NumberOfLocations": pd.array(NumberOfLocations, dtype="Int32"),
         "ProcurementCycle": ProcurementCycle,
         "ContractType": ContractType,
         "CreditRating": CreditRating,

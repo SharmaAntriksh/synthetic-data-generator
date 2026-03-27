@@ -217,7 +217,7 @@ def _cleanup_parts_folder(
         )
     else:
         try:
-            shutil.rmtree(parts_folder_abs, ignore_errors=True)
+            shutil.rmtree(parts_folder_abs)
         except OSError as ex:
             warn(f"[DELTA] Failed to clean up parts folder {parts_folder_abs}: {ex}")
 

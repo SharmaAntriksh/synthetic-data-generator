@@ -38,7 +38,7 @@ OUTPUT_COLS = [
 
 # Minimal fallback when master parquet is missing (original 71 cities).
 # Only used for backward compatibility — the master file is preferred.
-_FALLBACK_ROWS: List[Tuple[str, str, str, str, str]] = [
+FALLBACK_ROWS: List[Tuple[str, str, str, str, str]] = [
     ("New York", "New York", "United States", "North America", "USD"),
     ("Los Angeles", "California", "United States", "North America", "USD"),
     ("Chicago", "Illinois", "United States", "North America", "USD"),
@@ -112,8 +112,6 @@ _FALLBACK_ROWS: List[Tuple[str, str, str, str, str]] = [
     ("Monterrey", "Nuevo León", "Mexico", "South America", "MXN"),
 ]
 
-# Backward compat alias
-CURATED_ROWS = _FALLBACK_ROWS
 
 
 # =============================================================
@@ -123,7 +121,7 @@ CURATED_ROWS = _FALLBACK_ROWS
 def _load_master(master_path: Path | None = None) -> pd.DataFrame:
     """Load the geography master file.
 
-    Falls back to built-in _FALLBACK_ROWS if the file is missing.
+    Falls back to built-in FALLBACK_ROWS if the file is missing.
     """
     if master_path is None:
         master_path = _DEFAULT_MASTER_PATH
@@ -139,11 +137,11 @@ def _load_master(master_path: Path | None = None) -> pd.DataFrame:
 
     warn(
         f"Geography master not found at {master_path}; "
-        f"using built-in fallback ({len(_FALLBACK_ROWS)} cities). "
+        f"using built-in fallback ({len(FALLBACK_ROWS)} cities). "
         f"Run: python scripts/build_geography_master.py to create it."
     )
     return pd.DataFrame(
-        _FALLBACK_ROWS,
+        FALLBACK_ROWS,
         columns=["City", "State", "Country", "Continent", "ISOCode"],
     )
 
@@ -156,7 +154,7 @@ def _master_signature(master_path: Path | None = None) -> str:
     if master_path.exists():
         raw = master_path.read_bytes()
     else:
-        raw = repr(_FALLBACK_ROWS).encode("utf-8")
+        raw = repr(FALLBACK_ROWS).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -164,18 +162,19 @@ def _validate_cfg(cfg: Dict) -> Dict:
     if not isinstance(cfg, Mapping):
         raise TypeError("cfg must be a dict")
 
-    if not hasattr(cfg, "geography") or not isinstance(cfg.geography, Mapping):
-        raise KeyError("Missing required config section: 'geography'")
+    geo = getattr(cfg, "geography", None)
+    if not isinstance(geo, Mapping):
+        raise DimensionError("Missing required config section: 'geography'")
 
-    if not hasattr(cfg, "exchange_rates") or not isinstance(cfg.exchange_rates, Mapping):
-        raise KeyError("Missing required config section: 'exchange_rates'")
+    er = getattr(cfg, "exchange_rates", None)
+    if not isinstance(er, Mapping):
+        raise DimensionError("Missing required config section: 'exchange_rates'")
 
-    er = cfg.exchange_rates
     currencies = list(er.from_currencies or []) + list(er.to_currencies or [])
     if not currencies:
-        raise ValueError("exchange_rates.from_currencies/to_currencies must contain at least one currency code")
+        raise DimensionError("exchange_rates.from_currencies/to_currencies must contain at least one currency code")
 
-    return cfg.geography
+    return geo
 
 
 # =============================================================

@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import warnings
 
+from src.exceptions import DimensionError
 from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.config_helpers import as_dict
 from src.utils.config_precedence import resolve_seed
@@ -74,7 +75,7 @@ def _build_year_windows(
     start = pd.to_datetime(start).normalize()
     end = pd.to_datetime(end).normalize()
     if end < start:
-        raise ValueError(f"Promotions: end < start ({end.date()} < {start.date()})")
+        raise DimensionError(f"Promotions: end < start ({end.date()} < {start.date()})")
 
     years = list(range(start.year, end.year + 1))
     windows: Dict[int, Tuple[pd.Timestamp, pd.Timestamp]] = {}
@@ -170,9 +171,9 @@ def generate_promotions_catalog(
     PromotionKey=1 is always the "No Discount" sentinel row.
     """
     if not years:
-        raise ValueError("Promotions: No years provided.")
+        raise DimensionError("Promotions: No years provided.")
     if not year_windows:
-        raise ValueError("Promotions: year_windows is empty.")
+        raise DimensionError("Promotions: year_windows is empty.")
 
     rng = np.random.default_rng(int(seed))
     rows: List[Dict] = []
@@ -434,7 +435,7 @@ def generate_promotions_catalog(
                  f"({req - got} dropped by date-window clamping)")
 
     if not rows:
-        raise ValueError("Promotions: No promotions could be generated (check date windows and config).")
+        raise DimensionError("Promotions: No promotions could be generated (check date windows and config).")
 
     df = pd.DataFrame(rows)
 
@@ -517,7 +518,7 @@ def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
     out_path = parquet_folder / "promotions.parquet"
 
     if not isinstance(cfg, Mapping) or not hasattr(cfg, "promotions"):
-        raise KeyError("Missing required config section: 'promotions'")
+        raise DimensionError("Missing required config section: 'promotions'")
 
     promo_cfg = cfg.promotions or {}
     defaults_dates = (
@@ -526,7 +527,7 @@ def run_promotions(cfg: Dict, parquet_folder: Path) -> None:
         getattr(getattr(cfg, "_defaults", None), "dates", None)
     )
     if not defaults_dates or not getattr(defaults_dates, "start", None) or not getattr(defaults_dates, "end", None):
-        raise ValueError("Promotions: missing defaults.dates.start/end (or _defaults.dates.start/end)")
+        raise DimensionError("Promotions: missing defaults.dates.start/end (or _defaults.dates.start/end)")
 
     version_cfg = as_dict(promo_cfg)
     version_cfg["global_dates"] = as_dict(defaults_dates) if defaults_dates else {}

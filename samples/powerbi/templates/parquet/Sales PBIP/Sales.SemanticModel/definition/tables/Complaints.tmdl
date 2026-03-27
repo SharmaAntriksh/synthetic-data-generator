@@ -1,0 +1,133 @@
+table Complaints
+	lineageTag: 565e8a4a-59cc-474a-83e0-30489c52ac17
+
+	column ComplaintKey
+		dataType: int64
+		formatString: 0
+		lineageTag: f2cbf49a-5016-4dc6-905b-c1bdbcf71205
+		summarizeBy: count
+		sourceColumn: ComplaintKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 7343ff92-785e-4f21-9b0f-f52f836ca5b3
+		summarizeBy: count
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesOrderNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: e2a4a9e5-3907-471b-b065-843baacc8f3a
+		summarizeBy: sum
+		sourceColumn: SalesOrderNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column LineNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 5a45b24d-aad5-4f26-8a28-6c96611f8255
+		summarizeBy: sum
+		sourceColumn: LineNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column ComplaintDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 644fbdfe-97de-4856-85fe-898c72ce6514
+		summarizeBy: none
+		sourceColumn: ComplaintDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column ResolutionDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 2558dc5e-e3b3-4fcf-b834-3231dbf4b1a1
+		summarizeBy: none
+		sourceColumn: ResolutionDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column ComplaintType
+		dataType: string
+		lineageTag: a0c000e8-fc0f-43da-9a04-a3ff49571fd1
+		summarizeBy: none
+		sourceColumn: ComplaintType
+
+		annotation SummarizationSetBy = Automatic
+
+	column ComplaintDetail
+		dataType: string
+		lineageTag: 1a4aaeaa-6c52-482c-b44e-dfb858dc841b
+		summarizeBy: none
+		sourceColumn: ComplaintDetail
+
+		annotation SummarizationSetBy = Automatic
+
+	column Severity
+		dataType: string
+		lineageTag: 96e06eae-8538-4da2-9aaa-47e3ce0b5253
+		summarizeBy: none
+		sourceColumn: Severity
+
+		annotation SummarizationSetBy = Automatic
+
+	column Channel
+		dataType: string
+		lineageTag: ce8d262b-6a4a-4997-adc5-30b29b8aecaf
+		summarizeBy: none
+		sourceColumn: Channel
+
+		annotation SummarizationSetBy = Automatic
+
+	column Status
+		dataType: string
+		lineageTag: 15241dbc-459c-4686-855b-e0e1521d4c8d
+		summarizeBy: none
+		sourceColumn: Status
+
+		annotation SummarizationSetBy = Automatic
+
+	column ResolutionType
+		dataType: string
+		lineageTag: 1b97c8c2-4a98-41f6-945d-cc044412986b
+		summarizeBy: none
+		sourceColumn: ResolutionType
+
+		annotation SummarizationSetBy = Automatic
+
+	column ResponseDays
+		dataType: int64
+		formatString: 0
+		lineageTag: ab23dcdc-225a-4c04-9aad-8405f11934b3
+		summarizeBy: sum
+		sourceColumn: ResponseDays
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Complaints = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source      = FxReadParquetFile ( "facts\complaints" )
+				in
+				    Source
+
+	annotation PBI_ResultType = Table
+

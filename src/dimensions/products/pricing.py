@@ -3,6 +3,8 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
+
 
 def _to_float(x, default=None):
     try:
@@ -367,7 +369,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     out = df.copy()
 
     if "ListPrice" not in out.columns:
-        raise ValueError("Products dataframe must contain a ListPrice column before pricing is applied")
+        raise DimensionError("Products dataframe must contain a ListPrice column before pricing is applied")
 
     out["ListPrice"] = pd.to_numeric(out["ListPrice"], errors="coerce").astype("float64")
 
@@ -392,7 +394,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     # ----------------------------
     value_scale = _to_float(base_cfg.get("value_scale"), 1.0)
     if value_scale is None or value_scale <= 0:
-        raise ValueError("products.pricing.base.value_scale must be a number > 0")
+        raise DimensionError("products.pricing.base.value_scale must be a number > 0")
 
     min_price = _to_float(base_cfg.get("min_unit_price"), None)
     max_price = _to_float(base_cfg.get("max_unit_price"), None)
@@ -403,7 +405,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
 
     if rescale and (min_price is not None) and (max_price is not None):
         if float(max_price) <= float(min_price):
-            raise ValueError("products.pricing.base.max_unit_price must be > min_unit_price when rescaling")
+            raise DimensionError("products.pricing.base.max_unit_price must be > min_unit_price when rescaling")
         out["ListPrice"] = _rescale_to_range(out["ListPrice"], float(min_price), float(max_price))
 
     if min_price is not None:
@@ -449,7 +451,7 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     # ----------------------------
     mode = (cost_cfg.get("mode") or "").strip().lower()
     if mode not in ("", "keep", "margin"):
-        raise ValueError('products.pricing.cost.mode must be one of: "keep", "margin"')
+        raise DimensionError('products.pricing.cost.mode must be one of: "keep", "margin"')
 
     min_margin = _to_float(cost_cfg.get("min_margin_pct"), None)
     max_margin = _to_float(cost_cfg.get("max_margin_pct"), None)
@@ -463,9 +465,9 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
 
     if mode == "margin":
         if min_margin is None or max_margin is None:
-            raise ValueError("products.pricing.cost: min_margin_pct and max_margin_pct must be provided for mode=margin")
+            raise DimensionError("products.pricing.cost: min_margin_pct and max_margin_pct must be provided for mode=margin")
         if not (0.0 < float(min_margin) < float(max_margin) < 1.0):
-            raise ValueError("products.pricing.cost: require 0 < min_margin_pct < max_margin_pct < 1")
+            raise DimensionError("products.pricing.cost: require 0 < min_margin_pct < max_margin_pct < 1")
         m = _sample_margin(rng, len(out), float(min_margin), float(max_margin))
         out["UnitCost"] = out["ListPrice"].to_numpy(dtype=np.float64, copy=False) * (1.0 - m)
     else:

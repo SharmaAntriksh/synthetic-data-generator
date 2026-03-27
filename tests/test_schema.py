@@ -244,7 +244,7 @@ class TestAttributeAccess:
 class TestDefaults:
     def test_sales_defaults(self):
         s = SalesConfig()
-        assert s.file_format == "csv"
+        assert s.file_format == "parquet"
         assert s.total_rows == 1_000_000
         assert s.compression == "snappy"
         assert s.workers is None
@@ -266,7 +266,7 @@ class TestDefaults:
 
     def test_empty_appconfig(self):
         app = AppConfig()
-        assert app.sales.file_format == "csv"
+        assert app.sales.file_format == "parquet"
         assert app.defaults.seed == 42
 
     def test_year_level_factors_values_rename(self):

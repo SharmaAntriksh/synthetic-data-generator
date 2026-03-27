@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
+
 
 def _stratified_trim_indices(
     group_values: np.ndarray,
@@ -110,13 +112,13 @@ def expand_contoso_products(
     _ = float(price_jitter_pct)  # backward compatible arg; intentionally ignored
 
     if not isinstance(num_products, (int, np.integer)) or int(num_products) <= 0:
-        raise ValueError("num_products must be a positive integer")
+        raise DimensionError("num_products must be a positive integer")
     num_products = int(num_products)
 
     base = base_products.reset_index(drop=True)
     base_count = int(len(base))
     if base_count <= 0:
-        raise ValueError("base_products is empty")
+        raise DimensionError("base_products is empty")
 
     if "SubcategoryKey" not in base.columns:
         # Fallback: simple deterministic shuffle/trim/expand if SubcategoryKey missing

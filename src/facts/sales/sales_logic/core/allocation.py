@@ -7,6 +7,8 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from src.exceptions import SalesError
+
 
 # ----------------------------------------------------------------
 # Schedule validation
@@ -18,23 +20,23 @@ def _sched_mode_and_values(node: dict, name: str) -> tuple[str, list[float]]:
       { mode: "repeat"|"once", values: [..numbers..] }
     """
     if not isinstance(node, Mapping):
-        raise ValueError(f"{name} must be a mapping with keys: mode, values")
+        raise SalesError(f"{name} must be a mapping with keys: mode, values")
 
     mode = str(node.get("mode", "repeat")).strip().lower()
     if mode not in ("repeat", "once"):
-        raise ValueError(f"{name}.mode must be 'repeat' or 'once'")
+        raise SalesError(f"{name}.mode must be 'repeat' or 'once'")
 
     # Pydantic renames "values" → "factor_values"; accept both keys
     values = node.get("factor_values") or node.get("values")
     if not isinstance(values, list) or len(values) == 0:
-        raise ValueError(f"{name}.values must be a non-empty list")
+        raise SalesError(f"{name}.values must be a non-empty list")
 
     out: list[float] = []
     for v in values:
         try:
             out.append(float(v))
         except (ValueError, TypeError) as e:
-            raise ValueError(f"{name}.values must contain only numbers: {e}") from e
+            raise SalesError(f"{name}.values must contain only numbers: {e}") from e
 
     return mode, out
 
@@ -164,7 +166,7 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     shock_hi = float(shock_hi)
 
     if shock_p > 0.0 and shock_lo > shock_hi:
-        raise ValueError("shock_impact must be [low, high] with low <= high")
+        raise SalesError("shock_impact must be [low, high] with low <= high")
 
     m = np.arange(T, dtype="float64")
 
@@ -172,7 +174,7 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     yoy_node = cfg.get("yoy_growth_schedule")
     lvl_node = cfg.get("year_level_factors")
     if yoy_node and lvl_node:
-        raise ValueError("Use only one of: yoy_growth_schedule OR year_level_factors")
+        raise SalesError("Use only one of: yoy_growth_schedule OR year_level_factors")
 
     year_idx = (m // 12).astype("int64")  # year index per month, relative to dataset start
 
@@ -189,7 +191,7 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     if lvl_node:
         mode, vals = _sched_mode_and_values(lvl_node, "year_level_factors")
         if any(v <= 0.0 for v in vals):
-            raise ValueError("year_level_factors.values must be > 0")
+            raise SalesError("year_level_factors.values must be > 0")
 
         levels = np.asarray(vals, dtype="float64")
         if mode == "repeat":
@@ -203,7 +205,7 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     elif yoy_node:
         mode, vals = _sched_mode_and_values(yoy_node, "yoy_growth_schedule")
         if any(v <= -0.99 for v in vals):
-            raise ValueError("yoy_growth_schedule.values must be > -0.99")
+            raise SalesError("yoy_growth_schedule.values must be > -0.99")
 
         yoy = np.asarray(vals, dtype="float64") * row_share
         n_years = int((T + 11) // 12)

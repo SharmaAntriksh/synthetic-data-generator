@@ -1,0 +1,296 @@
+table Customer
+	lineageTag: 31deafa7-4b24-418a-ae54-bc54723bd23c
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: bf5f81f0-8faa-450a-b94e-e4db2e8c2746
+		summarizeBy: none
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerID
+		dataType: int64
+		formatString: 0
+		lineageTag: 4187de29-9f5e-4da1-895e-2e22cc7a19b6
+		summarizeBy: count
+		sourceColumn: CustomerID
+
+		annotation SummarizationSetBy = Automatic
+
+	column VersionNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 22466f1d-4a3f-4c73-9bf2-b1480a25a250
+		summarizeBy: sum
+		sourceColumn: VersionNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column EffectiveStartDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 4ec773f3-ac57-4f50-82fd-2fd13e1c0cc3
+		summarizeBy: none
+		sourceColumn: EffectiveStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column EffectiveEndDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: d70e002e-6f84-4eca-8374-d68d24c6d91b
+		summarizeBy: none
+		sourceColumn: EffectiveEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column IsCurrent
+		dataType: int64
+		formatString: 0
+		lineageTag: 6ce8f591-f371-44d9-b038-84850781c736
+		summarizeBy: sum
+		sourceColumn: IsCurrent
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerName
+		dataType: string
+		lineageTag: 2255c54b-2499-47f9-803b-41e891f874a0
+		summarizeBy: none
+		sourceColumn: CustomerName
+
+		annotation SummarizationSetBy = Automatic
+
+	column DOB
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 9035cf34-9832-4e59-96d3-e1c29ee746cd
+		summarizeBy: none
+		sourceColumn: DOB
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column Gender
+		dataType: string
+		lineageTag: 01e39f71-be3d-4128-b52a-4f69739a9693
+		summarizeBy: none
+		sourceColumn: Gender
+
+		annotation SummarizationSetBy = Automatic
+
+	column EmailAddress
+		dataType: string
+		lineageTag: 5b38a471-c4bd-478d-a9aa-71e64afe790c
+		summarizeBy: none
+		sourceColumn: EmailAddress
+
+		annotation SummarizationSetBy = Automatic
+
+	column PhoneNumber
+		dataType: string
+		lineageTag: cd0801ce-ee83-499d-a2d6-05eddc9458d0
+		summarizeBy: none
+		sourceColumn: PhoneNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column HomeAddress
+		dataType: string
+		lineageTag: 7505bf09-1a61-4d25-b38c-63de0bc1b045
+		summarizeBy: none
+		sourceColumn: HomeAddress
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkAddress
+		dataType: string
+		lineageTag: b50a8398-c5c1-4f45-8b21-21c7a5b30bd5
+		summarizeBy: none
+		sourceColumn: WorkAddress
+
+		annotation SummarizationSetBy = Automatic
+
+	column Latitude
+		dataType: double
+		lineageTag: 81c1048a-edc4-42fa-abde-10027dd63b73
+		summarizeBy: sum
+		sourceColumn: Latitude
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Longitude
+		dataType: double
+		lineageTag: c39238ea-5b96-4d91-8af2-fafa7c69789b
+		summarizeBy: sum
+		sourceColumn: Longitude
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column PostalCode
+		dataType: string
+		lineageTag: ef0f0c90-7c81-4e23-aaa5-d2d68507e8aa
+		summarizeBy: none
+		sourceColumn: PostalCode
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerType
+		dataType: string
+		lineageTag: 3221aa8a-c821-488a-a734-dddb93d50004
+		summarizeBy: none
+		sourceColumn: CustomerType
+
+		annotation SummarizationSetBy = Automatic
+
+	column CompanyName
+		dataType: string
+		lineageTag: 5aa90761-1a83-45de-a987-730d8b89d978
+		summarizeBy: none
+		sourceColumn: CompanyName
+
+		annotation SummarizationSetBy = Automatic
+
+	column GeographyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: a2505ea1-13ce-4495-bb09-9429d55ecdb7
+		summarizeBy: none
+		sourceColumn: GeographyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column HouseholdKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 2c427d03-63e0-4ff9-be0b-ab2e249db154
+		summarizeBy: count
+		sourceColumn: HouseholdKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column HouseholdRole
+		dataType: string
+		lineageTag: f4073f5a-678b-4a69-9baf-dea182525af5
+		summarizeBy: none
+		sourceColumn: HouseholdRole
+
+		annotation SummarizationSetBy = Automatic
+
+	column LoyaltyTierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8b0d3a9b-2f34-49f9-aaaa-1b415b588523
+		summarizeBy: none
+		sourceColumn: LoyaltyTierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerAcquisitionChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: a19c4b94-53f0-434c-b877-e49259475d1b
+		summarizeBy: count
+		sourceColumn: CustomerAcquisitionChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearlyIncome
+		dataType: double
+		lineageTag: 5cc1ec5d-7fe4-4216-83c3-5d15ced9d26b
+		summarizeBy: sum
+		sourceColumn: YearlyIncome
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column IncomeGroup
+		dataType: string
+		lineageTag: 577f4c97-8d3b-4d82-8a70-94e2b2c85f35
+		summarizeBy: none
+		sourceColumn: IncomeGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	column MaritalStatus
+		dataType: string
+		lineageTag: 1cf81080-a942-4486-9bea-6f9828b1dde7
+		summarizeBy: none
+		sourceColumn: MaritalStatus
+
+		annotation SummarizationSetBy = Automatic
+
+	column HomeOwnership
+		dataType: string
+		lineageTag: d52f1350-21ac-4e8b-b712-6c39ec3a3ba7
+		summarizeBy: none
+		sourceColumn: HomeOwnership
+
+		annotation SummarizationSetBy = Automatic
+
+	column NumberOfChildren
+		dataType: double
+		lineageTag: 00cfa498-191d-4fe0-ae85-22ec4ace0b06
+		summarizeBy: sum
+		sourceColumn: NumberOfChildren
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column CustomerStartDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 5a3a8c5b-c6e5-4d92-a4a2-391bd2709d8f
+		summarizeBy: none
+		sourceColumn: CustomerStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column CustomerEndDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 4c87b845-4787-44fb-af53-270c3296c3ec
+		summarizeBy: none
+		sourceColumn: CustomerEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	partition Customer = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\customers" ),
+				    #"Filtered Rows" = Table.SelectRows(Source, each ([NumberOfChildren] = null))
+				in
+				    #"Filtered Rows"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

@@ -1,0 +1,234 @@
+table OrganizationProfile
+	lineageTag: ada48175-67bb-4857-a514-cc70000146e5
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 7eb1b1fa-959f-4a03-8015-165fadf62524
+		summarizeBy: none
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column Industry
+		dataType: string
+		lineageTag: c16733b0-7b1a-492b-a1a4-16c3088d0b42
+		summarizeBy: none
+		sourceColumn: Industry
+
+		annotation SummarizationSetBy = Automatic
+
+	column CompanySize
+		dataType: string
+		lineageTag: 59f77d46-da50-488d-8f46-21791bae9952
+		summarizeBy: none
+		sourceColumn: CompanySize
+
+		annotation SummarizationSetBy = Automatic
+
+	column AnnualRevenue
+		dataType: double
+		lineageTag: 47e3b921-dd49-4b84-bc20-c705f95c1177
+		summarizeBy: sum
+		sourceColumn: AnnualRevenue
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column FoundedYear
+		dataType: int64
+		formatString: 0
+		lineageTag: 1077db0a-c9f2-47a4-bedc-f1ae186d57cd
+		summarizeBy: sum
+		sourceColumn: FoundedYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsPubliclyTraded
+		dataType: string
+		lineageTag: 2ede6141-4055-438e-bc73-22838e65b5ef
+		summarizeBy: none
+		sourceColumn: IsPubliclyTraded
+
+		annotation SummarizationSetBy = Automatic
+
+	column HeadquarterCountry
+		dataType: string
+		lineageTag: 7e38c228-60b8-43d2-9f24-c58827d2abf5
+		summarizeBy: none
+		sourceColumn: HeadquarterCountry
+
+		annotation SummarizationSetBy = Automatic
+
+	column Website
+		dataType: string
+		lineageTag: ef8aeb12-a83a-43fc-80d3-33e6cfd22b9a
+		summarizeBy: none
+		sourceColumn: Website
+
+		annotation SummarizationSetBy = Automatic
+
+	column OrgDomain
+		dataType: string
+		lineageTag: dc2e69fe-b142-4c3d-923a-346cc85deb41
+		summarizeBy: none
+		sourceColumn: OrgDomain
+
+		annotation SummarizationSetBy = Automatic
+
+	column OrgAddress
+		dataType: string
+		lineageTag: 6525ea0c-4d96-4fc8-a9dc-cd1cb0e64686
+		summarizeBy: none
+		sourceColumn: OrgAddress
+
+		annotation SummarizationSetBy = Automatic
+
+	column PrimaryContactName
+		dataType: string
+		lineageTag: a19bad3a-1ada-4df1-8388-df0f0e8b99ae
+		summarizeBy: none
+		sourceColumn: PrimaryContactName
+
+		annotation SummarizationSetBy = Automatic
+
+	column PrimaryContactRole
+		dataType: string
+		lineageTag: 4f20132e-34af-488e-9c45-a847ab41026a
+		summarizeBy: none
+		sourceColumn: PrimaryContactRole
+
+		annotation SummarizationSetBy = Automatic
+
+	column NumberOfEmployees
+		dataType: int64
+		formatString: 0
+		lineageTag: a64f7935-e740-4c67-b83f-978582b7ac40
+		summarizeBy: sum
+		sourceColumn: NumberOfEmployees
+
+		annotation SummarizationSetBy = Automatic
+
+	column NumberOfLocations
+		dataType: int64
+		formatString: 0
+		lineageTag: 262f0862-4774-4e36-9e12-17fef4f9e9cb
+		summarizeBy: sum
+		sourceColumn: NumberOfLocations
+
+		annotation SummarizationSetBy = Automatic
+
+	column ProcurementCycle
+		dataType: string
+		lineageTag: 092f2f25-89ec-4514-8fd9-f2759958040e
+		summarizeBy: none
+		sourceColumn: ProcurementCycle
+
+		annotation SummarizationSetBy = Automatic
+
+	column ContractType
+		dataType: string
+		lineageTag: 286dbdbd-97f9-4e67-b55e-50a369e77c5c
+		summarizeBy: none
+		sourceColumn: ContractType
+
+		annotation SummarizationSetBy = Automatic
+
+	column CreditRating
+		dataType: string
+		lineageTag: ba44d6af-071b-43f4-a02f-5f9c4cb0dd80
+		summarizeBy: none
+		sourceColumn: CreditRating
+
+		annotation SummarizationSetBy = Automatic
+
+	column PaymentTerms
+		dataType: string
+		lineageTag: 2e6111d7-20e1-4b48-bb59-8d73aaf65c5f
+		summarizeBy: none
+		sourceColumn: PaymentTerms
+
+		annotation SummarizationSetBy = Automatic
+
+	column PreferredShippingMethod
+		dataType: string
+		lineageTag: e37c6b27-842d-4540-996d-32995f89a078
+		summarizeBy: none
+		sourceColumn: PreferredShippingMethod
+
+		annotation SummarizationSetBy = Automatic
+
+	column HasDedicatedAccountTeam
+		dataType: string
+		lineageTag: bba129b1-cd50-4dcd-a535-1ad27facb1c7
+		summarizeBy: none
+		sourceColumn: HasDedicatedAccountTeam
+
+		annotation SummarizationSetBy = Automatic
+
+	column AvgOrderValueUSD
+		dataType: double
+		lineageTag: 1fbb295f-2579-47ea-a7cc-7e736ccce97c
+		summarizeBy: sum
+		sourceColumn: AvgOrderValueUSD
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column IsStrategicAccount
+		dataType: string
+		lineageTag: 47097c61-9c00-4645-bac1-b4c9b77620e4
+		summarizeBy: none
+		sourceColumn: IsStrategicAccount
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearsAsCustomer
+		dataType: double
+		lineageTag: d4ec34b5-c839-4fd3-85c5-599a8b354ba3
+		summarizeBy: sum
+		sourceColumn: YearsAsCustomer
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column SatisfactionTier
+		dataType: string
+		lineageTag: 50e30f90-fecf-4a72-a8de-ce750ab8ce53
+		summarizeBy: none
+		sourceColumn: SatisfactionTier
+
+		annotation SummarizationSetBy = Automatic
+
+	column HasExclusiveDeal
+		dataType: string
+		lineageTag: a1992a15-9035-4b83-a946-4073949d7bc9
+		summarizeBy: none
+		sourceColumn: HasExclusiveDeal
+
+		annotation SummarizationSetBy = Automatic
+
+	column ESGRating
+		dataType: string
+		lineageTag: dbd375ad-dae7-48a1-937c-fed138478e91
+		summarizeBy: none
+		sourceColumn: ESGRating
+
+		annotation SummarizationSetBy = Automatic
+
+	partition OrganizationProfile = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\organization_profile" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

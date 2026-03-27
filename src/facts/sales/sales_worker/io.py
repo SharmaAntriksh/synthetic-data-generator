@@ -59,10 +59,17 @@ def add_year_month_from_date(
     year = pc.cast(pc.year(col), year_type)
     month = pc.cast(pc.month(col), month_type)
 
-    if year_col not in names:
-        table = table.append_column(year_col, year)
-    if month_col not in names:
-        table = table.append_column(month_col, month)
+    need_year = year_col not in names
+    need_month = month_col not in names
+    if need_year and need_month:
+        # Single table reconstruction instead of two sequential append_column calls
+        new_names = table.schema.names + [year_col, month_col]
+        new_cols = [table.column(i) for i in range(table.num_columns)] + [year, month]
+        return pa.table(dict(zip(new_names, new_cols)))
+    if need_year:
+        return table.append_column(year_col, year)
+    if need_month:
+        return table.append_column(month_col, month)
     return table
 
 
@@ -93,6 +100,15 @@ def normalize_to_schema(
             f"Expected:\n{expected}\n\nGot:\n{table.schema}"
         )
 
+    # Fast path: if the incoming schema already matches expected (common case),
+    # just reorder columns without per-field type checking.
+    got_schema = table.schema.remove_metadata()
+    if got_schema.equals(expected):
+        if list(got_schema.names) == list(expected.names):
+            return table
+        return table.select(expected.names)
+
+    # Slow path: per-field cast (first chunk typically; result is cached by caller)
     cast_safe = bool(getattr(State, "cast_safe", True))
     arrays = []
     for field in expected:

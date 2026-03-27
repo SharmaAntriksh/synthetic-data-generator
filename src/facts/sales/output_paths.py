@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from src.exceptions import SalesError
+
 
 # -----------------------------
 # Logical table names (future)
@@ -107,20 +109,20 @@ class OutputPaths:
 
         ff = self.file_format
         if ff not in ("csv", "parquet", "deltaparquet"):
-            raise ValueError(f"Unsupported file_format: {ff!r}")
+            raise SalesError(f"Unsupported file_format: {ff!r}")
 
         if not self.out_folder:
-            raise ValueError("out_folder is required")
+            raise SalesError("out_folder is required")
 
         if ff == "deltaparquet" and not self.delta_output_folder:
-            raise ValueError("delta_output_folder is required when file_format='deltaparquet'")
+            raise SalesError("delta_output_folder is required when file_format='deltaparquet'")
 
     # -----------------------------
     # Table specs / validation
     # -----------------------------
     def spec(self, table: str) -> TableSpec:
         if table not in self.table_specs:
-            raise KeyError(f"Unknown table: {table!r}")
+            raise SalesError(f"Unknown table: {table!r}")
         return self.table_specs[table]
 
     # -----------------------------
@@ -177,7 +179,7 @@ class OutputPaths:
     # -----------------------------
     def delta_table_dir(self, table: str) -> str:
         if not self.delta_output_folder:
-            raise ValueError("delta_output_folder is not set")
+            raise SalesError("delta_output_folder is not set")
         spec = self.spec(table)
 
         # Backward-compat: Sales delta is rooted at delta_output_folder (no subdir)

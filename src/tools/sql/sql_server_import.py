@@ -8,7 +8,12 @@ import re
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-import pyodbc
+from src.exceptions import SqlServerImportError
+
+try:
+    import pyodbc
+except ImportError:
+    pyodbc = None  # type: ignore[assignment]
 
 def _find_project_root() -> Path:
     """Walk up from this file to find the repo root (contains main.py)."""
@@ -23,9 +28,6 @@ def _find_project_root() -> Path:
 PROJECT_ROOT = _find_project_root()
 _GO_SPLIT_RE = re.compile(r"^\s*GO\s*$", flags=re.MULTILINE | re.IGNORECASE)
 
-
-class SqlServerImportError(RuntimeError):
-    """Raised when SQL Server import fails."""
 
 
 # -------------------------
@@ -124,7 +126,7 @@ def _fast_rowcount(cursor: "pyodbc.Cursor", schema: str, table: str) -> int:
         "SELECT COALESCE(SUM(row_count),0) "
         "FROM sys.dm_db_partition_stats "
         "WHERE object_id = OBJECT_ID(?) AND index_id IN (0,1);",
-        f"{schema}.{table}",
+        f"[{schema}].[{table}]",
     )
     return int(cursor.fetchone()[0])
 
@@ -699,6 +701,11 @@ def import_sql_server(
     drop_pk: bool = False,
     verify: bool = False,
 ) -> None:
+    if pyodbc is None:
+        raise SqlServerImportError(
+            "pyodbc is required for SQL Server import. "
+            "Install it with: pip install pyodbc"
+        )
     import time as _time
 
     run_dir = Path(run_dir)
@@ -964,3 +971,7 @@ def import_sql_server(
     except pyodbc.Error as exc:
         _log("WARN", f"  Verification failed: {exc.args}")
         # Non-fatal — data is already loaded
+
+    # Grand total (import + drop-pk + CCI + verify)
+    _log("INFO", "=" * 60)
+    _log("DONE", f"Total pipeline time: {_time.time() - _t_total:.1f}s")

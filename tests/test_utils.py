@@ -1,7 +1,7 @@
 """Comprehensive tests for utility modules that previously had no tests.
 
 Covers:
-  - config_helpers (bool_or, int_or, float_or, str_or, range2, as_dict, pick_seed_*)
+  - config_helpers (bool_or, int_or, float_or, str_or, range2, as_dict)
   - config_precedence (resolve_seed, resolve_dates)
   - shared_arrays (SharedArrayGroup publish/resolve, _is_shareable)
   - name_pools (load_list, normalize_name_ascii, hash_u64, pick_from_pool, etc.)
@@ -27,14 +27,13 @@ import pytest
 # ===================================================================
 
 from src.engine.config.config_schema import AppConfig
+from src.exceptions import ConfigError
 from src.utils.config_helpers import (
     as_dict,
     bool_or,
     float_or,
     int_or,
     parse_global_dates,
-    pick_seed_flat,
-    pick_seed_nested,
     rand_dates_between,
     rand_single_date,
     range2,
@@ -218,65 +217,6 @@ class TestRange2:
         assert hi == 10.0
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-class TestPickSeedNested:
-    def test_override_seed_wins(self):
-        cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
-        local = AppConfig.model_validate({"seed": 2, "override": {"seed": 3}})
-        assert pick_seed_nested(cfg, local) == 3
-
-    def test_local_seed_second(self):
-        cfg = AppConfig.model_validate({"defaults": {"seed": 1}})
-        local = AppConfig.model_validate({"seed": 2})
-        assert pick_seed_nested(cfg, local) == 2
-
-    def test_defaults_seed_third(self):
-        cfg = AppConfig.model_validate({"defaults": {"seed": 10}})
-        local = AppConfig.model_validate({})
-        assert pick_seed_nested(cfg, local) == 10
-
-    def test_underscore_defaults_fallback(self):
-        """_defaults is a legacy normalizer key; Pydantic strips _ prefixed keys.
-        With the Pydantic migration, _defaults is no longer reachable — fall back to 42."""
-        cfg = AppConfig.model_validate({"_defaults": {"seed": 77}})
-        local = AppConfig.model_validate({})
-        assert pick_seed_nested(cfg, local) == 42  # _defaults stripped by Pydantic
-
-    def test_hardcoded_fallback(self):
-        # AppConfig default has defaults.seed=42, so fallback is never reached
-        assert pick_seed_nested(AppConfig.model_validate({}), AppConfig.model_validate({})) == 42
-
-    def test_custom_fallback(self):
-        # defaults.seed=42 wins over custom fallback since AppConfig always has defaults
-        assert pick_seed_nested(AppConfig.model_validate({}), AppConfig.model_validate({}), fallback=99) == 42
-
-    def test_emits_deprecation_warning(self):
-        cfg = AppConfig.model_validate({})
-        with pytest.warns(DeprecationWarning, match="pick_seed_nested.*deprecated"):
-            pick_seed_nested(cfg, cfg)
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-class TestPickSeedFlat:
-    def test_local_wins(self):
-        assert pick_seed_flat(AppConfig.model_validate({"defaults": {"seed": 1}}), AppConfig.model_validate({"seed": 2})) == 2
-
-    def test_defaults_seed_used(self):
-        # pick_seed_flat now delegates to resolve_seed which checks defaults.seed
-        assert pick_seed_flat(AppConfig.model_validate({"defaults": {"seed": 10}}), AppConfig.model_validate({})) == 10
-
-    def test_fallback(self):
-        assert pick_seed_flat(AppConfig.model_validate({}), AppConfig.model_validate({})) == 42
-
-    def test_none_seed_skipped(self):
-        assert pick_seed_flat(AppConfig.model_validate({}), AppConfig.model_validate({"seed": None})) == 42
-
-    def test_emits_deprecation_warning(self):
-        cfg = AppConfig.model_validate({})
-        with pytest.warns(DeprecationWarning, match="pick_seed_flat.*deprecated"):
-            pick_seed_flat(cfg, cfg)
-
-
 class TestParseGlobalDates:
     def test_valid_defaults(self):
         cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "2020-01-01", "end": "2023-12-31"}}})
@@ -287,7 +227,7 @@ class TestParseGlobalDates:
     def test_missing_dates_raises(self):
         # Create an AppConfig with empty date strings so parse_global_dates raises
         cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "", "end": ""}}})
-        with pytest.raises(KeyError, match="defaults.dates"):
+        with pytest.raises(ConfigError, match="defaults.dates"):
             parse_global_dates(cfg, AppConfig.model_validate({}))
 
     def test_swapped_dates_corrected(self):
@@ -446,7 +386,7 @@ class TestResolveDates:
 
     def test_raises_when_missing(self):
         cfg = AppConfig.model_validate({"defaults": {"dates": {"start": "", "end": ""}}})
-        with pytest.raises(KeyError):
+        with pytest.raises(ConfigError):
             resolve_dates(cfg, AppConfig.model_validate({}))
 
 

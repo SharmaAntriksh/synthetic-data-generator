@@ -1,5 +1,5 @@
-expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-02-26 04_53_47 PM Customers 80 Sales 10K PARQUET" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
-	lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
+expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-03-26 11_54_38 PM Customers 29K Sales 1M PARQUET" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+	lineageTag: 90c67787-2617-4042-ab11-f7ae15b30835
 	queryGroup: 'Parameters & Functions'
 
 	annotation PBI_NavigationStepName = Navigation
@@ -16,10 +16,8 @@ expression FxReadParquetFile = ```
 		in
 		    Source
 		```
-	lineageTag: d2ba962f-2339-4f99-977a-ef51cbe9f4db
+	lineageTag: abf7f597-4950-4e17-ba65-e094b8c483e2
 	queryGroup: 'Parameters & Functions'
-
-	annotation PBI_NavigationStepName = Navigation
 
 	annotation PBI_ResultType = Function
 

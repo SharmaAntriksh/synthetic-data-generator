@@ -70,7 +70,7 @@ table MeasureTable
 			            )
 			        ),
 			        Sales[StoreKey],
-			        Sales[SalesPersonEmployeeKey],
+			        Sales[EmployeeKey],
 			        Dates[Date]
 			    )
 			)
@@ -80,6 +80,53 @@ table MeasureTable
 		lineageTag: 9ea4b942-f332-4920-b527-413f495e5a02
 
 		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Min List Price' = MIN ( Products[ListPrice] )
+		displayFolder: 01 - Base Measures
+		lineageTag: 81811407-e72b-4e9b-8c3e-c35c2065f19c
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Max List Price' = MAX ( Products[ListPrice] )
+		displayFolder: 01 - Base Measures
+		lineageTag: 2219c523-d345-4f7f-a9f7-d553ed7449c6
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Order vs Delivery' = ```
+			
+			SUMX ( 
+			    Sales,
+			    DATEDIFF ( Sales[OrderDate], Sales[DeliveryDate],  DAY )
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 11d337b2-9fac-4fee-b262-810c534d7661
+
+	measure 'Due vs Delivery' = ```
+			
+			SUMX ( 
+			    Sales,
+			    DATEDIFF ( Sales[DueDate], Sales[DeliveryDate],  DAY )
+			)
+			```
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 1e7b72ab-ed2c-4cf0-9ef5-7cb7b4c05124
+
+	measure 'Avg Delivery Lag' = ```
+			
+			AVERAGEX(
+			    Sales,
+			    DATEDIFF(Sales[OrderDate], Sales[DeliveryDate], DAY)
+			)
+			
+			```
+		displayFolder: 01 - Base Measures
+		lineageTag: 0f58abd1-1a98-4bda-bdfe-aa63c2fddeee
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column Column1
 		dataType: string
@@ -101,7 +148,7 @@ table MeasureTable
 				in
 				    #"Changed Type"
 
-	annotation PBI_ResultType = Table
-
 	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
 

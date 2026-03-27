@@ -14,8 +14,8 @@ def add_iso_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFrame:
     using ISO Monday-based weeks).
     """
     iso = df["Date"].dt.isocalendar()
-    df["WeekOfYearISO"] = iso.week.astype(np.int16)
-    df["ISOYear"] = iso.year.astype(np.int16)
+    df["WeekOfYearISO"] = iso.week.astype(np.int32)
+    df["ISOYear"] = iso.year.astype(np.int32)
 
     df["WeekStartDate"] = (df["Date"] - pd.to_timedelta(df["Date"].dt.weekday, unit="D")).dt.normalize()
     df["WeekEndDate"] = (df["WeekStartDate"] + pd.Timedelta(days=6)).dt.normalize()

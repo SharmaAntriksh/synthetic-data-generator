@@ -1,154 +1,252 @@
 table Store
-	lineageTag: b6787471-f359-49c1-8666-e49d80de3bf8
+	lineageTag: 3461cb4a-a1e8-4805-9f54-36f0299a16e2
 
 	column StoreKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 8637d84b-74d0-48a2-92c8-2af2e7cb27a6
+		lineageTag: 352b12d9-4cbb-462a-a33e-4f147100e06a
 		summarizeBy: count
 		sourceColumn: StoreKey
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column StoreNumber
+		dataType: string
+		lineageTag: 0dfb1ae8-1b4f-4f01-bde8-2d024b9bda1e
+		summarizeBy: none
+		sourceColumn: StoreNumber
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreName
 		dataType: string
-		lineageTag: 72ba9cc9-f09d-41c0-9a80-a41a12023084
+		lineageTag: 1eb73d27-d6c6-4f7e-965c-6f44c9911b52
 		summarizeBy: none
 		sourceColumn: StoreName
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreType
 		dataType: string
-		lineageTag: 99c219ef-bdbc-4d17-be91-7b42ea630553
+		lineageTag: dd08c982-8927-4a66-85c3-6684f8ccbe8c
 		summarizeBy: none
 		sourceColumn: StoreType
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column StoreFormat
+		dataType: string
+		lineageTag: 9387477d-a29c-4a3b-b0f1-0debb043860f
+		summarizeBy: none
+		sourceColumn: StoreFormat
+
+		annotation SummarizationSetBy = Automatic
+
+	column OwnershipType
+		dataType: string
+		lineageTag: 393019e2-64c7-474d-87e4-764753b31b28
+		summarizeBy: none
+		sourceColumn: OwnershipType
+
+		annotation SummarizationSetBy = Automatic
+
+	column RevenueClass
+		dataType: string
+		lineageTag: e94210c4-a8ed-431a-a0c3-cb1fe9e873a0
+		summarizeBy: none
+		sourceColumn: RevenueClass
 
 		annotation SummarizationSetBy = Automatic
 
 	column Status
 		dataType: string
-		lineageTag: b6499753-8667-48b7-9343-725afb9e0bf0
+		lineageTag: 7ba166a4-0f74-4c26-a071-2555eea98b64
 		summarizeBy: none
 		sourceColumn: Status
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column GeographyKey
 		dataType: int64
 		formatString: 0
-		lineageTag: dfddc145-b9df-431c-bad2-89fb5e22c252
+		lineageTag: ceb4f00c-0218-4432-9ebc-412ef5ced765
 		summarizeBy: count
 		sourceColumn: GeographyKey
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column StoreZone
+		dataType: string
+		lineageTag: c15c5ae7-851c-47dc-bdb7-f01db04efa70
+		summarizeBy: none
+		sourceColumn: StoreZone
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreDistrict
+		dataType: string
+		lineageTag: 668cb030-27b1-49e8-b728-9d94c8d154ef
+		summarizeBy: none
+		sourceColumn: StoreDistrict
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreRegion
+		dataType: string
+		lineageTag: efef1b72-26d3-4b6f-aeec-11e213454a03
+		summarizeBy: none
+		sourceColumn: StoreRegion
 
 		annotation SummarizationSetBy = Automatic
 
 	column OpeningDate
 		dataType: dateTime
-		formatString: Long Date
-		lineageTag: 38713ebc-a588-4f9d-b653-045c9d2f883f
+		formatString: yyyy-mm-dd
+		lineageTag: 51e41ed9-d731-4aec-9ed0-228873433b22
 		summarizeBy: none
 		sourceColumn: OpeningDate
 
-		changedProperty = IsHidden
-
 		annotation SummarizationSetBy = Automatic
 
 		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
 
 	column ClosingDate
 		dataType: dateTime
-		formatString: Long Date
-		lineageTag: e225643c-a9cd-4b79-a9a3-d999c1e7d19c
+		formatString: yyyy-mm-dd
+		lineageTag: 1d8f749b-ea7a-49fd-a587-dbfb5ee3509f
 		summarizeBy: none
 		sourceColumn: ClosingDate
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
 
 	column OpenFlag
 		dataType: int64
 		formatString: 0
-		lineageTag: fe65a993-456c-4d32-924b-21d0dc34de01
+		lineageTag: 939902b3-b81d-4a59-a569-176806a642c7
 		summarizeBy: sum
 		sourceColumn: OpenFlag
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column SquareFootage
 		dataType: int64
 		formatString: 0
-		lineageTag: 397a3657-92e0-47f9-8a90-7139436eb067
+		lineageTag: 8c0456de-e274-46b9-817a-04aecfdbeb2f
 		summarizeBy: sum
 		sourceColumn: SquareFootage
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column EmployeeCount
 		dataType: int64
 		formatString: 0
-		lineageTag: e167b0c3-6ef3-4b0d-b1d0-474b566ab5f3
+		lineageTag: 767816fe-4e29-4627-a639-5ee0e01e4b5f
 		summarizeBy: sum
 		sourceColumn: EmployeeCount
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreManager
 		dataType: string
-		lineageTag: 3a6eefda-f93f-41d2-9a51-4412ba34ed04
+		lineageTag: abab45d4-aaae-4fc6-a61b-274dde1e09e0
 		summarizeBy: none
 		sourceColumn: StoreManager
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column Phone
 		dataType: string
-		lineageTag: 8bfa479e-183c-47ca-8a2b-e23a1c8d3592
+		lineageTag: ac325863-7ccd-4e22-8b61-e0e9eb4cf48e
 		summarizeBy: none
 		sourceColumn: Phone
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column StoreEmail
+		dataType: string
+		lineageTag: 352356da-0723-454a-8fac-887dfd55fd06
+		summarizeBy: none
+		sourceColumn: StoreEmail
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreDescription
 		dataType: string
-		lineageTag: cd83747a-a10f-45d4-9d20-eb2807a58713
+		lineageTag: 6f6e5e38-ec7c-4f0d-8c20-c97d289f4107
 		summarizeBy: none
 		sourceColumn: StoreDescription
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column CloseReason
 		dataType: string
-		lineageTag: 4be9573e-b903-481c-8700-80dc86f47667
+		lineageTag: 4ba63d36-17d5-4866-b84c-eaeafa8191f4
 		summarizeBy: none
 		sourceColumn: CloseReason
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column AvgTransactionValue
+		dataType: double
+		lineageTag: c786c22e-21c2-40ca-984f-89424bc4aa1d
+		summarizeBy: sum
+		sourceColumn: AvgTransactionValue
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column CustomerSatisfactionScore
+		dataType: double
+		lineageTag: 0ff48b07-bc03-490d-9586-ffee71ff97c2
+		summarizeBy: sum
+		sourceColumn: CustomerSatisfactionScore
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column InventoryTurnoverTarget
+		dataType: double
+		lineageTag: f1cee33c-53da-4fc0-a192-31cc1db004ed
+		summarizeBy: sum
+		sourceColumn: InventoryTurnoverTarget
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column LastAuditScore
+		dataType: int64
+		formatString: 0
+		lineageTag: 676e14b6-479f-4769-a47b-94388c5bdc9b
+		summarizeBy: sum
+		sourceColumn: LastAuditScore
+
+		annotation SummarizationSetBy = Automatic
+
+	column ShrinkageRatePct
+		dataType: double
+		lineageTag: 3c1abf79-b5cc-4d3f-ad8d-f3b516edb67c
+		summarizeBy: sum
+		sourceColumn: ShrinkageRatePct
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column WarehouseKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 87e869c1-3e40-49b7-96e5-fff940b2560b
+		summarizeBy: count
+		sourceColumn: WarehouseKey
 
 		annotation SummarizationSetBy = Automatic
 
@@ -160,8 +258,6 @@ table Store
 				    Source = FxReadParquetFile ( "dimensions\stores" )
 				in
 				    Source
-
-	changedProperty = IsHidden
 
 	annotation PBI_NavigationStepName = Navigation
 

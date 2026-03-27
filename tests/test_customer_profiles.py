@@ -20,7 +20,7 @@ from src.utils.customer_profiles import (
 
 class TestProfileDefinitions:
     def test_all_expected_profiles_exist(self):
-        expected = {"gradual", "steady", "aggressive", "instant"}
+        expected = {"gradual", "steady", "aggressive", "instant", "decline"}
 
         assert expected == VALID_PROFILES
 

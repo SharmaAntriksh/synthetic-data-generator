@@ -316,8 +316,6 @@ def write_create_table_scripts(*, dims_out: Path, facts_out: Path, sql_root: Pat
             return
 
         generate_all_create_tables(
-            dim_folder=dims_out,
-            fact_folder=facts_out,
             output_folder=sql_root,
             cfg=cfg,
         )

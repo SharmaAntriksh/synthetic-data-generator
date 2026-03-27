@@ -6,9 +6,9 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 10832800
+  sales_rows: 1083280
   products: 5167                    #5167 total products in base file
-  customers: 68834
+  customers: 28834
   stores: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
@@ -18,7 +18,7 @@ scale:
 defaults:
   seed: 42
   random: false                    # true = ignore seeds, use OS entropy (non-deterministic)
-  view_schema: "report"               # dbo = vw_ prefix (default), or dedicated schema (bi, report, etc.)
+  view_schema: report               # dbo = vw_ prefix (default), or dedicated schema (bi, report, etc.)
   dates:
     start: "2021-01-01"
     end: "2025-12-31"
@@ -35,8 +35,8 @@ paths:
 sales:
   max_lines_per_order: 5
 
-  file_format: "parquet"              # csv | parquet | deltaparquet
-  sales_output: "sales"               # sales | sales_order | both
+  file_format: parquet              # csv | parquet | deltaparquet
+  sales_output: sales              # sales | sales_order | both
   skip_order_cols: false
 
   merge:
@@ -46,14 +46,15 @@ sales:
 
   partition_by: ["Year", "Month"]     # null or [] to disable
 
-  optimize: false                      # sort merged files for better query perf
+  sort_merged_parquet: false            # sort merged parquet for better read perf (parquet only)
+  sort_delta_parts: false               # sort each delta partition part for better read perf (deltaparquet only)
   quality_report: false                  # generate HTML data quality report after packaging
 
   advanced:
     chunk_size: 1_000_000
     workers: 8                        # null = auto-detect
     row_group_size: 1_000_000
-    compression: "snappy"
+    compression: snappy
 
 # ------------------------------------------------------------------
 # RETURNS
@@ -79,7 +80,7 @@ products:
   scd2:
     enabled: true                     # enable SCD Type 2 price history tracking
     revision_frequency: 12             # months between price revisions
-    price_drift: 0.20                  # ~5% price change per revision
+    price_drift: 0.20                  # ±20% price change per revision
     max_versions: 4                    # max version rows per product
 
 # ------------------------------------------------------------------
@@ -92,8 +93,8 @@ customers:
   region_mix: { Americas: 41, Europe: 39, India: 2, APAC: 18 }
   org_pct: 1
 
-  profile: gradual                   # gradual | steady | aggressive | instant
-  first_year_pct: 0.27              # #% of customers in year 1, rest acquired over time
+  profile: aggressive                     # gradual | steady | aggressive | instant | decline
+  # first_year_pct: 0.27             # override: % of customers in year 1 (omit to let profile decide)
 
   scd2:
     enabled: true                    # enable SCD Type 2 history tracking
@@ -144,7 +145,7 @@ subscriptions:
   seed: 700
 
 # ------------------------------------------------------------------
-# GEOGRAPHY (static — derived from CURATED_ROWS in geography.py)
+# GEOGRAPHY (static — derived from FALLBACK_ROWS in geography.py)
 # ------------------------------------------------------------------
 geography: {}
 
@@ -207,7 +208,7 @@ dates:
     weekly_fiscal:
       enabled: false
       first_day_of_week: 0
-      weekly_type: "Last"
+      weekly_type: "Last" #nearest
       quarter_week_type: "445"
       type_start_fiscal_year: 1
 
@@ -243,19 +244,21 @@ inventory:
   seed: 42
   grain: monthly                       # monthly | quarterly
   partition_by: ["Year", "Month"]      # null or [] to disable (used by deltaparquet)
-  abc_filter: [A, B]                     # null = all classes; ["A", "B"] = skip C-class products
+  abc_filter: ["A", "B"]                     # null = all classes; ["A", "B"] = skip C-class products
 
-  min_demand_months: 6
-  initial_stock_multiplier: 1.5        # was 3.0 — start with 1.5 months of avg demand, not 3
-  reorder_compliance: 0.65             # was 0.85 — 35% of reorders are late/missed (realistic)
-  lead_time_variance: 0.40             # was 0.20 — wider delivery jitter (±40%)
-  overstock_bias: 1.0                  # was 1.15 — no systematic over-ordering
+  min_demand_months: 6                  # months of sales history needed before stocking a product
+  initial_stock_multiplier: 1.5        # starting stock = multiplier × avg monthly demand
+  reorder_compliance: 0.65             # fraction of reorders fulfilled on time (rest are late/missed)
+  lead_time_variance: 0.40             # delivery jitter as fraction of lead time (±40%)
+  overstock_bias: 1.0                  # >1 = systematic over-ordering, 1.0 = neutral
 
-  abc_stock_multiplier:
-    A: 1.20                            # was 1.30
-    B: 1.00
-    C: 0.60                            # C-class products are more neglected
+  abc_stock_multiplier:                # safety stock multiplier by ABC classification
+    A: 1.20                            # high-value: keep more buffer
+    B: 1.00                            # mid-value: baseline
+    C: 0.60                            # low-value: minimal buffer
 
   shrinkage:
     enabled: true
     rate: 0.02
+
+  write_chunk_rows: 3_000_000           # rows per CSV chunk (inventory compresses well, use larger chunks)

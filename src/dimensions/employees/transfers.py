@@ -288,7 +288,7 @@ def apply_transfers(
             original_end_ns = end_ns[idx]
             new_end_ns = np.datetime64(transfer_date - pd.Timedelta(days=1), "ns")
             end_ns[idx] = new_end_ns
-            col_is_primary[idx] = np.int8(0)
+            col_is_primary[idx] = np.int32(0)
             col_status[idx] = "Transferred"
 
             reason = rng.choice(
@@ -314,7 +314,7 @@ def apply_transfers(
                 "EndDate": new_end,
                 "FTE": col_fte[idx],
                 "RoleAtStore": col_role[idx],
-                "IsPrimary": np.int8(1),
+                "IsPrimary": np.int32(1),
                 "TransferReason": str(reason),
                 "Status": new_status,
             })
@@ -338,7 +338,7 @@ def apply_transfers(
     # Sort and reassign keys/sequences
     df = df.sort_values(["EmployeeKey", "StartDate"]).reset_index(drop=True)
     df["AssignmentKey"] = np.arange(1, len(df) + 1, dtype=np.int32)
-    df["AssignmentSequence"] = df.groupby("EmployeeKey").cumcount().astype(np.int16) + 1
+    df["AssignmentSequence"] = df.groupby("EmployeeKey").cumcount().astype(np.int32) + 1
 
     # Normalize dates
     df["StartDate"] = pd.to_datetime(df["StartDate"]).dt.normalize()

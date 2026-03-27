@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from web.shared_state import (
+    ConfigUpdate,
     _config_path,
     _base_config,
     _g,
@@ -29,14 +30,6 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 from src.engine.config.config import _VALID_FILE_FORMATS as _VALID_FORMATS
 
 _VALID_SALES_OUTPUTS = {"sales", "sales_order", "both"}
-
-
-# ---------------------------------------------------------------------------
-# Pydantic models
-# ---------------------------------------------------------------------------
-
-class ConfigUpdate(BaseModel):
-    values: Dict[str, Any]
 
 
 class ConfigYamlUpdate(BaseModel):
@@ -88,12 +81,12 @@ def get_config():
         "mergeParquet": bool(getattr(sales, "merge_parquet", True)),
         "partitionEnabled": bool(_g(sales, "partitioning", "enabled", default=True)),
         "maxLinesPerOrder": int(getattr(sales, "max_lines_per_order", 5)),
-        "salesOptimize": bool(getattr(sales, "optimize", True)),
+        "salesOptimize": bool(getattr(sales, "sort_merged_parquet", False)),
         "qualityReport": bool(getattr(sales, "quality_report", True)),
         # Dates
         "startDate": str(_g(defaults, "start", default="2023-01-01")),
         "endDate": str(_g(defaults, "end", default="2026-12-31")),
-        "fiscalMonthOffset": int(_g(dates_cfg, "fiscal_month_offset", default=_g(dates_cfg, "fiscal_start_month", default=0)) or 0),
+        "fiscalMonthOffset": int(_g(dates_cfg, "fiscal_start_month", default=0) or 0),
         "asOfDate": str(_g(dates_cfg, "as_of_date", default="") or ""),
         "includeCalendar": True,
         "includeIso": bool(_g(include, "iso", default=False)),
@@ -271,7 +264,7 @@ def update_config(body: ConfigUpdate):
                 cfg.sales.partitioning = {}
             cfg.sales.partitioning["enabled"] = bool(v["partitionEnabled"])
         if "maxLinesPerOrder" in v: cfg.sales.max_lines_per_order = int(v["maxLinesPerOrder"])
-        if "salesOptimize" in v: cfg.sales.optimize = bool(v["salesOptimize"])
+        if "salesOptimize" in v: cfg.sales.sort_merged_parquet = bool(v["salesOptimize"])
         if "qualityReport" in v: cfg.sales.quality_report = bool(v["qualityReport"])
 
         # Dates

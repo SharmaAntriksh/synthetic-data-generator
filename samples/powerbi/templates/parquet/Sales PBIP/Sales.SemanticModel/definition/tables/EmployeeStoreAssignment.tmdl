@@ -1,19 +1,37 @@
 table EmployeeStoreAssignment
-	lineageTag: e0eb2dcb-0949-4b1d-86ca-d558ebda6c58
+	lineageTag: 1bbcc92c-be12-4278-9d19-f009f2346346
+
+	column AssignmentKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 7b79aa8d-8376-4329-9afc-29f0f5e1c04c
+		summarizeBy: count
+		sourceColumn: AssignmentKey
+
+		annotation SummarizationSetBy = Automatic
 
 	column EmployeeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 4ac7b2c6-0070-425f-8bab-b46a5e05f232
+		lineageTag: e8cb5a3a-e9e0-484a-8767-dda12a94286b
 		summarizeBy: count
 		sourceColumn: EmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column AssignmentSequence
+		dataType: int64
+		formatString: 0
+		lineageTag: 4c91131c-b35b-43bf-8c21-7544295d4ffa
+		summarizeBy: sum
+		sourceColumn: AssignmentSequence
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 45697346-c5e3-4a98-ac10-0fb1a5d4b29c
+		lineageTag: dc06f5f0-3aa4-403e-904c-ef405b7a0c61
 		summarizeBy: count
 		sourceColumn: StoreKey
 
@@ -22,7 +40,7 @@ table EmployeeStoreAssignment
 	column StartDate
 		dataType: dateTime
 		formatString: yyyy-mm-dd
-		lineageTag: 37488242-4a67-4848-bfc3-0c91d1c3a113
+		lineageTag: e615d94b-e890-4000-b432-c5391ffaf52f
 		summarizeBy: none
 		sourceColumn: StartDate
 
@@ -35,7 +53,7 @@ table EmployeeStoreAssignment
 	column EndDate
 		dataType: dateTime
 		formatString: yyyy-mm-dd
-		lineageTag: 68ffd156-5f19-4a4f-9449-6a6c34cc6230
+		lineageTag: 21c9985f-8606-4362-9ff8-4c5279cc5168
 		summarizeBy: none
 		sourceColumn: EndDate
 
@@ -47,7 +65,7 @@ table EmployeeStoreAssignment
 
 	column FTE
 		dataType: double
-		lineageTag: 4627ce23-a8d5-40cb-ba3d-226bd86786df
+		lineageTag: cc6e753e-c539-402b-8fc5-143d611f4195
 		summarizeBy: sum
 		sourceColumn: FTE
 
@@ -57,27 +75,34 @@ table EmployeeStoreAssignment
 
 	column RoleAtStore
 		dataType: string
-		lineageTag: 0af47093-9f98-4cf6-b692-56ef44209caa
+		lineageTag: 124cbc1a-a819-4175-9926-a75f54fac95c
 		summarizeBy: none
 		sourceColumn: RoleAtStore
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsPrimary
-		dataType: boolean
-		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: 3f77aae2-0669-42e5-b767-31653557264c
-		summarizeBy: none
+		dataType: int64
+		formatString: 0
+		lineageTag: 30f3cb85-77cc-4f0c-a70a-deeed32a5e10
+		summarizeBy: sum
 		sourceColumn: IsPrimary
 
 		annotation SummarizationSetBy = Automatic
 
-	column AssignmentSequence
-		dataType: int64
-		formatString: 0
-		lineageTag: 1dc8717f-bdc4-4580-b8d4-2f5849c01848
-		summarizeBy: sum
-		sourceColumn: AssignmentSequence
+	column TransferReason
+		dataType: string
+		lineageTag: 75a2b2b7-5d79-4609-bb3a-5a2e7b88bb5b
+		summarizeBy: none
+		sourceColumn: TransferReason
+
+		annotation SummarizationSetBy = Automatic
+
+	column Status
+		dataType: string
+		lineageTag: fdd0d62d-4d17-4d1f-b02c-f7339fc24905
+		summarizeBy: none
+		sourceColumn: Status
 
 		annotation SummarizationSetBy = Automatic
 

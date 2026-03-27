@@ -19,12 +19,12 @@ def add_fiscal_columns(
     """
     fy_start_month = _clamp_month(fiscal_start_month)
 
-    df["FiscalYearStartYear"] = np.where(df["Month"] >= fy_start_month, df["Year"], df["Year"] - 1).astype(np.int16)
-    df["FiscalMonthNumber"] = (((df["Month"].astype(int) - fy_start_month + 12) % 12) + 1).astype(np.int8)
-    df["FiscalQuarterNumber"] = (((df["FiscalMonthNumber"] - 1) // 3) + 1).astype(np.int8)
+    df["FiscalYearStartYear"] = np.where(df["Month"] >= fy_start_month, df["Year"], df["Year"] - 1).astype(np.int32)
+    df["FiscalMonthNumber"] = (((df["Month"].astype(int) - fy_start_month + 12) % 12) + 1).astype(np.int32)
+    df["FiscalQuarterNumber"] = (((df["FiscalMonthNumber"] - 1) // 3) + 1).astype(np.int32)
 
     fy_end_add = 0 if fy_start_month == 1 else 1
-    fiscal_year_end = (df["FiscalYearStartYear"].astype(int) + fy_end_add).astype(np.int16)
+    fiscal_year_end = (df["FiscalYearStartYear"].astype(int) + fy_end_add).astype(np.int32)
 
     if fy_start_month == 1:
         df["FiscalYearBin"] = df["FiscalYearStartYear"].astype(str)
@@ -56,12 +56,12 @@ def add_fiscal_columns(
     ).dt.normalize()
     df["FiscalQuarterEndDate"] = (df["FiscalQuarterStartDate"] + pd.DateOffset(months=3) - pd.Timedelta(days=1)).dt.normalize()
 
-    df["IsFiscalYearStart"] = (df["Date"] == df["FiscalYearStartDate"]).astype(np.int8)
-    df["IsFiscalYearEnd"] = (df["Date"] == df["FiscalYearEndDate"]).astype(np.int8)
-    df["IsFiscalQuarterStart"] = (df["Date"] == df["FiscalQuarterStartDate"]).astype(np.int8)
-    df["IsFiscalQuarterEnd"] = (df["Date"] == df["FiscalQuarterEndDate"]).astype(np.int8)
+    df["IsFiscalYearStart"] = (df["Date"] == df["FiscalYearStartDate"]).astype(np.int32)
+    df["IsFiscalYearEnd"] = (df["Date"] == df["FiscalYearEndDate"]).astype(np.int32)
+    df["IsFiscalQuarterStart"] = (df["Date"] == df["FiscalQuarterStartDate"]).astype(np.int32)
+    df["IsFiscalQuarterEnd"] = (df["Date"] == df["FiscalQuarterEndDate"]).astype(np.int32)
 
-    df["FiscalYear"] = fiscal_year_end.astype(np.int16)
+    df["FiscalYear"] = fiscal_year_end.astype(np.int32)
     df["FiscalYearLabel"] = "FY " + df["FiscalYear"].astype(str)
 
     # Fiscal offsets relative to as_of

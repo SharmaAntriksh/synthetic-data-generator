@@ -15,7 +15,7 @@
 models:
 
   macro_demand:
-    trend: new-market-entry          # directional (extend over time):
+    trend: gradual-growth          # directional (extend over time):
                                     #   steady-growth | strong-growth | gradual-growth
                                     #   hockey-stick | decline | new-market-entry
                                     # cyclical (repeat every 10 years):
@@ -122,19 +122,23 @@ models:
   returns:
     enabled: true
 
-    reasons:
-      - { key: 1, label: "Damaged / Defective",    weight: 0.28 }
-      - { key: 2, label: "Wrong Item",              weight: 0.12 }
-      - { key: 3, label: "Not as Described",        weight: 0.14 }
-      - { key: 4, label: "Arrived Late",            weight: 0.08 }
-      - { key: 5, label: "Better Price Elsewhere",  weight: 0.06 }
-      - { key: 6, label: "No Longer Needed",        weight: 0.20 }
-      - { key: 7, label: "Size / Fit",              weight: 0.07 }
-      - { key: 8, label: "Other",                   weight: 0.05 }
+    reasons:                               # keys/labels/categories defined in defaults.py
+      - { key: 1, weight: 0.20 }           # Defective (Quality)
+      - { key: 2, weight: 0.12 }           # Damaged in shipping (Logistics)
+      - { key: 3, weight: 0.14 }           # Wrong item (Fulfillment)
+      - { key: 4, weight: 0.10 }           # Not as described (Customer)
+      - { key: 5, weight: 0.14 }           # No longer needed (Customer)
+      - { key: 6, weight: 0.08 }           # Late delivery (Logistics)
+      - { key: 7, weight: 0.07 }           # Better price found (Customer)
+      - { key: 8, weight: 0.15 }           # Other (Other)
 
     lag_days:
       distribution: triangular
       mode: 7
+      split_min_gap: 3              # min days between split return events
+      split_max_gap: 20             # max days between split return events
 
     quantity:
-      full_line_probability: 0.85
+      full_line_probability: 0.85   # probability of returning full line qty
+      split_return_rate: 0.20       # fraction of returns that split across multiple events
+      max_splits: 3                 # max return events per line item

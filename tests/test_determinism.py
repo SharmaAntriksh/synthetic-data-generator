@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.dimensions.geography import CURATED_ROWS, build_dim_geography
+from src.dimensions.geography import FALLBACK_ROWS, build_dim_geography
 from src.engine.config.config_schema import AppConfig
 
 

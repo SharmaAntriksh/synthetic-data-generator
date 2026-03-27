@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from src.exceptions import ValidationError
+
 
 # ---------------------------------------------------------------------
 # Deterministic hashing utilities (no row-order dependence)
@@ -180,9 +182,9 @@ _DEFAULT_ARCHETYPE: dict = {
 for _sc_name, _arch in list(_SUBCATEGORY_ARCHETYPES.items()) + [("_DEFAULT", _DEFAULT_ARCHETYPE)]:
     _mw_sum = float(sum(_arch["mw"]))
     if abs(_mw_sum - 1.0) > 1e-6:
-        raise ValueError(f"product_profile._SUBCATEGORY_ARCHETYPES[{_sc_name!r}].mw sums to {_mw_sum}, expected 1.0")
+        raise ValidationError(f"product_profile._SUBCATEGORY_ARCHETYPES[{_sc_name!r}].mw sums to {_mw_sum}, expected 1.0")
     if len(_arch["mat"]) != len(_arch["mw"]):
-        raise ValueError(f"product_profile._SUBCATEGORY_ARCHETYPES[{_sc_name!r}] mat/mw length mismatch")
+        raise ValidationError(f"product_profile._SUBCATEGORY_ARCHETYPES[{_sc_name!r}] mat/mw length mismatch")
 del _sc_name, _arch, _mw_sum
 
 _SIZE_DIMS: dict[str, dict] = {

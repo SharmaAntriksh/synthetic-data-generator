@@ -901,6 +901,9 @@ def build_chunk_table(
         cust_cfg.get("new_customer_share", 0.10), 0.0, 1.0))
     distinct_ratio = float(np.clip(
         cust_cfg.get("distinct_ratio", 0.55), 0.0, 1.0))
+    _override_dr = getattr(State, "override_distinct_ratio", None)
+    if _override_dr is not None:
+        distinct_ratio = max(distinct_ratio, float(_override_dr))
     cycle_amplitude = float(np.clip(
         cust_cfg.get("cycle_amplitude", 0.35), 0.0, 1.0))
     discovery_shape = float(np.clip(
@@ -940,6 +943,9 @@ def build_chunk_table(
     _BOOTSTRAP_MONTHS = int(macro_cfg.get("bootstrap_months") or 6)
     _MAX_FRAC_PER_MONTH = float(cust_cfg.get("max_new_fraction_per_month", 0.015))
     _MAX_DISTINCT_RATIO = float(macro_cfg.get("max_distinct_ratio") or 0.70)
+    _override_mdr = getattr(State, "override_max_distinct_ratio", None)
+    if _override_mdr is not None:
+        _MAX_DISTINCT_RATIO = max(_MAX_DISTINCT_RATIO, float(_override_mdr))
     _MIN_DISTINCT_CUSTOMERS = int(macro_cfg.get("min_distinct_customers") or 250)
 
     # Brand popularity is OFF if block absent. If present without enabled, default-on.

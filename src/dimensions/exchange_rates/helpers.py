@@ -12,7 +12,7 @@ from src.defaults import (
     CURRENCY_NAME_MAP,
     CURRENCY_SYMBOL_MAP,
 )
-from src.exceptions import ConfigError
+from src.exceptions import ConfigError, DimensionError
 from src.utils.logging_utils import warn
 
 
@@ -23,22 +23,22 @@ from src.utils.logging_utils import warn
 def normalize_currency_list(currencies: List[str]) -> List[str]:
     """Validate, dedupe, upper-case, and ensure base currency is present."""
     if not isinstance(currencies, list) or not currencies:
-        raise ValueError("currencies must be a non-empty list")
+        raise DimensionError("currencies must be a non-empty list")
 
     normalized: List[str] = []
     seen: set[str] = set()
 
     for c in currencies:
         if not isinstance(c, str) or not c.strip():
-            raise ValueError(f"Invalid currency code: {c!r}")
+            raise DimensionError(f"Invalid currency code: {c!r}")
 
         code = c.strip().upper()
 
         if len(code) != 3 or not code.isalpha():
-            raise ValueError(f"Currency code must be 3 letters (e.g. USD). Got: {c!r}")
+            raise DimensionError(f"Currency code must be 3 letters (e.g. USD). Got: {c!r}")
 
         if code in seen:
-            raise ValueError(f"Duplicate currency code: {code}")
+            raise DimensionError(f"Duplicate currency code: {code}")
 
         seen.add(code)
         normalized.append(code)

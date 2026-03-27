@@ -1,5 +1,16 @@
 table MeasureTable
-	lineageTag: 0585b77d-b129-4c0e-9763-a29089eabcd3
+	lineageTag: 0f499fee-5a7e-4f15-a385-23eb73549c8d
+
+	measure '# Customers' = ```
+			
+			CALCULATE ( 
+			    DISTINCTCOUNT ( SalesOrderHeader[CustomerKey] ),
+			    SalesOrderDetail
+			)
+			```
+		formatString: 0
+		displayFolder: 01 - Base Measures
+		lineageTag: 6ec8f0ae-723d-46cd-b46d-b9c1cedc3068
 
 	measure 'Cost Amount' = ```
 			
@@ -11,6 +22,15 @@ table MeasureTable
 		formatString: #,0
 		displayFolder: 01 - Base Measures
 		lineageTag: 161627e6-1af2-4474-94e3-8f71733d228e
+
+		annotation PBI_FormatHint = {"isDecimal":true}
+
+	measure 'Profit Amount' =
+			
+			[Sales Amount] - [Cost Amount]
+		formatString: #,0
+		displayFolder: 01 - Base Measures
+		lineageTag: 2a2235d4-e261-4801-84e5-a5284e715773
 
 		annotation PBI_FormatHint = {"isDecimal":true}
 
@@ -34,26 +54,6 @@ table MeasureTable
 		displayFolder: 01 - Base Measures
 		lineageTag: f941d2a9-2c52-4441-ba75-afa6c2f91413
 
-	measure '# Customers' = ```
-			
-			CALCULATE ( 
-			    DISTINCTCOUNT ( SalesOrderHeader[CustomerKey] ),
-			    CROSSFILTER ( SalesOrderDetail[SalesOrderNumber], SalesOrderHeader[SalesOrderNumber], Both )
-			)
-			```
-		formatString: 0
-		displayFolder: 01 - Base Measures
-		lineageTag: 6ec8f0ae-723d-46cd-b46d-b9c1cedc3068
-
-	measure 'Profit Amount' =
-			
-			[Sales Amount] - [Cost Amount]
-		formatString: #,0
-		displayFolder: 01 - Base Measures
-		lineageTag: 2a2235d4-e261-4801-84e5-a5284e715773
-
-		annotation PBI_FormatHint = {"isDecimal":true}
-
 	measure 'Employee Sales by Store Assgn.' = ```
 			
 			CALCULATE ( 
@@ -72,21 +72,46 @@ table MeasureTable
 			            )
 			        ),
 			        SalesOrderHeader[StoreKey],
-			        SalesOrderHeader[SalesPersonEmployeeKey],
+			        SalesOrderHeader[EmployeeKey],
 			        Dates[Date]
 			    )
 			)
 			```
-		formatString: #,0
 		displayFolder: 01 - Base Measures
-		lineageTag: 8d7be87d-7474-4424-9ae8-82393276bfb6
+		lineageTag: 1eb2d978-22a6-4e76-b3df-ceb15774abba
 
-		annotation PBI_FormatHint = {"isDecimal":true}
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'New Customers' = ```
+			
+			VAR CustomersFirstPurchaseDate = 
+			    CALCULATETABLE ( 
+			        ADDCOLUMNS ( 
+			            VALUES ( SalesOrderHeader[CustomerKey] ),
+			            "FirstPurchaseDate", CALCULATE ( MIN ( SalesOrderHeader[OrderDate] ) )
+			        ),
+			        REMOVEFILTERS ( Dates )
+			    )
+			VAR Result = 
+			    CALCULATE ( 
+			        [# Customers],
+			        TREATAS ( 
+			            CustomersFirstPurchaseDate,
+			            SalesOrderHeader[CustomerKey],
+			            SalesOrderHeader[OrderDate]
+			        )
+			    )
+			RETURN
+			    Result
+			```
+		formatString: 0
+		displayFolder: 01 - Base Measures
+		lineageTag: f8b1a56d-3cf7-4f55-a112-8c72978e317c
 
 	column Column1
 		dataType: string
 		isHidden
-		lineageTag: edd2d66e-98a3-429e-8dc6-c41e7d5a3847
+		lineageTag: b5e40204-5a0e-4f74-b064-069f49a4573c
 		summarizeBy: none
 		sourceColumn: Column1
 
@@ -103,7 +128,7 @@ table MeasureTable
 				in
 				    #"Changed Type"
 
-	annotation PBI_ResultType = Table
-
 	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
 

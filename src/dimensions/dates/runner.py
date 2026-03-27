@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-from src.exceptions import ConfigError
+from src.exceptions import ConfigError, DimensionError
 from src.utils import info, warn, skip, stage
 from src.utils.config_helpers import int_or as _int_or, bool_or as _bool_or, as_dict
 from src.utils.output_utils import write_parquet_with_date32
@@ -50,10 +50,7 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
     end_date = pd.Timestamp(raw_end_ts.year + buffer_years, 12, 31)
     info(f"Dates: {start_date.date()} to {end_date.date()} (±{buffer_years}yr buffer)")
 
-    fiscal_start_month = _int_or(dates_cfg.fiscal_start_month or dates_cfg.fiscal_month_offset or 5, 5)
-    if dates_cfg.fiscal_start_month is None and dates_cfg.fiscal_month_offset is not None:
-        warn("Dates: fiscal_month_offset is deprecated, use fiscal_start_month instead")
-    fiscal_start_month = _clamp_month(fiscal_start_month)
+    fiscal_start_month = _clamp_month(_int_or(dates_cfg.fiscal_start_month, 5))
 
     as_of_date = dates_cfg.as_of_date or str(raw_end_ts.date())
 
@@ -95,7 +92,7 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
         cols = resolve_date_columns(dates_cfg)
         missing = [c for c in cols if c not in df.columns]
         if missing:
-            raise RuntimeError(f"Dates: requested columns missing from generator: {missing}")
+            raise DimensionError(f"Dates: requested columns missing from generator: {missing}")
 
         df = df[cols]
 

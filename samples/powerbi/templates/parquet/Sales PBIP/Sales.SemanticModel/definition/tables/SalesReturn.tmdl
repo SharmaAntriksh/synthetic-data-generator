@@ -1,0 +1,93 @@
+table SalesReturn
+	lineageTag: d8f35106-f551-4dcd-b8cb-422debfa82c6
+
+	column SalesOrderNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 9765951b-8f6c-47e0-8fd8-f0504a627df3
+		summarizeBy: sum
+		sourceColumn: SalesOrderNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesOrderLineNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 63a28ddd-6e03-49e0-a23d-64143209a8f0
+		summarizeBy: sum
+		sourceColumn: SalesOrderLineNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 2546108f-63e0-4554-9d4b-02f2e034e9e9
+		summarizeBy: none
+		sourceColumn: ReturnDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column ReturnReasonKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 9d078336-ea66-41f7-ab8e-cd31a2c56201
+		summarizeBy: none
+		sourceColumn: ReturnReasonKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnQuantity
+		dataType: int64
+		formatString: 0
+		lineageTag: 34605e09-8abc-4937-82ee-b53541c7016d
+		summarizeBy: sum
+		sourceColumn: ReturnQuantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnNetPrice
+		dataType: decimal
+		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		lineageTag: b1e2351f-57c7-4783-a669-82d58d182208
+		summarizeBy: sum
+		sourceColumn: ReturnNetPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	column ReturnSequence
+		dataType: int64
+		formatString: 0
+		lineageTag: f314e34b-47cc-4682-b3a3-be264a625e95
+		summarizeBy: sum
+		sourceColumn: ReturnSequence
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnEventKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 4c08e6f2-1543-4bdb-9d70-277e2b8f3ffa
+		summarizeBy: count
+		sourceColumn: ReturnEventKey
+
+		annotation SummarizationSetBy = Automatic
+
+	partition SalesReturn = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source      = FxReadParquetFile ( "facts\sales_return" ),
+				    ChangedType = Table.TransformColumnTypes ( Source, { { "ReturnNetPrice", Currency.Type } } )
+				in
+				    ChangedType
+
+	annotation PBI_ResultType = Table
+

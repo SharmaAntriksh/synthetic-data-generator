@@ -5,7 +5,7 @@ import pytest
 import pandas as pd
 
 from src.dimensions.geography import (
-    CURATED_ROWS,
+    FALLBACK_ROWS,
     OUTPUT_COLS,
     build_dim_geography,
     normalize_geography_config,
@@ -15,28 +15,28 @@ from src.exceptions import DimensionError
 
 
 # ===================================================================
-# CURATED_ROWS integrity
+# FALLBACK_ROWS integrity
 # ===================================================================
 
-class TestCuratedRows:
+class TestFallbackRows:
     def test_all_rows_are_5_tuples(self):
-        for i, row in enumerate(CURATED_ROWS):
+        for i, row in enumerate(FALLBACK_ROWS):
             assert len(row) == 5, f"Row {i} has {len(row)} elements, expected 5"
 
     def test_no_duplicate_city_state_country(self):
-        combos = [(r[0], r[1], r[2]) for r in CURATED_ROWS]
+        combos = [(r[0], r[1], r[2]) for r in FALLBACK_ROWS]
 
         assert len(combos) == len(set(combos)), "Duplicate city+state+country found"
 
     def test_all_continents_present(self):
-        continents = {r[3] for r in CURATED_ROWS}
+        continents = {r[3] for r in FALLBACK_ROWS}
         expected = {"North America", "Europe", "Asia", "Africa", "Oceania",
                     "South America", "Middle East"}
 
         assert expected.issubset(continents)
 
     def test_iso_codes_are_uppercase_3char(self):
-        for row in CURATED_ROWS:
+        for row in FALLBACK_ROWS:
             iso = row[4]
             assert iso == iso.upper(), f"ISO code {iso} should be uppercase"
             assert len(iso) == 3, f"ISO code {iso} should be 3 characters"

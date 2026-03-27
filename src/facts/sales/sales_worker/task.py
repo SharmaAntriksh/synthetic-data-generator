@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, Callable
 
@@ -249,12 +250,13 @@ def _as_list(v: Any, default: Sequence[Any]) -> list[Any]:
     return [v]
 
 
-def _build_returns_config() -> Optional[ReturnsConfig]:
-    """Build ReturnsConfig from State once, return None if returns disabled."""
+def _build_returns_config(chunk_idx: int = 0) -> Optional[ReturnsConfig]:
+    """Build ReturnsConfig from State, return None if returns disabled."""
     if not bool(getattr(State, "returns_enabled", False)):
         return None
     if TABLE_SALES_RETURN is None:
         raise RuntimeError("returns_enabled=True but TABLE_SALES_RETURN is not defined in output_paths.py")
+    capacity = int(getattr(State, "returns_event_key_capacity", 100000))
     return ReturnsConfig(
         enabled=True,
         return_rate=float(getattr(State, "returns_rate", 0.0) or 0.0),
@@ -262,6 +264,13 @@ def _build_returns_config() -> Optional[ReturnsConfig]:
         max_lag_days=int(getattr(State, "returns_max_lag_days", 60) or 60),
         reason_keys=_as_list(getattr(State, "returns_reason_keys", None), default=[1]),
         reason_probs=_as_list(getattr(State, "returns_reason_probs", None), default=[1.0]),
+        full_line_probability=float(getattr(State, "returns_full_line_probability", 0.85)),
+        split_return_rate=float(getattr(State, "returns_split_return_rate", 0.0)),
+        max_splits=int(getattr(State, "returns_max_splits", 3)),
+        split_min_gap=int(getattr(State, "returns_split_min_gap", 3)),
+        split_max_gap=int(getattr(State, "returns_split_max_gap", 20)),
+        event_key_offset=chunk_idx * capacity,
+        logistics_keys=frozenset(getattr(State, "returns_logistics_keys", ())),
     )
 
 
@@ -932,7 +941,7 @@ def _worker_task(args):
     skip_order_cols_flag = bool(getattr(State, "skip_order_cols_requested", False))
 
     mode = _mode()
-    returns_cfg = _build_returns_config()
+    returns_cfg_base = _build_returns_config()
     do_budget = _budget_enabled()
     simple_aggs = _resolve_simple_agg_flags()
 
@@ -958,6 +967,13 @@ def _worker_task(args):
             )
 
         chunk_seed = derive_chunk_seed(seed, idx_i, stride=10_000)
+
+        # Per-chunk returns config with unique event_key_offset
+        if returns_cfg_base is not None:
+            capacity = int(getattr(State, "returns_event_key_capacity", 100000))
+            returns_cfg = _dc_replace(returns_cfg_base, event_key_offset=idx_i * capacity)
+        else:
+            returns_cfg = None
 
         detail_table = build_chunk_table(
             batch_i,

@@ -1,0 +1,59 @@
+table Supplier
+	lineageTag: c3f0fe57-7860-4b26-ac24-a505075db602
+
+	column SupplierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 490229d4-4b85-4098-8d0d-e6963ebf6bde
+		summarizeBy: none
+		sourceColumn: SupplierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SupplierName
+		dataType: string
+		lineageTag: 18840e00-542b-448a-b818-179e2105637e
+		summarizeBy: none
+		sourceColumn: SupplierName
+
+		annotation SummarizationSetBy = Automatic
+
+	column SupplierType
+		dataType: string
+		lineageTag: 19a355bf-d3e4-49e3-bc37-62ee713661d5
+		summarizeBy: none
+		sourceColumn: SupplierType
+
+		annotation SummarizationSetBy = Automatic
+
+	column Country
+		dataType: string
+		lineageTag: 2b17bff4-f36b-4340-86a5-de2c4fbbced6
+		summarizeBy: none
+		sourceColumn: Country
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReliabilityScore
+		dataType: double
+		lineageTag: ec4f825f-9832-4d68-826d-da2ffb19e6e4
+		summarizeBy: none
+		sourceColumn: ReliabilityScore
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition Supplier = m
+		mode: import
+		queryGroup: Dimensions\Products
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\suppliers" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

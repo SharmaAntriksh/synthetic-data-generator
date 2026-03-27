@@ -9,11 +9,7 @@ from typing import Any, Dict, Tuple
 
 import pandas as pd
 
-try:
-    import numpy as _np
-    _HAS_NUMPY = True
-except ImportError:
-    _HAS_NUMPY = False
+from src.exceptions import ConfigError
 
 import numpy as np
 
@@ -68,7 +64,7 @@ def bool_or(value: Any, default: bool) -> bool:
         return bool(default)
     if isinstance(value, bool):
         return value
-    if _HAS_NUMPY and isinstance(value, _np.integer):
+    if isinstance(value, np.integer):
         return bool(int(value))
     elif isinstance(value, (int, float)):
         return bool(int(value))
@@ -106,47 +102,6 @@ def range2(v: Any, default_lo: float, default_hi: float) -> Tuple[float, float]:
         lo, hi = hi, lo
     return lo, hi
 
-
-# ---------------------------------------------------------------------------
-# Seed resolution
-# ---------------------------------------------------------------------------
-
-def pick_seed_nested(
-    cfg: Dict[str, Any],
-    local_cfg: Dict[str, Any],
-    fallback: int = 42,
-) -> int:
-    """Resolve seed: ``override.seed → local_cfg.seed → defaults.seed → fallback``.
-
-    .. deprecated:: Use ``resolve_seed`` from ``src.utils.config_precedence`` instead.
-    """
-    import warnings
-    from src.utils.config_precedence import resolve_seed
-    warnings.warn(
-        "pick_seed_nested() is deprecated — use resolve_seed() from config_precedence",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_seed(cfg, local_cfg, fallback=fallback)
-
-
-def pick_seed_flat(
-    cfg: Dict[str, Any],
-    local_cfg: Dict[str, Any],
-    fallback: int = 42,
-) -> int:
-    """Resolve seed: ``local_cfg.seed → cfg.seed → fallback``.
-
-    .. deprecated:: Use ``resolve_seed`` from ``src.utils.config_precedence`` instead.
-    """
-    import warnings
-    from src.utils.config_precedence import resolve_seed
-    warnings.warn(
-        "pick_seed_flat() is deprecated — use resolve_seed() from config_precedence",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return resolve_seed(cfg, local_cfg, fallback=fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +157,7 @@ def parse_global_dates(
         return gs, ge
 
     label = f" for {dimension_name}" if dimension_name else ""
-    raise KeyError(
+    raise ConfigError(
         f"defaults.dates.start and defaults.dates.end are required{label}."
     )
 

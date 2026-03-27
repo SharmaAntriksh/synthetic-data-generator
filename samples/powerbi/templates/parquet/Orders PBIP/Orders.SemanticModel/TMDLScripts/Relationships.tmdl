@@ -1,75 +1,152 @@
 createOrReplace
 
-	relationship 3bb02a0a-77e9-8fd5-1882-a4bed0493884
-		fromColumn: Customers.GeographyKey
-		toColumn: Geography.GeographyKey
+	relationship 1942c651-02bd-465c-9da5-66b9ae660e90
+		crossFilteringBehavior: bothDirections
+		fromCardinality: one
+		fromColumn: ProductProfile.ProductKey
+		toColumn: Products.ProductKey
 
-	relationship 525ee982-092b-a66e-0179-255a18f8e461
-		isActive: false
-		fromColumn: Store.GeographyKey
-		toColumn: Geography.GeographyKey
-
-	relationship d023a999-5449-fd85-6bd5-c77eea3ff127
-		fromColumn: SalesOrderHeader.OrderDate
-		toColumn: Dates.Date
-
-	relationship 9be8d967-d6b9-e0ff-4901-c81ba25499a7
-		fromColumn: SalesOrderDetail.SalesOrderNumber
-		toColumn: SalesOrderHeader.SalesOrderNumber
-
-	relationship d334731b-09fb-8eb2-3f35-4a7640e7f1ac
-		fromColumn: ExchangeRates.Date
-		toColumn: Dates.Date
-
-	relationship 7ca0bd36-df37-71a6-440e-09913b545112
-		fromColumn: ExchangeRates.ToCurrency
-		toColumn: Currency.ToCurrency
-
-	relationship 853887d0-e696-5f31-e439-553fe910ddb2
-		fromColumn: Products.SubcategoryKey
-		toColumn: ProductSubcategory.SubcategoryKey
-
-	relationship cb4c6f5d-fbe5-091e-e26b-be6cd2a31828
-		fromColumn: ProductSubcategory.CategoryKey
-		toColumn: ProductCategory.CategoryKey
-
-	relationship dded5175-84e2-b7b8-6f6d-f340109e64ff
+	relationship 2ca39336-43c9-4d72-a68e-e5c70db8bcae
 		fromColumn: SalesOrderDetail.ProductKey
 		toColumn: Products.ProductKey
 
-	relationship 4407fcda-70ba-5a9a-d338-638b7def17f6
-		fromColumn: SalesOrderHeader.CustomerKey
-		toColumn: Customers.CustomerKey
+	relationship 3b4f1ea9-6274-4f44-bdc1-9781e76b6a9b
+		fromColumn: Inventory.ProductKey
+		toColumn: Products.ProductKey
 
-	relationship 2b688c46-8a20-48a9-812b-bf9f17278197
-		fromColumn: SalesOrderHeader.StoreKey
-		toColumn: Store.StoreKey
+	relationship 6bf5ab3d-c9e5-46bb-9fc8-c3b946b2c8f2
+		fromColumn: Wishlist.ProductKey
+		toColumn: Products.ProductKey
 
-	relationship c1c05fe6-786e-4e23-873c-fd27b924aa2e
-		fromColumn: SalesOrderHeader.PromotionKey
-		toColumn: Promotions.PromotionKey
+	relationship eaa81c0b-ab8b-47e7-86e1-9199018ea979
+		fromColumn: Products.SubcategoryKey
+		toColumn: ProductSubcategory.SubcategoryKey
 
-	relationship 3ff333b6-8b16-4f30-bd72-b4bf84bf937c
-		fromColumn: SalesOrderHeader.CurrencyKey
-		toColumn: Currency.CurrencyKey
+	relationship 10a87905-433c-4d23-ab67-e66ce8dfd030
+		fromColumn: ProductSubcategory.CategoryKey
+		toColumn: ProductCategory.CategoryKey
 
-	relationship d5b6d7a1-05a6-4c37-8351-3d2ec59ba9e7
+	relationship 47643443-0ad8-4b46-99ac-52e130664af9
+		fromColumn: Budget.Category
+		toColumn: ProductCategory.Category
+
+	relationship 96d24166-8acf-4bd1-948d-ef335d9309c9
+		fromColumn: BudgetMonthly.Category
+		toColumn: ProductCategory.Category
+
+	relationship 1effc57e-80e3-4924-a2ef-69b3c0b1f054
+		fromColumn: ProductProfile.SupplierKey
+		toColumn: Supplier.SupplierKey
+
+	relationship 6c4808ed-7393-4823-92bf-f821fff411b5
+		fromColumn: Wishlist.CustomerKey
+		toColumn: CustomerProfile.CustomerKey
+
+	relationship c7ab0227-4aba-4a4f-9232-dd6842f222a4
+		fromColumn: Store.GeographyKey
+		toColumn: Geography.GeographyKey
+
+	relationship ac05c826-9a5b-4adb-bf75-c2b1ce8d8454
+		crossFilteringBehavior: bothDirections
+		fromCardinality: one
+		fromColumn: Warehouse.GeographyKey
+		toColumn: Geography.GeographyKey
+
+	relationship cdedc67a-f519-4f80-a513-77b97c7b8c68
+		fromColumn: Customer.CustomerAcquisitionChannelKey
+		toColumn: AcquisitionChannel.CustomerAcquisitionChannelKey
+
+	relationship f55b7859-c342-472a-bd8e-0cc880a43201
+		fromColumn: PlanSubscription.PlanKey
+		toColumn: Plan.PlanKey
+
+	relationship 96343533-82d8-41db-87f5-cda233246821
 		fromColumn: EmployeeStoreAssignment.StoreKey
 		toColumn: Store.StoreKey
 
-	relationship 61dbfd54-d553-4a41-890a-a0c8b998ed42
-		fromColumn: SalesOrderHeader.SalesChannelKey
-		toColumn: SalesChannel.SalesChannelKey
+	relationship f96ce07e-88ea-4d76-b86d-78c72d33e414
+		fromColumn: SalesOrderHeader.StoreKey
+		toColumn: Store.StoreKey
 
-	relationship bd3482e1-9d52-44aa-af55-6a054e219cd5
-		fromColumn: SalesReturns.ReturnReasonKey
-		toColumn: ReturnReason.ReturnReasonKey
+	relationship 6fe99a4c-0392-4f96-90d6-3568138980fb
+		fromColumn: Inventory.WarehouseKey
+		toColumn: Warehouse.WarehouseKey
 
-	relationship 21632fb4-d9d5-4fbc-a87e-6ac87eddf2ef
+	relationship 93651748-b5a4-4091-ad97-09c46f045837
+		fromColumn: SalesOrderHeader.PromotionKey
+		toColumn: Promotion.PromotionKey
+
+	relationship fa0a3628-d326-4f62-a988-1ed6373b1ae7
+		fromColumn: SalesOrderHeader.CurrencyKey
+		toColumn: Currency.CurrencyKey
+
+	relationship 36ddbc15-3886-4a27-8a79-705a2065405a
 		fromColumn: EmployeeStoreAssignment.EmployeeKey
 		toColumn: Employee.EmployeeKey
 
-	relationship e03cfaab-d683-1fa7-fd8d-441fce65e92c
-		fromColumn: SalesOrderHeader.SalesPersonEmployeeKey
+	relationship a9584517-d053-42d2-965d-024be09823a1
+		fromColumn: SalesOrderHeader.EmployeeKey
 		toColumn: Employee.EmployeeKey
+
+	relationship 7b8fb692-822f-4e90-9fa4-25f7b6ef9ef4
+		fromColumn: SalesReturn.ReturnReasonKey
+		toColumn: ReturnReason.ReturnReasonKey
+
+	relationship a478271d-d2f0-4802-85fd-9687f88dcd05
+		fromColumn: SalesOrderHeader.SalesChannelKey
+		toColumn: SalesChannel.SalesChannelKey
+
+	relationship e8987ec9-5a25-4485-a1bb-c810b2e37a4b
+		fromColumn: SalesOrderHeader.TimeKey
+		toColumn: Time.TimeKey
+
+	relationship 8e2d5f0d-755f-4102-af1d-e29ff0d108d2
+		fromColumn: SalesOrderDetail.SalesOrderNumber
+		toColumn: SalesOrderHeader.SalesOrderNumber
+
+	relationship 7ceb0ba6-ad52-ad79-72de-373802bdb068
+		fromColumn: SalesOrderHeader.OrderDate
+		toColumn: Dates.Date
+
+	relationship fa5a85f7-fe1a-f9d1-42ab-b8fb8c1c04f2
+		fromColumn: SalesReturn.ReturnDate
+		toColumn: Dates.Date
+
+	relationship b21c0451-c4d1-f6c6-439a-b256b55f3e43
+		fromColumn: PlanSubscription.CustomerKey
+		toColumn: Customer.CustomerKey
+
+	relationship 88fd9d38-e85e-a411-ecb4-bcbca7216202
+		fromColumn: Inventory.SnapshotDate
+		toColumn: Dates.Date
+
+	relationship 4cf93af9-668b-e74c-f035-916e140a57a6
+		fromColumn: ExchangeRate.FromCurrencyKey
+		toColumn: Currency.CurrencyKey
+
+	relationship 1d15404d-5baf-0c18-9611-097ac101181a
+		fromColumn: ExchangeRate.Date
+		toColumn: Dates.Date
+
+	relationship 550fd709-c0c3-1ed3-6148-d7553edabd05
+		fromColumn: ExchangeRateMonthly.Date
+		toColumn: Dates.Date
+
+	relationship 210cb20d-5ade-d808-966e-915e70b73861
+		fromColumn: ExchangeRateMonthly.FromCurrencyKey
+		toColumn: Currency.CurrencyKey
+
+	relationship bcfd37d9-44b5-9759-5a62-162e303eaffc
+		crossFilteringBehavior: bothDirections
+		fromCardinality: one
+		fromColumn: CustomerProfile.CustomerKey
+		toColumn: Customer.CustomerKey
+
+	relationship a6d2b30c-613f-dfc3-4a69-9269d4158e8c
+		fromColumn: SalesOrderHeader.CustomerKey
+		toColumn: Customer.CustomerKey
+
+	relationship b73a3b27-2cb2-1b7a-4fa9-59e59e8420ca
+		fromColumn: Complaints.CustomerKey
+		toColumn: Customer.CustomerKey
 

@@ -46,14 +46,11 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     final_folder = create_final_output_folder(
         final_folder_root=final_root,
         parquet_dims=parquet_dims,
-        fact_folder=fact_out,
         sales_cfg=sales_cfg,
         file_format=file_format,
-        sales_rows_expected=sales_cfg.total_rows,
         cfg=cfg,
         config_yaml_path=config_yaml_path,
         model_yaml_path=model_yaml_path,
-        package_facts=False,
     )
 
     # Remove URL-encoded duplicate run folder (%20)

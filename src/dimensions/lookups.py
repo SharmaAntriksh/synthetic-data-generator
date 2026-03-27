@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 import numpy as np
 import pandas as pd
 
+from src.exceptions import DimensionError
 from src.utils.config_helpers import as_dict as _as_dict, int_or as _int_or
 from src.utils.logging_utils import info, skip, stage
 from src.versioning.version_store import should_regenerate, save_version
@@ -54,7 +55,7 @@ def _maybe_override_rows(dim_cfg: Dict[str, Any], required_cols: Sequence[str]) 
 
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
-        raise ValueError(f"Override rows missing required columns: {missing}")
+        raise DimensionError(f"Override rows missing required columns: {missing}")
     return df[required_cols].copy()
 
 
@@ -196,7 +197,7 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
 
     def _derive_flags(df: pd.DataFrame) -> pd.DataFrame:
         # Ensure base types
-        df["SalesChannelKey"] = df["SalesChannelKey"].astype(np.int16)
+        df["SalesChannelKey"] = df["SalesChannelKey"].astype(np.int32)
 
         # Defaults
         if "SalesChannelDescription" not in df.columns:
@@ -213,7 +214,7 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
             df["SalesChannelCode"] = df["SalesChannel"].map(_normalize_code)
 
         if "SortOrder" not in df.columns:
-            df["SortOrder"] = df["SalesChannelKey"].astype(np.int16)
+            df["SortOrder"] = df["SalesChannelKey"].astype(np.int32)
 
         # Derive based on ChannelGroup + name heuristics
         grp = df["ChannelGroup"].astype(str).str.strip().str.lower()
@@ -254,10 +255,10 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
             )
 
         # Hard-cast
-        df["SortOrder"] = df["SortOrder"].astype(np.int16)
+        df["SortOrder"] = df["SortOrder"].astype(np.int32)
         for c in ["IsDigital", "IsPhysical", "IsThirdParty", "IsB2B", "IsAssisted", "IsOwnedChannel", "Is24x7"]:
             df[c] = df[c].astype(bool)
-        df["TypicalFulfillmentDays"] = df["TypicalFulfillmentDays"].astype(np.int16)
+        df["TypicalFulfillmentDays"] = df["TypicalFulfillmentDays"].astype(np.int32)
 
         return df
 
@@ -267,7 +268,7 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         df = pd.DataFrame(override_rows)
         missing = [c for c in base_required if c not in df.columns]
         if missing:
-            raise ValueError(f"Override rows missing required columns: {missing}")
+            raise DimensionError(f"Override rows missing required columns: {missing}")
 
         df = _derive_flags(df)
 
@@ -378,8 +379,8 @@ def _df_loyalty_tiers(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     required = ["LoyaltyTierKey", "LoyaltyTier", "TierRank", "PointsMultiplier"]
     override = _maybe_override_rows(dim_cfg, required_cols=required)
     if override is not None:
-        override["LoyaltyTierKey"] = override["LoyaltyTierKey"].astype(np.int16)
-        override["TierRank"] = override["TierRank"].astype(np.int16)
+        override["LoyaltyTierKey"] = override["LoyaltyTierKey"].astype(np.int32)
+        override["TierRank"] = override["TierRank"].astype(np.int32)
         override["PointsMultiplier"] = override["PointsMultiplier"].astype(float)
         return override
 
@@ -390,8 +391,8 @@ def _df_loyalty_tiers(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         (3, "Platinum", 3, 1.20),
     ]
     df = pd.DataFrame(rows, columns=required)
-    df["LoyaltyTierKey"] = df["LoyaltyTierKey"].astype(np.int16)
-    df["TierRank"] = df["TierRank"].astype(np.int16)
+    df["LoyaltyTierKey"] = df["LoyaltyTierKey"].astype(np.int32)
+    df["TierRank"] = df["TierRank"].astype(np.int32)
     df["PointsMultiplier"] = df["PointsMultiplier"].astype(float)
     return df
 
@@ -400,7 +401,7 @@ def _df_customer_acquisition_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     required = ["CustomerAcquisitionChannelKey", "AcquisitionChannel", "ChannelGroup"]
     override = _maybe_override_rows(dim_cfg, required_cols=required)
     if override is not None:
-        override["CustomerAcquisitionChannelKey"] = override["CustomerAcquisitionChannelKey"].astype(np.int16)
+        override["CustomerAcquisitionChannelKey"] = override["CustomerAcquisitionChannelKey"].astype(np.int32)
         return override
 
     rows = [
@@ -413,7 +414,7 @@ def _df_customer_acquisition_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         (7, "Affiliates", "Partner"),
     ]
     df = pd.DataFrame(rows, columns=required)
-    df["CustomerAcquisitionChannelKey"] = df["CustomerAcquisitionChannelKey"].astype(np.int16)
+    df["CustomerAcquisitionChannelKey"] = df["CustomerAcquisitionChannelKey"].astype(np.int32)
     return df
 
 

@@ -200,7 +200,7 @@ class CustomersConfig(_Base):
     total_customers: Optional[int] = None
     active_ratio: float = 0.98
     profile: str = "steady"
-    first_year_pct: float = 0.27
+    first_year_pct: Optional[float] = None
     # Flattened from region_mix by _expand_region_mix
     pct_us: float = 0.0
     pct_eu: float = 0.0
@@ -244,8 +244,19 @@ class DatesIncludeConfig(_Base):
 
 class DatesTableConfig(_Base):
     fiscal_start_month: int = 5
-    fiscal_month_offset: Optional[int] = None  # deprecated alias for fiscal_start_month
     as_of_date: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_fiscal_offset(cls, data: Any) -> Any:
+        """Migrate removed ``fiscal_month_offset`` to ``fiscal_start_month``."""
+        if isinstance(data, dict) and "fiscal_month_offset" in data:
+            data = dict(data)
+            if "fiscal_start_month" not in data:
+                data["fiscal_start_month"] = data.pop("fiscal_month_offset")
+            else:
+                data.pop("fiscal_month_offset")
+        return data
     buffer_years: int = 1
     include: DatesIncludeConfig = DatesIncludeConfig()
     override: Optional[Dict[str, Any]] = None
@@ -369,6 +380,7 @@ class InventoryConfig(_Base):
     overstock_bias: float = 1.0
     abc_stock_multiplier: ABCStockMultiplierConfig = ABCStockMultiplierConfig()
     shrinkage: ShrinkageConfig = ShrinkageConfig()
+    write_chunk_rows: int = 2_000_000
 
 
 # -- Packaging --
@@ -459,7 +471,7 @@ class ReturnsConfig(_Base):
 class SalesConfig(_Base):
     total_rows: int = 1_000_000
     max_lines_per_order: int = 5
-    file_format: str = "csv"
+    file_format: str = "parquet"
     sales_output: str = "sales"
     skip_order_cols: bool = False
 
@@ -473,14 +485,23 @@ class SalesConfig(_Base):
     partition_cols: Optional[List[str]] = None
     partitioning: Optional[Dict[str, Any]] = None
 
-    optimize: bool = True
+    # Parquet: sort the merged parquet file for better downstream query perf
+    # (predicate pushdown, row group skipping). Adds O(N log N) post-merge overhead.
+    sort_merged_parquet: bool = False
+
+    # Delta Lake: sort each partition part before writing. Improves downstream
+    # query performance (predicate pushdown, row group skipping) but adds
+    # O(N log N) overhead per part during generation. Disable for faster
+    # generation when the consuming tool (Power BI, SQL Server, etc.) applies
+    # its own indexes or columnstore compression.
+    sort_delta_parts: bool = False
 
     # Performance (promoted from sales.advanced)
     chunk_size: int = 1_000_000
     workers: Optional[int] = None
     row_group_size: int = 1_000_000
     compression: str = "snappy"
-    quality_report: bool = True
+    quality_report: bool = False
 
     # Order ID run identifier (0..999)
     order_id_run_id: Optional[int] = None
@@ -491,6 +512,18 @@ class SalesConfig(_Base):
     parquet_folder: str = "./data/parquet_dims"
     out_folder: str = "./data/fact_out"
     delta_output_folder: str = "./data/fact_out/delta"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_optimize(cls, data: Any) -> Any:
+        """Migrate removed ``optimize`` to ``sort_merged_parquet``."""
+        if isinstance(data, dict) and "optimize" in data:
+            data = dict(data)
+            if "sort_merged_parquet" not in data:
+                data["sort_merged_parquet"] = data.pop("optimize")
+            else:
+                data.pop("optimize")
+        return data
 
 
 # -- Scale --
@@ -836,24 +869,35 @@ class BrandPopularityConfig(_Base):
     noise_sd: float = 0.15
     min_share: float = 0.02
     year_len_months: int = 12
-    brand_weights: Dict[str, float] = {}  # deprecated: ignored at runtime, kept for schema compat
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_removed_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            data.pop("brand_weights", None)
+        return data
 
 
 # -- Returns (models.yaml) --
 
 class ReturnReasonEntry(_Base):
     key: int
-    label: str
+    label: Optional[str] = None
     weight: float
 
 
 class LagDaysConfig(_Base):
     distribution: str = "triangular"
     mode: int = 7
+    split_min_gap: int = 3
+    split_max_gap: int = 20
 
 
 class ReturnQuantityConfig(_Base):
     full_line_probability: float = 0.85
+    split_return_rate: float = 0.0
+    max_splits: int = 3
 
 
 class ReturnsModelsConfig(_Base):
@@ -861,6 +905,19 @@ class ReturnsModelsConfig(_Base):
     reasons: List[ReturnReasonEntry] = []
     lag_days: LagDaysConfig = LagDaysConfig()
     quantity: ReturnQuantityConfig = ReturnQuantityConfig()
+
+    @model_validator(mode="after")
+    def _validate_reason_keys(self) -> "ReturnsModelsConfig":
+        if self.reasons:
+            from src.defaults import RETURN_REASON_KEYS
+            valid = set(RETURN_REASON_KEYS)
+            invalid = [r.key for r in self.reasons if r.key not in valid]
+            if invalid:
+                raise ValueError(
+                    f"models.yaml returns.reasons contains keys not in "
+                    f"defaults.RETURN_REASONS: {invalid}. Valid: {sorted(valid)}"
+                )
+        return self
 
 
 # -- Customers (models.yaml: injected by resolve_customer_profile) --

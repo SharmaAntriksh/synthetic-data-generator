@@ -14,6 +14,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from src.exceptions import ValidationError
+
 # ---------------------------------------------------------------------------
 # SCD2 sentinel date for IsCurrent=1 rows.
 # NOTE: datetime64[ns] overflows at ~2262, so 9999-12-31 silently wraps to
@@ -194,7 +196,7 @@ EMPLOYEE_GENDER_PROBS: Dict[str, float] = {
     "male": 0.49,
 }
 if abs(sum(EMPLOYEE_GENDER_PROBS.values()) - 1.0) > 1e-9:
-    raise ValueError(
+    raise ValidationError(
         f"EMPLOYEE_GENDER_PROBS must sum to 1.0, got {sum(EMPLOYEE_GENDER_PROBS.values())}"
     )
 
@@ -218,7 +220,7 @@ EMPLOYEE_TERMINATION_REASON_LABELS = np.array(
 )
 EMPLOYEE_TERMINATION_REASON_PROBS = np.array([0.45, 0.30, 0.15, 0.10], dtype=np.float64)
 if abs(EMPLOYEE_TERMINATION_REASON_PROBS.sum() - 1.0) > 1e-9:
-    raise ValueError(
+    raise ValidationError(
         f"EMPLOYEE_TERMINATION_REASON_PROBS must sum to 1.0, got {EMPLOYEE_TERMINATION_REASON_PROBS.sum()}"
     )
 
@@ -229,7 +231,7 @@ EMPLOYEE_TRANSFER_REASON_LABELS = np.array(
 )
 EMPLOYEE_TRANSFER_REASON_PROBS = np.array([0.30, 0.20, 0.25, 0.15, 0.10], dtype=np.float64)
 if abs(EMPLOYEE_TRANSFER_REASON_PROBS.sum() - 1.0) > 1e-9:
-    raise ValueError(
+    raise ValidationError(
         f"EMPLOYEE_TRANSFER_REASON_PROBS must sum to 1.0, got {EMPLOYEE_TRANSFER_REASON_PROBS.sum()}"
     )
 
@@ -575,7 +577,7 @@ def _validate_probability_arrays() -> None:
     for name, arr in _PROB_ARRAYS.items():
         total = float(arr.sum())
         if abs(total - 1.0) > 1e-6:
-            raise ValueError(
+            raise ValidationError(
                 f"defaults.{name} probabilities sum to {total}, expected 1.0"
             )
 
@@ -588,7 +590,7 @@ def _validate_probability_arrays() -> None:
         for key, arr in d.items():
             total = float(arr.sum())
             if abs(total - 1.0) > 1e-6:
-                raise ValueError(
+                raise ValidationError(
                     f"defaults.{name}[{key!r}] probabilities sum to {total}, expected 1.0"
                 )
 
@@ -601,7 +603,7 @@ def _validate_probability_arrays() -> None:
         for i, arr in enumerate(lst):
             total = float(arr.sum())
             if abs(total - 1.0) > 1e-6:
-                raise ValueError(
+                raise ValidationError(
                     f"defaults.{name}[{i}] probabilities sum to {total}, expected 1.0"
                 )
 
@@ -614,11 +616,11 @@ def _validate_probability_arrays() -> None:
         for key, (choices, probs) in d.items():
             total = float(sum(probs))
             if abs(total - 1.0) > 1e-6:
-                raise ValueError(
+                raise ValidationError(
                     f"defaults.{name}[{key!r}] probabilities sum to {total}, expected 1.0"
                 )
             if len(choices) != len(probs):
-                raise ValueError(
+                raise ValidationError(
                     f"defaults.{name}[{key!r}] choices/probs length mismatch: {len(choices)} vs {len(probs)}"
                 )
 
@@ -626,14 +628,14 @@ def _validate_probability_arrays() -> None:
     for entry in PROMOTION_HOLIDAYS:
         name_h, _, _, d_min, d_max = entry
         if d_min > d_max:
-            raise ValueError(
+            raise ValidationError(
                 f"defaults.PROMOTION_HOLIDAYS[{name_h!r}] discount_min ({d_min}) > discount_max ({d_max})"
             )
 
     # Validate PROMOTION_SEASON_WINDOWS months are 1-12
     for sname, (s_start, s_end) in PROMOTION_SEASON_WINDOWS.items():
         if not (1 <= s_start <= 12 and 1 <= s_end <= 12):
-            raise ValueError(
+            raise ValidationError(
                 f"defaults.PROMOTION_SEASON_WINDOWS[{sname!r}] has invalid month(s): ({s_start}, {s_end})"
             )
 
@@ -645,6 +647,38 @@ def _validate_probability_arrays() -> None:
 # Used as fallback when sales_channels.parquet is not available.
 SALES_CHANNEL_CORE_KEYS = np.array([1, 2, 3, 4, 5], dtype=np.int16)
 SALES_CHANNEL_CORE_KEYS.flags.writeable = False
+
+
+# =================================================================
+#  RETURN REASONS — single source of truth
+#  (key, label, category, default_weight)
+# =================================================================
+
+RETURN_REASONS: tuple[tuple[int, str, str, float], ...] = (
+    (1, "Defective",            "Quality",     0.20),
+    (2, "Damaged in shipping",  "Logistics",   0.12),
+    (3, "Wrong item",           "Fulfillment", 0.14),
+    (4, "Not as described",     "Customer",    0.10),
+    (5, "No longer needed",     "Customer",    0.14),
+    (6, "Late delivery",        "Logistics",   0.08),
+    (7, "Better price found",   "Customer",    0.07),
+    (8, "Other",                "Other",       0.15),
+)
+
+RETURN_REASON_KEYS: tuple[int, ...] = tuple(r[0] for r in RETURN_REASONS)
+RETURN_REASON_LABELS: dict[int, str] = {r[0]: r[1] for r in RETURN_REASONS}
+RETURN_REASON_CATEGORIES: dict[int, str] = {r[0]: r[2] for r in RETURN_REASONS}
+RETURN_REASON_DEFAULT_WEIGHTS: dict[int, float] = {r[0]: r[3] for r in RETURN_REASONS}
+RETURN_REASON_LOGISTICS_KEYS: frozenset[int] = frozenset(
+    r[0] for r in RETURN_REASONS if r[2] == "Logistics"
+)
+
+_rr_weights = np.array([r[3] for r in RETURN_REASONS])
+if abs(float(_rr_weights.sum()) - 1.0) > 1e-6:
+    raise ValidationError(
+        f"defaults.RETURN_REASONS weights sum to {_rr_weights.sum()}, expected 1.0"
+    )
+del _rr_weights
 
 
 _validate_probability_arrays()

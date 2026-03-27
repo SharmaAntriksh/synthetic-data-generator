@@ -167,23 +167,23 @@ def add_weekly_fiscal_columns(
     fw_start_year = fw_year_s.map(start_map).astype("datetime64[ns]")
     fw_end_year = fw_year_s.map(end_map).astype("datetime64[ns]")
 
-    fw_day_of_year = (df["Date"] - fw_start_year).dt.days.add(1).astype(np.int16)
-    fw_week = ((fw_day_of_year.astype(int) - 1) // 7 + 1).astype(np.int16)
+    fw_day_of_year = (df["Date"] - fw_start_year).dt.days.add(1).astype(np.int32)
+    fw_week = ((fw_day_of_year.astype(int) - 1) // 7 + 1).astype(np.int32)
 
     week = fw_week.astype(int).to_numpy()
-    fw_period = np.where(week > 52, 13, (week + 3) // 4).astype(np.int16)
-    fw_quarter = np.where(week > 52, 4, (week + 12) // 13).astype(np.int8)
+    fw_period = np.where(week > 52, 13, (week + 3) // 4).astype(np.int32)
+    fw_quarter = np.where(week > 52, 4, (week + 12) // 13).astype(np.int32)
 
     fw_quarter_s = pd.Series(fw_quarter, index=df.index, name="FWQuarterNumber")
     week_in_q = np.where(week > 52, 14, week - 13 * (fw_quarter_s.astype(int).to_numpy() - 1)).astype(int)
-    fw_week_in_quarter = pd.Series(week_in_q.astype(np.int16), index=df.index, name="FWWeekInQuarterNumber")
+    fw_week_in_quarter = pd.Series(week_in_q.astype(np.int32), index=df.index, name="FWWeekInQuarterNumber")
 
     m_in_q = np.select(
         [week_in_q <= w1, week_in_q <= (w1 + w2)],
         [1, 2],
         default=3,
-    ).astype(np.int8)
-    fw_month = ((fw_quarter_s.astype(int) - 1) * 3 + m_in_q).astype(np.int8)
+    ).astype(np.int32)
+    fw_month = ((fw_quarter_s.astype(int) - 1) * 3 + m_in_q).astype(np.int32)
     fw_month_s = pd.Series(fw_month, index=df.index, name="FWMonthNumber")
 
     fw_year_quarter = (fw_year_s.astype(int) * 4 - 1 + fw_quarter_s.astype(int)).astype(np.int32)
@@ -192,7 +192,7 @@ def add_weekly_fiscal_columns(
     # Weekday number relative to first day of week (1..7)
     sun0 = (df["Date"].dt.weekday + 1) % 7
     pos0 = (sun0 - fdow) % 7
-    week_day_num = (pos0 + 1).astype(np.int8)
+    week_day_num = (pos0 + 1).astype(np.int32)
     week_day_name_short = df["Date"].dt.strftime("%a")
 
     fw_start_week = (df["Date"] - pd.to_timedelta(week_day_num - 1, unit="D")).dt.normalize()
@@ -200,7 +200,7 @@ def add_weekly_fiscal_columns(
 
     # Working day (Mon-Fri)
     is_work = df["Date"].dt.weekday.isin([0, 1, 2, 3, 4])
-    is_working_day = is_work.astype(np.int8)
+    is_working_day = is_work.astype(np.int32)
     day_type = np.where(is_work, "Working Day", "Non-Working day")
 
     # Boundaries within weekly fiscal month/quarter using temporary frame
@@ -214,11 +214,11 @@ def add_weekly_fiscal_columns(
     )
     fw_start_month = tmp.groupby("FWYearMonthNumber")["Date"].transform("min")
     fw_end_month = tmp.groupby("FWYearMonthNumber")["Date"].transform("max")
-    fw_day_of_month = (df["Date"] - fw_start_month).dt.days.add(1).astype(np.int16)
+    fw_day_of_month = (df["Date"] - fw_start_month).dt.days.add(1).astype(np.int32)
 
     fw_start_quarter = tmp.groupby("FWYearQuarterNumber")["Date"].transform("min")
     fw_end_quarter = tmp.groupby("FWYearQuarterNumber")["Date"].transform("max")
-    fw_day_of_quarter = (df["Date"] - fw_start_quarter).dt.days.add(1).astype(np.int16)
+    fw_day_of_quarter = (df["Date"] - fw_start_quarter).dt.days.add(1).astype(np.int32)
 
     # DAX-like FWYearWeekNumber (global increasing week index)
     first_week_reference = pd.Timestamp("1900-12-30") + pd.Timedelta(days=fdow)
@@ -242,10 +242,10 @@ def add_weekly_fiscal_columns(
             "FWEndOfYear": fw_end_year,
             "FWDayOfYearNumber": fw_day_of_year,
             "FWWeekNumber": fw_week,
-            "FWPeriodNumber": pd.Series(fw_period, index=df.index).astype(np.int16),
-            "FWQuarterNumber": fw_quarter_s.astype(np.int8),
+            "FWPeriodNumber": pd.Series(fw_period, index=df.index).astype(np.int32),
+            "FWQuarterNumber": fw_quarter_s.astype(np.int32),
             "FWWeekInQuarterNumber": fw_week_in_quarter,
-            "FWMonthNumber": fw_month_s.astype(np.int8),
+            "FWMonthNumber": fw_month_s.astype(np.int32),
             "FWYearQuarterNumber": fw_year_quarter,
             "FWYearMonthNumber": fw_year_month,
             "WeekDayNumber": week_day_num,

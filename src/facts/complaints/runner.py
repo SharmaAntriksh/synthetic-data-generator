@@ -608,7 +608,7 @@ def _generate_complaints_parallel(
     n_workers: int,
 ) -> pa.Table:
     """Partition complainers across workers and merge results."""
-    from src.facts.sales.sales_worker.pool import PoolRunSpec, iter_imap_unordered
+    from src.utils.pool import PoolRunSpec, iter_imap_unordered
 
     g_start_ns = np.int64(g_start.value)
     g_end_ns = np.int64(g_end.value)

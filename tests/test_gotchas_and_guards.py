@@ -12,6 +12,7 @@ import pytest
 
 from src.dimensions.customers.scd2 import _apply_life_event, _available_events, expand_changed_customers
 from src.engine.config.config_schema import AppConfig
+from src.exceptions import ConfigError
 from src.facts.sales.sales_logic.core import _normalize_cdf
 
 
@@ -259,17 +260,17 @@ class TestNewNormalizers:
 
     def test_products_negative_count_raises(self):
         from src.engine.config.config import normalize_products_config
-        with pytest.raises(ValueError, match="positive integer"):
+        with pytest.raises(ConfigError, match="positive integer"):
             normalize_products_config({"num_products": -5})
 
     def test_products_bad_active_ratio_raises(self):
         from src.engine.config.config import normalize_products_config
-        with pytest.raises(ValueError, match="between 0 and 1"):
+        with pytest.raises(ConfigError, match="between 0 and 1"):
             normalize_products_config({"active_ratio": 1.5})
 
     def test_customers_negative_pct_raises(self):
         from src.engine.config.config import normalize_customers_config
-        with pytest.raises(ValueError, match="must be >= 0"):
+        with pytest.raises(ConfigError, match="must be >= 0"):
             normalize_customers_config({"pct_us": -10})
 
     def test_stores_coerces_int(self):
@@ -280,13 +281,13 @@ class TestNewNormalizers:
 
     def test_promotions_negative_bucket_raises(self):
         from src.engine.config.config import normalize_promotions_config
-        with pytest.raises(ValueError, match="non-negative"):
+        with pytest.raises(ConfigError, match="non-negative"):
             normalize_promotions_config({"num_seasonal": -1})
 
     def test_region_mix_unknown_raises(self):
         from src.engine.config.config import _expand_region_mix
         cfg = {"customers": {"region_mix": {"Atlantis": 50}}}
-        with pytest.raises(ValueError, match="Unknown region"):
+        with pytest.raises(ConfigError, match="Unknown region"):
             _expand_region_mix(cfg)
 
     def test_region_mix_valid(self):

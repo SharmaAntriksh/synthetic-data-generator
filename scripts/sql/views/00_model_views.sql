@@ -133,6 +133,11 @@ IF OBJECT_ID(N'dbo.Stores', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_Stores] AS SELECT * FROM [dbo].[Stores];');
 GO
 
+-- Warehouses
+IF OBJECT_ID(N'dbo.Warehouses', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_Warehouses] AS SELECT * FROM [dbo].[Warehouses];');
+GO
+
 -- Suppliers
 IF OBJECT_ID(N'dbo.Suppliers', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_Suppliers] AS SELECT * FROM [dbo].[Suppliers];');
@@ -251,6 +256,7 @@ SELECT
     ReturnEventKey,
     SalesOrderNumber,
     SalesOrderLineNumber,
+    ReturnSequence,
     ReturnDate,
     ReturnReasonKey,
     ReturnQuantity,

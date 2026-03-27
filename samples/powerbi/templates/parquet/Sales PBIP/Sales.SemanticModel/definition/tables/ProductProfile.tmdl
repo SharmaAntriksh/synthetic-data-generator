@@ -1,0 +1,411 @@
+table ProductProfile
+	lineageTag: f882f74d-1a84-4748-ab83-3e58134c7741
+
+	column ProductKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 85969b22-45d6-40f1-b0fd-55a75e5f41d5
+		summarizeBy: none
+		sourceColumn: ProductKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ColorFamily
+		dataType: string
+		lineageTag: d02935a1-5976-40b6-9cbd-66ef4d9f36d3
+		summarizeBy: none
+		sourceColumn: ColorFamily
+
+		annotation SummarizationSetBy = Automatic
+
+	column Material
+		dataType: string
+		lineageTag: de858396-abd0-41e6-8146-7df2d69d5650
+		summarizeBy: none
+		sourceColumn: Material
+
+		annotation SummarizationSetBy = Automatic
+
+	column Style
+		dataType: string
+		lineageTag: db71dbaa-cc6b-4e17-b593-56d5f72f06bd
+		summarizeBy: none
+		sourceColumn: Style
+
+		annotation SummarizationSetBy = Automatic
+
+	column AgeGroup
+		dataType: string
+		lineageTag: 4f098f10-4412-46f3-90df-88b552268874
+		summarizeBy: none
+		sourceColumn: AgeGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	column ProductLine
+		dataType: string
+		lineageTag: 3b6737c4-45cd-4a9a-bfc2-081c7f2c46ed
+		summarizeBy: none
+		sourceColumn: ProductLine
+
+		annotation SummarizationSetBy = Automatic
+
+	column SeasonalityProfile
+		dataType: string
+		lineageTag: bf2bae48-66dd-4bed-8574-68d1655688ba
+		summarizeBy: none
+		sourceColumn: SeasonalityProfile
+
+		annotation SummarizationSetBy = Automatic
+
+	column WeightKg
+		dataType: double
+		lineageTag: 111ed066-5a68-42cd-9126-39207f135e54
+		summarizeBy: sum
+		sourceColumn: WeightKg
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column LengthCm
+		dataType: double
+		lineageTag: 74f3efc8-abf8-4bd5-bacf-7e060829b6c5
+		summarizeBy: sum
+		sourceColumn: LengthCm
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column WidthCm
+		dataType: double
+		lineageTag: f27d5662-04af-42c7-a9c2-997d49629758
+		summarizeBy: sum
+		sourceColumn: WidthCm
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column HeightCm
+		dataType: double
+		lineageTag: 1a84b65e-6b96-4cd9-8565-d9c8a73270e6
+		summarizeBy: sum
+		sourceColumn: HeightCm
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column VolumeCm3
+		dataType: double
+		lineageTag: 838fba64-534b-43ac-8c0e-8a3662465695
+		summarizeBy: sum
+		sourceColumn: VolumeCm3
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column ShippingClass
+		dataType: string
+		lineageTag: 5549a641-29a7-44e2-ab88-5e75366ed382
+		summarizeBy: none
+		sourceColumn: ShippingClass
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsFragile
+		dataType: int64
+		formatString: 0
+		lineageTag: 92a37d5d-1233-4177-9468-d4f207ed8a53
+		summarizeBy: sum
+		sourceColumn: IsFragile
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsHazmat
+		dataType: int64
+		formatString: 0
+		lineageTag: 48ca1a2d-bd62-427d-8929-2b600351c808
+		summarizeBy: sum
+		sourceColumn: IsHazmat
+
+		annotation SummarizationSetBy = Automatic
+
+	column LeadTimeDays
+		dataType: int64
+		formatString: 0
+		lineageTag: 2664f420-8560-43c3-aa3f-dd6ecb0e0cdb
+		summarizeBy: sum
+		sourceColumn: LeadTimeDays
+
+		annotation SummarizationSetBy = Automatic
+
+	column CasePackQty
+		dataType: int64
+		formatString: 0
+		lineageTag: fa72ffcc-4d5c-4561-abc9-b444e12015f4
+		summarizeBy: sum
+		sourceColumn: CasePackQty
+
+		annotation SummarizationSetBy = Automatic
+
+	column FulfillmentType
+		dataType: string
+		lineageTag: 42249fa2-ae14-4c11-993b-db537ee353eb
+		summarizeBy: none
+		sourceColumn: FulfillmentType
+
+		annotation SummarizationSetBy = Automatic
+
+	column BrandTier
+		dataType: string
+		lineageTag: 4f30ef18-e49b-4a6c-b238-ab799fe77886
+		summarizeBy: none
+		sourceColumn: BrandTier
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleStore
+		dataType: int64
+		formatString: 0
+		lineageTag: 9d26b56d-8a98-497e-9e34-3bd30285abb6
+		summarizeBy: sum
+		sourceColumn: EligibleStore
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleOnline
+		dataType: int64
+		formatString: 0
+		lineageTag: 84a93bf4-63d6-4433-bb4f-e21aa7ea1b16
+		summarizeBy: sum
+		sourceColumn: EligibleOnline
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleMarketplace
+		dataType: int64
+		formatString: 0
+		lineageTag: dddba949-7157-4048-85a4-e2e16750469b
+		summarizeBy: sum
+		sourceColumn: EligibleMarketplace
+
+		annotation SummarizationSetBy = Automatic
+
+	column EligibleB2B
+		dataType: int64
+		formatString: 0
+		lineageTag: 72e98953-6b88-4443-a0c1-cc4d7882c755
+		summarizeBy: sum
+		sourceColumn: EligibleB2B
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarrantyMonths
+		dataType: int64
+		formatString: 0
+		lineageTag: 1f5f2fd1-28cf-4edc-b9ab-38e2cffc5232
+		summarizeBy: sum
+		sourceColumn: WarrantyMonths
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReturnRateBase
+		dataType: double
+		lineageTag: bb9ab6b4-7896-4e20-8f21-281e1f11d11f
+		summarizeBy: sum
+		sourceColumn: ReturnRateBase
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column DefectRateBase
+		dataType: double
+		lineageTag: 7ea05fe8-ac23-4164-880f-daf112330da9
+		summarizeBy: sum
+		sourceColumn: DefectRateBase
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column ReturnWindowDays
+		dataType: int64
+		formatString: 0
+		lineageTag: f3e1509d-0975-433a-b2ab-729bd68070de
+		summarizeBy: sum
+		sourceColumn: ReturnWindowDays
+
+		annotation SummarizationSetBy = Automatic
+
+	column CountryOfOrigin
+		dataType: string
+		lineageTag: 7c95b277-5b23-4e03-a7db-a299d5901401
+		summarizeBy: none
+		sourceColumn: CountryOfOrigin
+
+		annotation SummarizationSetBy = Automatic
+
+	column SustainabilityScore
+		dataType: int64
+		formatString: 0
+		lineageTag: faf736b3-2616-45a1-939b-15fd48c63bf8
+		summarizeBy: sum
+		sourceColumn: SustainabilityScore
+
+		annotation SummarizationSetBy = Automatic
+
+	column CertificationType
+		dataType: string
+		lineageTag: 6be48d32-d419-4899-afa7-5ff6771bbfec
+		summarizeBy: none
+		sourceColumn: CertificationType
+
+		annotation SummarizationSetBy = Automatic
+
+	column AssemblyRequired
+		dataType: string
+		lineageTag: ce314b0b-45e0-4bdc-a28f-bd3c3e00d7f5
+		summarizeBy: none
+		sourceColumn: AssemblyRequired
+
+		annotation SummarizationSetBy = Automatic
+
+	column PopularityScore
+		dataType: int64
+		formatString: 0
+		lineageTag: 1d092057-847b-4757-be9e-48126800b907
+		summarizeBy: sum
+		sourceColumn: PopularityScore
+
+		annotation SummarizationSetBy = Automatic
+
+	column ABCClassification
+		dataType: string
+		lineageTag: d407d72c-6d41-4ac9-addf-664bc06b8d90
+		summarizeBy: none
+		sourceColumn: ABCClassification
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReorderPointUnits
+		dataType: int64
+		formatString: 0
+		lineageTag: 72192e48-cc98-47cd-9b01-207ec20faded
+		summarizeBy: sum
+		sourceColumn: ReorderPointUnits
+
+		annotation SummarizationSetBy = Automatic
+
+	column SafetyStockUnits
+		dataType: int64
+		formatString: 0
+		lineageTag: c9210551-5b0d-4fde-b24a-8fbbafba21ee
+		summarizeBy: sum
+		sourceColumn: SafetyStockUnits
+
+		annotation SummarizationSetBy = Automatic
+
+	column PackagingType
+		dataType: string
+		lineageTag: 64cba7a3-95ac-4184-b1c4-78c76ce9d436
+		summarizeBy: none
+		sourceColumn: PackagingType
+
+		annotation SummarizationSetBy = Automatic
+
+	column AvgCustomerRating
+		dataType: double
+		lineageTag: 44bd51e4-d68c-46c5-9d3f-47f9da9d2a30
+		summarizeBy: sum
+		sourceColumn: AvgCustomerRating
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column ReviewCount
+		dataType: int64
+		formatString: 0
+		lineageTag: 595bcf3f-634b-42ba-85c0-c1a8b21793f1
+		summarizeBy: sum
+		sourceColumn: ReviewCount
+
+		annotation SummarizationSetBy = Automatic
+
+	column CompetitorPriceIndex
+		dataType: double
+		lineageTag: 996b1966-823c-40aa-9a90-61802187c322
+		summarizeBy: sum
+		sourceColumn: CompetitorPriceIndex
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column MarginCategory
+		dataType: string
+		lineageTag: 0194c1ad-a22f-43d2-b08a-416d9ac95140
+		summarizeBy: none
+		sourceColumn: MarginCategory
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsGiftEligible
+		dataType: string
+		lineageTag: 7ed095ba-4b46-4e65-90c1-d8b7ed7cf1bb
+		summarizeBy: none
+		sourceColumn: IsGiftEligible
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsBestseller
+		dataType: string
+		lineageTag: a3f2fa32-11f0-432f-8d86-d3f174b0cfbb
+		summarizeBy: none
+		sourceColumn: IsBestseller
+
+		annotation SummarizationSetBy = Automatic
+
+	column IsEcoFriendly
+		dataType: string
+		lineageTag: 7ea2be14-cef9-4f4a-8016-7e79887760cc
+		summarizeBy: none
+		sourceColumn: IsEcoFriendly
+
+		annotation SummarizationSetBy = Automatic
+
+	column TargetGender
+		dataType: string
+		lineageTag: 6a5aac56-0c6c-4889-a90d-af1331d540ba
+		summarizeBy: none
+		sourceColumn: TargetGender
+
+		annotation SummarizationSetBy = Automatic
+
+	column SupplierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: bd797d74-31a0-4aee-9585-e9a9469d14a9
+		summarizeBy: none
+		sourceColumn: SupplierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	partition ProductProfile = m
+		mode: import
+		queryGroup: Dimensions\Products
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\product_profile" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

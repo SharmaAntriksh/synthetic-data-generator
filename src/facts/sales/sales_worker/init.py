@@ -16,6 +16,7 @@ from ..output_paths import (
 from ..sales_logic import bind_globals, State
 from ..sales_logic.chunk_builder import reset_worker_cdf_cache
 from .schemas import build_worker_schemas
+from src.exceptions import SalesError
 from src.utils.config_helpers import int_or, float_or, str_or
 from src.utils.shared_arrays import resolve_array
 
@@ -200,12 +201,12 @@ def build_buckets_from_key(
     if key_np.size == 0:
         return []
     if key_np.min() < 0:
-        raise RuntimeError("Key values must be non-negative integers")
+        raise SalesError("Key values must be non-negative integers")
 
     max_k = int(key_np.max()) if max_key is None else int(max_key)
     K = max_k + 1
     if K > int(max_buckets):
-        raise RuntimeError(
+        raise SalesError(
             f"Refusing to allocate {K:,} buckets (max_key={max_k:,}); "
             f"set max_key/max_buckets explicitly if this is intended."
         )
@@ -306,17 +307,17 @@ def _normalize_assignment_arrays(
     if a_store.size == 0 or a_emp.size == 0:
         return None
     if a_store.shape[0] != a_emp.shape[0]:
-        raise RuntimeError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
+        raise SalesError("employee assignment arrays must align (StoreKey vs EmployeeKey)")
 
     start_raw = np.asarray(assign_start, dtype="datetime64[D]")
     end_raw = np.asarray(assign_end, dtype="datetime64[D]")
     if start_raw.shape[0] != a_store.shape[0] or end_raw.shape[0] != a_store.shape[0]:
-        raise RuntimeError("employee assignment arrays must align (dates vs keys)")
+        raise SalesError("employee assignment arrays must align (dates vs keys)")
 
     # Optional aligned arrays
     fte = np.ones(a_store.shape[0], dtype=np.float64) if assign_fte is None else np.asarray(assign_fte, dtype=np.float64)
     if fte.shape[0] != a_store.shape[0]:
-        raise RuntimeError("employee_assign_fte must align with employee assignments")
+        raise SalesError("employee_assign_fte must align with employee assignments")
 
     is_primary = (
         np.zeros(a_store.shape[0], dtype=bool)
@@ -324,7 +325,7 @@ def _normalize_assignment_arrays(
         else np.asarray(assign_is_primary, dtype=bool)
     )
     if is_primary.shape[0] != a_store.shape[0]:
-        raise RuntimeError("employee_assign_is_primary must align with employee assignments")
+        raise SalesError("employee_assign_is_primary must align with employee assignments")
 
     FAR_FUTURE = np.datetime64("2262-04-11", "D")
     FAR_PAST = np.datetime64("1900-01-01", "D")
@@ -561,7 +562,7 @@ def _build_brand_prob_by_month_rotate_winner(
     brand_product_counts: np.ndarray | None = None,
 ) -> np.ndarray:
     if T <= 0 or B <= 0:
-        raise RuntimeError(f"Invalid T/B for brand_prob_by_month: T={T}, B={B}")
+        raise SalesError(f"Invalid T/B for brand_prob_by_month: T={T}, B={B}")
 
     year_len = max(1, int(year_len_months))
 
@@ -707,9 +708,19 @@ def init_sales_worker(worker_cfg: dict) -> None:
             returns_min_lag_days = returns_max_lag_days
         returns_reason_keys = worker_cfg.get("returns_reason_keys")
         returns_reason_probs = worker_cfg.get("returns_reason_probs")
+        returns_full_line_probability = float(worker_cfg.get("returns_full_line_probability", 0.85))
+        returns_split_return_rate = float(worker_cfg.get("returns_split_return_rate", 0.0))
+        returns_max_splits = int(worker_cfg.get("returns_max_splits", 3))
+        returns_split_min_gap = int(worker_cfg.get("returns_split_min_gap", 3))
+        returns_split_max_gap = int(worker_cfg.get("returns_split_max_gap", 20))
+        returns_event_key_capacity = int(worker_cfg.get("returns_event_key_capacity", 100000))
+        returns_logistics_keys = worker_cfg.get("returns_logistics_keys", [])
 
         if sales_output in {"sales_order", "both"}:
             skip_order_cols = False
+
+        override_distinct_ratio = worker_cfg.get("override_distinct_ratio")
+        override_max_distinct_ratio = worker_cfg.get("override_max_distinct_ratio")
 
         partition_enabled = bool(worker_cfg.get("partition_enabled", False))
         partition_cols = worker_cfg.get("partition_cols") or []
@@ -1027,6 +1038,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
         returns_enabled=bool(returns_enabled),
         parquet_dict_exclude=set(parquet_dict_exclude) if parquet_dict_exclude else None,
         models_cfg=models_cfg if isinstance(models_cfg, Mapping) else None,
+        total_rows=int(worker_cfg.get("total_rows", 0)),
     )
 
     # ---- Budget lookups (already built in main process, passed as flat keys) ----
@@ -1095,6 +1107,15 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "returns_max_lag_days": int(returns_max_lag_days),
             "returns_reason_keys": returns_reason_keys,
             "returns_reason_probs": returns_reason_probs,
+            "returns_full_line_probability": returns_full_line_probability,
+            "returns_split_return_rate": returns_split_return_rate,
+            "returns_max_splits": returns_max_splits,
+            "returns_split_min_gap": returns_split_min_gap,
+            "returns_split_max_gap": returns_split_max_gap,
+            "returns_event_key_capacity": returns_event_key_capacity,
+            "override_distinct_ratio": override_distinct_ratio,
+            "override_max_distinct_ratio": override_max_distinct_ratio,
+            "returns_logistics_keys": returns_logistics_keys,
             # EMPLOYEE assignment (canonical + optional legacy)
             "salesperson_effective_by_store": salesperson_effective_by_store,
             "salesperson_by_store_month": salesperson_by_store_month,

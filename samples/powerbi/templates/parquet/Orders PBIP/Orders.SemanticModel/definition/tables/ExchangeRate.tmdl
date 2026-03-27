@@ -1,0 +1,74 @@
+table ExchangeRate
+	lineageTag: d5b7aed9-54bc-48b0-b45e-9a3841a391bd
+
+	column Date
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 29353264-d554-4f45-892c-d9a6283ea7be
+		summarizeBy: none
+		sourceColumn: Date
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column FromCurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 0492e7e4-d7df-464e-a2c6-1850e587d955
+		summarizeBy: count
+		sourceColumn: FromCurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ToCurrencyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8e929d43-ab90-495c-a3cb-2e440a25b83b
+		summarizeBy: count
+		sourceColumn: ToCurrencyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column FromCurrency
+		dataType: string
+		lineageTag: cbcb9911-d82a-432d-81e0-b0d43ed9f24e
+		summarizeBy: none
+		sourceColumn: FromCurrency
+
+		annotation SummarizationSetBy = Automatic
+
+	column ToCurrency
+		dataType: string
+		lineageTag: f0ddede6-0cc9-4110-86f4-de7fc6d6812b
+		summarizeBy: none
+		sourceColumn: ToCurrency
+
+		annotation SummarizationSetBy = Automatic
+
+	column Rate
+		dataType: decimal
+		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		lineageTag: 4286af9b-fa6f-4969-b38e-45a36d5d49b7
+		summarizeBy: sum
+		sourceColumn: Rate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+
+	partition ExchangeRate = m
+		mode: import
+		queryGroup: Fact
+		source =
+				let
+				    Source = FxReadParquetFile ( "dimensions\exchange_rates" ),
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"Rate", Currency.Type}}),
+				    #"Rounded Off" = Table.TransformColumns(#"Changed Type",{{"Rate", each Number.Round(_, 2), Currency.Type}})
+				in
+				    #"Rounded Off"
+
+	annotation PBI_ResultType = Table
+

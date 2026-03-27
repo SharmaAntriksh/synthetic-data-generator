@@ -29,6 +29,7 @@ from src.defaults import (
     WAREHOUSE_TYPES,
     WAREHOUSE_TYPES_P,
 )
+from src.exceptions import DimensionError
 from src.utils.logging_utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
@@ -292,7 +293,7 @@ def generate_warehouse_table(
     online = stores_df[sk >= ONLINE_STORE_KEY_BASE].copy()
 
     if "StoreZone" not in physical.columns:
-        raise ValueError("stores.parquet missing StoreZone column")
+        raise DimensionError("stores.parquet missing StoreZone column")
 
     enriched = _enrich_with_geography(physical, parquet_dims)
     enriched["StoreZone"] = physical["StoreZone"].values

@@ -332,7 +332,7 @@ AND NOT EXISTS (
 )
 BEGIN
     CREATE INDEX IX_SalesReturn_NaturalKey
-    ON dbo.SalesReturn ([SalesOrderNumber], [SalesOrderLineNumber], [ReturnDate], [ReturnReasonKey]);
+    ON dbo.SalesReturn ([SalesOrderNumber], [SalesOrderLineNumber], [ReturnSequence]);
 END;
 GO
 

@@ -64,16 +64,17 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
     },
 
     # ------------------------------------------------------------------
-    # steady — Mature business. Most customers exist from early on,
-    #          low churn, mild seasonality, predictable month-to-month.
+    # steady — Mature business. Nearly all customers exist from the start,
+    #          very low churn, mild seasonality, predictable month-to-month.
+    #          Should produce a flat, stable customer count over time.
     # ------------------------------------------------------------------
     "steady": {
         "lifecycle": {
             "enable_churn": True,
-            "base_monthly_churn": 0.005,
-            "min_tenure_months": 8,
-            "initial_active_customers": 0.30,
-            "initial_spread_months": 12,
+            "base_monthly_churn": 0.003,
+            "min_tenure_months": 12,
+            "initial_active_customers": 0.95,
+            "initial_spread_months": 1,
             "acquisition_curve": "logistic",
             "acquisition_params": {"midpoint": 0.40, "steepness": 4.0},
         },
@@ -124,8 +125,9 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
 
     # ------------------------------------------------------------------
     # instant — All customers available from day one, no lifecycle drama.
-    #           Flat participation, no ramp, no churn. Simplest output —
-    #           useful for testing or when you just want uniform data.
+    #           Flat participation, no ramp, no churn, no seasonality.
+    #           Simplest output — useful for testing, teaching, or when
+    #           you just want uniform data without lifecycle complexity.
     # ------------------------------------------------------------------
     "instant": {
         "lifecycle": {
@@ -138,13 +140,42 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
             "acquisition_params": {"midpoint": 0.50, "steepness": 2.0},
         },
         "demand": {
-            "distinct_ratio": 0.60,
+            "distinct_ratio": 0.80,
             "new_customer_share": 0.0,
             "max_new_fraction_per_month": 0.0,
             "cycle_amplitude": 0.0,
             "discovery_shape": 0.0,
-            "participation_noise": 0.05,
+            "participation_noise": 0.02,
             "seasonal_spikes": [],
+        },
+    },
+
+    # ------------------------------------------------------------------
+    # decline — Shrinking business. Large existing customer base eroding
+    #           over time. High churn, minimal new acquisition. Pairs
+    #           naturally with the "decline" macro demand trend.
+    # ------------------------------------------------------------------
+    "decline": {
+        "lifecycle": {
+            "enable_churn": True,
+            "base_monthly_churn": 0.045,
+            "min_tenure_months": 6,
+            "initial_active_customers": 0.90,
+            "initial_spread_months": 3,
+            "acquisition_curve": "logistic",
+            "acquisition_params": {"midpoint": 0.70, "steepness": 3.0},
+        },
+        "demand": {
+            "distinct_ratio": 0.60,
+            "new_customer_share": 0.03,
+            "max_new_fraction_per_month": 0.02,
+            "cycle_amplitude": 0.20,
+            "discovery_shape": -0.3,
+            "participation_noise": 0.15,
+            "seasonal_spikes": [
+                {"month": 11, "boost": 0.30},
+                {"month": 12, "boost": 0.20},
+            ],
         },
     },
 }

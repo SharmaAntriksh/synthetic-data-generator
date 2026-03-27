@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping, Sequence, Tuple
 
-from src.utils.static_schemas import STATIC_SCHEMAS, get_dates_schema, get_sales_schema
+from src.utils.static_schemas import STATIC_SCHEMAS, BIGINT_NN, get_dates_schema, get_sales_schema, _INT32_HALF
 from src.utils.logging_utils import work
 from src.tools.sql.sql_helpers import (
     sql_escape_literal as _sql_escape_literal,
@@ -92,12 +92,11 @@ def create_table_from_schema(
     _validate_sql_identifier(table_name, "table name")
     _validate_sql_identifier(schema, "schema name")
     fq_table = _qualify(schema, table_name)
-    object_id_name = _sql_escape_literal(f"{schema}.{table_name}")
 
     lines: list[str] = []
     if drop_existing:
         lines.append(
-            f"IF OBJECT_ID(N'{object_id_name}', N'U') IS NOT NULL\n"
+            f"IF OBJECT_ID(N'{_sql_escape_literal(fq_table)}', N'U') IS NOT NULL\n"
             f"    DROP TABLE {fq_table};"
         )
         if include_go:
@@ -117,8 +116,6 @@ def create_table_from_schema(
 
 
 def generate_all_create_tables(
-    dim_folder,   # kept for backward compat (unused)
-    fact_folder,  # kept for backward compat (unused)
     output_folder,
     cfg,
     skip_order_cols: bool = False,
@@ -136,8 +133,6 @@ def generate_all_create_tables(
       - get_sales_schema(skip_order_cols) for Sales
       - get_dates_schema(cfg['dates']) for Dates
     """
-    _ = dim_folder
-    _ = fact_folder
 
     schema_dir = Path(output_folder) / "schema"
     schema_dir.mkdir(parents=True, exist_ok=True)
@@ -207,7 +202,7 @@ def generate_all_create_tables(
         fact_scripts.append(
             create_table_from_schema(
                 TABLE_SALES,
-                get_sales_schema(eff_skip_order_cols),
+                get_sales_schema(eff_skip_order_cols, total_rows=int(getattr(getattr(cfg, "sales", None), "total_rows", 0) or 0)),
                 schema=schema,
                 drop_existing=drop_existing,
                 include_go=True,
@@ -238,10 +233,17 @@ def generate_all_create_tables(
     # - If sales_order tables exist: emit after detail
     # - Else: emit after Sales (if present) or as the only fact
     if include_returns and (include_sales or include_sales_order):
+        _ret_schema = list(_require_static_schema(TABLE_SALES_RETURN))
+        _tr = int(getattr(getattr(cfg, "sales", None), "total_rows", 0) or 0)
+        if _tr > _INT32_HALF:
+            _ret_schema = [
+                ("SalesOrderNumber", BIGINT_NN) if n == "SalesOrderNumber" else (n, t)
+                for n, t in _ret_schema
+            ]
         fact_scripts.append(
             create_table_from_schema(
                 TABLE_SALES_RETURN,
-                _require_static_schema(TABLE_SALES_RETURN),
+                _ret_schema,
                 schema=schema,
                 drop_existing=drop_existing,
                 include_go=True,
