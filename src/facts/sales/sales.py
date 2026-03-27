@@ -858,14 +858,23 @@ def generate_sales_fact(
         customer_end_month = np.full(len(customer_keys), -1, dtype=np.int64)
 
     # --- Derive is_active_in_sales ---
-    # All customers participate in sales during their active window
-    # (customer_start_month..customer_end_month). Churned customers are
-    # time-bounded by customer_end_month, not excluded entirely — this
-    # ensures they appear in sales for the months they were active.
+    # active_ratio marks a permanent inactive fraction (never transact).
+    # Derived from seed for reproducibility without a persisted column.
     if "IsActiveInSales" in cust_df.columns:
         is_active_in_sales = _as_np(cust_df["IsActiveInSales"], np.int32)
     else:
-        is_active_in_sales = np.ones(len(customer_keys), dtype=np.int32)
+        _cust_active_ratio = _float_or(
+            _cfg_get(cfg, ["customers", "active_ratio"], 1.0), 1.0
+        )
+        N_cust = len(customer_keys)
+        active_count = int(np.floor(N_cust * _cust_active_ratio))
+        if 0 < active_count < N_cust:
+            _ar_rng = np.random.default_rng(seed + 7)
+            active_idx = _ar_rng.choice(N_cust, size=active_count, replace=False)
+            is_active_in_sales = np.zeros(N_cust, dtype=np.int32)
+            is_active_in_sales[active_idx] = 1
+        else:
+            is_active_in_sales = np.ones(N_cust, dtype=np.int32)
 
     # Extract customer weight from the already-loaded DataFrame (no extra parquet open)
     customer_base_weight = None
@@ -1559,28 +1568,6 @@ def generate_sales_fact(
                 State.models_cfg = _models_copy
 
     # ------------------------------------------------------------
-    # Derive distinct_ratio / max_distinct_ratio from active_ratio
-    # so customer participation matches the user's intent.
-    # Passed as explicit worker_cfg overrides (plain floats survive pickling).
-    # ------------------------------------------------------------
-    _cust_active_ratio = float(getattr(getattr(cfg, "customers", None), "active_ratio", 0.98) or 0.98)
-    _override_distinct_ratio = None
-    _override_max_distinct_ratio = None
-    if _cust_active_ratio > 0:
-        _m = State.models_cfg
-        _cd = _m.get("customers", {}) or {}
-        _cur_dr = float(_cd.get("distinct_ratio", 0.55) if isinstance(_cd, dict) else getattr(_cd, "distinct_ratio", 0.55))
-        if _cur_dr < _cust_active_ratio:
-            _override_distinct_ratio = min(_cust_active_ratio * 0.97, 0.99)
-            debug(f"distinct_ratio raised from {_cur_dr:.2f} to {_override_distinct_ratio:.2f} (active_ratio={_cust_active_ratio:.2f})")
-
-        _md = _m.get("macro_demand", {}) or {}
-        _cur_mdr = float(_md.get("max_distinct_ratio", 0.70) if isinstance(_md, dict) else getattr(_md, "max_distinct_ratio", 0.70))
-        if _cur_mdr < _cust_active_ratio:
-            _override_max_distinct_ratio = min(_cust_active_ratio, 0.99)
-            debug(f"max_distinct_ratio raised from {_cur_mdr:.2f} to {_override_max_distinct_ratio:.2f} (active_ratio={_cust_active_ratio:.2f})")
-
-    # ------------------------------------------------------------
     # Worker configuration (keep keys stable for compatibility)
     # ------------------------------------------------------------
     worker_cfg = dict(
@@ -1655,9 +1642,6 @@ def generate_sales_fact(
         partition_cols=partition_cols,
 
         models_cfg=State.models_cfg,
-        # Active ratio overrides (plain floats, survive pickling)
-        override_distinct_ratio=_override_distinct_ratio,
-        override_max_distinct_ratio=_override_max_distinct_ratio,
         # Returns (optional)
         returns_enabled=bool(returns_enabled_effective),
         returns_rate=float(returns_rate),

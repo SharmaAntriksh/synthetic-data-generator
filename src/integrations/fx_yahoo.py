@@ -208,7 +208,7 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    curr_list = currencies or CURRENCY_DEFAULT_LIST
+    curr_list = currencies if currencies is not None else CURRENCY_DEFAULT_LIST
 
     start_ts = pd.to_datetime(start_date).normalize()
     end_ts = pd.to_datetime(end_date).normalize()

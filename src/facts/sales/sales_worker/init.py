@@ -719,9 +719,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
         if sales_output in {"sales_order", "both"}:
             skip_order_cols = False
 
-        override_distinct_ratio = worker_cfg.get("override_distinct_ratio")
-        override_max_distinct_ratio = worker_cfg.get("override_max_distinct_ratio")
-
         partition_enabled = bool(worker_cfg.get("partition_enabled", False))
         partition_cols = worker_cfg.get("partition_cols") or []
         models_cfg = worker_cfg.get("models_cfg")
@@ -1113,8 +1110,6 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "returns_split_min_gap": returns_split_min_gap,
             "returns_split_max_gap": returns_split_max_gap,
             "returns_event_key_capacity": returns_event_key_capacity,
-            "override_distinct_ratio": override_distinct_ratio,
-            "override_max_distinct_ratio": override_max_distinct_ratio,
             "returns_logistics_keys": returns_logistics_keys,
             # EMPLOYEE assignment (canonical + optional legacy)
             "salesperson_effective_by_store": salesperson_effective_by_store,
