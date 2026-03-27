@@ -327,11 +327,18 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     ]
 
     core_cols = [c for c in _PRODUCTS_CORE_COLS if c in df.columns]
-    # All SCD2 versions share identical analytical attributes → 1:1 with Products
+    # ProductProfile: one row per product (IsCurrent=1 only).
+    # Analytical attributes are static across SCD2 versions — keyed on the
+    # current version's ProductKey for a clean 1:1 FK to Products.
     profile_cols = ["ProductKey"] + [c for c in df.columns if c not in core_cols]
 
     products_df = df[core_cols].copy()
-    profile_df = df[profile_cols].copy()
+    if "IsCurrent" in df.columns:
+        profile_df = df.loc[df["IsCurrent"] == 1, profile_cols].copy().reset_index(drop=True)
+        if profile_df.empty:
+            raise DimensionError("No IsCurrent=1 rows in products — cannot build ProductProfile")
+    else:
+        profile_df = df[profile_cols].drop_duplicates(subset=["ProductKey"]).reset_index(drop=True)
 
     # Reorder profile columns to match static_schemas.py (SQL CREATE TABLE order).
     # BULK INSERT is positional — CSV column order must match the schema exactly.

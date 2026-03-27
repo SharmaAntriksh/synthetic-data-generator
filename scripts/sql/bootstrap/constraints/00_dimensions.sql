@@ -146,7 +146,7 @@ BEGIN
     ALTER TABLE dbo.Products CHECK CONSTRAINT CK_Products_VersionNumber;
 END;
 
--- ProductProfile (1:1 with Products)
+-- ProductProfile (one row per product, IsCurrent=1 version only)
 IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
 AND NOT EXISTS (
     SELECT 1
@@ -586,7 +586,7 @@ BEGIN
     ALTER TABLE dbo.ProductSubcategory CHECK CONSTRAINT FK_ProductSubcategory_ProductCategory;
 END;
 
--- ProductProfile -> Products (1:1)
+-- ProductProfile -> Products (1:1 on ProductKey, IsCurrent=1 version only)
 IF OBJECT_ID(N'dbo.ProductProfile', N'U') IS NOT NULL
 AND OBJECT_ID(N'dbo.Products', N'U') IS NOT NULL
 AND NOT EXISTS (

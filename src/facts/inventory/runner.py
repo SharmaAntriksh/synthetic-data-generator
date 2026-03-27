@@ -124,39 +124,18 @@ def _update_product_profile_abc(
 ) -> None:
     """Write volume-based ABC back to product_profile.parquet.
 
-    ProductProfile now has one row per SCD2 version.  Sales demand only
-    references current-version ProductKeys, so we propagate ABC to all
-    versions of the same product via BaseProductKey from products.parquet.
+    ProductProfile has one row per product (IsCurrent=1 version only),
+    keyed on ProductKey. Sales demand arrays use the same ProductKey,
+    so the lookup is direct — no ProductID mapping needed.
     """
     pp_path = parquet_dims / "product_profile.parquet"
     if not pp_path.exists():
         return
 
-    # Build ProductKey -> ABC from demand-recomputed attrs (current versions)
+    # Build ProductKey -> ABC from demand-recomputed attrs
     new_abc = product_attrs_arrays["ABCClassification"]
     pa_pk = product_attrs_arrays["ProductKey"]
     abc_by_pk: Dict[int, str] = dict(zip(pa_pk, new_abc))
-
-    # Propagate ABC to historical SCD2 versions via BaseProductKey
-    products_path = parquet_dims / "products.parquet"
-    if products_path.exists():
-        try:
-            prods = pd.read_parquet(
-                str(products_path), columns=["ProductKey", "BaseProductKey"],
-            )
-            pk_arr = prods["ProductKey"].to_numpy(dtype=np.int64)
-            bpk_arr = prods["BaseProductKey"].to_numpy(dtype=np.int64)
-            # Pass 1: build BaseProductKey -> ABC from known current-version keys
-            abc_by_base: Dict[int, str] = {}
-            for pk_int, bpk_int in zip(pk_arr, bpk_arr):
-                if pk_int in abc_by_pk and bpk_int not in abc_by_base:
-                    abc_by_base[bpk_int] = abc_by_pk[pk_int]
-            # Pass 2: backfill historical versions from their base product
-            for pk_int, bpk_int in zip(pk_arr, bpk_arr):
-                if pk_int not in abc_by_pk and bpk_int in abc_by_base:
-                    abc_by_pk[pk_int] = abc_by_base[bpk_int]
-        except (KeyError, ValueError, OSError):
-            pass  # fall back to direct ProductKey lookup only
 
     table = pq.read_table(str(pp_path))
     pk_arr = np.array(table.column("ProductKey").to_pylist(), dtype=np.int64)

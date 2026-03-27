@@ -82,9 +82,9 @@ BEGIN
         DECLARE @missing_pp INT;
         SELECT @missing_pp = COUNT(*) FROM dbo.Products p
         LEFT JOIN dbo.ProductProfile pp ON pp.ProductKey = p.ProductKey
-        WHERE pp.ProductKey IS NULL;
-        INSERT INTO #R VALUES ('Referential', 'ProductProfile covers all products',
-            'Every product (all SCD2 versions) must have a ProductProfile row',
+        WHERE p.IsCurrent = 1 AND pp.ProductKey IS NULL;
+        INSERT INTO #R VALUES ('Referential', 'ProductProfile covers all current products',
+            'Every IsCurrent=1 product must have a ProductProfile row',
             CASE WHEN @missing_pp = 0 THEN 'PASS' ELSE 'FAIL' END,
             CAST(@missing_pp AS VARCHAR) + ' missing');
 
