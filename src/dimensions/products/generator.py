@@ -284,7 +284,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     # -----------------------------------------------------------------
     N = len(df)
     df["ProductID"] = df["ProductKey"].copy()
-    df["VersionNumber"] = np.ones(N, dtype="int64")
+    df["VersionNumber"] = np.ones(N, dtype=np.int8)
 
     # Resolve date range for SCD2 effective dates
     try:
@@ -296,7 +296,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
 
     df["EffectiveStartDate"] = start_date
     df["EffectiveEndDate"] = SCD2_END_OF_TIME
-    df["IsCurrent"] = np.ones(N, dtype="int64")
+    df["IsCurrent"] = np.ones(N, dtype=np.int8)
 
     # SCD2 expansion (if enabled)
     scd2_cfg = getattr(p, "scd2", None)

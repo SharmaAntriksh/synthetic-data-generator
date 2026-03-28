@@ -140,7 +140,7 @@ def build_return_reason_dimension(
 
     rr = _normalize_reasons(reasons)
 
-    keys = pa.array([x.key for x in rr], type=pa.int64())
+    keys = pa.array([x.key for x in rr], type=pa.int32())
     labels = pa.array([x.reason for x in rr], type=pa.string())
     cats = pa.array([x.category for x in rr], type=pa.string())
 

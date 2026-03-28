@@ -20,7 +20,6 @@ from src.dimensions.customers.subscriptions.helpers import (
     build_type_groups,
     choose_plans_diverse,
     compute_customer_windows,
-    expand_subscription_periods,
     advance_months,
     months_between,
     ns_to_year_month,
@@ -252,106 +251,6 @@ class TestCustomerWindows:
 # Period expansion tests
 # ===================================================================
 
-class TestExpandSubscriptionPeriods:
-    def _sub_ns(self, date_str: str) -> int:
-        return int(pd.Timestamp(date_str).value)
-
-    def test_monthly_basic(self):
-        sub_ns = self._sub_ns("2024-01-15")
-        g_end_ns = self._sub_ns("2024-06-30")
-        result = expand_subscription_periods(
-            sub_key=1, ck=100, pk=10,
-            sub_ns=sub_ns, cancel_ns=None, trial_end_ns=None,
-            cycle_months=1, cycle_price=15.49, g_end_ns=g_end_ns,
-        )
-        sk, ck_l, pk_l, ps, pe, price, first, churn, trial, cyc = result
-        assert len(sk) == 6  # Jan-Jun
-        assert all(s == 1 for s in sk)
-        assert all(c == 100 for c in ck_l)
-        assert first[0] == 1
-        assert all(f == 0 for f in first[1:])
-        assert all(t == 0 for t in trial)
-        assert all(ch == 0 for ch in churn)
-        assert cyc == [1, 2, 3, 4, 5, 6]
-
-    def test_quarterly_cycle(self):
-        sub_ns = self._sub_ns("2024-01-01")
-        g_end_ns = self._sub_ns("2024-12-31")
-        result = expand_subscription_periods(
-            sub_key=1, ck=1, pk=1,
-            sub_ns=sub_ns, cancel_ns=None, trial_end_ns=None,
-            cycle_months=3, cycle_price=30.0, g_end_ns=g_end_ns,
-        )
-        sk = result[0]
-        assert len(sk) == 4  # 4 quarters
-
-    def test_annual_cycle(self):
-        sub_ns = self._sub_ns("2024-01-01")
-        g_end_ns = self._sub_ns("2025-12-31")
-        result = expand_subscription_periods(
-            sub_key=1, ck=1, pk=1,
-            sub_ns=sub_ns, cancel_ns=None, trial_end_ns=None,
-            cycle_months=12, cycle_price=100.0, g_end_ns=g_end_ns,
-        )
-        sk = result[0]
-        assert len(sk) == 2  # 2 years
-
-    def test_trial_period_first_cycle_free(self):
-        sub_ns = self._sub_ns("2024-01-15")
-        trial_end_ns = sub_ns + 14 * _NS_PER_DAY
-        g_end_ns = self._sub_ns("2024-06-30")
-        result = expand_subscription_periods(
-            sub_key=1, ck=1, pk=1,
-            sub_ns=sub_ns, cancel_ns=None, trial_end_ns=trial_end_ns,
-            cycle_months=1, cycle_price=15.49, g_end_ns=g_end_ns,
-        )
-        _, _, _, _, _, price, _, _, trial, _ = result
-        assert trial[0] == 1
-        assert price[0] == 0.0
-        assert all(t == 0 for t in trial[1:])
-        assert all(p == 15.49 for p in price[1:])
-
-    def test_churn_last_period(self):
-        sub_ns = self._sub_ns("2024-01-01")
-        cancel_ns = self._sub_ns("2024-03-15")
-        g_end_ns = self._sub_ns("2025-12-31")
-        result = expand_subscription_periods(
-            sub_key=1, ck=1, pk=1,
-            sub_ns=sub_ns, cancel_ns=cancel_ns, trial_end_ns=None,
-            cycle_months=1, cycle_price=10.0, g_end_ns=g_end_ns,
-        )
-        _, _, _, _, _, _, _, churn, _, _ = result
-        assert churn[-1] == 1
-        assert all(ch == 0 for ch in churn[:-1])
-
-    def test_single_month_subscription(self):
-        sub_ns = self._sub_ns("2024-06-15")
-        cancel_ns = self._sub_ns("2024-06-30")
-        g_end_ns = self._sub_ns("2025-12-31")
-        result = expand_subscription_periods(
-            sub_key=1, ck=1, pk=1,
-            sub_ns=sub_ns, cancel_ns=cancel_ns, trial_end_ns=None,
-            cycle_months=1, cycle_price=5.0, g_end_ns=g_end_ns,
-        )
-        sk = result[0]
-        assert len(sk) == 1
-
-    def test_period_dates_are_month_boundaries(self):
-        sub_ns = self._sub_ns("2024-03-15")
-        g_end_ns = self._sub_ns("2024-05-31")
-        result = expand_subscription_periods(
-            sub_key=1, ck=1, pk=1,
-            sub_ns=sub_ns, cancel_ns=None, trial_end_ns=None,
-            cycle_months=1, cycle_price=10.0, g_end_ns=g_end_ns,
-        )
-        _, _, _, ps, pe, _, _, _, _, _ = result
-        for p_start in ps:
-            assert p_start.day == 1
-        for p_end in pe:
-            # Last day of month
-            assert p_end == month_end_date(p_end.year, p_end.month)
-
-
 # ===================================================================
 # Bridge schema tests
 # ===================================================================
@@ -389,12 +288,6 @@ class TestDeterminism:
             results.append(list(plans))
         assert results[0] == results[1] == results[2]
 
-    def test_period_expansion_deterministic(self):
-        sub_ns = int(pd.Timestamp("2024-01-01").value)
-        g_end_ns = int(pd.Timestamp("2024-12-31").value)
-        r1 = expand_subscription_periods(1, 1, 1, sub_ns, None, None, 1, 10.0, g_end_ns)
-        r2 = expand_subscription_periods(1, 1, 1, sub_ns, None, None, 1, 10.0, g_end_ns)
-        assert r1 == r2
 
 
 # ===================================================================
@@ -438,13 +331,17 @@ class TestEdgeCases:
         assert span_days[0] == 0
         assert span_days[0] < 30  # would be filtered by eligibility
 
-    def test_zero_month_subscription_gets_one_period(self):
-        """If cancel_ns == sub_ns, should still produce at least 1 period."""
+    def test_zero_month_window_eligible(self):
+        """A customer window of zero days should still be handled without crash."""
         sub_ns = int(pd.Timestamp("2024-06-15").value)
-        result = expand_subscription_periods(
-            sub_key=1, ck=1, pk=1,
-            sub_ns=sub_ns, cancel_ns=sub_ns, trial_end_ns=None,
-            cycle_months=1, cycle_price=10.0,
-            g_end_ns=int(pd.Timestamp("2025-12-31").value),
+        # Zero-length windows are filtered by eligibility in bulk generation;
+        # verify the compute_customer_windows helper handles them gracefully.
+        cust = pd.DataFrame({
+            "CustomerKey": [1],
+            "CustomerStartDate": [pd.Timestamp("2024-06-15")],
+            "CustomerEndDate": [pd.NaT],
+        })
+        ck, lo, hi = compute_customer_windows(
+            cust, pd.Timestamp("2024-06-15"), pd.Timestamp("2024-06-15"),
         )
-        assert len(result[0]) >= 1
+        assert len(ck) == 1

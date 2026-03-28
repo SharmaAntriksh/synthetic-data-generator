@@ -128,7 +128,7 @@ def build_dim_plans(g_start: pd.Timestamp) -> pd.DataFrame:
         g_start + pd.Timedelta(days=int(r[12])) for r in PLANS_CATALOG
     ])
     return pd.DataFrame({
-        "PlanKey":          np.arange(1, k + 1, dtype=np.int64),
+        "PlanKey":          np.arange(1, k + 1, dtype=np.int32),
         "PlanName":         [r[0] for r in PLANS_CATALOG],
         "PlanType":         [r[1] for r in PLANS_CATALOG],
         "Category":         [r[2] for r in PLANS_CATALOG],
@@ -140,9 +140,9 @@ def build_dim_plans(g_start: pd.Timestamp) -> pd.DataFrame:
         "AnnualPrice":      pd.array([r[8] for r in PLANS_CATALOG], dtype="Float64"),
         "Tier":             [r[9] for r in PLANS_CATALOG],
         "MaxUsers":         np.array([r[10] for r in PLANS_CATALOG], dtype=np.int32),
-        "HasFreeTrial":     np.array([r[11] for r in PLANS_CATALOG], dtype=np.int32),
+        "HasFreeTrial":     np.array([r[11] for r in PLANS_CATALOG], dtype=np.int8),
         "LaunchDate":       launch_dates,
-        "IsActiveFlag":     np.ones(k, dtype=np.int32),
+        "IsActiveFlag":     np.ones(k, dtype=np.int8),
     })
 
 
@@ -183,7 +183,7 @@ def compute_customer_windows(
     g_end: pd.Timestamp,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Extract sorted (CustomerKey, start_ns, end_ns) arrays, clamped to [g_start, g_end]."""
-    cust_keys = customers["CustomerKey"].astype(np.int64).to_numpy()
+    cust_keys = customers["CustomerKey"].astype(np.int32).to_numpy()
     order = np.argsort(cust_keys)
     cust_keys = cust_keys[order]
 
@@ -237,75 +237,6 @@ def write_empty_bridge(out_path: Path) -> None:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(schema.empty_table(), str(out_path))
-
-
-def expand_subscription_periods(
-    sub_key: int,
-    ck: int,
-    pk: int,
-    sub_ns: int,
-    cancel_ns: Optional[int],
-    trial_end_ns: Optional[int],
-    cycle_months: int,
-    cycle_price: float,
-    g_end_ns: int,
-) -> Tuple[
-    List[int], List[int], List[int],
-    List[date], List[date], List[float],
-    List[int], List[int], List[int], List[int],
-]:
-    """Expand a single subscription into billing-period rows.
-
-    Pre-computes the number of periods to avoid incremental list growth.
-    """
-    sub_y, sub_m = ns_to_year_month(sub_ns)
-    end_ref = cancel_ns if cancel_ns is not None else g_end_ns
-    end_y, end_m = ns_to_year_month(end_ref)
-    n_months = months_between(sub_y, sub_m, end_y, end_m)
-    if n_months <= 0:
-        n_months = 1
-
-    n_periods = -(-n_months // cycle_months)  # ceil division
-
-    has_cancel = cancel_ns is not None
-    has_trial = trial_end_ns is not None
-
-    # Pre-allocate lists at final size
-    sk_list = [sub_key] * n_periods
-    ck_list = [ck] * n_periods
-    pk_list = [pk] * n_periods
-    ps_list: List[date] = [None] * n_periods  # type: ignore[list-item]
-    pe_list: List[date] = [None] * n_periods  # type: ignore[list-item]
-    price_list = [cycle_price] * n_periods
-    first_list = [0] * n_periods
-    churn_list = [0] * n_periods
-    trial_list = [0] * n_periods
-    cycle_list: List[int] = [0] * n_periods
-
-    y, m = sub_y, sub_m
-    for i in range(n_periods):
-        end_y_p, end_m_p = advance_months(y, m, cycle_months - 1)
-
-        ps_list[i] = month_start_date(y, m)
-        pe_list[i] = month_end_date(end_y_p, end_m_p)
-        cycle_list[i] = i + 1
-
-        if i == 0:
-            first_list[0] = 1
-            if has_trial:
-                trial_list[0] = 1
-                price_list[0] = 0.0
-
-        if i == n_periods - 1 and has_cancel:
-            churn_list[i] = 1
-
-        y, m = advance_months(y, m, cycle_months)
-
-    return (
-        sk_list, ck_list, pk_list,
-        ps_list, pe_list, price_list,
-        first_list, churn_list, trial_list, cycle_list,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +402,7 @@ def generate_subscriptions_bulk(
     # ------------------------------------------------------------------
     # 6. Expand to billing-period rows using np.repeat
     # ------------------------------------------------------------------
-    sub_keys = np.arange(sub_key_start, sub_key_start + total_subs, dtype=np.int64)
+    sub_keys = np.arange(sub_key_start, sub_key_start + total_subs, dtype=np.int32)
 
     r_sk = np.repeat(sub_keys, n_periods)
     r_ck = np.repeat(ck_arr, n_periods)

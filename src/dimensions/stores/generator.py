@@ -700,11 +700,11 @@ def generate_store_table(
             f"({_ONLINE_SK_BASE}). Max physical stores is {_ONLINE_SK_BASE - 1}."
         )
 
-    phys_keys = np.arange(1, n_physical + 1, dtype=np.int64)
-    online_keys = (_ONLINE_SK_BASE + np.arange(1, n_online + 1, dtype=np.int64)) if n_online > 0 else np.array([], dtype=np.int64)
+    phys_keys = np.arange(1, n_physical + 1, dtype=np.int32)
+    online_keys = (_ONLINE_SK_BASE + np.arange(1, n_online + 1, dtype=np.int32)) if n_online > 0 else np.array([], dtype=np.int32)
     store_key = np.concatenate([phys_keys, online_keys])
     df = pd.DataFrame({"StoreKey": store_key})
-    sk = store_key.astype(np.int64)
+    sk = store_key.astype(np.int32)
 
     # StoreNumber — STR-xxxx for physical, ONL-xxxx for online
     store_numbers = np.empty(num_stores, dtype=object)
@@ -977,7 +977,7 @@ def generate_store_table(
                 close_d.astype("datetime64[ns]")
             ).normalize()
 
-    df["OpenFlag"] = (df["Status"] == "Open").astype(np.int64)
+    df["OpenFlag"] = (df["Status"] == "Open").astype(np.int8)
 
     df["SquareFootage"] = _square_footage_from_cfg(
         rng=rng,

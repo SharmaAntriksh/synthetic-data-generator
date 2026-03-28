@@ -100,7 +100,7 @@ def generate_scd2_versions(
 
     # Build result DataFrame by repeating base rows
     result = base_df.iloc[row_idx].reset_index(drop=True)
-    result["VersionNumber"] = ver_within + 1
+    result["VersionNumber"] = (ver_within + 1).astype(np.int8)
     result["EffectiveStartDate"] = pd.to_datetime(eff_dates)
 
     # Apply cumulative price drift for versions > 1
@@ -147,7 +147,7 @@ def generate_scd2_versions(
     same_pid_as_next[-1] = False
 
     eff_end_arr = np.full(total_rows, SCD2_END_OF_TIME, dtype="datetime64[ns]")
-    is_current_arr = np.ones(total_rows, dtype=np.int64)
+    is_current_arr = np.ones(total_rows, dtype=np.int8)
     _shift_mask = np.flatnonzero(same_pid_as_next)
     eff_end_arr[_shift_mask] = eff_start_arr[_shift_mask + 1] - np.timedelta64(1, "D")
     is_current_arr[_shift_mask] = 0

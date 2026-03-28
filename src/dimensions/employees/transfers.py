@@ -314,7 +314,7 @@ def apply_transfers(
                 "EndDate": new_end,
                 "FTE": col_fte[idx],
                 "RoleAtStore": col_role[idx],
-                "IsPrimary": np.int32(1),
+                "IsPrimary": np.int8(1),
                 "TransferReason": str(reason),
                 "Status": new_status,
             })

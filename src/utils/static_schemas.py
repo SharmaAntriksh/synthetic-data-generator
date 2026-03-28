@@ -212,7 +212,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
     "Customers": (
         ("CustomerKey", INT_NN),
         ("CustomerID", INT_NN),
-        ("VersionNumber", INT(not_null=True)),
+        ("VersionNumber", TINYINT(not_null=True)),
         ("EffectiveStartDate", DATE_NN),
         ("EffectiveEndDate", DATE_NN),
         ("IsCurrent", BIT(not_null=True)),
@@ -323,7 +323,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
     "Products": (
         ("ProductKey", INT_NN),
         ("ProductID", INT_NN),
-        ("VersionNumber", INT(not_null=True)),
+        ("VersionNumber", TINYINT(not_null=True)),
         ("EffectiveStartDate", DATE_NN),
         ("EffectiveEndDate", DATE_NN),
         ("IsCurrent", BIT(not_null=True)),
