@@ -220,7 +220,7 @@ def build_worker_schemas(
     # ---------------------------------------------------------------------
     date_cols_by_table: dict[str, list[str]] = {
         TABLE_SALES: ["OrderDate", "DeliveryDate"],
-        TABLE_SALES_ORDER_DETAIL: ["DueDate", "DeliveryDate"],  # FIX: no OrderDate in detail schema
+        TABLE_SALES_ORDER_DETAIL: ["DueDate", "DeliveryDate"],  # OrderDate is order-level (header only)
         TABLE_SALES_ORDER_HEADER: ["OrderDate"],
     }
     if returns_enabled:

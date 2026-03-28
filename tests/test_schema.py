@@ -71,7 +71,7 @@ class TestAppConfigFromYAML:
 
     def test_defaults_dates(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)
-        assert app.defaults.dates.start == "2021-01-01"
+        assert app.defaults.dates.start == "2018-01-01"
         assert app.defaults.dates.end == "2025-12-31"
 
     def test_sales_section(self, normalized_config):
@@ -113,7 +113,7 @@ class TestAppConfigFromYAML:
 
     def test_products_section(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)
-        assert app.products.active_ratio == 0.98
+        assert app.products.active_ratio == 0.96
         assert app.products.pricing is not None
 
     def test_packaging_defaults(self, normalized_config):
@@ -180,7 +180,7 @@ class TestAttributeAccess:
 
     def test_nested_attribute_read(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)
-        assert app.defaults.dates.start == "2021-01-01"
+        assert app.defaults.dates.start == "2018-01-01"
 
     def test_hasattr_existing(self, normalized_config):
         app = AppConfig.from_raw_dict(normalized_config)
@@ -343,7 +343,7 @@ class TestLoadConfigIntegration:
         cfg = load_config_typed("config.yaml")
         assert isinstance(cfg, AppConfig)
         assert cfg.sales.total_rows > 0
-        assert cfg.defaults.dates.start == "2021-01-01"
+        assert cfg.defaults.dates.start == "2018-01-01"
 
     def test_load_config_typed_attribute_access(self):
         from src.engine.config.config import load_config_typed

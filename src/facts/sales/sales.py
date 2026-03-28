@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from src.defaults import ONLINE_SALES_REP_ROLE
-from src.exceptions import SalesError
+from src.exceptions import PackagingError, SalesError
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
 from src.utils.logging_utils import debug, done, info, skip, work
 from src.utils.shared_arrays import SharedArrayGroup
@@ -509,17 +509,19 @@ def _merge_fact_csv_chunks(
         rows_in_current = 0
         file_idx += 1
 
-    _open_next()
-    for chunk_path in csv_chunks:
-        with open(chunk_path, "r", encoding="utf-8") as in_f:
-            next(in_f, None)  # skip header
-            for line in in_f:
-                if rows_in_current >= chunk_size:
-                    _open_next()
-                out_f.write(line)
-                rows_in_current += 1
-    if out_f is not None:
-        out_f.close()
+    try:
+        _open_next()
+        for chunk_path in csv_chunks:
+            with open(chunk_path, "r", encoding="utf-8") as in_f:
+                next(in_f, None)  # skip header
+                for line in in_f:
+                    if rows_in_current >= chunk_size:
+                        _open_next()
+                    out_f.write(line)
+                    rows_in_current += 1
+    finally:
+        if out_f is not None:
+            out_f.close()
 
     # Remove original chunks
     for f in csv_chunks:
@@ -532,7 +534,10 @@ def _merge_fact_csv_chunks(
     out_files: list[Path] = []
     for tmp_f in tmp_files:
         dest = out_dir / tmp_f.name
-        tmp_f.replace(dest)
+        try:
+            tmp_f.replace(dest)
+        except OSError as exc:
+            raise PackagingError(f"Failed to move merged chunk {tmp_f.name} to {dest}: {exc}") from exc
         out_files.append(dest)
 
     # Clean up temp directory

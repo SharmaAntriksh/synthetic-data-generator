@@ -79,6 +79,8 @@ INT_NN = INT(not_null=True)
 INT_NULL = INT(not_null=False)
 BIGINT_NN = BIGINT(not_null=True)
 BIGINT_NULL = BIGINT(not_null=False)
+SMALLINT_NN = SMALLINT(not_null=True)
+TINYINT_NN = TINYINT(not_null=True)
 DATE_NN = DATE(not_null=True)
 DATE_NULL = DATE(not_null=False)
 
@@ -147,8 +149,8 @@ _SALES_SCHEMA: Schema = (
     ("EmployeeKey", INT_NN),
     ("PromotionKey", INT_NN),
     ("CurrencyKey", INT_NN),
-    ("SalesChannelKey", INT_NN),
-    ("TimeKey", INT_NN),
+    ("SalesChannelKey", SMALLINT_NN),
+    ("TimeKey", SMALLINT_NN),
     ("OrderDate", DATE_NN),
     ("DueDate", DATE_NN),
     ("DeliveryDate", DATE_NN),
@@ -158,7 +160,7 @@ _SALES_SCHEMA: Schema = (
     ("UnitCost", DECIMAL(8, 2, not_null=True)),
     ("DiscountAmount", DECIMAL(8, 2, not_null=True)),
     ("DeliveryStatus", VARCHAR(20, not_null=True)),
-    ("IsOrderDelayed", INT_NN),
+    ("IsOrderDelayed", TINYINT_NN),
 )
 
 
@@ -568,7 +570,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("FWYearMonthLabel", VARCHAR(20, not_null=True)),
     ),
     "Time": (
-        ("TimeKey", INT_NN),  # 0..1439 minute-of-day
+        ("TimeKey", SMALLINT_NN),  # 0..1439 minute-of-day
         ("Hour", INT_NN),  # 0..23
         ("Minute", INT_NN),  # 0..59
         ("TimeText", VARCHAR(5, not_null=True)),  # "HH:MM"
@@ -700,7 +702,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("PointsMultiplier", DECIMAL(4, 2, not_null=True)),
     ),
     "SalesChannels": (
-        ("SalesChannelKey", INT_NN),
+        ("SalesChannelKey", SMALLINT_NN),
         ("SalesChannel", VARCHAR(50, not_null=False)),
         ("SalesChannelDescription", VARCHAR(200, not_null=False)),
         ("ChannelGroup", VARCHAR(50, not_null=False)),
