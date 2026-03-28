@@ -70,7 +70,7 @@ def _normalize_cdf(weights: np.ndarray) -> np.ndarray:
 # Backward compatibility: PA_AVAILABLE was defined in the original core.py
 try:
     import pyarrow as pa  # type: ignore
-except Exception:
+except ImportError:
     pa = None
 
 PA_AVAILABLE = pa is not None

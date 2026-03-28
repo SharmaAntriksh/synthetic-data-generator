@@ -8,6 +8,7 @@ from typing import Optional, Sequence, Union
 
 import pandas as pd
 
+from src.exceptions import PackagingError
 from src.utils.logging_utils import stage, done, info
 
 __all__ = [
@@ -442,7 +443,7 @@ def create_final_output_folder(
             try:
                 from deltalake import write_deltalake
             except ImportError as e:
-                raise RuntimeError(
+                raise PackagingError(
                     "deltaparquet mode requested but 'deltalake' is not installed. "
                     "Run `pip install deltalake` or switch to parquet/csv."
                 ) from e

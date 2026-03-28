@@ -11,7 +11,7 @@ import pyarrow.compute as pc
 
 try:
     import pyarrow.parquet as pq
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     pq = None  # type: ignore
 
 from ..sales_logic import State, build_chunk_table
@@ -27,7 +27,7 @@ from ..output_paths import TABLE_SALES, TABLE_SALES_ORDER_DETAIL, TABLE_SALES_OR
 
 try:
     from ..output_paths import TABLE_SALES_RETURN  # type: ignore
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     TABLE_SALES_RETURN = None  # type: ignore
 
 from .init import int_or
