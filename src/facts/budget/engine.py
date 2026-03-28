@@ -148,6 +148,8 @@ def _compute_yearly_budget(
              BudgetGrowthPct, BudgetSalesAmount, BudgetSalesQuantity, BudgetMethod.
     """
     a = actuals_annual.copy()
+    if a.empty:
+        return pd.DataFrame()
     min_year = int(a["Year"].min())
     max_year = int(a["Year"].max())
 

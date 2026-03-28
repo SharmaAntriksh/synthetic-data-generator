@@ -133,15 +133,20 @@ def _g(d, *keys, default=None):
     return cur if cur is not None else default
 
 
+_PROMO_KEYS = (
+    "num_seasonal", "num_clearance", "num_limited", "num_flash",
+    "num_volume", "num_loyalty", "num_bundle", "num_new_customer",
+)
+
+
 def _promo_total(promos) -> int:
-    keys = ("num_seasonal", "num_clearance", "num_limited")
     if isinstance(promos, dict):
-        if all(k in promos for k in keys):
-            return sum(int(promos.get(k, 0) or 0) for k in keys)
+        if any(k in promos for k in _PROMO_KEYS):
+            return sum(int(promos.get(k, 0) or 0) for k in _PROMO_KEYS)
         return int(promos.get("total_promotions", 0) or 0)
     # Pydantic model path
-    if all(hasattr(promos, k) for k in keys):
-        return sum(int(getattr(promos, k, 0) or 0) for k in keys)
+    if any(hasattr(promos, k) for k in _PROMO_KEYS):
+        return sum(int(getattr(promos, k, 0) or 0) for k in _PROMO_KEYS)
     return int(getattr(promos, "total_promotions", 0) or 0)
 
 

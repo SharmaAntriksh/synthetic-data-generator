@@ -142,11 +142,12 @@ DIM_SPECS: List[DimensionSpec] = [
     DimensionSpec(name="loyalty_tiers", cfg_key="loyalty_tiers", run_fn=run_loyalty_tiers, outputs_all=("loyalty_tiers.parquet",)),
     DimensionSpec(name="customer_acquisition_channels", cfg_key="customer_acquisition_channels", run_fn=run_customer_acquisition_channels, outputs_all=("customer_acquisition_channels.parquet",)),
 
-    # 2) Customers
+    # 2) Customers (depends on geography for GeographyKey assignment)
     DimensionSpec(
         name="customers",
         cfg_key="customers",
         run_fn=run_customers,
+        deps=("geography",),
         date_dependent=True,
         inject_global_dates=True,
         outputs_all=("customers.parquet", "customer_profile.parquet", "organization_profile.parquet"),

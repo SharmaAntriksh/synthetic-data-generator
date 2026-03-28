@@ -355,8 +355,14 @@ def _apply_overrides(cfg, sales_cfg, overrides: PipelineOverrides):
         _apply_promotions_total(cfg.promotions, int(overrides.promotions))
 
     if overrides.products_scd2 is not None:
+        if cfg.products.scd2 is None:
+            from src.engine.config.config_schema import ProductsSCD2Config
+            cfg.products.scd2 = ProductsSCD2Config()
         cfg.products.scd2.enabled = bool(overrides.products_scd2)
     if overrides.customers_scd2 is not None:
+        if cfg.customers.scd2 is None:
+            from src.engine.config.config_schema import CustomersSCD2Config
+            cfg.customers.scd2 = CustomersSCD2Config()
         cfg.customers.scd2.enabled = bool(overrides.customers_scd2)
 
     return cfg, sales_cfg

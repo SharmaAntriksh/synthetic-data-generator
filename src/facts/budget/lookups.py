@@ -49,6 +49,8 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
     countries = store_geo["Country"].fillna("Unknown").unique()
     country_to_id = {c: i for i, c in enumerate(countries)}
 
+    if store_geo.empty:
+        raise ValueError("No stores found after geography merge — cannot build budget lookups")
     max_store = int(store_geo["StoreKey"].max())
     store_to_country = np.full(max_store + 1, -1, dtype=np.int32)
     _sg_sk = store_geo["StoreKey"].to_numpy(dtype=np.intp)
@@ -79,6 +81,8 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
     categories = prod_cat["Category"].fillna("Unknown").unique()
     category_to_id = {c: i for i, c in enumerate(categories)}
 
+    if prod_cat.empty:
+        raise ValueError("No products found after category merge — cannot build budget lookups")
     max_prod = int(prod_cat["ProductKey"].max())
     product_to_cat = np.full(max_prod + 1, -1, dtype=np.int32)
     _pc_pk = prod_cat["ProductKey"].to_numpy(dtype=np.intp)

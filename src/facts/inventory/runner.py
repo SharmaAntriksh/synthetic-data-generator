@@ -49,6 +49,12 @@ def _rollup_demand_to_warehouse(
     if not stores_path.exists():
         raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
 
+    store_schema = pq.read_schema(str(stores_path))
+    if "WarehouseKey" not in store_schema.names:
+        raise FileNotFoundError(
+            "stores.parquet is missing WarehouseKey column. "
+            "Run with --regen-dimensions stores to rebuild stores and warehouses."
+        )
     stores = pd.read_parquet(str(stores_path), columns=["StoreKey", "WarehouseKey"])
     sk_to_wk = dict(zip(
         stores["StoreKey"].astype(np.int32),

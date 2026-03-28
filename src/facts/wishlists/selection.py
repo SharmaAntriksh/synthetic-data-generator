@@ -39,6 +39,8 @@ def build_subcategory_pool(
     Returns:
         (pool, global_cdf) — pool for selection loop, global_cdf for fallback picks.
     """
+    if product_weights.size == 0:
+        raise ValueError("No products available for wishlist generation")
     global_cdf = np.cumsum(product_weights)
     global_cdf[-1] = 1.0
 

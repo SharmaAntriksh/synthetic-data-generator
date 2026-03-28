@@ -108,7 +108,7 @@ def get_models_form():
     return {
         # Macro demand
         "demandMode": str(ylf.get("mode", "once")),
-        "demandFactors": list(ylf.get("values", [1.0])),
+        "demandFactors": list(ylf.get("factor_values", None) or ylf.get("values", [1.0])),
         # Quantity
         "qtyLambda": float(qty.get("base_poisson_lambda", 1.7)),
         "qtyMin": int(qty.get("min_qty", 1)),
