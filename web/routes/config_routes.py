@@ -77,7 +77,7 @@ def get_config():
         "salesOutput": str(getattr(sales, "sales_output", "sales")),
         "skipOrderCols": bool(getattr(sales, "skip_order_cols", False)),
         "compression": str(_g(sales, "compression", default="snappy")),
-        "rowGroupSize": int(_g(sales, "row_group_size", default=2000000)),
+        "rowGroupSize": int(_g(sales, "row_group_size", default=1000000)),
         "mergeParquet": bool(getattr(sales, "merge_parquet", True)),
         "partitionEnabled": bool(_g(sales, "partitioning", "enabled", default=True)),
         "maxLinesPerOrder": int(getattr(sales, "max_lines_per_order", 5)),
@@ -112,7 +112,7 @@ def get_config():
         "pctAsia": float(getattr(cust, "pct_asia", 0)),
         "pctOrg": float(getattr(cust, "pct_org", 10)),
         "customerActiveRatio": float(getattr(cust, "active_ratio", 0.90)),
-        "firstYearPct": float(getattr(cust, "first_year_pct", 0.27)),
+        "firstYearPct": float(getattr(cust, "first_year_pct", None) or 0.27),
         "householdPct": float(getattr(cust, "household_pct", 0.35) or 0.35),
         # Customers SCD2
         "custScd2Enabled": bool(getattr(getattr(cust, "scd2", None), "enabled", False)),
@@ -182,8 +182,8 @@ def get_config():
         "subSeed": int(getattr(sub, "seed", 700) or 700),
         # Stores detail
         "storeEnsureIsoCoverage": bool(getattr(stores, "ensure_iso_coverage", True)),
-        "storeOpeningStart": str(_g(stores, "opening", "start", default="1995-01-01")),
-        "storeOpeningEnd": str(_g(stores, "opening", "end", default="2023-12-31")),
+        "storeOpeningStart": str(_g(stores, "opening", "start", default="2018-01-01")),
+        "storeOpeningEnd": str(_g(stores, "opening", "end", default="2025-12-31")),
         "storeClosingEnd": str(getattr(stores, "closing_end", "2028-12-31")),
         "storeAssortmentEnabled": bool(_g(stores, "assortment", "enabled", default=True)),
         "storeOnlineStores": int(getattr(stores, "online_stores", 5) or 5),
@@ -273,7 +273,13 @@ def update_config(body: ConfigUpdate):
         if "asOfDate" in v: cfg.dates.as_of_date = v["asOfDate"] or None
         if "includeIso" in v: cfg.dates.include.iso = bool(v["includeIso"])
         if "includeFiscal" in v: cfg.dates.include.fiscal = bool(v["includeFiscal"])
-        if "includeWeeklyFiscal" in v: cfg.dates.include.weekly_fiscal.enabled = bool(v["includeWeeklyFiscal"])
+        if "includeWeeklyFiscal" in v:
+            wf = cfg.dates.include.weekly_fiscal
+            if not hasattr(wf, "enabled"):
+                from src.engine.config.config_schema import WeeklyFiscalConfig
+                cfg.dates.include.weekly_fiscal = WeeklyFiscalConfig(enabled=bool(v["includeWeeklyFiscal"]))
+            else:
+                cfg.dates.include.weekly_fiscal.enabled = bool(v["includeWeeklyFiscal"])
         if "wfFirstDay" in v: cfg.dates.include.weekly_fiscal.first_day_of_week = int(v["wfFirstDay"])
         if "wfWeeklyType" in v: cfg.dates.include.weekly_fiscal.weekly_type = v["wfWeeklyType"]
         if "wfQuarterType" in v: cfg.dates.include.weekly_fiscal.quarter_week_type = v["wfQuarterType"]

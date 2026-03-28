@@ -1,8 +1,8 @@
 """Shared config merge utilities.
 
-Used by both ``customer_profiles.py`` and ``trend_presets.py`` for
-merging Pydantic model configs with dict overrides while preserving
-only explicitly-set YAML values.
+Used by ``trend_presets.py`` and other config resolvers for merging
+Pydantic model configs with dict overrides while preserving only
+explicitly-set YAML values.
 """
 from __future__ import annotations
 

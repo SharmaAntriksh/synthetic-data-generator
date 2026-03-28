@@ -360,11 +360,6 @@ function App() {
               <F label="Active ratio" help="Fraction of customers active during date range."><N value={cfg.customerActiveRatio} onChange={v => s("customerActiveRatio", v)} min={.1} max={1} step={.01} /></F>
               <F label="Household %" help="Fraction of customers assigned to households."><N value={cfg.householdPct} onChange={v => s("householdPct", v)} min={0} max={1} step={.05} /></F>
             </R2>
-            <Box title="Acquisition Override">
-              <R2>
-                <F label="First year %" help="% of customers that exist in year 1. Overrides trend preset default. Rest acquired over time."><N value={cfg.firstYearPct} onChange={v => s("firstYearPct", v)} min={0.05} max={1} step={0.01} /></F>
-              </R2>
-            </Box>
             <Box title="SCD Type 2 (Slowly Changing Dimension)">
               <Check checked={cfg.custScd2Enabled} onChange={v => s("custScd2Enabled", v)} label="Enable customer version history" />
               {cfg.custScd2Enabled && <R2>

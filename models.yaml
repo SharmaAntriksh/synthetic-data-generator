@@ -15,7 +15,7 @@
 models:
 
   macro_demand:
-    trend: strong-growth          # controls revenue shape + customer lifecycle
+    trend: gradual-growth          # controls revenue shape + customer lifecycle
                                     # directional (extend over time):
                                     #   steady-growth | strong-growth | gradual-growth
                                     #   hockey-stick | decline | new-market-entry

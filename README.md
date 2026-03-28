@@ -184,7 +184,7 @@ Controls the shape and scale of the dataset: row counts, date ranges, customer p
 | `defaults` | Global seed and date range (`start` / `end`) |
 | `sales` | Output format, merge settings, chunk/worker parallelism, compression |
 | `returns` | Return rate, timing window, enable/disable |
-| `customers` | Region mix (US/EU/India/Asia), org percentage, acquisition profile, SCD2 versioning |
+| `customers` | Region mix (US/EU/India/Asia), org percentage, SCD2 versioning, first-year override |
 | `products` | Active ratio, price range, margin range, brand normalization, SCD2 price history |
 | `stores` | Districts, regions, opening/closing dates, product assortment filtering |
 | `subscriptions` | Plans + CustomerSubscriptions bridge for DAX many-to-many patterns |
@@ -198,26 +198,54 @@ Controls the shape and scale of the dataset: row counts, date ranges, customer p
 
 ### `models.yaml` — how sales behave
 
-Controls the realism of generated sales data at the product level:
+Controls the realism of generated sales data and the overall business shape:
 
 | Section | What it controls |
 |---|---|
-| `macro_demand` | Year-level demand factors (growth trajectory across years) |
+| `macro_demand` | **Trend preset** — the single knob that defines the business story (see below) |
 | `quantity` | Basket size distribution (Poisson lambda, monthly seasonality, noise) |
 | `pricing` | Inflation drift, markdown ladder, price snapping/rounding rules |
 | `brand_popularity` | Rotating "winner" brand boost each year |
 | `returns` | Return reason weights, lag day distribution, partial vs. full-line returns |
 
-### Customer acquisition profiles
+### Trend presets
 
-The `customers.profile` setting in `config.yaml` controls how customers are acquired over time:
+The `macro_demand.trend` setting in `models.yaml` is the single source of business shape. Each preset defines a coherent story across revenue, customer acquisition, churn, and demand behavior.
 
-| Profile | Behavior |
-|---|---|
-| `steady` | Even acquisition pace across the date range |
-| `gradual` | Slow initial ramp, accelerating over time |
-| `aggressive` | Heavy front-loading with rapid early growth |
-| `instant` | All customers available from day one |
+| Preset | Revenue Shape | Customer Curve |
+|---|---|---|
+| `steady-growth` | Gentle 5%/yr upward line | Stable base, gradual acquisition |
+| `strong-growth` | Exponential acceleration | Continuously growing |
+| `gradual-growth` | S-curve with organic dips | Ramp then level off |
+| `hockey-stick` | Explosive years 4-6 | Rapid ramp |
+| `decline` | Steady year-over-year erosion | Shrinking (high churn) |
+| `new-market-entry` | Near-zero then accelerating | Slow start, late ramp |
+| `boom-and-bust` | Rapid rise then collapse | Rise then crash |
+| `recession-recovery` | U-shape dip and partial recovery | Stable |
+| `seasonal-dominant` | Flat trend, strong seasonal swings | Flat with seasonal waves |
+| `seasonal-with-growth` | Growth + retail seasonality | Growing with seasonal waves |
+| `plateau` | Growth for 4 years then flat | Growth then stable |
+| `volatile` | Wild year-to-year swings | Flat with noise |
+| `stagnation` | Perfectly flat | Perfectly flat |
+| `slow-decline` | Gentle ~10%/yr drop | Gradual erosion |
+| `double-dip` | Two distinct downturns | Gradual decline |
+
+### Scaling tips
+
+Chart quality depends on the balance between customers, sales rows, and date range:
+
+- **More customers relative to rows** → spikier, more realistic charts (each customer averages fewer orders, so monthly variation is visible)
+- **Fewer customers relative to rows** → smoother, flatter charts (law of large numbers averages out variance)
+- **Longer date ranges** → need fewer customers for the same row count (rows spread over more months)
+- **Rule of thumb:** target ~1.5 orders per customer per month → `customers ≈ sales_rows / months / 1.5`
+
+**Recommended customer counts** (for visually interesting charts at ~1.5 orders/customer/month):
+
+| Sales Rows | 5 years (60 mo) | 10 years (120 mo) | 20 years (240 mo) |
+|---|---|---|---|
+| 2M | 22K customers | 11K customers | 6K customers |
+| 20M | 222K customers | 111K customers | 56K customers |
+| 100M | 1.1M customers | 555K customers | 278K customers |
 
 ---
 
@@ -253,6 +281,27 @@ python main.py [OPTIONS]
 
 ---
 
+## Parquet Optimization
+
+Re-compress and re-partition existing parquet output without regenerating data. Useful for tuning file size, compression codec, or row group size after a run.
+
+```powershell
+python scripts/optimize_parquet.py `
+  ".\generated_datasets\2026-03-28 01_03_23 PM Customers 89K Sales 21M PARQUET" `
+  -c snappy `
+  -r 1_000_000
+```
+
+| Flag | Description |
+|---|---|
+| `-c` / `--compression` | Codec: `snappy`, `zstd`, `gzip`, `brotli`, `lz4`, `none` (default: `zstd`) |
+| `-l` / `--level` | Compression level (codec-dependent, e.g. zstd 1-22) |
+| `-r` / `--row-group-size` | Target rows per row group (default: 1,000,000) |
+| `--in-place` | Overwrite originals instead of writing to a new folder |
+| `--dry-run` | Show what would be done without writing |
+
+---
+
 ## SQL Server Import (CSV mode)
 
 When generating in CSV mode, the output includes auto-generated SQL scripts for bootstrapping a SQL Server database. Use the import script to load everything in one step.
@@ -263,11 +312,13 @@ When generating in CSV mode, the output includes auto-generated SQL scripts for 
 
 ```powershell
 .\scripts\run_sql_server_import.ps1 `
-  -RunPath ".\generated_datasets\2026-03-07 10_18_21 PM Customers 49K Sales 100K CSV>" `
+  -RunPath ".\generated_datasets\2026-03-26 06_40_28 PM Customers 29K Sales 1M CSV" `
   -Server "YOURSERVER\SQL2022" `
-  -Database Sales100K `
-  -TrustedConnection
-  -ApplyCCI $true
+  -Database Sales1M `
+  -TrustedConnection `
+  -ApplyCCI $true `
+  -DropPK $true `
+  -Verify
 ```
 
 **SQL Authentication:**
@@ -283,7 +334,15 @@ When generating in CSV mode, the output includes auto-generated SQL scripts for 
 
 > SQL authentication requires Mixed Mode to be enabled on SQL Server.
 
-The import creates all dimension and fact tables, applies PK/FK constraints, and creates analytical views. Add `-ApplyCCI $true` to also create clustered columnstore indexes.
+| Flag | Description |
+|---|---|
+| `-TrustedConnection` | Use Windows Authentication |
+| `-User` / `-Password` | Use SQL Authentication |
+| `-ApplyCCI $true` | Create clustered columnstore indexes after load |
+| `-DropPK $true` | Drop primary keys and foreign keys before applying CCI (saved to `[admin].[_PK_Backup]` for restore) |
+| `-Verify` | Run post-import data integrity checks (row counts, FK consistency, cross-table validations) |
+
+The import creates all dimension and fact tables, applies PK/FK constraints, and creates analytical views. Dropped constraints can be restored with `EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'`.
 
 ---
 
@@ -303,6 +362,9 @@ A web UI (FastAPI + React) is also available for interactive generation:
 
 <img src="docs/assets/web-pipeline-run.png" alt="Pipeline run status" width="700" />
 
+### SQL Server Import
+
+<img src="docs/assets/web-sqlserver-import.png" alt="Pipeline run status" width="700" />
 ---
 
 ## Generated Dataset Folder
@@ -321,7 +383,7 @@ Each output includes a Power BI Project (`.pbip`) template with pre-configured f
 
 ## Testing
 
-The project includes 900+ tests covering config validation, pricing pipeline, quantity model, geography, customer profiles, version store, state management, determinism guarantees, edge-case guards, web API, packaging, sales logic, and schema validation.
+The project includes 1070+ tests covering config validation, pricing pipeline, quantity model, geography, trend presets, version store, state management, determinism guarantees, edge-case guards, web API, packaging, sales logic, and schema validation.
 
 ```bash
 # Run all tests

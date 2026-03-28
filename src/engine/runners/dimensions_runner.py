@@ -430,7 +430,10 @@ def generate_dimensions(
     if force_set.intersection(date_dependent_names):
         force_set.update(date_dependent_names)
 
-    # Downstream cascade: if A is forced, force all dependents of A
+    # Downstream cascade: if A is forced, force all dependents of A.
+    # This also handles the case where warehouses must regenerate when
+    # stores regenerates (warehouses modifies stores.parquet to add
+    # WarehouseKey — a fresh stores.parquet without it breaks inventory).
     dependents = _dependents_map(DIM_SPECS)
     queue = list(force_set)
     while queue:
@@ -481,6 +484,17 @@ def generate_dimensions(
                 regen = bool(io_regen) if io_regen is not None else False
 
             regenerated[spec.name] = bool(regen)
+
+        # If stores regenerated (hash change or force) but warehouses did not,
+        # warehouses must re-run to add WarehouseKey to the fresh stores.parquet.
+        if regenerated.get("stores") and not regenerated.get("warehouses"):
+            wh_spec = by_name.get("warehouses")
+            if wh_spec is not None:
+                info("Stores regenerated — forcing warehouses to re-add WarehouseKey to stores.parquet")
+                delete_version("warehouses")
+                cfg_run = _cfg_for_dimension(cfg, wh_spec.cfg_key)
+                wh_spec.run_fn(cfg_run, parquet_dims_folder)
+                regenerated["warehouses"] = True
 
     return {
         "global_dates": global_dates,

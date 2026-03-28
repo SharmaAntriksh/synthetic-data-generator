@@ -143,7 +143,7 @@ src/
   utils/
     shared_arrays.py             # Numpy shared memory for dimension broadcasting to workers
     static_schemas.py            # Column definitions for all output tables
-    customer_profiles.py         # Acquisition profiles (steady/gradual/aggressive/instant)
+    trend_presets.py             # Trend presets: business shape (revenue, lifecycle, demand)
     config_helpers.py            # Canonical type coercion helpers (bool_or, int_or, float_or, etc.)
     config_precedence.py         # Standardized config resolution (resolve_seed, resolve_dates)
     pool.py                      # Generic multiprocessing pool (PoolRunSpec, iter_imap_unordered)
@@ -170,13 +170,58 @@ Controls row counts, entity counts, date ranges, output format, parallelism, fea
 - Key sections: `scale`, `defaults`, `sales`, `returns`, `products`, `customers`, `stores`, `employees`, `dates`, `exchange_rates`, `budget`, `inventory`, `subscriptions`, `wishlists`, `complaints`
 - Validated by strict normalizer registry in `src/engine/config/config.py`
 
-### models.yaml -- Sales Behavior
-Controls demand curves, pricing dynamics, quantity distribution, markdown rules, return reasons.
+### models.yaml -- Sales Behavior & Business Shape
+Controls demand curves, pricing dynamics, quantity distribution, markdown rules, return reasons, and the overall business shape via trend presets.
 - Key sections: `models.macro_demand`, `models.quantity`, `models.pricing`, `models.brand_popularity`, `models.returns`
 - Validated through Pydantic at pipeline startup: `ModelsConfig.from_raw_dict()` → `ModelsInnerConfig` (typed sub-models for each section)
 - `State.models_cfg` holds the validated `ModelsInnerConfig` instance (not a raw dict)
-- `resolve_customer_profile()` may replace `macro_demand` and `customers` sub-models with plain dicts at runtime — downstream code must handle both via `.get()` shims
+- `resolve_trend_preset()` injects macro demand, customer lifecycle, and customer demand from the trend preset into both `cfg` and `models_cfg`. After resolution, `models_cfg.macro_demand` and `models_cfg.customers` are proper Pydantic models (not plain dicts)
 - Not overridable via CLI; edit directly or use web UI
+
+### Trend Presets (`models.macro_demand.trend`)
+The trend preset is the **single source of business shape**. Each preset defines a coherent story across revenue curve, customer lifecycle, and demand behavior. Set via `macro_demand.trend` in `models.yaml`.
+
+**Directional presets (extend over time):**
+| Preset | Revenue Shape | Customer Curve |
+|---|---|---|
+| `steady-growth` | Gentle 5%/yr upward line | Stable base, gradual acquisition |
+| `strong-growth` | Exponential acceleration | Continuously growing |
+| `gradual-growth` | S-curve with dips | Ramp then level off |
+| `hockey-stick` | Explosive years 4-6 | Rapid ramp |
+| `decline` | Steady erosion | Shrinking (high churn) |
+| `new-market-entry` | Near-zero then accelerating | Very slow then ramping |
+| `slow-decline` | Gentle ~10%/yr drop | Gradual erosion |
+
+**Cyclical presets (repeat every 10 years):**
+| Preset | Revenue Shape | Customer Curve |
+|---|---|---|
+| `boom-and-bust` | Rapid rise then collapse | Rise then crash |
+| `recession-recovery` | U-shape dip | Stable (dip from orders) |
+| `seasonal-dominant` | Flat trend, strong seasonal | Flat with seasonal waves |
+| `seasonal-with-growth` | Growth + retail seasonality | Growing with seasonal waves |
+| `plateau` | Growth then flatline | Growth then stable |
+| `volatile` | Wild year-to-year swings | Flat with noise |
+| `double-dip` | Two downturns | Gradual decline |
+| `stagnation` | Perfectly flat | Perfectly flat (no churn) |
+
+Each preset controls: `year_level_factors`, `row_share_of_growth`, `noise_std`, `shock_probability`, `monthly_seasonality`, `bootstrap_months`, `early_month_cap`, and embedded `lifecycle` (acquisition curve, churn, initial customer spread) + `customers` (participation ratios, discovery, seasonal spikes) sub-dicts.
+
+Resolved by `resolve_trend_preset()` in `src/utils/trend_presets.py`, called from `pipeline_runner.py`. The old `customers.profile` config key is deprecated — it maps to trend presets via `_PROFILE_TO_TREND` for backward compatibility.
+
+### Scaling Guidelines
+Chart visual quality depends on the ratio of customers to sales rows and the date range:
+- **Target ~1.5 orders per customer per month** for spiky, interesting charts
+- **Formula:** `customers ≈ sales_rows / months / 1.5`
+- Longer date ranges need fewer customers for the same row count (rows spread over more months)
+- Too few customers relative to rows → overly smooth charts (each customer averages many orders, variance averages out)
+- Too many customers relative to rows → sparse purchase history per customer
+
+| Sales Rows | 3 years (36 mo) | 6 years (72 mo) | 10 years (120 mo) | 20 years (240 mo) |
+|---|---|---|---|---|
+| 2M | 37K | 19K | 11K | 6K |
+| 10M | 185K | 93K | 56K | 28K |
+| 20M | 370K | 185K | 111K | 56K |
+| 100M | 1.85M | 925K | 555K | 278K |
 
 ### Override Precedence
 CLI flags > config.yaml values (one-time, not persisted).
@@ -231,7 +276,7 @@ CLI flags > config.yaml values (one-time, not persisted).
     - **Read config:** `cfg.sales.file_format` or `models_cfg.pricing.inflation` — attribute access, not `cfg["field"]`
     - **Write config:** `cfg.sales.file_format = "csv"` (attribute assignment) — bracket write (`cfg["key"] = val`) works via `_MutationMixin.__setitem__`
     - **`.get()` shim:** `_MutationMixin.get(key, default)` delegates to `getattr()`, so existing `.get()` chains work on Pydantic models. This is intentional for backward compatibility with code that handles both dicts and models
-    - **`resolve_customer_profile` caveat:** After profile resolution, `models_cfg.macro_demand` and `models_cfg.customers` may be plain dicts (replaced via `__setitem__`). Code accessing these must handle both Pydantic models and dicts — `.get()` works on both
+    - **`resolve_trend_preset` caveat:** After trend resolution, `models_cfg.macro_demand` and `models_cfg.customers` are replaced with freshly validated Pydantic models (`MacroDemandConfig` and `CustomersDemandConfig`). The old `resolve_customer_profile` is deprecated
     - **`_`-prefixed keys are stripped:** Pydantic v2 treats `_`-prefixed keys as private fields. `_strip_internal_keys()` in `config_schema.py` removes normalizer metadata before validation
     - **`extra="forbid"` on sub-models:** All config sub-models (via `_Base`) reject unknown keys. `AppConfig` and `ModelsConfig` use `extra="allow"` for runtime-injected keys. Add new fields to the schema class if needed
     - **Worker configs are plain dicts:** `worker_cfg`, `acfg`, and sales worker internals remain plain dicts for multiprocessing pickling — these correctly use dict access
@@ -266,7 +311,7 @@ pytest --lf            # rerun only last-failed tests
 pytest --co            # list tests without running
 ```
 
-Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py`, `test_dimensions.py`, `test_packaging.py`, `test_sales_logic.py`, `test_utils.py`, `test_web_routes.py`, `test_schema.py`, `test_gotchas_and_guards.py` (914+ tests; web API/route tests require `httpx` and are skipped without it).
+Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py`, `test_dimensions.py`, `test_packaging.py`, `test_sales_logic.py`, `test_utils.py`, `test_web_routes.py`, `test_schema.py`, `test_gotchas_and_guards.py` (1076+ tests; web API/route tests require `httpx` and are skipped without it).
 
 ## Output Formats
 
