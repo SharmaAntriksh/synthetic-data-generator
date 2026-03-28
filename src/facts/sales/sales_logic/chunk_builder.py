@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pyarrow as pa
 
+from src.utils.config_helpers import int_or as _int_or, float_or as _float_or
 from .globals import PA_AVAILABLE, State
 from .core import (
     _eligible_customer_mask_for_month,
@@ -937,10 +938,10 @@ def build_chunk_table(
     else:
         shape_mult = np.ones(T, dtype=np.float64)
 
-    _BOOTSTRAP_MONTHS = int(macro_cfg.get("bootstrap_months") or 6)
-    _MAX_FRAC_PER_MONTH = float(cust_cfg.get("max_new_fraction_per_month", 0.015))
-    _MAX_DISTINCT_RATIO = float(macro_cfg.get("max_distinct_ratio") or 0.70)
-    _MIN_DISTINCT_CUSTOMERS = int(macro_cfg.get("min_distinct_customers") or 250)
+    _BOOTSTRAP_MONTHS = _int_or(macro_cfg.get("bootstrap_months"), 6)
+    _MAX_FRAC_PER_MONTH = _float_or(cust_cfg.get("max_new_fraction_per_month"), 0.015)
+    _MAX_DISTINCT_RATIO = _float_or(macro_cfg.get("max_distinct_ratio"), 0.70)
+    _MIN_DISTINCT_CUSTOMERS = _int_or(macro_cfg.get("min_distinct_customers"), 250)
 
     # Brand popularity is OFF if block absent. If present without enabled, default-on.
     brand_cfg = State.models_cfg.get("brand_popularity", None)

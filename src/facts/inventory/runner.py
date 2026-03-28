@@ -556,17 +556,19 @@ def _merge_csv_chunks(
         rows_in_current = 0
         file_idx += 1
 
-    _open_next()
-    for chunk_path in csv_chunks:
-        with open(chunk_path, "r", encoding="utf-8") as in_f:
-            next(in_f, None)  # skip header
-            for line in in_f:
-                if rows_in_current >= chunk_size:
-                    _open_next()
-                out_f.write(line)
-                rows_in_current += 1
-    if out_f is not None:
-        out_f.close()
+    try:
+        _open_next()
+        for chunk_path in csv_chunks:
+            with open(chunk_path, "r", encoding="utf-8") as in_f:
+                next(in_f, None)  # skip header
+                for line in in_f:
+                    if rows_in_current >= chunk_size:
+                        _open_next()
+                    out_f.write(line)
+                    rows_in_current += 1
+    finally:
+        if out_f is not None:
+            out_f.close()
 
     # If only one output file, rename to the non-numbered name
     if len(out_files) == 1:

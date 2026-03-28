@@ -25,7 +25,7 @@ import numpy as np
 
 try:
     import pyarrow as pa  # type: ignore
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     pa = None
 
 from src.utils.static_schemas import get_sales_schema

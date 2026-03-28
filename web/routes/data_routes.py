@@ -388,7 +388,9 @@ def preview_table(
 
     try:
         preview = _read_preview(dataset_path, table_info, offset, limit)
-    except Exception:
+    except FileNotFoundError:
+        raise HTTPException(404, f"Table file not found: {table}")
+    except (OSError, ValueError, KeyError):
         logging.getLogger(__name__).exception("Failed to read table %s/%s", folder, table)
         raise HTTPException(500, "Failed to read table")
 

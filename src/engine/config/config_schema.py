@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from datetime import date as _date
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # =========================================================================
@@ -412,9 +412,9 @@ class CustomersSCD2Config(_Base):
 
 class ProductsSCD2Config(_Base):
     enabled: bool = False
-    revision_frequency: int = 12        # months between price revisions
-    price_drift: float = 0.05           # ~5% price change per revision
-    max_versions: int = 4               # max version rows per product
+    revision_frequency: int = Field(default=12, ge=1)   # months between price revisions
+    price_drift: float = 0.05                            # ~5% price change per revision
+    max_versions: int = Field(default=4, ge=1)           # max version rows per product
 
 
 # -- Products --
