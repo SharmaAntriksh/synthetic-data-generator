@@ -8,14 +8,15 @@
 #   - Brand popularity rotation
 #   - Return reasons and timing
 #
-# Customer behavior (lifecycle, demand shape, growth) is controlled by
-# the profile key in config.yaml → customers.profile
+# Business shape (growth trajectory, customer lifecycle, demand behavior)
+# is controlled by the trend preset in macro_demand.trend below
 # ==========================================================================
 
 models:
 
   macro_demand:
-    trend: gradual-growth          # directional (extend over time):
+    trend: strong-growth          # controls revenue shape + customer lifecycle
+                                    # directional (extend over time):
                                     #   steady-growth | strong-growth | gradual-growth
                                     #   hockey-stick | decline | new-market-entry
                                     # cyclical (repeat every 10 years):

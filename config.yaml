@@ -6,9 +6,9 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 1083280
+  sales_rows: 2003295
   products: 5167                    #5167 total products in base file
-  customers: 28834
+  customers: 42851
   stores: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
 
@@ -18,9 +18,9 @@ scale:
 defaults:
   seed: 42
   random: false                    # true = ignore seeds, use OS entropy (non-deterministic)
-  view_schema: report               # dbo = vw_ prefix (default), or dedicated schema (bi, report, etc.)
+  view_schema: bi               # dbo = vw_ prefix (default), or dedicated schema (bi, report, etc.)
   dates:
-    start: "2021-01-01"
+    start: "2018-01-01"
     end: "2025-12-31"
 
 paths:
@@ -33,7 +33,7 @@ paths:
 # SALES
 # ------------------------------------------------------------------
 sales:
-  max_lines_per_order: 5
+  max_lines_per_order: 10
 
   file_format: parquet              # csv | parquet | deltaparquet
   sales_output: sales              # sales | sales_order | both
@@ -61,7 +61,7 @@ sales:
 # ------------------------------------------------------------------
 returns:
   enabled: true
-  return_rate: 0.03
+  return_rate: 0.08
   min_days_after_sale: 1
   max_days_after_sale: 60
 
@@ -69,7 +69,7 @@ returns:
 # PRODUCTS
 # ------------------------------------------------------------------
 products:
-  active_ratio: 0.98
+  active_ratio: 0.96
   value_scale: 1                      # multiplier on all base prices
   price_range: [20, 4000]             # [min, max] ListPrice
   margin_range: [0.15, 0.45]          # [min, max] cost margin pct
@@ -78,7 +78,7 @@ products:
   brand_normalize_alpha: 0.35         # brands keep 65% of price identity
 
   scd2:
-    enabled: true                     # enable SCD Type 2 price history tracking
+    enabled: false                     # enable SCD Type 2 price history tracking
     revision_frequency: 12             # months between price revisions
     price_drift: 0.20                  # ±20% price change per revision
     max_versions: 4                    # max version rows per product
@@ -87,17 +87,14 @@ products:
 # CUSTOMERS
 # ------------------------------------------------------------------
 customers:
-  active_ratio: 0.98
+  active_ratio: 0.95
   household_pct: 0.35               # fraction of individuals in multi-person households
 
   region_mix: { Americas: 41, Europe: 39, India: 2, APAC: 18 }
   org_pct: 1
 
-  profile: aggressive                     # gradual | steady | aggressive | instant | decline
-  # first_year_pct: 0.27             # override: % of customers in year 1 (omit to let profile decide)
-
   scd2:
-    enabled: true                    # enable SCD Type 2 history tracking
+    enabled: false                    # enable SCD Type 2 history tracking
     change_rate: 0.15                # fraction of customers with life event changes
     max_versions: 4                  # max version rows per customer
 
@@ -187,8 +184,8 @@ warehouses:
 employees:
   transfers:
     enabled: true                     # enable inter-store staff transfers
-    annual_rate: 0.20                  # fraction of eligible staff that transfer per year
-    min_tenure_months: 4               # minimum months at current store before eligible
+    annual_rate: 0.40                  # fraction of eligible staff that transfer per year
+    min_tenure_months: 6               # minimum months at current store before eligible
     same_region_pref: 0.70             # probability transfer stays within the same region
   hr:
     email_domain: "contoso.com"
@@ -203,7 +200,7 @@ dates:
   include:
     calendar: true
     iso: false
-    fiscal: true
+    fiscal: false
 
     weekly_fiscal:
       enabled: false
@@ -216,7 +213,7 @@ dates:
 # EXCHANGE RATES
 # ------------------------------------------------------------------
 exchange_rates:
-  from_currencies: ["USD", "CAD", "GBP", "EUR"]
+  from_currencies: ["USD"] #, "CAD", "GBP", "EUR"]
   to_currencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"] #, "KRW", "SGD", "AED", "ZAR", "BRL", "MXN"]
   base_currency: "USD"
 

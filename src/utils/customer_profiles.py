@@ -1,19 +1,14 @@
-"""Customer behavior profiles.
+"""Customer behavior profiles — DEPRECATED.
 
-Controls customer lifecycle and demand behavior via a single ``profile``
-key. Macro demand (chart shape, trend, seasonality) is owned by the
-separate trend preset system in ``trend_presets.py``.
+This module is superseded by the trend preset system in
+``trend_presets.py``, which now owns both macro demand shape AND
+customer lifecycle/demand behavior.
 
-Usage in config.yaml:
-    customers:
-      profile: gradual     # gradual | steady | aggressive | instant
+The ``customers.profile`` config key still works for backward
+compatibility — it is mapped to a trend preset name via
+``_PROFILE_TO_TREND`` in ``trend_presets.py``.
 
-The profile is resolved into two parts:
-  - lifecycle:      injected into cfg.customers.lifecycle (dict)
-  - demand:         injected into models_cfg.customers (CustomersDemandConfig)
-
-Any explicit overrides in config.yaml or models.yaml take priority
-over profile defaults (merge, not replace).
+New code should use ``models.macro_demand.trend`` instead.
 """
 from __future__ import annotations
 
@@ -24,6 +19,7 @@ from typing import Any, Dict, Optional, Tuple
 from src.engine.config.config_schema import CustomersDemandConfig
 from src.utils.config_merge import pydantic_to_explicit_dict, deep_merge
 from src.utils.logging_utils import info
+from src.utils.trend_presets import _apply_first_year_pct
 
 
 # ================================================================
@@ -187,26 +183,6 @@ VALID_PROFILES = frozenset(_PROFILES.keys())
 # Resolver
 # ================================================================
 
-
-
-def _apply_first_year_pct(fyr: float, lifecycle: dict, demand: CustomersDemandConfig) -> None:
-    """
-    Derive acquisition knobs from a single first_year_pct value.
-
-    fyr = 0.30 means 30% of customers exist in year 1, 70% acquired later.
-    fyr = 0.80 means 80% in year 1, only 20% acquired later.
-
-    Adjusts:
-      lifecycle: initial_active_customers, initial_spread_months
-      demand:    new_customer_share, max_new_fraction_per_month
-    """
-    remaining = 1.0 - fyr
-
-    lifecycle["initial_active_customers"] = fyr
-    lifecycle["initial_spread_months"] = 12
-
-    demand.new_customer_share = round(0.04 + remaining * 0.12, 3)
-    demand.max_new_fraction_per_month = round(0.02 + remaining * 0.06, 3)
 
 
 def resolve_customer_profile(

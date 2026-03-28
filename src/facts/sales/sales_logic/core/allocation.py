@@ -186,8 +186,8 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
     else:
         g = 1.0
 
-    # year-level factors (pin exact per-year levels — no dampening, user
-    # controls these directly)
+    # year-level factors — dampened by row_share so only that fraction of
+    # the stated trajectory drives row allocation (remainder via prices).
     if lvl_node:
         mode, vals = _sched_mode_and_values(lvl_node, "year_level_factors")
         if any(v <= 0.0 for v in vals):
@@ -198,6 +198,11 @@ def macro_month_weights(rng: np.random.Generator, T: int, cfg: dict) -> np.ndarr
             yfac = levels[year_idx % len(levels)]
         else:  # once
             yfac = levels[np.minimum(year_idx, len(levels) - 1)]
+
+        # Interpolate toward 1.0 (flat) based on row_share:
+        # row_share=1.0 → full factor, row_share=0.0 → completely flat
+        if row_share < 1.0:
+            yfac = 1.0 + (yfac - 1.0) * row_share
 
         g = g * yfac
 

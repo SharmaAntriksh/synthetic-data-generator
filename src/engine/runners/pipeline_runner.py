@@ -215,17 +215,11 @@ def run_pipeline(
             fact_out.mkdir(parents=True, exist_ok=True)
 
         # ----------------------------
-        # Resolve customer profile (must run before State and models injection)
-        # ----------------------------
-        from src.utils.customer_profiles import resolve_customer_profile
-        cfg, models_cfg = resolve_customer_profile(cfg, models_cfg)
-
-        # ----------------------------
-        # Resolve trend preset (after profile, before State binding)
+        # Resolve trend preset (injects macro demand, lifecycle, and customers)
         # ----------------------------
         from src.utils.trend_presets import resolve_trend_preset
         _profile_name = getattr(getattr(cfg, "customers", None), "profile", None)
-        resolve_trend_preset(models_cfg, profile_name=_profile_name)
+        resolve_trend_preset(models_cfg, cfg=cfg, profile_name=_profile_name)
 
         # ----------------------------
         # Attach models config to runtime state (ONLY if sales will run)

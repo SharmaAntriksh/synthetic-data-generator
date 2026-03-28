@@ -199,7 +199,7 @@ class BudgetConfig(_Base):
 class CustomersConfig(_Base):
     total_customers: Optional[int] = None
     active_ratio: float = 0.98
-    profile: str = "steady"
+    profile: Optional[str] = None  # DEPRECATED: use models.macro_demand.trend
     first_year_pct: Optional[float] = None
     # Flattened from region_mix by _expand_region_mix
     pct_us: float = 0.0
@@ -210,7 +210,7 @@ class CustomersConfig(_Base):
     # Original region_mix kept for reference
     region_mix: Optional[Dict[str, float]] = None
     org_pct: Optional[float] = None
-    # Injected by resolve_customer_profile
+    # Injected by resolve_trend_preset
     lifecycle: Optional[Dict[str, Any]] = None
     # Customer enrichment (loyalty tiers, acquisition channels)
     enrichment: Optional[Dict[str, Any]] = None
@@ -920,7 +920,7 @@ class ReturnsModelsConfig(_Base):
         return self
 
 
-# -- Customers (models.yaml: injected by resolve_customer_profile) --
+# -- Customers (models.yaml: injected by resolve_trend_preset) --
 
 class SeasonalSpikeConfig(_Base):
     month: int
@@ -948,7 +948,7 @@ class ModelsInnerConfig(_Base):
     pricing: PricingModelsConfig = PricingModelsConfig()
     brand_popularity: BrandPopularityConfig = BrandPopularityConfig()
     returns: ReturnsModelsConfig = ReturnsModelsConfig()
-    # Injected at runtime by resolve_customer_profile
+    # Injected at runtime by resolve_trend_preset
     customers: Optional[CustomersDemandConfig] = None
 
 

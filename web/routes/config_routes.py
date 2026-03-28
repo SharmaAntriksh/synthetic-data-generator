@@ -112,7 +112,6 @@ def get_config():
         "pctAsia": float(getattr(cust, "pct_asia", 0)),
         "pctOrg": float(getattr(cust, "pct_org", 10)),
         "customerActiveRatio": float(getattr(cust, "active_ratio", 0.90)),
-        "profile": str(getattr(cust, "profile", "steady")),
         "firstYearPct": float(getattr(cust, "first_year_pct", 0.27)),
         "householdPct": float(getattr(cust, "household_pct", 0.35) or 0.35),
         # Customers SCD2
@@ -298,7 +297,6 @@ def update_config(body: ConfigUpdate):
         if "pctAsia" in v: cfg.customers.pct_asia = float(v["pctAsia"])
         if "pctOrg" in v: cfg.customers.pct_org = float(v["pctOrg"])
         if "customerActiveRatio" in v: cfg.customers.active_ratio = float(v["customerActiveRatio"])
-        if "profile" in v: cfg.customers.profile = v["profile"]
         if "firstYearPct" in v: cfg.customers.first_year_pct = float(v["firstYearPct"])
         if "householdPct" in v: cfg.customers.household_pct = float(v["householdPct"])
 
