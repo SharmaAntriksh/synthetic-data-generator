@@ -271,7 +271,7 @@ class TestInvalidConfig:
             run_pipeline(config_path=config_path, models_config_path=str(p), dry_run=True)
 
     def test_invalid_only_value(self, config_path, models_path):
-        with pytest.raises(ValueError, match="only must be"):
+        with pytest.raises(ConfigError, match="only must be"):
             run_pipeline(
                 config_path=config_path,
                 models_config_path=models_path,

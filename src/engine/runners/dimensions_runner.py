@@ -304,7 +304,7 @@ def _stable_toposort(specs: Sequence[DimensionSpec]) -> List[DimensionSpec]:
     for s in specs:
         for d in s.deps:
             if d not in by_name:
-                raise KeyError(f"Dimension '{s.name}' depends on unknown dimension '{d}'")
+                raise DimensionError(f"Dimension '{s.name}' depends on unknown dimension '{d}'")
             out[d].append(s.name)
             indeg[s.name] += 1
 

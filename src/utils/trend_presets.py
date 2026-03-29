@@ -30,6 +30,7 @@ from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
 
 from src.engine.config.config_schema import CustomersDemandConfig, MacroDemandConfig
+from src.exceptions import ConfigError
 from src.utils.config_merge import pydantic_to_explicit_dict, deep_merge
 from src.utils.logging_utils import info
 
@@ -833,7 +834,7 @@ def _resolve_seasonality(preset: dict, overrides: dict) -> list:
     if isinstance(raw, str):
         name = raw.strip().lower()
         if name not in _SEASONALITY_PRESETS:
-            raise ValueError(
+            raise ConfigError(
                 f"Unknown seasonality preset: {name!r}. "
                 f"Valid presets: {', '.join(sorted(VALID_SEASONALITY_PRESETS))}"
             )
@@ -841,12 +842,12 @@ def _resolve_seasonality(preset: dict, overrides: dict) -> list:
 
     if isinstance(raw, (list, tuple)):
         if len(raw) != 12:
-            raise ValueError(
+            raise ConfigError(
                 f"monthly_seasonality must have exactly 12 values, got {len(raw)}"
             )
         return [float(v) for v in raw]
 
-    raise ValueError(
+    raise ConfigError(
         f"seasonality must be a preset name or list of 12 floats, got {type(raw).__name__}"
     )
 
@@ -883,7 +884,7 @@ def get_seasonality_names() -> list[str]:
 def get_trend_defaults(name: str) -> dict:
     """Return a copy of the named trend preset dict."""
     if name not in _TREND_PRESETS:
-        raise ValueError(f"Unknown trend preset: {name!r}")
+        raise ConfigError(f"Unknown trend preset: {name!r}")
     return copy.deepcopy(_TREND_PRESETS[name])
 
 
@@ -934,7 +935,7 @@ def resolve_trend_preset(
 
     trend_name = str(trend_name).strip().lower()
     if trend_name not in _TREND_PRESETS:
-        raise ValueError(
+        raise ConfigError(
             f"Unknown trend preset: {trend_name!r}. "
             f"Valid presets: {', '.join(sorted(VALID_TRENDS))}"
         )
@@ -990,7 +991,7 @@ def resolve_trend_preset(
             if first_year_pct is not None:
                 fyr = float(first_year_pct)
                 if not 0.05 <= fyr <= 1.0:
-                    raise ValueError(
+                    raise ConfigError(
                         f"customers.first_year_pct must be between 0.05 and 1.0, got {fyr}"
                     )
                 _apply_first_year_pct(fyr, cust_cfg.lifecycle, models_cfg.customers)
