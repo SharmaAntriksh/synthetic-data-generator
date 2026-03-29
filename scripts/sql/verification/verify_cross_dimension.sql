@@ -2,7 +2,15 @@
 -- VERIFY CROSS-DIMENSION CONSISTENCY
 -- Run after loading generated data into SQL Server.
 -- Checks that dimensions agree with each other where they share references.
+--
+-- Supports both sales_output modes:
+--   sales        -> single Sales table
+--   sales_order  -> SalesOrderHeader + SalesOrderDetail tables
 -- ============================================================================
+
+-- Detect which sales table exists
+DECLARE @has_sales  BIT = CASE WHEN OBJECT_ID('dbo.Sales') IS NOT NULL THEN 1 ELSE 0 END;
+DECLARE @has_header BIT = CASE WHEN OBJECT_ID('dbo.SalesOrderHeader') IS NOT NULL THEN 1 ELSE 0 END;
 
 
 -- ============================================================================
@@ -70,11 +78,22 @@ WHERE e.GeographyKey IS NOT NULL AND g.GeographyKey IS NULL;
 -- ============================================================================
 
 -- 3a. All CurrencyKeys in Sales exist in Currency dimension
-SELECT DISTINCT f.CurrencyKey
-FROM Sales f
-LEFT JOIN Currency c ON c.CurrencyKey = f.CurrencyKey
-WHERE c.CurrencyKey IS NULL;
--- EXPECTED: zero rows
+IF @has_sales = 1
+BEGIN
+    SELECT DISTINCT f.CurrencyKey
+    FROM Sales f
+    LEFT JOIN Currency c ON c.CurrencyKey = f.CurrencyKey
+    WHERE c.CurrencyKey IS NULL;
+    -- EXPECTED: zero rows
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT DISTINCT h.CurrencyKey
+    FROM SalesOrderHeader h
+    LEFT JOIN Currency c ON c.CurrencyKey = h.CurrencyKey
+    WHERE c.CurrencyKey IS NULL;
+    -- EXPECTED: zero rows
+END
 
 -- 3b. All FromCurrencyKey values in ExchangeRates exist in Currency dimension
 SELECT DISTINCT er.FromCurrencyKey
@@ -197,19 +216,42 @@ WHERE pp.SupplierKey IS NOT NULL AND s.SupplierKey IS NULL;
 -- ============================================================================
 
 -- 8a. EmployeeKey in Sales should reference valid employee
-SELECT DISTINCT f.EmployeeKey
-FROM Sales f
-LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
-WHERE f.EmployeeKey IS NOT NULL
-  AND e.EmployeeKey IS NULL;
--- EXPECTED: zero rows
+IF @has_sales = 1
+BEGIN
+    SELECT DISTINCT f.EmployeeKey
+    FROM Sales f
+    LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
+    WHERE f.EmployeeKey IS NOT NULL
+      AND e.EmployeeKey IS NULL;
+    -- EXPECTED: zero rows
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT DISTINCT h.EmployeeKey
+    FROM SalesOrderHeader h
+    LEFT JOIN Employees e ON e.EmployeeKey = h.EmployeeKey
+    WHERE h.EmployeeKey IS NOT NULL
+      AND e.EmployeeKey IS NULL;
+    -- EXPECTED: zero rows
+END
 
 -- 8b. Sales person employees should have SalesPersonFlag=1
-SELECT DISTINCT f.EmployeeKey, e.SalesPersonFlag
-FROM Sales f
-JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
-WHERE e.SalesPersonFlag = 0;
--- EXPECTED: zero rows
+IF @has_sales = 1
+BEGIN
+    SELECT DISTINCT f.EmployeeKey, e.SalesPersonFlag
+    FROM Sales f
+    JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
+    WHERE e.SalesPersonFlag = 0;
+    -- EXPECTED: zero rows
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT DISTINCT h.EmployeeKey, e.SalesPersonFlag
+    FROM SalesOrderHeader h
+    JOIN Employees e ON e.EmployeeKey = h.EmployeeKey
+    WHERE e.SalesPersonFlag = 0;
+    -- EXPECTED: zero rows
+END
 
 
 -- ============================================================================
@@ -265,22 +307,39 @@ SELECT 'ProductProfile: covers all products',
     'Every product (all SCD2 versions) must have a ProductProfile row; FAIL = missing profile',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM Products p LEFT JOIN ProductProfile pp ON pp.ProductKey = p.ProductKey
-WHERE pp.ProductKey IS NULL
+WHERE pp.ProductKey IS NULL;
 
-UNION ALL
+-- Currency + SalesPerson FK checks run separately per sales mode
+-- because UNION ALL cannot contain IF/ELSE branching.
+IF @has_sales = 1
+BEGIN
+    SELECT 'Currency: all sales currencies valid' AS [Check],
+        'Every CurrencyKey used in Sales must exist in Currency dim; FAIL = orphaned currency reference' AS [Description],
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
+    FROM (SELECT DISTINCT CurrencyKey FROM Sales) f
+    LEFT JOIN Currency c ON c.CurrencyKey = f.CurrencyKey
+    WHERE c.CurrencyKey IS NULL;
 
-SELECT 'Currency: all sales currencies valid',
-    'Every CurrencyKey used in Sales must exist in Currency dim; FAIL = orphaned currency reference',
-    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM (SELECT DISTINCT CurrencyKey FROM Sales) f
-LEFT JOIN Currency c ON c.CurrencyKey = f.CurrencyKey
-WHERE c.CurrencyKey IS NULL
+    SELECT 'SalesPerson: valid employee references' AS [Check],
+        'Every EmployeeKey in Sales must exist in Employees; FAIL = sale assigned to non-existent employee' AS [Description],
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
+    FROM (SELECT DISTINCT EmployeeKey FROM Sales WHERE EmployeeKey IS NOT NULL) f
+    LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
+    WHERE e.EmployeeKey IS NULL;
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT 'Currency: all sales currencies valid' AS [Check],
+        'Every CurrencyKey used in Sales must exist in Currency dim; FAIL = orphaned currency reference' AS [Description],
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
+    FROM (SELECT DISTINCT CurrencyKey FROM SalesOrderHeader) f
+    LEFT JOIN Currency c ON c.CurrencyKey = f.CurrencyKey
+    WHERE c.CurrencyKey IS NULL;
 
-UNION ALL
-
-SELECT 'SalesPerson: valid employee references',
-    'Every EmployeeKey in Sales must exist in Employees; FAIL = sale assigned to non-existent employee',
-    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM (SELECT DISTINCT EmployeeKey FROM Sales WHERE EmployeeKey IS NOT NULL) f
-LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
-WHERE e.EmployeeKey IS NULL;
+    SELECT 'SalesPerson: valid employee references' AS [Check],
+        'Every EmployeeKey in SalesOrderHeader must exist in Employees; FAIL = sale assigned to non-existent employee' AS [Description],
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
+    FROM (SELECT DISTINCT EmployeeKey FROM SalesOrderHeader WHERE EmployeeKey IS NOT NULL) f
+    LEFT JOIN Employees e ON e.EmployeeKey = f.EmployeeKey
+    WHERE e.EmployeeKey IS NULL;
+END

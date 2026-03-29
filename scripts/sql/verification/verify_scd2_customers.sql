@@ -194,12 +194,24 @@ WHERE c.IsCurrent IS NULL OR c.IsCurrent <> 1;
 -- EXPECTED: zero rows
 
 -- 4d. Sales fact should join to customers (IsCurrent=1 for point-in-time reporting)
-SELECT
-    COUNT(*)                                                        AS TotalSales,
-    SUM(CASE WHEN c.CustomerKey IS NULL THEN 1 ELSE 0 END)         AS OrphanedSales,
-    SUM(CASE WHEN c.IsCurrent = 1 THEN 1 ELSE 0 END)              AS CurrentVersionSales
-FROM Sales f
-LEFT JOIN Customers c ON c.CustomerKey = f.CustomerKey;
+IF OBJECT_ID('dbo.Sales') IS NOT NULL
+BEGIN
+    SELECT
+        COUNT(*)                                                        AS TotalSales,
+        SUM(CASE WHEN c.CustomerKey IS NULL THEN 1 ELSE 0 END)         AS OrphanedSales,
+        SUM(CASE WHEN c.IsCurrent = 1 THEN 1 ELSE 0 END)              AS CurrentVersionSales
+    FROM Sales f
+    LEFT JOIN Customers c ON c.CustomerKey = f.CustomerKey;
+END
+ELSE IF OBJECT_ID('dbo.SalesOrderHeader') IS NOT NULL
+BEGIN
+    SELECT
+        COUNT(*)                                                        AS TotalSales,
+        SUM(CASE WHEN c.CustomerKey IS NULL THEN 1 ELSE 0 END)         AS OrphanedSales,
+        SUM(CASE WHEN c.IsCurrent = 1 THEN 1 ELSE 0 END)              AS CurrentVersionSales
+    FROM SalesOrderHeader f
+    LEFT JOIN Customers c ON c.CustomerKey = f.CustomerKey;
+END
 -- EXPECTED: zero orphaned sales, all join to IsCurrent=1
 
 

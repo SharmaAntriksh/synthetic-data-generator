@@ -157,11 +157,22 @@ WHERE p.IsCurrent IS NULL OR p.IsCurrent <> 1;
 -- EXPECTED: zero rows
 
 -- 4c. Sales fact should join to products
-SELECT
-    COUNT(*)                                                        AS TotalSales,
-    SUM(CASE WHEN p.ProductKey IS NULL THEN 1 ELSE 0 END)          AS OrphanedSales
-FROM Sales f
-LEFT JOIN Products p ON p.ProductKey = f.ProductKey;
+IF OBJECT_ID('dbo.Sales') IS NOT NULL
+BEGIN
+    SELECT
+        COUNT(*)                                                        AS TotalSales,
+        SUM(CASE WHEN p.ProductKey IS NULL THEN 1 ELSE 0 END)          AS OrphanedSales
+    FROM Sales f
+    LEFT JOIN Products p ON p.ProductKey = f.ProductKey;
+END
+ELSE IF OBJECT_ID('dbo.SalesOrderDetail') IS NOT NULL
+BEGIN
+    SELECT
+        COUNT(*)                                                        AS TotalSales,
+        SUM(CASE WHEN p.ProductKey IS NULL THEN 1 ELSE 0 END)          AS OrphanedSales
+    FROM SalesOrderDetail f
+    LEFT JOIN Products p ON p.ProductKey = f.ProductKey;
+END
 -- EXPECTED: zero orphaned sales
 
 

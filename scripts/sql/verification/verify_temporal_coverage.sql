@@ -2,7 +2,15 @@
 -- VERIFY TEMPORAL COVERAGE
 -- Run after loading generated data into SQL Server.
 -- Checks that every month has data, no gaps, dates within configured range.
+--
+-- Supports both sales_output modes:
+--   sales        -> single Sales table
+--   sales_order  -> SalesOrderHeader + SalesOrderDetail tables
 -- ============================================================================
+
+-- Detect which sales table exists
+DECLARE @has_sales  BIT = CASE WHEN OBJECT_ID('dbo.Sales') IS NOT NULL THEN 1 ELSE 0 END;
+DECLARE @has_header BIT = CASE WHEN OBJECT_ID('dbo.SalesOrderHeader') IS NOT NULL THEN 1 ELSE 0 END;
 
 
 -- ============================================================================
@@ -10,32 +18,68 @@
 -- ============================================================================
 
 -- 1a. Monthly sales count — no month should be zero
-SELECT
-    d.[Year],
-    d.[Month],
-    COUNT(f.SalesOrderNumber)                                       AS SalesLines
-FROM Dates d
-LEFT JOIN Sales f ON f.TimeKey = d.DateKey
-WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
-                 AND (SELECT MAX(OrderDate) FROM Sales)
-GROUP BY d.[Year], d.[Month]
-ORDER BY d.[Year], d.[Month];
--- EXPECTED: every month has sales > 0; no gaps
+IF @has_sales = 1
+BEGIN
+    SELECT
+        d.[Year],
+        d.[Month],
+        COUNT(f.SalesOrderNumber)                                       AS SalesLines
+    FROM Dates d
+    LEFT JOIN Sales f ON f.TimeKey = d.DateKey
+    WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
+                     AND (SELECT MAX(OrderDate) FROM Sales)
+    GROUP BY d.[Year], d.[Month]
+    ORDER BY d.[Year], d.[Month];
+    -- EXPECTED: every month has sales > 0; no gaps
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT
+        d.[Year],
+        d.[Month],
+        COUNT(h.SalesOrderNumber)                                       AS SalesLines
+    FROM Dates d
+    LEFT JOIN SalesOrderHeader h ON h.TimeKey = d.DateKey
+    WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM SalesOrderHeader)
+                     AND (SELECT MAX(OrderDate) FROM SalesOrderHeader)
+    GROUP BY d.[Year], d.[Month]
+    ORDER BY d.[Year], d.[Month];
+    -- EXPECTED: every month has sales > 0; no gaps
+END
 
 -- 1b. Identify any gap months (zero sales)
-SELECT
-    d.[Year],
-    d.[Month]
-FROM Dates d
-WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
-                 AND (SELECT MAX(OrderDate) FROM Sales)
-  AND d.[Day] = 1
-  AND NOT EXISTS (
-      SELECT 1 FROM Sales f
-      WHERE YEAR(f.OrderDate) = d.[Year]
-        AND MONTH(f.OrderDate) = d.[Month]
-  );
--- EXPECTED: zero rows (no month without sales)
+IF @has_sales = 1
+BEGIN
+    SELECT
+        d.[Year],
+        d.[Month]
+    FROM Dates d
+    WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
+                     AND (SELECT MAX(OrderDate) FROM Sales)
+      AND d.[Day] = 1
+      AND NOT EXISTS (
+          SELECT 1 FROM Sales f
+          WHERE YEAR(f.OrderDate) = d.[Year]
+            AND MONTH(f.OrderDate) = d.[Month]
+      );
+    -- EXPECTED: zero rows (no month without sales)
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT
+        d.[Year],
+        d.[Month]
+    FROM Dates d
+    WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM SalesOrderHeader)
+                     AND (SELECT MAX(OrderDate) FROM SalesOrderHeader)
+      AND d.[Day] = 1
+      AND NOT EXISTS (
+          SELECT 1 FROM SalesOrderHeader h
+          WHERE YEAR(h.OrderDate) = d.[Year]
+            AND MONTH(h.OrderDate) = d.[Month]
+      );
+    -- EXPECTED: zero rows (no month without sales)
+END
 
 
 -- ============================================================================
@@ -43,14 +87,29 @@ WHERE d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
 -- ============================================================================
 
 -- 2a. Sales dates should fall within configured range
-SELECT
-    MIN(OrderDate) AS EarliestSale,
-    MAX(OrderDate) AS LatestSale,
-    MIN(DueDate)   AS EarliestDue,
-    MAX(DueDate)   AS LatestDue
-FROM Sales;
--- EXPECTED: EarliestSale >= config start date, LatestSale <= config end date
---           DueDate may extend slightly past end date (fulfillment lag)
+IF @has_sales = 1
+BEGIN
+    SELECT
+        MIN(OrderDate) AS EarliestSale,
+        MAX(OrderDate) AS LatestSale,
+        MIN(DueDate)   AS EarliestDue,
+        MAX(DueDate)   AS LatestDue
+    FROM Sales;
+    -- EXPECTED: EarliestSale >= config start date, LatestSale <= config end date
+    --           DueDate may extend slightly past end date (fulfillment lag)
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT
+        MIN(h.OrderDate) AS EarliestSale,
+        MAX(h.OrderDate) AS LatestSale,
+        MIN(d.DueDate)   AS EarliestDue,
+        MAX(d.DueDate)   AS LatestDue
+    FROM SalesOrderHeader h
+    JOIN SalesOrderDetail d ON d.SalesOrderNumber = h.SalesOrderNumber;
+    -- EXPECTED: EarliestSale >= config start date, LatestSale <= config end date
+    --           DueDate may extend slightly past end date (fulfillment lag)
+END
 
 -- 2b. Customer start dates within range
 SELECT
@@ -92,11 +151,22 @@ FROM ExchangeRates;
 -- EXPECTED: FXStart <= sales start, FXEnd >= sales end
 
 -- 3b. Any sales dates without FX rates?
-SELECT DISTINCT f.OrderDate
-FROM Sales f
-LEFT JOIN ExchangeRates er ON er.Date = f.OrderDate
-WHERE er.Date IS NULL;
--- EXPECTED: zero rows (every sales day has FX coverage)
+IF @has_sales = 1
+BEGIN
+    SELECT DISTINCT f.OrderDate
+    FROM Sales f
+    LEFT JOIN ExchangeRates er ON er.Date = f.OrderDate
+    WHERE er.Date IS NULL;
+    -- EXPECTED: zero rows (every sales day has FX coverage)
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT DISTINCT h.OrderDate
+    FROM SalesOrderHeader h
+    LEFT JOIN ExchangeRates er ON er.Date = h.OrderDate
+    WHERE er.Date IS NULL;
+    -- EXPECTED: zero rows (every sales day has FX coverage)
+END
 
 -- 3c. All configured currencies should have rates
 SELECT DISTINCT ToCurrency FROM ExchangeRates ORDER BY ToCurrency;
@@ -117,11 +187,22 @@ FROM Dates;
 -- EXPECTED: TotalDays = ExpectedDays (no gaps)
 
 -- 4b. Every sales OrderDate should have a matching TimeKey
-SELECT COUNT(*) AS OrphanedDates
-FROM Sales f
-LEFT JOIN Dates d ON d.DateKey = f.TimeKey
-WHERE d.DateKey IS NULL;
--- EXPECTED: zero
+IF @has_sales = 1
+BEGIN
+    SELECT COUNT(*) AS OrphanedDates
+    FROM Sales f
+    LEFT JOIN Dates d ON d.DateKey = f.TimeKey
+    WHERE d.DateKey IS NULL;
+    -- EXPECTED: zero
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT COUNT(*) AS OrphanedDates
+    FROM SalesOrderHeader h
+    LEFT JOIN Dates d ON d.DateKey = h.TimeKey
+    WHERE d.DateKey IS NULL;
+    -- EXPECTED: zero
+END
 
 
 -- ============================================================================
@@ -204,67 +285,137 @@ FROM Complaints;
 -- ============================================================================
 -- 8. TEMPORAL COVERAGE SCORECARD
 -- ============================================================================
-SELECT
-    'Sales: no gap months' AS [Check],
-    'Every month in the sales date range must have transactions; FAIL = missing month with zero sales' AS [Description],
-    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
-FROM (
-    SELECT d.[Year], d.[Month]
-    FROM Dates d
-    WHERE d.[Day] = 1
-      AND d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
-                     AND (SELECT MAX(OrderDate) FROM Sales)
-      AND NOT EXISTS (
-          SELECT 1 FROM Sales f
-          WHERE YEAR(f.OrderDate) = d.[Year]
-            AND MONTH(f.OrderDate) = d.[Month]
-      )
-) x
+IF @has_sales = 1
+BEGIN
+    SELECT
+        'Sales: no gap months' AS [Check],
+        'Every month in the sales date range must have transactions; FAIL = missing month with zero sales' AS [Description],
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
+    FROM (
+        SELECT d.[Year], d.[Month]
+        FROM Dates d
+        WHERE d.[Day] = 1
+          AND d.Date BETWEEN (SELECT MIN(OrderDate) FROM Sales)
+                         AND (SELECT MAX(OrderDate) FROM Sales)
+          AND NOT EXISTS (
+              SELECT 1 FROM Sales f
+              WHERE YEAR(f.OrderDate) = d.[Year]
+                AND MONTH(f.OrderDate) = d.[Month]
+          )
+    ) x
 
-UNION ALL
+    UNION ALL
 
-SELECT 'Date dim: no gaps',
-    'Date table must have one row per calendar day with no missing days; FAIL = holes in calendar dimension',
-    CASE WHEN COUNT(*) = DATEDIFF(DAY, MIN(Date), MAX(Date)) + 1
-         THEN 'PASS' ELSE 'FAIL' END
-FROM Dates
+    SELECT 'Date dim: no gaps',
+        'Date table must have one row per calendar day with no missing days; FAIL = holes in calendar dimension',
+        CASE WHEN COUNT(*) = DATEDIFF(DAY, MIN(Date), MAX(Date)) + 1
+             THEN 'PASS' ELSE 'FAIL' END
+    FROM Dates
 
-UNION ALL
+    UNION ALL
 
-SELECT 'FX: covers all sales dates',
-    'ExchangeRates must have rates for every day with sales; FAIL = sales date has no FX rate available',
-    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM (
-    SELECT DISTINCT f.OrderDate FROM Sales f
-    LEFT JOIN ExchangeRates er ON er.Date = f.OrderDate
-    WHERE er.Date IS NULL
-) x
+    SELECT 'FX: covers all sales dates',
+        'ExchangeRates must have rates for every day with sales; FAIL = sales date has no FX rate available',
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+    FROM (
+        SELECT DISTINCT f.OrderDate FROM Sales f
+        LEFT JOIN ExchangeRates er ON er.Date = f.OrderDate
+        WHERE er.Date IS NULL
+    ) x
 
-UNION ALL
+    UNION ALL
 
-SELECT 'Budget: 3 scenarios per year',
-    'Each budget year must have Low/Medium/High scenarios; FAIL = missing scenario for a year',
-    CASE WHEN MIN(ScenarioCount) = 3 AND MAX(ScenarioCount) = 3
-         THEN 'PASS' ELSE 'FAIL' END
-FROM (
-    SELECT BudgetYear, COUNT(DISTINCT Scenario) AS ScenarioCount
-    FROM BudgetYearly GROUP BY BudgetYear
-) x
+    SELECT 'Budget: 3 scenarios per year',
+        'Each budget year must have Low/Medium/High scenarios; FAIL = missing scenario for a year',
+        CASE WHEN MIN(ScenarioCount) = 3 AND MAX(ScenarioCount) = 3
+             THEN 'PASS' ELSE 'FAIL' END
+    FROM (
+        SELECT BudgetYear, COUNT(DISTINCT Scenario) AS ScenarioCount
+        FROM BudgetYearly GROUP BY BudgetYear
+    ) x
 
-UNION ALL
+    UNION ALL
 
-SELECT 'Inventory: no gap months',
-    'Inventory snapshots must exist for every month in the range; FAIL = missing monthly snapshot',
-    CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM (
-    SELECT d.[Year], d.[Month]
-    FROM Dates d
-    WHERE d.[Day] = 1
-      AND d.Date BETWEEN (SELECT MIN(SnapshotDate) FROM InventorySnapshot)
-                     AND (SELECT MAX(SnapshotDate) FROM InventorySnapshot)
-      AND NOT EXISTS (
-          SELECT 1 FROM InventorySnapshot i
-          WHERE YEAR(i.SnapshotDate) = d.[Year]
-            AND MONTH(i.SnapshotDate) = d.[Month]
-      )
-) x;
+    SELECT 'Inventory: no gap months',
+        'Inventory snapshots must exist for every month in the range; FAIL = missing monthly snapshot',
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+    FROM (
+        SELECT d.[Year], d.[Month]
+        FROM Dates d
+        WHERE d.[Day] = 1
+          AND d.Date BETWEEN (SELECT MIN(SnapshotDate) FROM InventorySnapshot)
+                         AND (SELECT MAX(SnapshotDate) FROM InventorySnapshot)
+          AND NOT EXISTS (
+              SELECT 1 FROM InventorySnapshot i
+              WHERE YEAR(i.SnapshotDate) = d.[Year]
+                AND MONTH(i.SnapshotDate) = d.[Month]
+          )
+    ) x;
+END
+ELSE IF @has_header = 1
+BEGIN
+    SELECT
+        'Sales: no gap months' AS [Check],
+        'Every month in the sales date range must have transactions; FAIL = missing month with zero sales' AS [Description],
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END AS Result
+    FROM (
+        SELECT d.[Year], d.[Month]
+        FROM Dates d
+        WHERE d.[Day] = 1
+          AND d.Date BETWEEN (SELECT MIN(OrderDate) FROM SalesOrderHeader)
+                         AND (SELECT MAX(OrderDate) FROM SalesOrderHeader)
+          AND NOT EXISTS (
+              SELECT 1 FROM SalesOrderHeader h
+              WHERE YEAR(h.OrderDate) = d.[Year]
+                AND MONTH(h.OrderDate) = d.[Month]
+          )
+    ) x
+
+    UNION ALL
+
+    SELECT 'Date dim: no gaps',
+        'Date table must have one row per calendar day with no missing days; FAIL = holes in calendar dimension',
+        CASE WHEN COUNT(*) = DATEDIFF(DAY, MIN(Date), MAX(Date)) + 1
+             THEN 'PASS' ELSE 'FAIL' END
+    FROM Dates
+
+    UNION ALL
+
+    SELECT 'FX: covers all sales dates',
+        'ExchangeRates must have rates for every day with sales; FAIL = sales date has no FX rate available',
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+    FROM (
+        SELECT DISTINCT h.OrderDate FROM SalesOrderHeader h
+        LEFT JOIN ExchangeRates er ON er.Date = h.OrderDate
+        WHERE er.Date IS NULL
+    ) x
+
+    UNION ALL
+
+    SELECT 'Budget: 3 scenarios per year',
+        'Each budget year must have Low/Medium/High scenarios; FAIL = missing scenario for a year',
+        CASE WHEN MIN(ScenarioCount) = 3 AND MAX(ScenarioCount) = 3
+             THEN 'PASS' ELSE 'FAIL' END
+    FROM (
+        SELECT BudgetYear, COUNT(DISTINCT Scenario) AS ScenarioCount
+        FROM BudgetYearly GROUP BY BudgetYear
+    ) x
+
+    UNION ALL
+
+    SELECT 'Inventory: no gap months',
+        'Inventory snapshots must exist for every month in the range; FAIL = missing monthly snapshot',
+        CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
+    FROM (
+        SELECT d.[Year], d.[Month]
+        FROM Dates d
+        WHERE d.[Day] = 1
+          AND d.Date BETWEEN (SELECT MIN(SnapshotDate) FROM InventorySnapshot)
+                         AND (SELECT MAX(SnapshotDate) FROM InventorySnapshot)
+          AND NOT EXISTS (
+              SELECT 1 FROM InventorySnapshot i
+              WHERE YEAR(i.SnapshotDate) = d.[Year]
+                AND MONTH(i.SnapshotDate) = d.[Month]
+          )
+    ) x;
+END
