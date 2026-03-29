@@ -88,5 +88,5 @@ def micro_aggregate_inventory(
         "store_key": g_store,
         "year": g_year.astype(np.int16),
         "month": g_month.astype(np.int8),
-        "quantity_sold": group_qty.astype(np.int64),
+        "quantity_sold": group_qty.astype(np.int32),
     }

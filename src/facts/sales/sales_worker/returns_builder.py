@@ -7,6 +7,7 @@ import numpy as np
 import pyarrow as pa
 
 from src.defaults import RETURN_REASON_KEYS, RETURN_REASON_DEFAULT_WEIGHTS
+from src.exceptions import SalesError
 
 
 # Columns required from SalesOrderDetail to produce a returns fact table.
@@ -139,10 +140,10 @@ def _validate_cfg(cfg: ReturnsConfig) -> tuple[float, int, int, np.ndarray, np.n
         raise RuntimeError("ReturnsConfig.max_lag_days must be >= 0.")
 
     if min_lag > max_lag:
-        raise RuntimeError('ReturnsConfig.min_lag_days must be <= max_lag_days.')
+        raise SalesError('ReturnsConfig.min_lag_days must be <= max_lag_days.')
 
     # reasons
-    rk = _as_np_i64(list(cfg.reason_keys))
+    rk = _as_np_i32(list(cfg.reason_keys))
     rp = _as_np_f64(list(cfg.reason_probs))
 
     if rk.size == 0:
@@ -150,7 +151,7 @@ def _validate_cfg(cfg: ReturnsConfig) -> tuple[float, int, int, np.ndarray, np.n
         rp = np.array([1.0], dtype=np.float64)
 
     if rp.size != rk.size:
-        raise RuntimeError("ReturnsConfig.reason_probs must match reason_keys length.")
+        raise SalesError("ReturnsConfig.reason_probs must match reason_keys length.")
 
     if not np.all(np.isfinite(rp)):
         raise RuntimeError("ReturnsConfig.reason_probs must be finite.")
