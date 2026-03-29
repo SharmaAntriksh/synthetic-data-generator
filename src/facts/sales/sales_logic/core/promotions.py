@@ -101,6 +101,9 @@ def apply_promotions(
     if promo_start_all.shape[0] != P or promo_end_all.shape[0] != P:
         raise SalesError("promo_start_all/promo_end_all must align with promo_keys_all length")
 
+    # Import once per call (not per inner-loop iteration); lazy to avoid circular import
+    from . import _normalize_cdf
+
     promo_valid_glob = (promo_keys_all != int(no_discount_key))
     if not promo_valid_glob.any():
         return promo_keys
@@ -197,7 +200,6 @@ def apply_promotions(
                     if _s <= 0.0:
                         _chosen = _filtered[rng.integers(0, _filtered.size, size=_ct_count)]
                     else:
-                        from . import _normalize_cdf
                         _cdf = _normalize_cdf(_w)
                         _u = rng.random(_ct_count)
                         _j = np.searchsorted(_cdf, _u, side="right")
@@ -213,7 +215,6 @@ def apply_promotions(
                 if s <= 0.0:
                     chosen = idx[rng.integers(0, idx.size, size=count)]
                 else:
-                    from . import _normalize_cdf
                     cdf = _normalize_cdf(w)
                     u = rng.random(count)
                     j = np.searchsorted(cdf, u, side="right")
