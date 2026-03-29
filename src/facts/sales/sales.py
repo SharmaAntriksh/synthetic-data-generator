@@ -1753,6 +1753,18 @@ def generate_sales_fact(
     if inventory_enabled:
         inventory_acc = InventoryAccumulator()
         worker_cfg["inventory_enabled"] = True
+        # Pre-build store→warehouse map so workers aggregate at warehouse grain
+        # (eliminates expensive post-hoc rollup in the inventory runner)
+        _wh_stores_path = parquet_folder_p / "stores.parquet"
+        if _wh_stores_path.exists():
+            _wh_st = pd.read_parquet(str(_wh_stores_path), columns=["StoreKey", "WarehouseKey"])
+            if "WarehouseKey" in _wh_st.columns:
+                _sk = _wh_st["StoreKey"].astype(np.int32).to_numpy()
+                _wk = _wh_st["WarehouseKey"].astype(np.int32).to_numpy()
+                _max_sk = int(_sk.max()) + 1
+                _sk_to_wk = np.full(_max_sk, -1, dtype=np.int32)
+                _sk_to_wk[_sk] = _wk
+                worker_cfg["inventory_store_to_warehouse"] = _sk_to_wk
         info("Inventory streaming aggregation: enabled")
     else:
         worker_cfg["inventory_enabled"] = False

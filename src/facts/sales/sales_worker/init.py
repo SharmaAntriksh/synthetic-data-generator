@@ -1123,6 +1123,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
             "budget_product_to_cat": budget_product_to_cat,
 
             "inventory_enabled": bool(worker_cfg.get("inventory_enabled", False)),
+            "inventory_store_to_warehouse": worker_cfg.get("inventory_store_to_warehouse"),
             "wishlists_enabled": bool(worker_cfg.get("wishlists_enabled", False)),
             "complaints_enabled": bool(worker_cfg.get("complaints_enabled", False)),
 

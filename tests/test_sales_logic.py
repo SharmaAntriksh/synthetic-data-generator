@@ -957,8 +957,9 @@ class TestInventoryMicroAgg:
         result = micro_aggregate_inventory(table)
         assert result is not None
         assert "product_key" in result
-        assert "store_key" in result
+        assert "location_key" in result
         assert "quantity_sold" in result
+        assert result["grain"] in ("store", "warehouse")
 
     def test_empty_table_returns_none(self):
         table = pa.table({

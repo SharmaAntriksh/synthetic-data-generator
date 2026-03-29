@@ -183,12 +183,11 @@ def run_inventory_pipeline(
 
     demand = accumulator.finalize()
 
-    # ABC reclassification needs store-level demand (before rollup)
-    # so we save a reference before aggregating to warehouse grain.
-    store_demand = demand
-
-    # Roll up store-level demand to warehouse-level
-    demand = _rollup_demand_to_warehouse(demand, parquet_dims)
+    # If workers already aggregated at warehouse grain, skip the expensive rollup.
+    if "WarehouseKey" in demand.columns:
+        info("Demand already at warehouse grain (pre-mapped in workers)")
+    else:
+        demand = _rollup_demand_to_warehouse(demand, parquet_dims)
 
     # Single groupby for both metrics
     _pair_groups = demand.groupby(["ProductKey", "WarehouseKey"])
@@ -227,7 +226,7 @@ def run_inventory_pipeline(
     # low-price products (e.g. Tailspin Toys) are correctly classified as A.
     if product_attrs_arrays is not None and "ABCClassification" in product_attrs_arrays:
         product_attrs_arrays = _recompute_abc_from_demand(
-            store_demand, product_attrs_arrays,
+            demand, product_attrs_arrays,
         )
         # Write updated ABC back to product_profile so Power BI sees it
         _update_product_profile_abc(parquet_dims, product_attrs_arrays)

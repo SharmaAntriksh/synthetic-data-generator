@@ -73,21 +73,23 @@ class TestComplaintsAccumulator:
         acc.add({"customer_key": np.array([], dtype=np.int64)})
         assert acc.has_data is False
 
-    def test_deduplication(self):
+    def test_concatenation_across_chunks(self):
+        """Each chunk has unique SalesOrderNumbers (chunk_idx × stride),
+        so cross-chunk duplicates cannot occur.  Accumulator concatenates
+        without dedup for performance."""
         acc = ComplaintsAccumulator()
         acc.add({
-            "customer_key": np.array([1, 1, 2], dtype=np.int64),
-            "sales_order_number": np.array([100, 100, 200], dtype=np.int64),
-            "line_number": np.array([1, 1, 1], dtype=np.int64),
+            "customer_key": np.array([1, 2], dtype=np.int64),
+            "sales_order_number": np.array([100, 200], dtype=np.int64),
+            "line_number": np.array([1, 1], dtype=np.int64),
         })
         acc.add({
             "customer_key": np.array([1, 3], dtype=np.int64),
-            "sales_order_number": np.array([100, 300], dtype=np.int64),
+            "sales_order_number": np.array([300, 400], dtype=np.int64),
             "line_number": np.array([1, 1], dtype=np.int64),
         })
         df = acc.finalize()
-        # (1,100,1) appears 3 times across parts — should be deduped to 1
-        assert len(df) == 3  # (1,100,1), (2,200,1), (3,300,1)
+        assert len(df) == 4  # all rows preserved (no cross-chunk overlap)
 
     def test_multiple_parts(self):
         acc = ComplaintsAccumulator()

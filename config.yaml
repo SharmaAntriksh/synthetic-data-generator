@@ -6,7 +6,7 @@
 # SCALE — row/entity counts for each table (start here)
 # ------------------------------------------------------------------
 scale:
-  sales_rows: 2003295
+  sales_rows: 1003295
   products: 5167                    #5167 total products in base file
   customers: 42851
   stores: 200

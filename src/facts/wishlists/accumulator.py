@@ -22,6 +22,8 @@ class WishlistAccumulator(BaseAccumulator):
         all_ck = np.concatenate([p["customer_key"] for p in self._parts])
         all_pk = np.concatenate([p["product_key"] for p in self._parts])
 
-        # Hash-based dedup — O(n) vs O(n log n) for np.unique(axis=0)
+        # Dedup required: same (customer, product) pair can appear in
+        # multiple sales chunks when a customer buys the same product
+        # in different months.
         df = pd.DataFrame({"CustomerKey": all_ck, "ProductKey": all_pk})
         return df.drop_duplicates(ignore_index=True)
