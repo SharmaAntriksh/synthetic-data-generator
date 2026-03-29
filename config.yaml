@@ -240,7 +240,7 @@ inventory:
   enabled: true
   seed: 42
   grain: monthly                       # monthly | quarterly
-  partition_by: ["Year", "Month"]      # null or [] to disable (used by deltaparquet)
+  partition_by: ["Year"]               # ["Year","Month"] for finer pruning; null or [] to disable
   abc_filter: ["A", "B"]                     # null = all classes; ["A", "B"] = skip C-class products
 
   min_demand_months: 6                  # months of sales history needed before stocking a product

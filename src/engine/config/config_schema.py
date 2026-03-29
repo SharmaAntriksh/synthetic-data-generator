@@ -371,7 +371,7 @@ class InventoryConfig(_Base):
     enabled: bool = True
     seed: int = 42
     grain: str = "monthly"
-    partition_by: Optional[List[str]] = None
+    partition_by: Optional[List[str]] = ["Year"]
     abc_filter: Optional[List[str]] = None
     min_demand_months: int = 6
     initial_stock_multiplier: float = 1.5

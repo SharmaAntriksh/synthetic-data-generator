@@ -26,6 +26,10 @@ python main.py --regen-dimensions products      # force-rebuild specific dim
 python main.py --regen-dimensions all           # force-rebuild all dims
 python main.py --refresh-fx-master              # top up FX rates via Yahoo Finance
 
+# Post-generation tools
+python scripts/optimize_delta.py "generated_datasets/..."   # compact small delta files
+python scripts/optimize_parquet.py "generated_datasets/..."  # re-compress parquet
+
 # Web UI
 python -m uvicorn web.api:app --port 8502
 ```

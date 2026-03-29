@@ -302,6 +302,29 @@ python scripts/optimize_parquet.py `
 
 ---
 
+## Delta Lake Optimization
+
+Compact small Delta Lake files into fewer, larger ones. Useful after `deltaparquet` runs where partitioned tables (Sales, InventorySnapshot) produce many small files from parallel chunk writes.
+
+```powershell
+python scripts/optimize_delta.py `
+  "generated_datasets\2026-03-29 07_11_29 PM Customers 43K Sales 1M DELTAPARQUET" `
+  --target-size 256 `
+  --min-files 5
+```
+
+Tables with 5 or fewer files are skipped automatically (dimensions, small facts). The script runs `OPTIMIZE` (compaction) and `VACUUM` (cleanup) on each qualifying Delta table.
+
+| Flag | Description |
+|---|---|
+| `--min-files N` | Skip tables with N or fewer files (default: 5) |
+| `--target-size MB` | Target file size after compaction in MB (default: 256) |
+| `--max-tasks N` | Max concurrent compaction tasks (default: CPU count) |
+
+**Partition tuning:** Inventory partitioning is controlled by `inventory.partition_by` in `config.yaml`. Default is `["Year"]`. Set to `["Year", "Month"]` for finer query pruning at the cost of more files, or `null` to disable partitioning entirely.
+
+---
+
 ## SQL Server Import (CSV mode)
 
 When generating in CSV mode, the output includes auto-generated SQL scripts for bootstrapping a SQL Server database. Use the import script to load everything in one step.
