@@ -383,7 +383,7 @@ Each output includes a Power BI Project (`.pbip`) template with pre-configured f
 
 ## Testing
 
-The project includes 1070+ tests covering config validation, pricing pipeline, quantity model, geography, trend presets, version store, state management, determinism guarantees, edge-case guards, web API, packaging, sales logic, and schema validation.
+The project includes 1338+ tests covering config validation, pricing pipeline, quantity model, geography, trend presets, version store, state management, determinism guarantees, edge-case guards, web API, packaging, sales logic, schema validation, product dimensions, sales writer, and SQL tools.
 
 ```bash
 # Run all tests
