@@ -11,7 +11,7 @@ from src.dimensions.geography import (
     normalize_geography_config,
 )
 from src.engine.config.config_schema import AppConfig
-from src.exceptions import DimensionError
+from src.exceptions import ConfigError, DimensionError
 
 
 # ===================================================================
@@ -123,5 +123,5 @@ class TestNormalizeGeographyConfig:
         assert result["override"]["seed"] == 42
 
     def test_non_dict_override_raises(self):
-        with pytest.raises(TypeError, match="must be a mapping"):
+        with pytest.raises(ConfigError, match="must be a mapping"):
             normalize_geography_config({"override": "bad"})

@@ -590,7 +590,7 @@ def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[
     """
     schema_dir = sql_dir / "schema"
     if not schema_dir.is_dir():
-        return [], [], [], []
+        return [], [], [], [], []
 
     schema_tables_dir = schema_dir / "tables"
     schema_views_dir = schema_dir / "views"

@@ -979,9 +979,8 @@ def apply_cross_section_rules(cfg: Dict[str, Any]) -> Dict[str, Any]:
     from src.utils.logging_utils import warn as _warn
 
     sales_cfg = cfg.get("sales")
-    returns_cfg = cfg.get("returns")
 
-    # Rules 1-2: Returns and complaints require order columns
+    # Returns and complaints require order columns
     if skip_order_blocks_feature(cfg):
         for section in ("returns", "complaints"):
             sec_cfg = cfg.get(section)

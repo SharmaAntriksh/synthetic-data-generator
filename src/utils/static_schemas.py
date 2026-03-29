@@ -42,10 +42,6 @@ def FLOAT(*, not_null: bool = True) -> str:
     return _sql("FLOAT", not_null=not_null)
 
 
-def REAL(*, not_null: bool = True) -> str:
-    return _sql("REAL", not_null=not_null)
-
-
 def DATE(*, not_null: bool = True) -> str:
     return _sql("DATE", not_null=not_null)
 
@@ -160,7 +156,7 @@ _SALES_SCHEMA: Schema = (
     ("UnitCost", DECIMAL(8, 2, not_null=True)),
     ("DiscountAmount", DECIMAL(8, 2, not_null=True)),
     ("DeliveryStatus", VARCHAR(20, not_null=True)),
-    ("IsOrderDelayed", TINYINT_NN),
+    ("IsOrderDelayed", BIT(not_null=True)),
 )
 
 
@@ -212,7 +208,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
     "Customers": (
         ("CustomerKey", INT_NN),
         ("CustomerID", INT_NN),
-        ("VersionNumber", INT(not_null=True)),
+        ("VersionNumber", TINYINT(not_null=True)),
         ("EffectiveStartDate", DATE_NN),
         ("EffectiveEndDate", DATE_NN),
         ("IsCurrent", BIT(not_null=True)),
@@ -323,7 +319,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
     "Products": (
         ("ProductKey", INT_NN),
         ("ProductID", INT_NN),
-        ("VersionNumber", INT(not_null=True)),
+        ("VersionNumber", TINYINT(not_null=True)),
         ("EffectiveStartDate", DATE_NN),
         ("EffectiveEndDate", DATE_NN),
         ("IsCurrent", BIT(not_null=True)),
@@ -356,16 +352,16 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("HeightCm", FLOAT(not_null=True)),
         ("VolumeCm3", FLOAT(not_null=True)),
         ("ShippingClass", VARCHAR(20, not_null=True)),
-        ("IsFragile", INT_NN),
-        ("IsHazmat", INT_NN),
+        ("IsFragile", BIT(not_null=True)),
+        ("IsHazmat", BIT(not_null=True)),
         ("LeadTimeDays", INT_NN),
         ("CasePackQty", INT_NN),
         ("FulfillmentType", VARCHAR(20, not_null=True)),
         ("BrandTier", VARCHAR(20, not_null=True)),
-        ("EligibleStore", INT_NN),
-        ("EligibleOnline", INT_NN),
-        ("EligibleMarketplace", INT_NN),
-        ("EligibleB2B", INT_NN),
+        ("EligibleStore", BIT(not_null=True)),
+        ("EligibleOnline", BIT(not_null=True)),
+        ("EligibleMarketplace", BIT(not_null=True)),
+        ("EligibleB2B", BIT(not_null=True)),
         ("WarrantyMonths", INT_NN),
         ("ReturnRateBase", FLOAT(not_null=True)),
         ("DefectRateBase", FLOAT(not_null=True)),
@@ -460,14 +456,14 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("SequentialDayIndex", INT_NN),
 
         ("Year", INT_NN),
-        ("IsYearStart", INT_NN),
-        ("IsYearEnd", INT_NN),
+        ("IsYearStart", BIT(not_null=True)),
+        ("IsYearEnd", BIT(not_null=True)),
 
         ("Quarter", INT_NN),
         ("QuarterStartDate", DATE_NN),
         ("QuarterEndDate", DATE_NN),
-        ("IsQuarterStart", INT_NN),
-        ("IsQuarterEnd", INT_NN),
+        ("IsQuarterStart", BIT(not_null=True)),
+        ("IsQuarterEnd", BIT(not_null=True)),
         ("QuarterYear", VARCHAR(10, not_null=True)),
 
         ("Month", INT_NN),
@@ -480,8 +476,8 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("YearQuarterKey", INT_NN),
         ("CalendarMonthIndex", INT_NN),
         ("CalendarQuarterIndex", INT_NN),
-        ("IsMonthStart", INT_NN),
-        ("IsMonthEnd", INT_NN),
+        ("IsMonthStart", BIT(not_null=True)),
+        ("IsMonthEnd", BIT(not_null=True)),
 
         ("WeekOfMonth", INT_NN),
 
@@ -490,8 +486,8 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("DayShort", VARCHAR(10, not_null=True)),
         ("DayOfYear", INT_NN),
         ("DayOfWeek", INT_NN),
-        ("IsWeekend", INT_NN),
-        ("IsBusinessDay", INT_NN),
+        ("IsWeekend", BIT(not_null=True)),
+        ("IsBusinessDay", BIT(not_null=True)),
         ("NextBusinessDay", DATE_NN),
         ("PreviousBusinessDay", DATE_NN),
 

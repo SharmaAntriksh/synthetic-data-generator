@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pyarrow as pa
 
+from src.exceptions import SalesError
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or
 from .globals import PA_AVAILABLE, State
 from .core import (
@@ -781,7 +782,7 @@ def build_chunk_table(
     # Customer dimension arrays (new contract)
     customer_keys = _get_state_attr("customer_keys", "customers")
     if customer_keys is None:
-        raise RuntimeError("State must provide customer_keys/customers")
+        raise SalesError("State must provide customer_keys/customers")
     customer_keys = np.asarray(customer_keys, dtype="int32")
 
     # is_active_in_sales (new contract)
@@ -851,7 +852,7 @@ def build_chunk_table(
     st2g_arr = State.store_to_geo_arr
     g2c_arr = State.geo_to_currency_arr
     if st2g_arr is None or g2c_arr is None:
-        raise RuntimeError("State must provide store_to_geo_arr and geo_to_currency_arr")
+        raise SalesError("State must provide store_to_geo_arr and geo_to_currency_arr")
 
     file_format = State.file_format
 
@@ -1090,14 +1091,14 @@ def build_chunk_table(
         if not skip_cols:
             # Capacity check uses actual order count
             if order_cursor + np.int64(n_orders) > np.int64(cap):
-                raise RuntimeError(
+                raise SalesError(
                     f"chunk_capacity_orders too small: need {int(order_cursor) + n_orders} orders in chunk "
                     f"(cap={cap}). Increase chunk_capacity_orders (or reduce chunk sizing)."
                 )
 
             order_id_start = base + order_cursor
             if order_id_start + np.int64(n_orders) + 1 >= INT32_MAX:
-                raise RuntimeError(
+                raise SalesError(
                     f"SalesOrderNumber would exceed int32 range "
                     f"(order_id_start={int(order_id_start)}, n_orders={n_orders}, "
                     f"int32_max={int(INT32_MAX)}). Reduce total rows or increase chunk count."
@@ -1437,10 +1438,10 @@ def build_chunk_table(
 
         geo_arr = st2g_arr[store_key_arr]
         if np.any(geo_arr < 0):
-            raise RuntimeError("store_to_geo_arr missing mapping for sampled StoreKey(s)")
+            raise SalesError("store_to_geo_arr missing mapping for sampled StoreKey(s)")
         currency_arr = g2c_arr[geo_arr]
         if np.any(currency_arr < 0):
-            raise RuntimeError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
+            raise SalesError("geo_to_currency_arr missing mapping for sampled GeographyKey(s)")
 
         # --------------------------------------------------------
         # DATE LOGIC (CORRELATION #3: channel-aware delivery)
@@ -1725,7 +1726,7 @@ def build_chunk_table(
         if extra:
             unknown = [k for k in extra.keys() if k not in schema_types]
             if unknown:
-                raise RuntimeError(
+                raise SalesError(
                     f"Extra columns not in Sales schema: {unknown}. "
                     "Add them to src/utils/static_schemas.get_sales_schema(...) first."
                 )

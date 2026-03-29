@@ -26,6 +26,10 @@ python main.py --regen-dimensions products      # force-rebuild specific dim
 python main.py --regen-dimensions all           # force-rebuild all dims
 python main.py --refresh-fx-master              # top up FX rates via Yahoo Finance
 
+# Post-generation tools
+python scripts/optimize_delta.py "generated_datasets/..."   # compact small delta files
+python scripts/optimize_parquet.py "generated_datasets/..."  # re-compress parquet
+
 # Web UI
 python -m uvicorn web.api:app --port 8502
 ```
@@ -313,7 +317,7 @@ pytest --lf            # rerun only last-failed tests
 pytest --co            # list tests without running
 ```
 
-Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py`, `test_dimensions.py`, `test_packaging.py`, `test_sales_logic.py`, `test_utils.py`, `test_web_routes.py`, `test_schema.py`, `test_gotchas_and_guards.py` (1076+ tests; web API/route tests require `httpx` and are skipped without it).
+Test files: `tests/test_config_loader.py`, `test_pricing_pipeline.py`, `test_quantity_model.py`, `test_geography.py`, `test_customer_profiles.py`, `test_version_store.py`, `test_state.py`, `test_determinism.py`, `test_integration.py`, `test_web_api.py`, `test_dimensions.py`, `test_packaging.py`, `test_sales_logic.py`, `test_utils.py`, `test_web_routes.py`, `test_schema.py`, `test_gotchas_and_guards.py`, `test_products.py`, `test_sales_writer.py`, `test_sql_tools.py` (1338+ tests; web API/route tests require `httpx` and are skipped without it).
 
 ## Output Formats
 

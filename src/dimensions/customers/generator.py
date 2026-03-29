@@ -233,7 +233,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
 
     # Assign GeographyKey per customer: sample from their region's cities,
     # weighted by population. Falls back to uniform if no region pools.
-    GeographyKey = np.empty(N, dtype=np.int64)
+    GeographyKey = np.empty(N, dtype=np.int32)
     if _geo_region_pools:
         for region_code in np.unique(Region):
             mask = Region == region_code
@@ -814,7 +814,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     # =====================================================
     if _skip_post_phases:
         # Return raw arrays for the parallel orchestrator to merge and process
-        HouseholdKey = np.arange(1, N + 1, dtype="int64")
+        HouseholdKey = np.arange(1, N + 1, dtype=np.int32)
         HouseholdRole = np.full(N, "Single", dtype=object)
     else:
         household_pct_cfg = getattr(cust_cfg, "household_pct", None)
@@ -854,10 +854,10 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "CustomerKey": CustomerKey,
             "CustomerID": CustomerKey.copy(),       # durable business key (= CustomerKey initially)
             # --- SCD2 metadata (always present, defaults for Type 1 mode) ---
-            "VersionNumber": np.ones(N, dtype="int64"),
+            "VersionNumber": np.ones(N, dtype=np.int8),
             "EffectiveStartDate": pd.to_datetime(CustomerStartDate),
             "EffectiveEndDate": SCD2_END_OF_TIME,
-            "IsCurrent": np.ones(N, dtype="int64"),
+            "IsCurrent": np.ones(N, dtype=np.int8),
             "CustomerName": CustomerName,
             "DOB": BirthDate,
             "Gender": Gender,
@@ -1135,18 +1135,7 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
         names_folder = resolve_people_folder(cfg)
         people_pools = load_people_pools(names_folder, enable_asia=enable_asia, legacy_support=True)
 
-        # Re-derive Region from geography for org_profile
-        geography, _ = load_dimension("geography", parquet_dims_folder, cfg.geography)
-        geo_lookup = geography.set_index("GeographyKey")[["City", "State", "Country"]]
-
-        # Map GeographyKey -> Country -> Region
-        _geo_country = geo_lookup["Country"].to_dict()
-        _country_to_region = {}
-        for gk, row_data in geo_lookup.iterrows():
-            c = row_data["Country"]
-            if c not in _country_to_region:
-                _country_to_region[c] = "US"  # default
-        # Simplified region derivation from customer config
+        # Re-derive Region from customer config percentages for org_profile
         p_in, p_us, p_eu, p_as = validate_percentages(
             float(cust_cfg.pct_india), float(cust_cfg.pct_us),
             float(cust_cfg.pct_eu), float(getattr(cust_cfg, "pct_asia", 0.0)),

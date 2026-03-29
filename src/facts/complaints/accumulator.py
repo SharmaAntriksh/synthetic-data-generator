@@ -26,10 +26,12 @@ class ComplaintsAccumulator(BaseAccumulator):
         all_so = np.concatenate([p["sales_order_number"] for p in self._parts])
         all_ln = np.concatenate([p["line_number"] for p in self._parts])
 
-        # Hash-based dedup — O(n) vs O(n log n) for np.unique(axis=0)
-        df = pd.DataFrame({
+        # Each chunk already deduplicates per-chunk via micro_agg, and
+        # SalesOrderNumbers are unique across chunks (chunk_idx × stride),
+        # so cross-chunk duplicates cannot occur.  Skip the expensive
+        # drop_duplicates on the full concatenated array.
+        return pd.DataFrame({
             "CustomerKey": all_ck,
             "SalesOrderNumber": all_so,
             "SalesOrderLineNumber": all_ln,
         })
-        return df.drop_duplicates(ignore_index=True)

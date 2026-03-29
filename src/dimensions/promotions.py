@@ -460,7 +460,7 @@ def generate_promotions_catalog(
 
     # Sort promos by StartDate; keys start at 2 (key 1 reserved for No Discount)
     df = df.sort_values("StartDate").reset_index(drop=True)
-    df["PromotionKey"] = (df.index + 2).astype(np.int64)
+    df["PromotionKey"] = (df.index + 2).astype(np.int32)
 
     # Build "No Discount" sentinel — always PromotionKey=1
     min_year = min(years)
@@ -468,7 +468,7 @@ def generate_promotions_catalog(
     no_discount = pd.DataFrame(
         [
             {
-                "PromotionKey": np.int64(1),
+                "PromotionKey": np.int32(1),
                 "PromotionName": "No Discount",
                 "PromotionDescription": "No Discount",
                 "DiscountPct": 0.0,

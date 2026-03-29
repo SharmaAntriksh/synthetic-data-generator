@@ -30,7 +30,7 @@ def build_dim_currency(currencies: List[str]) -> pd.DataFrame:
     """Build the currency dimension DataFrame from a normalized currency list."""
     currencies = normalize_currency_list(currencies)
     return pd.DataFrame({
-        "CurrencyKey": pd.RangeIndex(1, len(currencies) + 1).astype("int64"),
+        "CurrencyKey": pd.RangeIndex(1, len(currencies) + 1).astype("int32"),
         "CurrencyCode": currencies,
         "CurrencyName": [currency_name(c) for c in currencies],
         "CurrencySymbol": [currency_symbol(c) for c in currencies],

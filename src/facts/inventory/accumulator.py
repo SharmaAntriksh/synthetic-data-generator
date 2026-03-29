@@ -33,30 +33,39 @@ class InventoryAccumulator(BaseAccumulator):
         Merge all micro-aggregates into a single DataFrame.
 
         Returns DataFrame with columns:
-            ProductKey, StoreKey, Year, Month, QuantitySold
+            ProductKey, (WarehouseKey or StoreKey), Year, Month, QuantitySold
+
+        When workers aggregate at warehouse grain (store→warehouse mapped
+        in the worker), the location column is WarehouseKey.  Otherwise
+        falls back to StoreKey for backward compatibility.
 
         Re-aggregates in case chunk boundaries split a month for the same
-        (product, store) pair.
+        (product, location) pair.
         """
         if not self._parts:
             return pd.DataFrame(columns=[
                 "ProductKey", "StoreKey", "Year", "Month", "QuantitySold",
             ])
 
-        # Concatenate all micro-agg arrays and cast to final dtypes upfront
+        # Detect grain from first part (new format uses location_key + grain;
+        # old format uses store_key without grain)
+        grain = self._parts[0].get("grain", "store")
+        loc_col = "WarehouseKey" if grain == "warehouse" else "StoreKey"
+        loc_key = "location_key" if "location_key" in self._parts[0] else "store_key"
+
         _pk = np.concatenate([p["product_key"] for p in self._parts]).astype(np.int32)
-        _sk = np.concatenate([p["store_key"] for p in self._parts]).astype(np.int32)
+        _lk = np.concatenate([p[loc_key] for p in self._parts]).astype(np.int32)
         _yr = np.concatenate([p["year"] for p in self._parts]).astype(np.int16)
         _mo = np.concatenate([p["month"] for p in self._parts]).astype(np.int8)
         _qty = np.concatenate([p["quantity_sold"] for p in self._parts]).astype(np.int32)
 
         df = pd.DataFrame({
-            "ProductKey": _pk, "StoreKey": _sk,
+            "ProductKey": _pk, loc_col: _lk,
             "Year": _yr, "Month": _mo, "QuantitySold": _qty,
         })
 
         df = df.groupby(
-            ["ProductKey", "StoreKey", "Year", "Month"],
+            ["ProductKey", loc_col, "Year", "Month"],
             as_index=False,
         ).agg({"QuantitySold": "sum"})
 

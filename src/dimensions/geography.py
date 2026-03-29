@@ -23,7 +23,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from src.exceptions import DimensionError
+from src.exceptions import ConfigError, DimensionError
 from src.utils.logging_utils import debug, info, skip, stage, warn
 from src.versioning.version_store import should_regenerate, save_version
 
@@ -107,9 +107,9 @@ FALLBACK_ROWS: List[Tuple[str, str, str, str, str]] = [
     ("São Paulo", "São Paulo", "Brazil", "South America", "BRL"),
     ("Rio de Janeiro", "Rio de Janeiro", "Brazil", "South America", "BRL"),
     ("Brasília", "Federal District", "Brazil", "South America", "BRL"),
-    ("Mexico City", "Mexico City", "Mexico", "South America", "MXN"),
-    ("Guadalajara", "Jalisco", "Mexico", "South America", "MXN"),
-    ("Monterrey", "Nuevo León", "Mexico", "South America", "MXN"),
+    ("Mexico City", "Mexico City", "Mexico", "North America", "MXN"),
+    ("Guadalajara", "Jalisco", "Mexico", "North America", "MXN"),
+    ("Monterrey", "Nuevo León", "Mexico", "North America", "MXN"),
 ]
 
 
@@ -263,16 +263,16 @@ def normalize_geography_config(geo_cfg: Dict) -> Dict:
     # override sub-block (kept for seed/dates/paths compatibility)
     override = geo_cfg.get("override") or {}
     if not isinstance(override, Mapping):
-        raise TypeError("geography.override must be a mapping")
+        raise ConfigError("geography.override must be a mapping")
     override.setdefault("seed", None)
     override.setdefault("dates", {})
     override.setdefault("paths", {})
     if override["seed"] is not None:
         override["seed"] = int(override["seed"])
     if not isinstance(override["dates"], Mapping):
-        raise TypeError("geography.override.dates must be a mapping")
+        raise ConfigError("geography.override.dates must be a mapping")
     if not isinstance(override["paths"], Mapping):
-        raise TypeError("geography.override.paths must be a mapping")
+        raise ConfigError("geography.override.paths must be a mapping")
     geo_cfg["override"] = override
 
     return geo_cfg

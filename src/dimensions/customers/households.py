@@ -96,7 +96,7 @@ def assign_households(
     ages_f64 = ages_years.astype(np.float64)
 
     # Assign household IDs to all heads upfront
-    hh_ids = np.arange(1, n_heads + 1, dtype="int64")
+    hh_ids = np.arange(1, n_heads + 1, dtype=np.int32)
     household_key[head_indices] = hh_ids
     household_role[head_indices] = "Head"
 

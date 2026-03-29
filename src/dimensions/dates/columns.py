@@ -129,7 +129,7 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
     _get = (lambda k, d: getattr(include, k, d)) if not isinstance(include, dict) else (lambda k, d: include.get(k, d))
     if _get("calendar", True):
         cols += calendar_cols
-    if _get("iso", True):
+    if _get("iso", False):
         cols += iso_cols
     if _get("fiscal", True):
         cols += fiscal_cols

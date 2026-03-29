@@ -188,6 +188,10 @@ def generate_bulk_insert_script(
     target_sql = Path(output_sql_file)
     target_sql.parent.mkdir(parents=True, exist_ok=True)
 
+    # Validate codepage to prevent SQL injection via config
+    if not str(codepage).strip().isdigit():
+        raise ValueError(f"codepage must be numeric, got {codepage!r}")
+
     csv_paths = list(_iter_csv_files(csv_folder, recursive=recursive))
     if not csv_paths:
         skip(f"No CSV files found in {csv_folder}. Skipping BULK INSERT script.")

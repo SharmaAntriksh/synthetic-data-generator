@@ -117,7 +117,7 @@ def run_pipeline(
     Returns a small run summary dict. Raises on failures.
     """
     if only not in (None, "dimensions", "sales"):
-        raise ValueError("only must be one of: None, 'dimensions', 'sales'")
+        raise ConfigError("only must be one of: None, 'dimensions', 'sales'")
 
     overrides = _normalize_overrides(overrides or PipelineOverrides())
     force_regenerate: Set[str] = set(regen_dimensions) if regen_dimensions else set()
@@ -329,7 +329,7 @@ def _apply_overrides(cfg, sales_cfg, overrides: PipelineOverrides):
         fmt = str(sales_cfg.file_format or "").lower()
         if fmt not in ("parquet", "deltaparquet"):
             fail("--row-group-size is only valid for parquet or deltaparquet output")
-            raise ValueError("row_group_size only valid for parquet/deltaparquet")
+            raise ConfigError("row_group_size only valid for parquet/deltaparquet")
         sales_cfg.row_group_size = int(overrides.row_group_size)
 
     # Global dates overrides
@@ -461,7 +461,7 @@ def _apply_promotions_total(promotions_cfg, total: int) -> None:
     for k in keys:
         val = getattr(promotions_cfg, k, None)
         if val is not None and int(val) < 0:
-            raise ValueError(f"promotions.{k} must be non-negative, got {val}")
+            raise ConfigError(f"promotions.{k} must be non-negative, got {val}")
     if all(getattr(promotions_cfg, k, None) is not None and isinstance(getattr(promotions_cfg, k), (int, float)) for k in keys):
         current = sum(int(getattr(promotions_cfg, k)) for k in keys)
         if current <= 0:

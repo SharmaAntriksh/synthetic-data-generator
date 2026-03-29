@@ -319,7 +319,7 @@ def expand_changed_customers(
             _row_count += 1
 
             new_state = dict(current_state)
-            new_state["VersionNumber"] = i + 2
+            new_state["VersionNumber"] = np.int8(i + 2)
             new_state["EffectiveStartDate"] = event_date
             new_state["EffectiveEndDate"] = SCD2_END_OF_TIME
             new_state["IsCurrent"] = 1

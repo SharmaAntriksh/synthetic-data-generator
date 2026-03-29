@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from src.engine.config.config_schema import ModelsInnerConfig
+from src.exceptions import ConfigError
 from src.utils.config_merge import deep_merge
 from src.utils.trend_presets import (
     VALID_TRENDS,
@@ -115,7 +116,7 @@ class TestTrendPresetAPI:
             assert result is not None
 
     def test_get_trend_defaults_unknown_raises(self):
-        with pytest.raises(ValueError, match="Unknown trend preset"):
+        with pytest.raises(ConfigError, match="Unknown trend preset"):
             get_trend_defaults("nonexistent")
 
 
@@ -134,7 +135,7 @@ class TestResolveTrendPreset:
     def test_unknown_trend_raises(self):
         models = self._models({"macro_demand": {"trend": "unknown"}})
 
-        with pytest.raises(ValueError, match="Unknown trend preset"):
+        with pytest.raises(ConfigError, match="Unknown trend preset"):
             resolve_trend_preset(models)
 
     def test_steady_growth_injects_lifecycle(self):
@@ -194,7 +195,7 @@ class TestResolveTrendPreset:
         }})
         models = self._models({"macro_demand": {"trend": "gradual-growth"}})
 
-        with pytest.raises(ValueError, match="between 0.05 and 1.0"):
+        with pytest.raises(ConfigError, match="between 0.05 and 1.0"):
             resolve_trend_preset(models, cfg=cfg)
 
     def test_deprecated_profile_maps_to_trend(self):

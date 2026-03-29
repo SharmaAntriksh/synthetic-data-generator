@@ -185,8 +185,8 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         )
     code_to_key = dict(zip(cur_df["CurrencyCode"], cur_df["CurrencyKey"]))
 
-    df["FromCurrencyKey"] = df["FromCurrency"].map(code_to_key).astype("int64")
-    df["ToCurrencyKey"] = df["ToCurrency"].map(code_to_key).astype("int64")
+    df["FromCurrencyKey"] = df["FromCurrency"].map(code_to_key).astype("int32")
+    df["ToCurrencyKey"] = df["ToCurrency"].map(code_to_key).astype("int32")
 
     daily_cols = [
         "Date", "FromCurrencyKey", "ToCurrencyKey",
