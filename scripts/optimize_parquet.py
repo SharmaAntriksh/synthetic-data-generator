@@ -33,7 +33,7 @@ _INT_DOWNCASTS: dict[str, pa.DataType] = {
     # Sales fact
     "SalesOrderLineNumber": pa.int32(),
     "Quantity":             pa.int32(),
-    "IsOrderDelayed":       pa.int32(),
+    "IsOrderDelayed":       pa.bool_(),
     "CurrencyKey":          pa.int32(),
     "PromotionKey":         pa.int32(),
     "ReturnQuantity":       pa.int32(),
@@ -43,8 +43,8 @@ _INT_DOWNCASTS: dict[str, pa.DataType] = {
     "ProductKey":           pa.int32(),
     "ReturnReasonKey":      pa.int32(),
     # Inventory
-    "ReorderFlag":          pa.int32(),
-    "StockoutFlag":         pa.int32(),
+    "ReorderFlag":          pa.bool_(),
+    "StockoutFlag":         pa.bool_(),
     "DaysOutOfStock":       pa.int32(),
     "QuantityOnHand":       pa.int32(),
     "QuantityOnOrder":      pa.int32(),
@@ -58,9 +58,9 @@ _INT_DOWNCASTS: dict[str, pa.DataType] = {
     # Subscriptions
     "PlanKey":              pa.int32(),
     "BillingCycleNumber":   pa.int32(),
-    "IsFirstPeriod":        pa.int32(),
-    "IsChurnPeriod":        pa.int32(),
-    "IsTrialPeriod":        pa.int32(),
+    "IsFirstPeriod":        pa.bool_(),
+    "IsChurnPeriod":        pa.bool_(),
+    "IsTrialPeriod":        pa.bool_(),
     # Budget
     "BudgetYear":           pa.int32(),
     # Wishlists
@@ -69,7 +69,7 @@ _INT_DOWNCASTS: dict[str, pa.DataType] = {
     "SubcategoryKey":       pa.int32(),
     "VariantIndex":         pa.int32(),
     "VersionNumber":        pa.int32(),
-    "IsCurrent":            pa.int32(),
+    "IsCurrent":            pa.bool_(),
     # Employees
     "StoreKey":             pa.int32(),
 }

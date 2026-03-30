@@ -83,6 +83,10 @@ def write_fact_table(
 
     if file_format == "csv":
         df = table.to_pandas() if isinstance(df_or_table, pa.Table) else df_or_table
+        # bool → 0/1 for SQL Server BULK INSERT compatibility (BIT columns)
+        _bool_cols = list(df.select_dtypes(include=["bool", "boolean"]).columns)
+        if _bool_cols:
+            df = df.assign(**{c: df[c].astype("Int8") for c in _bool_cols})
         csv_df = csv_prep_fn(df) if csv_prep_fn else df
         kwargs: dict = {"index": False}
         if csv_float_format:

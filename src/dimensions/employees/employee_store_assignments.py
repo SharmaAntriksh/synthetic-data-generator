@@ -127,7 +127,7 @@ def generate_employee_store_assignments(
         "EndDate": end,
         "FTE": emp["FTE"].fillna(1.0).astype(np.float64),
         "RoleAtStore": emp["Title"].astype(str),
-        "IsPrimary": np.int32(1),
+        "IsPrimary": True,
         "TransferReason": "Initial",
         "Status": np.where(is_terminated, "Completed", "Active"),
     })

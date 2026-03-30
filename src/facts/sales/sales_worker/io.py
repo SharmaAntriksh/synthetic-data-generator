@@ -182,6 +182,12 @@ def write_csv_table(
     if postprocess is not None:
         table = postprocess(table)
 
+    # Arrow CSV writes bool as "true"/"false"; SQL Server BULK INSERT
+    # expects 0/1 for BIT columns.  Cast bool → int8 before writing.
+    for i, field in enumerate(table.schema):
+        if pa.types.is_boolean(field.type):
+            table = table.set_column(i, field.name, pc.cast(table.column(i), pa.int8()))
+
     _ensure_dir(path)
 
     pacsv.write_csv(
@@ -286,7 +292,7 @@ def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
         table = table.set_column(
             idx,
             "IsOrderDelayed",
-            pc.cast(pc.fill_null(table["IsOrderDelayed"], 0), pa.int32()),
+            pc.cast(pc.fill_null(table["IsOrderDelayed"], False), pa.bool_()),
         )
     return table
 

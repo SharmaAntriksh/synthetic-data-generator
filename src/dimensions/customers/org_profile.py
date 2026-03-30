@@ -122,9 +122,7 @@ def generate_org_profile(
     FoundedYear = np.clip(founded_base, 1960, current_year - 1)
 
     is_large = (CompanySize == "Large") | (CompanySize == "Enterprise")
-    IsPubliclyTraded = np.where(
-        is_large & (rng.random(M) < 0.25), "Yes", "No"
-    )
+    IsPubliclyTraded = is_large & (rng.random(M) < 0.25)
 
     HeadquarterCountry = np.empty(M, dtype=object)
     for rc, country in _REGION_HQ_COUNTRY.items():
@@ -280,10 +278,7 @@ def generate_org_profile(
         if n:
             PreferredShippingMethod[mask] = rng.choice(_ORG_SHIPPING_METHODS, size=n, p=probs)
 
-    HasDedicatedAccountTeam = np.where(
-        is_large & (rng.random(M) < 0.45), "Yes",
-        np.where(~is_large & (rng.random(M) < 0.08), "Yes", "No"),
-    )
+    HasDedicatedAccountTeam = (is_large & (rng.random(M) < 0.45)) | (~is_large & (rng.random(M) < 0.08))
 
     AvgOrderValueUSD = np.round(
         AnnualRevenue * 0.001 * rng.uniform(0.5, 2.0, size=M)
@@ -294,7 +289,7 @@ def generate_org_profile(
 
     revenue_rank = np.argsort(np.argsort(-AnnualRevenue))
     top_10_pct = int(max(M * 0.10, 1))
-    IsStrategicAccount = np.where(revenue_rank < top_10_pct, "Yes", "No")
+    IsStrategicAccount = revenue_rank < top_10_pct
 
     start_ts = pd.to_datetime(org_start)
     delta = end_date - start_ts
@@ -311,10 +306,7 @@ def generate_org_profile(
     )
     SatisfactionTier = _ORG_SATISFACTION_TIERS[sat_idx]
 
-    HasExclusiveDeal = np.where(
-        (IsStrategicAccount == "Yes") & (rng.random(M) < 0.35), "Yes",
-        np.where(rng.random(M) < 0.03, "Yes", "No"),
-    )
+    HasExclusiveDeal = (IsStrategicAccount & (rng.random(M) < 0.35)) | (rng.random(M) < 0.03)
 
     esg_probs_by_size = {
         "Startup":    np.array([0.05, 0.10, 0.15, 0.10, 0.60]),

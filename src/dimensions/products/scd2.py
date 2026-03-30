@@ -147,10 +147,10 @@ def generate_scd2_versions(
     same_pid_as_next[-1] = False
 
     eff_end_arr = np.full(total_rows, SCD2_END_OF_TIME, dtype="datetime64[ns]")
-    is_current_arr = np.ones(total_rows, dtype=np.int32)
+    is_current_arr = np.ones(total_rows, dtype=bool)
     _shift_mask = np.flatnonzero(same_pid_as_next)
     eff_end_arr[_shift_mask] = eff_start_arr[_shift_mask + 1] - np.timedelta64(1, "D")
-    is_current_arr[_shift_mask] = 0
+    is_current_arr[_shift_mask] = False
 
     result["EffectiveEndDate"] = eff_end_arr
     result["IsCurrent"] = is_current_arr

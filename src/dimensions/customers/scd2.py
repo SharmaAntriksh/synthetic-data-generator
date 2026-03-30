@@ -311,7 +311,7 @@ def expand_changed_customers(
             event_date_np = event_dates[i]
             event_date = pd.Timestamp(event_date_np)
             current_state["EffectiveEndDate"] = event_date_np - _one_day
-            current_state["IsCurrent"] = 0
+            current_state["IsCurrent"] = False
             if _row_count < len(new_rows):
                 new_rows[_row_count] = dict(current_state)
             else:
@@ -322,7 +322,7 @@ def expand_changed_customers(
             new_state["VersionNumber"] = np.int32(i + 2)
             new_state["EffectiveStartDate"] = event_date
             new_state["EffectiveEndDate"] = SCD2_END_OF_TIME
-            new_state["IsCurrent"] = 1
+            new_state["IsCurrent"] = True
 
             available = _available_events(new_state, tier_keys)
             if not available:

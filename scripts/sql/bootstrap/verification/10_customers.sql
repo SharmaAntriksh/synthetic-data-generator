@@ -95,15 +95,15 @@ BEGIN
         CASE WHEN @org_demo = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@org_demo AS VARCHAR) + ' orgs with demographics');
 
-    -- CustomerProfile covers all current
+    -- CustomerProfile covers all current persons (orgs have OrganizationProfile)
     IF OBJECT_ID(N'dbo.CustomerProfile', N'U') IS NOT NULL
     BEGIN
         DECLARE @missing_cp INT;
         SELECT @missing_cp = COUNT(*) FROM dbo.Customers c
         LEFT JOIN dbo.CustomerProfile cp ON cp.CustomerKey = c.CustomerKey
-        WHERE c.IsCurrent = 1 AND cp.CustomerKey IS NULL;
-        INSERT INTO #R VALUES ('Referential', 'CustomerProfile covers all current',
-            'Every IsCurrent=1 customer must have a CustomerProfile row',
+        WHERE c.IsCurrent = 1 AND c.CustomerType != 'Organization' AND cp.CustomerKey IS NULL;
+        INSERT INTO #R VALUES ('Referential', 'CustomerProfile covers all current persons',
+            'Every IsCurrent=1 non-org customer must have a CustomerProfile row',
             CASE WHEN @missing_cp = 0 THEN 'PASS' ELSE 'FAIL' END,
             CAST(@missing_cp AS VARCHAR) + ' missing');
     END

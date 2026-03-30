@@ -715,18 +715,13 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     org_digital = np.full(N, 0.75)
     young_factor = np.where(IsOrg, org_digital, age_young)
 
-    HasOnlineAccount = np.where(rng.random(N) < (0.55 + 0.30 * young_factor), "Yes", "No")
-    OptInMarketing = np.where(rng.random(N) < 0.65, "Yes", "No")
-    SocialMediaFollower = np.where(
-        rng.random(N) < (0.20 + 0.40 * young_factor), "Yes", "No"
-    )
-    AppInstalled = np.where(
-        (HasOnlineAccount == "Yes") & (rng.random(N) < (0.30 + 0.35 * young_factor)),
-        "Yes", "No",
-    )
+    HasOnlineAccount = rng.random(N) < (0.55 + 0.30 * young_factor)
+    OptInMarketing = rng.random(N) < 0.65
+    SocialMediaFollower = rng.random(N) < (0.20 + 0.40 * young_factor)
+    AppInstalled = HasOnlineAccount & (rng.random(N) < (0.30 + 0.35 * young_factor))
 
     NewsletterFrequency = np.where(
-        OptInMarketing == "No",
+        ~OptInMarketing,
         "None",
         rng.choice(_NEWSLETTER_FREQ, size=N, p=np.array([0.30, 0.45, 0.25])),
     )
@@ -755,8 +750,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     days_after_start = rng.integers(0, 90, size=N)
     MemberSinceDate = (start_dates_ts + pd.to_timedelta(days_after_start, unit="D")).to_numpy("datetime64[ns]")
 
-    IsEmployee = np.where(rng.random(N) < 0.02, "Yes", "No")
-    IsEmployee[IsOrg] = "No"
+    IsEmployee = rng.random(N) < 0.02
+    IsEmployee[IsOrg] = False
 
     spend_score = np.clip(
         0.4 * CustomerWeight / (CustomerWeight.max() + 1e-9)
@@ -770,7 +765,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
         np.where(spend_score < 0.85, "High", "VIP")),
     )
 
-    HasGiftCardBalance = np.where(rng.random(N) < 0.15, "Yes", "No")
+    HasGiftCardBalance = rng.random(N) < 0.15
 
     tier_norm = LoyaltyTierKey.astype("float64") / max(tier_keys.max(), 1)
     RewardPointsBalance = np.clip(
@@ -857,7 +852,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "VersionNumber": np.ones(N, dtype=np.int32),
             "EffectiveStartDate": pd.to_datetime(CustomerStartDate),
             "EffectiveEndDate": SCD2_END_OF_TIME,
-            "IsCurrent": np.ones(N, dtype=np.int32),
+            "IsCurrent": np.ones(N, dtype=bool),
             "CustomerName": CustomerName,
             "DOB": BirthDate,
             "Gender": Gender,

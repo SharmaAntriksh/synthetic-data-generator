@@ -494,8 +494,8 @@ def compute_inventory_snapshots(
         "QuantityOnOrder": out_on_order[row_idx, col_idx].astype(np.int32),
         "QuantitySold": demand_matrix[row_idx, col_idx].astype(np.int32),
         "QuantityReceived": out_received[row_idx, col_idx].astype(np.int32),
-        "ReorderFlag": out_reorder[row_idx, col_idx].astype(np.int32),
-        "StockoutFlag": out_stockout[row_idx, col_idx].astype(np.int32),
+        "ReorderFlag": out_reorder[row_idx, col_idx].astype(bool),
+        "StockoutFlag": out_stockout[row_idx, col_idx].astype(bool),
         "DaysOutOfStock": out_days_oos[row_idx, col_idx].astype(np.int32),
     })
 
@@ -534,8 +534,8 @@ def _aggregate_quarterly(df: pd.DataFrame) -> pd.DataFrame:
     agg.drop(columns=["_Quarter"], inplace=True)
 
     agg["DaysOutOfStock"] = agg["DaysOutOfStock"].clip(upper=90).astype(np.int32)
-    agg["ReorderFlag"] = agg["ReorderFlag"].astype(np.int32)
-    agg["StockoutFlag"] = agg["StockoutFlag"].astype(np.int32)
+    agg["ReorderFlag"] = agg["ReorderFlag"].astype(bool)
+    agg["StockoutFlag"] = agg["StockoutFlag"].astype(bool)
     agg["ProductKey"] = agg["ProductKey"].astype(np.int32)
     agg["WarehouseKey"] = agg["WarehouseKey"].astype(np.int32)
     agg["QuantityOnHand"] = agg["QuantityOnHand"].astype(np.int32)

@@ -296,7 +296,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
 
     df["EffectiveStartDate"] = start_date
     df["EffectiveEndDate"] = SCD2_END_OF_TIME
-    df["IsCurrent"] = np.ones(N, dtype=np.int32)
+    df["IsCurrent"] = np.ones(N, dtype=bool)
 
     # SCD2 expansion (if enabled)
     scd2_cfg = getattr(p, "scd2", None)

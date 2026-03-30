@@ -481,29 +481,29 @@ def enrich_products_attributes(
     out["HeightCm"] = pd.Series(H[inv], index=out.index).astype("float32")
     out["VolumeCm3"] = pd.Series(vol[inv], index=out.index).astype("float32")
     out["ShippingClass"] = pd.Series(ship_class[inv], index=out.index, dtype="string")
-    out["IsFragile"] = pd.Series(fragile_base[inv].astype("int64"), index=out.index)
-    out["IsHazmat"] = pd.Series(haz_base[inv].astype("int64"), index=out.index)
+    out["IsFragile"] = pd.Series(fragile_base[inv].astype(bool), index=out.index)
+    out["IsHazmat"] = pd.Series(haz_base[inv].astype(bool), index=out.index)
     out["LeadTimeDays"] = pd.Series(lead[inv], index=out.index).astype("int32")
     out["CasePackQty"] = pd.Series(case_pack[inv], index=out.index).astype("int32")
     out["FulfillmentType"] = pd.Series(fulfil[inv], index=out.index, dtype="string")
 
     # --- Channel eligibility (hash-seeded, safe in chunks) ---
     u_ch = _base_uniform(b_u64, seed, 0xF0F0F0F0)[inv]
-    is_haz = out["IsHazmat"].to_numpy(dtype=np.int64, copy=False) == 1
+    is_haz = out["IsHazmat"].to_numpy(dtype=bool, copy=False)
     ship = out["ShippingClass"].astype("string")
 
-    out["EligibleStore"] = 1
-    out["EligibleOnline"] = 1
+    out["EligibleStore"] = True
+    out["EligibleOnline"] = True
 
     # Marketplace: avoid hazmat/freight, then probabilistic
     eligible_mkt = (~is_haz) & (ship != "Freight") & (u_ch < 0.70)
-    out["EligibleMarketplace"] = eligible_mkt.astype("int64")
+    out["EligibleMarketplace"] = eligible_mkt
 
     # B2B: small share + bias if Class contains business/enterprise
     cls = _lower_series(out.get("Class", pd.Series("", index=out.index)))
     b2b_bias = cls.str.contains("business", regex=False) | cls.str.contains("enterprise", regex=False)
     eligible_b2b = (u_ch < 0.10) | b2b_bias
-    out["EligibleB2B"] = eligible_b2b.astype("int64")
+    out["EligibleB2B"] = eligible_b2b
 
     # --- Sourcing & Compliance (hash-seeded, safe in chunks) ---
     _COUNTRY_OF_ORIGIN = ["China", "USA", "Germany", "India", "Vietnam", "Mexico", "Japan", "Taiwan"]
@@ -551,7 +551,7 @@ def enrich_products_attributes(
     u_asm = _base_uniform(b_u64, seed, 0x4A4A4A4A)[inv]
     asm_prob = np.where(size_bucket[inv] == 2, 0.55, np.where(size_bucket[inv] == 1, 0.25, 0.08))
     out["AssemblyRequired"] = pd.Series(
-        np.where(u_asm < asm_prob, "Yes", "No"), index=out.index, dtype="string"
+        u_asm < asm_prob, index=out.index, dtype=bool
     )
 
     # PackagingType (hash-seeded, safe in chunks)
@@ -571,7 +571,7 @@ def enrich_products_attributes(
     u_gift = _base_uniform(b_u64, seed, 0xCC1C1C1C)[inv]
     gift_prob = np.where(size_bucket[inv] == 0, 0.70, np.where(size_bucket[inv] == 1, 0.50, 0.20))
     out["IsGiftEligible"] = pd.Series(
-        np.where(u_gift < gift_prob, "Yes", "No"), index=out.index, dtype="string"
+        u_gift < gift_prob, index=out.index, dtype=bool
     )
 
     # TargetGender (keyword-based, safe in chunks)
@@ -589,8 +589,8 @@ def enrich_products_attributes(
     if _is_digital.any():
         dm = pd.Series(_is_digital, index=out.index)
         out.loc[dm, "PackagingType"] = "Digital"
-        out.loc[dm, "AssemblyRequired"] = "No"
-        out.loc[dm, "IsGiftEligible"] = "Yes"
+        out.loc[dm, "AssemblyRequired"] = False
+        out.loc[dm, "IsGiftEligible"] = True
 
     # --- Rank-dependent columns (BrandTier + dependents) ---
     # Skipped in parallel chunk mode; computed on full dataset after merge.
@@ -658,8 +658,8 @@ def apply_post_merge_enrichment(df: pd.DataFrame, seed: int) -> pd.DataFrame:
     )
     out["WarrantyMonths"] = pd.Series(warr, index=out.index).astype("int32")
 
-    fragile = out["IsFragile"].to_numpy(dtype=np.int64, copy=False) == 1
-    is_haz = out["IsHazmat"].to_numpy(dtype=np.int64, copy=False) == 1
+    fragile = out["IsFragile"].to_numpy(dtype=bool, copy=False)
+    is_haz = out["IsHazmat"].to_numpy(dtype=bool, copy=False)
     ship = out["ShippingClass"].astype("string")
     ship_freight = (ship == "Freight").to_numpy(dtype=bool, copy=False)
 
@@ -749,13 +749,13 @@ def apply_post_merge_enrichment(df: pd.DataFrame, seed: int) -> pd.DataFrame:
     # IsBestseller (rank-based on PopularityScore)
     pop_rank = np.argsort(np.argsort(-PopularityScore))
     out["IsBestseller"] = pd.Series(
-        np.where(pop_rank < N * 0.15, "Yes", "No"), index=out.index, dtype="string"
+        pop_rank < N * 0.15, index=out.index, dtype=bool
     )
 
     # IsEcoFriendly (depends on SustainabilityScore which depends on BrandTier)
     sus_arr = out["SustainabilityScore"].to_numpy(dtype=np.int32, copy=False)
     out["IsEcoFriendly"] = pd.Series(
-        np.where(sus_arr > 70, "Yes", "No"), index=out.index, dtype="string"
+        sus_arr > 70, index=out.index, dtype=bool
     )
 
     return out

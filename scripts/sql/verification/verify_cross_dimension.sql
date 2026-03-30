@@ -147,11 +147,11 @@ WHERE p.ProductKey IS NULL;
 -- 5. Customer Profile Consistency
 -- ============================================================================
 
--- 5a. CustomerProfile has a row for every IsCurrent=1 customer
+-- 5a. CustomerProfile has a row for every IsCurrent=1 person (orgs have OrganizationProfile)
 SELECT c.CustomerKey, c.CustomerID
 FROM Customers c
 LEFT JOIN CustomerProfile cp ON cp.CustomerKey = c.CustomerKey
-WHERE c.IsCurrent = 1 AND cp.CustomerKey IS NULL;
+WHERE c.IsCurrent = 1 AND c.CustomerType != 'Organization' AND cp.CustomerKey IS NULL;
 -- EXPECTED: zero rows
 
 -- 5b. OrganizationProfile only for Organization-type customers
@@ -287,11 +287,11 @@ WHERE pc.CategoryKey IS NULL
 
 UNION ALL
 
-SELECT 'CustomerProfile: covers all current customers',
-    'Every IsCurrent=1 customer must have a CustomerProfile row; FAIL = missing profile for active customer',
+SELECT 'CustomerProfile: covers all current persons',
+    'Every IsCurrent=1 non-org customer must have a CustomerProfile row; FAIL = missing profile for active person',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
 FROM Customers c LEFT JOIN CustomerProfile cp ON cp.CustomerKey = c.CustomerKey
-WHERE c.IsCurrent = 1 AND cp.CustomerKey IS NULL
+WHERE c.IsCurrent = 1 AND c.CustomerType != 'Organization' AND cp.CustomerKey IS NULL
 
 UNION ALL
 

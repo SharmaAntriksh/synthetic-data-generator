@@ -518,7 +518,7 @@ class TestComputeDates:
         oids = np.arange(1, n + 1, dtype=np.int64)
         dates = np.array(["2023-03-15"] * n, dtype="datetime64[D]")
         result = compute_dates(rng, n, pk, oids, dates)
-        assert result["is_order_delayed"].dtype == np.int32
+        assert result["is_order_delayed"].dtype == bool
 
 
 # ===================================================================

@@ -103,7 +103,7 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
             "due_date": np.empty(0, dtype="datetime64[D]"),
             "delivery_date": np.empty(0, dtype="datetime64[D]"),
             "delivery_status": np.empty(0, dtype="U15"),
-            "is_order_delayed": np.empty(0, dtype=np.int32),
+            "is_order_delayed": np.empty(0, dtype=bool),
         }
 
     # Normalize inputs once
@@ -230,9 +230,9 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
         delayed_any = (
             np.bincount(inv_idx, weights=delayed_line.astype(np.float64), minlength=len(unique_orders)) > 0
         )
-        is_order_delayed = delayed_any[inv_idx].astype(np.int32, copy=False)
+        is_order_delayed = delayed_any[inv_idx].astype(bool, copy=False)
     else:
-        is_order_delayed = delayed_line.astype(np.int32, copy=False)
+        is_order_delayed = delayed_line.astype(bool, copy=False)
 
     return {
         "due_date": due_date,

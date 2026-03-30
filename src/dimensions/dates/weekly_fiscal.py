@@ -200,7 +200,7 @@ def add_weekly_fiscal_columns(
 
     # Working day (Mon-Fri)
     is_work = df["Date"].dt.weekday.isin([0, 1, 2, 3, 4])
-    is_working_day = is_work.astype(np.int32)
+    is_working_day = is_work.astype(bool)
     day_type = np.where(is_work, "Working Day", "Non-Working Day")
 
     # Boundaries within weekly fiscal month/quarter using temporary frame

@@ -99,7 +99,7 @@ def build_worker_schemas(
         pa.field("UnitCost", pa.float64()),
         pa.field("DiscountAmount", pa.float64()),
         pa.field("DeliveryStatus", pa.string()),
-        pa.field("IsOrderDelayed", pa.int32()),
+        pa.field("IsOrderDelayed", pa.bool_()),
     ]
 
     # OUT: what we want to write/merge/project (TimeKey injected later in task.py)
@@ -121,7 +121,7 @@ def build_worker_schemas(
         pa.field("UnitCost", pa.float64()),
         pa.field("DiscountAmount", pa.float64()),
         pa.field("DeliveryStatus", pa.string()),
-        pa.field("IsOrderDelayed", pa.int32()),
+        pa.field("IsOrderDelayed", pa.bool_()),
     ]
 
     # Promote SalesOrderNumber to int64 if total_rows approaches int32 limit
@@ -190,7 +190,7 @@ def build_worker_schemas(
         pa.field("SalesChannelKey", pa.int32()),
         pa.field("OrderDate", pa.date32()),
         pa.field("TimeKey", pa.int32()),
-        pa.field("IsOrderDelayed", pa.int32()),
+        pa.field("IsOrderDelayed", pa.bool_()),
     ]
     header_schema = pa.schema(header_fields + delta_fields) if is_delta else pa.schema(header_fields)
 
