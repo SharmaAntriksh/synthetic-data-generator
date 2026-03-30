@@ -1394,7 +1394,7 @@ def generate_sales_fact(
         promo_channel_group[_cat_series.isin({"Online", "Digital"}).to_numpy()] = 2
 
     # 5) Channel fulfillment days (from SalesChannels dimension)
-    channel_fulfillment_days = np.full(11, 3, dtype=np.int16)  # default 3 days
+    channel_fulfillment_days = np.full(11, 3, dtype=np.int32)  # default 3 days
     channel_fulfillment_days[0] = 0   # Unknown
     channel_fulfillment_days[1] = 0   # Store (immediate)
     channel_fulfillment_days[2] = 3   # Online
@@ -1414,7 +1414,7 @@ def generate_sales_fact(
                 _sc_keys = _sc_df["SalesChannelKey"].to_numpy(dtype=np.int32)
                 _sc_days = _sc_df["TypicalFulfillmentDays"]
                 _sc_valid = (_sc_keys >= 0) & (_sc_keys < len(channel_fulfillment_days)) & _sc_days.notna()
-                channel_fulfillment_days[_sc_keys[_sc_valid]] = _sc_days.to_numpy(dtype=np.int16)[_sc_valid]
+                channel_fulfillment_days[_sc_keys[_sc_valid]] = _sc_days.to_numpy(dtype=np.int32)[_sc_valid]
         except (KeyError, OSError):
             pass
 

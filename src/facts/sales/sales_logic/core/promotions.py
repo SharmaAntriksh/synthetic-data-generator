@@ -156,7 +156,7 @@ def apply_promotions(
         # sample all rows in that group at once.  O(groups × promos)
         # instead of O(rows × promos).
         if _has_ch_filter:
-            row_channels = np.asarray(channel_keys, dtype=np.int16)[rows]
+            row_channels = np.asarray(channel_keys, dtype=np.int32)[rows]
             _pcg = np.asarray(promo_channel_group, dtype=np.int8)
             _pcg_idx = _pcg[idx]  # promo channel groups for active promos
 

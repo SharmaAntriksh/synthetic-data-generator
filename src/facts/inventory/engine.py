@@ -494,9 +494,9 @@ def compute_inventory_snapshots(
         "QuantityOnOrder": out_on_order[row_idx, col_idx].astype(np.int32),
         "QuantitySold": demand_matrix[row_idx, col_idx].astype(np.int32),
         "QuantityReceived": out_received[row_idx, col_idx].astype(np.int32),
-        "ReorderFlag": out_reorder[row_idx, col_idx].astype(np.int8),
-        "StockoutFlag": out_stockout[row_idx, col_idx].astype(np.int8),
-        "DaysOutOfStock": out_days_oos[row_idx, col_idx].astype(np.int8),
+        "ReorderFlag": out_reorder[row_idx, col_idx].astype(np.int32),
+        "StockoutFlag": out_stockout[row_idx, col_idx].astype(np.int32),
+        "DaysOutOfStock": out_days_oos[row_idx, col_idx].astype(np.int32),
     })
 
     if icfg.grain == "quarterly":
@@ -533,9 +533,9 @@ def _aggregate_quarterly(df: pd.DataFrame) -> pd.DataFrame:
     agg["SnapshotDate"] = agg["_Quarter"].dt.start_time
     agg.drop(columns=["_Quarter"], inplace=True)
 
-    agg["DaysOutOfStock"] = agg["DaysOutOfStock"].clip(upper=90).astype(np.int8)
-    agg["ReorderFlag"] = agg["ReorderFlag"].astype(np.int8)
-    agg["StockoutFlag"] = agg["StockoutFlag"].astype(np.int8)
+    agg["DaysOutOfStock"] = agg["DaysOutOfStock"].clip(upper=90).astype(np.int32)
+    agg["ReorderFlag"] = agg["ReorderFlag"].astype(np.int32)
+    agg["StockoutFlag"] = agg["StockoutFlag"].astype(np.int32)
     agg["ProductKey"] = agg["ProductKey"].astype(np.int32)
     agg["WarehouseKey"] = agg["WarehouseKey"].astype(np.int32)
     agg["QuantityOnHand"] = agg["QuantityOnHand"].astype(np.int32)

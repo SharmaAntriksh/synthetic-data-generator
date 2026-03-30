@@ -977,7 +977,7 @@ def generate_store_table(
                 close_d.astype("datetime64[ns]")
             ).normalize()
 
-    df["OpenFlag"] = (df["Status"] == "Open").astype(np.int8)
+    df["OpenFlag"] = (df["Status"] == "Open").astype(np.int32)
 
     df["SquareFootage"] = _square_footage_from_cfg(
         rng=rng,

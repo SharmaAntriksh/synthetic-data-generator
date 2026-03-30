@@ -646,7 +646,7 @@ def _validate_probability_arrays() -> None:
 # =================================================================
 # Core channel keys (1-5) match lookups.py defaults.
 # Used as fallback when sales_channels.parquet is not available.
-SALES_CHANNEL_CORE_KEYS = np.array([1, 2, 3, 4, 5], dtype=np.int16)
+SALES_CHANNEL_CORE_KEYS = np.array([1, 2, 3, 4, 5], dtype=np.int32)
 SALES_CHANNEL_CORE_KEYS.flags.writeable = False
 
 

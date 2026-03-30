@@ -156,13 +156,13 @@ def _load_sales_channels(State: Any) -> Optional[Tuple[np.ndarray, np.ndarray, n
         read_cols += ["OpenTime", "CloseTime"]
 
     tab = pq.read_table(pth, columns=read_cols)
-    keys = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int16)
+    keys = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int32)
     grp = np.asarray(tab["ChannelGroup"].to_numpy(), dtype=object)
     open_times = np.asarray(tab["OpenTime"].to_numpy(), dtype=object) if has_times else None
     close_times = np.asarray(tab["CloseTime"].to_numpy(), dtype=object) if has_times else None
 
     # Exclude Unknown (0) from sampling if present
-    m = keys != np.int16(0)
+    m = keys != np.int32(0)
     keys = keys[m]
     grp = grp[m]
     if open_times is not None:
@@ -193,12 +193,12 @@ def _load_sales_channels(State: Any) -> Optional[Tuple[np.ndarray, np.ndarray, n
 def _sample_hour_weighted_minute(rng: np.random.Generator, size: int, hour_w: np.ndarray) -> np.ndarray:
     size = int(size)
     if size <= 0:
-        return np.empty(0, dtype=np.int16)
+        return np.empty(0, dtype=np.int32)
 
     w = _normalize_prob(hour_w)
     hours = rng.choice(24, size=size, p=w).astype(np.int32)
     mins = rng.integers(0, 60, size=size, dtype=np.int32)
-    return (hours * 60 + mins).astype(np.int16, copy=False)
+    return (hours * 60 + mins).astype(np.int32, copy=False)
 
 
 def _sample_timekey_by_channel(
@@ -207,8 +207,8 @@ def _sample_timekey_by_channel(
     channel_hour_lut: np.ndarray,
 ) -> np.ndarray:
     """Sample minute-of-day TimeKey values using per-channel hour weights."""
-    keys = np.asarray(channel_keys, dtype=np.int16)
-    out = np.empty(keys.shape[0], dtype=np.int16)
+    keys = np.asarray(channel_keys, dtype=np.int32)
+    out = np.empty(keys.shape[0], dtype=np.int32)
 
     # Group by unique channel key to batch-sample each channel's distribution
     unique_keys = np.unique(keys)
@@ -246,7 +246,7 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
     _prebuilt_ch = ctx["cols"].get("SalesChannelKey")
     if _prebuilt_ch is not None:
         # Already produced by chunk_builder's store-channel correlation
-        sales_channel = np.asarray(_prebuilt_ch, dtype=np.int16)
+        sales_channel = np.asarray(_prebuilt_ch, dtype=np.int32)
         channel_hour_lut = cache[2] if cache is not None else None
     elif "SalesChannelKey" in schema_types:
         if cache is None:
@@ -262,10 +262,10 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
             _min_oid = int(oid[0])
             _n_orders = int(oid[-1]) - _min_oid + 1
             inv = oid - np.int32(_min_oid)
-            per_order_channel = rng.choice(keys, size=_n_orders, p=p).astype(np.int16, copy=False)
+            per_order_channel = rng.choice(keys, size=_n_orders, p=p).astype(np.int32, copy=False)
             sales_channel = per_order_channel[inv]
         else:
-            sales_channel = rng.choice(keys, size=n, p=p).astype(np.int16, copy=False)
+            sales_channel = rng.choice(keys, size=n, p=p).astype(np.int32, copy=False)
 
         out["SalesChannelKey"] = sales_channel
     else:
@@ -277,7 +277,7 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
     if "TimeKey" in schema_types:
         if sales_channel is None:
             sc_base = ctx["cols"].get("SalesChannelKey")
-            sales_channel = None if sc_base is None else np.asarray(sc_base, dtype=np.int16)
+            sales_channel = None if sc_base is None else np.asarray(sc_base, dtype=np.int32)
 
         if sales_channel is None or channel_hour_lut is None:
             # digital-like fallback so night bins aren't empty
@@ -302,20 +302,19 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
         out["TimeKey"] = timekey
 
-        # Rollups — single int32 cast shared across all divisions
-        _tk32 = timekey.astype(np.int32)
+        # Rollups (timekey is already int32; integer division preserves dtype)
         if "TimeKey15" in schema_types:
-            out["TimeKey15"] = (_tk32 // 15).astype(np.int16)
+            out["TimeKey15"] = timekey // 15
         if "TimeKey30" in schema_types:
-            out["TimeKey30"] = (_tk32 // 30).astype(np.int16)
+            out["TimeKey30"] = timekey // 30
         if "TimeKey60" in schema_types:
-            out["TimeKey60"] = (_tk32 // 60).astype(np.int16)
+            out["TimeKey60"] = timekey // 60
         if "TimeKey360" in schema_types:
-            out["TimeKey360"] = (_tk32 // 360).astype(np.int16)
+            out["TimeKey360"] = timekey // 360
         if "TimeKey720" in schema_types:
-            out["TimeKey720"] = (_tk32 // 720).astype(np.int16)
+            out["TimeKey720"] = timekey // 720
         if "TimeBucketKey4" in schema_types:
-            out["TimeBucketKey4"] = (_tk32 // 240).astype(np.int16)
+            out["TimeBucketKey4"] = timekey // 240
 
     return out
 

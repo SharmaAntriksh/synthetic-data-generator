@@ -103,7 +103,7 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
             "due_date": np.empty(0, dtype="datetime64[D]"),
             "delivery_date": np.empty(0, dtype="datetime64[D]"),
             "delivery_status": np.empty(0, dtype="U15"),
-            "is_order_delayed": np.empty(0, dtype=np.int8),
+            "is_order_delayed": np.empty(0, dtype=np.int32),
         }
 
     # Normalize inputs once
@@ -134,7 +134,7 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
     # Fallback (no channel data): 3..7 days (original behavior)
     # ------------------------------------------------------------
     if channel_keys is not None and channel_fulfillment_days is not None:
-        _ch = np.asarray(channel_keys, dtype=np.int16)
+        _ch = np.asarray(channel_keys, dtype=np.int32)
         _ch_clipped = np.clip(_ch, 0, len(channel_fulfillment_days) - 1)
         _base_days = channel_fulfillment_days[_ch_clipped].astype(np.int64)
         # Add hash-based jitter: -1 to +2 days around the base
@@ -214,7 +214,7 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
     # Delivery status (use effective offset after clamping)
     # ------------------------------------------------------------
     # 0 = On Time, 1 = Early, 2 = Delayed
-    codes = np.zeros(n, dtype=np.int8)
+    codes = np.zeros(n, dtype=np.int32)
     codes[effective_offset < 0] = 1
     codes[effective_offset > 0] = 2
     labels = np.array(["On Time", "Early Delivery", "Delayed"], dtype="U15")
@@ -230,9 +230,9 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
         delayed_any = (
             np.bincount(inv_idx, weights=delayed_line.astype(np.float64), minlength=len(unique_orders)) > 0
         )
-        is_order_delayed = delayed_any[inv_idx].astype(np.int8, copy=False)
+        is_order_delayed = delayed_any[inv_idx].astype(np.int32, copy=False)
     else:
-        is_order_delayed = delayed_line.astype(np.int8, copy=False)
+        is_order_delayed = delayed_line.astype(np.int32, copy=False)
 
     return {
         "due_date": due_date,

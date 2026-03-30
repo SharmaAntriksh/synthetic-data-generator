@@ -854,10 +854,10 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "CustomerKey": CustomerKey,
             "CustomerID": CustomerKey.copy(),       # durable business key (= CustomerKey initially)
             # --- SCD2 metadata (always present, defaults for Type 1 mode) ---
-            "VersionNumber": np.ones(N, dtype=np.int8),
+            "VersionNumber": np.ones(N, dtype=np.int32),
             "EffectiveStartDate": pd.to_datetime(CustomerStartDate),
             "EffectiveEndDate": SCD2_END_OF_TIME,
-            "IsCurrent": np.ones(N, dtype=np.int8),
+            "IsCurrent": np.ones(N, dtype=np.int32),
             "CustomerName": CustomerName,
             "DOB": BirthDate,
             "Gender": Gender,
@@ -873,8 +873,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "GeographyKey": GeographyKey,
             "HouseholdKey": HouseholdKey,
             "HouseholdRole": HouseholdRole,
-            "LoyaltyTierKey": pd.Series(LoyaltyTierKey, dtype="int32"),
-            "CustomerAcquisitionChannelKey": pd.Series(CustomerAcquisitionChannelKey, dtype="int32"),
+            "LoyaltyTierKey": pd.Series(LoyaltyTierKey, dtype=np.int32),
+            "CustomerAcquisitionChannelKey": pd.Series(CustomerAcquisitionChannelKey, dtype=np.int32),
             # --- Columns moved from CustomerProfile (SCD2 tracked) ---
             "YearlyIncome": YearlyIncome,
             "IncomeGroup": IncomeGroup,
@@ -890,40 +890,42 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     # =====================================================
     # Build CustomerProfile dataframe (analytical slicers — minus moved cols)
     # =====================================================
+    # CustomerProfile is person-only; orgs have their own OrganizationProfile table.
+    person_mask = ~IsOrg
     profile_df = pd.DataFrame(
         {
-            "CustomerKey": CustomerKey,          # links to IsCurrent=1 row after SCD2 expansion
-            "AgeGroup": AgeGroup,
-            "Education": Education,
-            "Occupation": Occupation,
-            "NumberOfCars": pd.Series(NumberOfCars, dtype="Int32"),
-            "CreditScore": pd.Series(CreditScore, dtype="Int32"),
-            "UrbanRural": UrbanRural,
-            "TimeZone": TimeZone,
-            "BirthCity": BirthCity,
-            "CurrentCity": CurrentCity,
-            "DistanceToNearestStoreKm": DistanceToNearestStoreKm,
-            "PreferredLanguage": PreferredLanguage,
-            "HasOnlineAccount": HasOnlineAccount,
-            "OptInMarketing": OptInMarketing,
-            "SocialMediaFollower": SocialMediaFollower,
-            "AppInstalled": AppInstalled,
-            "NewsletterFrequency": NewsletterFrequency,
-            "DevicePreference": DevicePreference,
-            "LastWebVisitDate": pd.to_datetime(LastWebVisitDate),
-            "PreferredPaymentMethod": PreferredPaymentMethod,
-            "PreferredContactMethod": PreferredContactMethod,
-            "ReferralSource": ReferralSource,
-            "MemberSinceDate": pd.to_datetime(MemberSinceDate),
-            "IsEmployee": IsEmployee,
-            "AnnualSpendBucket": AnnualSpendBucket,
-            "HasGiftCardBalance": HasGiftCardBalance,
-            "RewardPointsBalance": pd.array(RewardPointsBalance, dtype="Int32"),
-            "AvgOrderFrequencyDays": pd.array(AvgOrderFrequencyDays, dtype="Int32"),
-            "CustomerSatisfactionScore": pd.array(CustomerSatisfactionScore, dtype="Int32"),
-            "NPS": pd.array(NPS, dtype="Int32"),
-            "CustomerLifetimeValue": CustomerLifetimeValue,
-            "ChurnRisk": ChurnRisk,
+            "CustomerKey": CustomerKey[person_mask],
+            "AgeGroup": AgeGroup[person_mask],
+            "Education": Education[person_mask],
+            "Occupation": Occupation[person_mask],
+            "NumberOfCars": NumberOfCars[person_mask].astype(np.int32),
+            "CreditScore": CreditScore[person_mask].astype(np.int32),
+            "UrbanRural": UrbanRural[person_mask],
+            "TimeZone": TimeZone[person_mask],
+            "BirthCity": BirthCity[person_mask],
+            "CurrentCity": CurrentCity[person_mask],
+            "DistanceToNearestStoreKm": DistanceToNearestStoreKm[person_mask],
+            "PreferredLanguage": PreferredLanguage[person_mask],
+            "HasOnlineAccount": HasOnlineAccount[person_mask],
+            "OptInMarketing": OptInMarketing[person_mask],
+            "SocialMediaFollower": SocialMediaFollower[person_mask],
+            "AppInstalled": AppInstalled[person_mask],
+            "NewsletterFrequency": NewsletterFrequency[person_mask],
+            "DevicePreference": DevicePreference[person_mask],
+            "LastWebVisitDate": pd.to_datetime(LastWebVisitDate[person_mask]),
+            "PreferredPaymentMethod": PreferredPaymentMethod[person_mask],
+            "PreferredContactMethod": PreferredContactMethod[person_mask],
+            "ReferralSource": ReferralSource[person_mask],
+            "MemberSinceDate": pd.to_datetime(MemberSinceDate[person_mask]),
+            "IsEmployee": IsEmployee[person_mask],
+            "AnnualSpendBucket": AnnualSpendBucket[person_mask],
+            "HasGiftCardBalance": HasGiftCardBalance[person_mask],
+            "RewardPointsBalance": RewardPointsBalance[person_mask].astype(np.int32),
+            "AvgOrderFrequencyDays": AvgOrderFrequencyDays[person_mask].astype(np.int32),
+            "CustomerSatisfactionScore": CustomerSatisfactionScore[person_mask].astype(np.int32),
+            "NPS": NPS[person_mask].astype(np.int32),
+            "CustomerLifetimeValue": CustomerLifetimeValue[person_mask],
+            "ChurnRisk": ChurnRisk[person_mask],
         }
     )
 
@@ -1063,7 +1065,11 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
         # Reassign CustomerKey sequentially across all chunks
         customers_df["CustomerKey"] = np.arange(1, len(customers_df) + 1, dtype="int64")
         customers_df["CustomerID"] = customers_df["CustomerKey"].copy()
-        profile_df["CustomerKey"] = customers_df["CustomerKey"].to_numpy()
+        # Profile is person-only; map keys via the person subset of customers_df
+        person_keys = customers_df.loc[
+            customers_df["CustomerType"] != "Organization", "CustomerKey"
+        ].to_numpy()
+        profile_df["CustomerKey"] = person_keys
 
         # Collect active customer keys
         active_customer_keys = set()

@@ -230,7 +230,7 @@ def _enrich_employee_hr_columns(
 
     # Compensation
     salaried = (df["OrgLevel"].astype(int) <= 5).to_numpy()
-    df["SalariedFlag"] = salaried.astype(np.int8)
+    df["SalariedFlag"] = salaried.astype(np.int32)
     df["PayFrequency"] = np.where(salaried, 1, 2).astype(np.int32)
 
     hourly_staff = np.clip(rng.normal(loc=18.0, scale=4.0, size=n), 10.0, 40.0)
@@ -266,7 +266,7 @@ def _enrich_employee_hr_columns(
         df.loc[needs_reason, "TerminationReason"] = reasons
 
     # SalesPersonFlag
-    df["SalesPersonFlag"] = title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE]).astype(np.int8)
+    df["SalesPersonFlag"] = title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE]).astype(np.int32)
 
     # DepartmentName
     dept = np.where(
@@ -317,9 +317,9 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
             df["ParentEmployeeKey"], errors="coerce",
         ).astype("Int32")
     _to_int("OrgLevel", np.int32)
-    _to_int("SalesPersonFlag", np.int8)
-    _to_int("SalariedFlag", np.int8)
-    _to_int("IsActive", np.int8)
+    _to_int("SalesPersonFlag", np.int32)
+    _to_int("SalariedFlag", np.int32)
+    _to_int("IsActive", np.int32)
     _to_int("RegionId", np.int32)
     _to_int("DistrictId", np.int32)
     _to_int("StoreKey", np.int32)
@@ -728,7 +728,7 @@ def generate_employee_dimension(
     # No random termination. No attrition. Store closures terminate.
     # ------------------------------------------------------------------
     df["TerminationDate"] = pd.NaT
-    df["IsActive"] = np.int8(1)
+    df["IsActive"] = np.int32(1)
     df["TerminationReason"] = pd.array([pd.NA] * n, dtype="object")
 
     # Store closures: terminate all employees at the closing store (vectorized)
@@ -741,7 +741,7 @@ def generate_employee_dimension(
             last_day = (close_date - pd.Timedelta(days=1)).normalize()
             mask = sk_all_np == int(close_sk)
             df.loc[mask, "TerminationDate"] = last_day
-            df.loc[mask, "IsActive"] = np.int8(0)
+            df.loc[mask, "IsActive"] = np.int32(0)
             df.loc[mask, "TerminationReason"] = "Store Closure"
 
     # Names

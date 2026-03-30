@@ -1066,11 +1066,12 @@ class TestCustomerGenerator:
         customers_df, *_ = self._run(cfg)
         assert len(customers_df) == 1
 
-    def test_profile_same_length_as_customers(self):
+    def test_profile_person_only(self):
         cfg = self._minimal_cfg(n=50)
         customers_df, profile_df, *_ = self._run(cfg)
-        assert len(profile_df) == len(customers_df)
-        assert list(profile_df["CustomerKey"]) == list(customers_df["CustomerKey"])
+        person_df = customers_df[customers_df["CustomerType"] != "Organization"]
+        assert len(profile_df) == len(person_df)
+        assert list(profile_df["CustomerKey"]) == list(person_df["CustomerKey"])
 
     def test_customer_type_matches_org(self):
         cfg = self._minimal_cfg(n=100)

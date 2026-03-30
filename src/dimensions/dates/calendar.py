@@ -50,8 +50,8 @@ def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFra
     weekday = df["Date"].dt.weekday  # 0=Mon..6=Sun
     df["DayOfWeek"] = ((weekday + 1) % 7).astype(np.int32)  # 0=Sun..6=Sat
 
-    df["IsWeekend"] = df["DayOfWeek"].isin([0, 6]).astype(np.int8)
-    df["IsBusinessDay"] = (df["IsWeekend"] == 0).astype(np.int8)
+    df["IsWeekend"] = df["DayOfWeek"].isin([0, 6]).astype(np.int32)
+    df["IsBusinessDay"] = (df["IsWeekend"] == 0).astype(np.int32)
 
     # Month start/end (pandas-native to avoid datetime64[D] casts)
     df["MonthStartDate"] = df["Date"].dt.to_period("M").dt.start_time.dt.normalize()
@@ -62,12 +62,12 @@ def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFra
     df["QuarterStartDate"] = qperiod.dt.start_time.dt.normalize()
     df["QuarterEndDate"] = qperiod.dt.end_time.dt.normalize()
 
-    df["IsMonthStart"] = (df["Day"] == 1).astype(np.int8)
-    df["IsMonthEnd"] = df["Date"].dt.is_month_end.astype(np.int8)
-    df["IsQuarterStart"] = df["Date"].dt.is_quarter_start.astype(np.int8)
-    df["IsQuarterEnd"] = df["Date"].dt.is_quarter_end.astype(np.int8)
-    df["IsYearStart"] = ((df["Month"] == 1) & (df["Day"] == 1)).astype(np.int8)
-    df["IsYearEnd"] = ((df["Month"] == 12) & (df["Day"] == 31)).astype(np.int8)
+    df["IsMonthStart"] = (df["Day"] == 1).astype(np.int32)
+    df["IsMonthEnd"] = df["Date"].dt.is_month_end.astype(np.int32)
+    df["IsQuarterStart"] = df["Date"].dt.is_quarter_start.astype(np.int32)
+    df["IsQuarterEnd"] = df["Date"].dt.is_quarter_end.astype(np.int32)
+    df["IsYearStart"] = ((df["Month"] == 1) & (df["Day"] == 1)).astype(np.int32)
+    df["IsYearEnd"] = ((df["Month"] == 12) & (df["Day"] == 31)).astype(np.int32)
 
     df["WeekOfMonth"] = ((df["Day"] - 1) // 7 + 1).astype(np.int32)
 
@@ -109,11 +109,11 @@ def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFra
     # ------------------------------------------------------------------
     # As-of relative columns
     # ------------------------------------------------------------------
-    df["IsToday"] = (df["Date"] == as_of).astype(np.int8)
-    df["IsCurrentYear"] = (df["Year"] == as_of.year).astype(np.int8)
-    df["IsCurrentMonth"] = ((df["Year"] == as_of.year) & (df["Month"] == as_of.month)).astype(np.int8)
+    df["IsToday"] = (df["Date"] == as_of).astype(np.int32)
+    df["IsCurrentYear"] = (df["Year"] == as_of.year).astype(np.int32)
+    df["IsCurrentMonth"] = ((df["Year"] == as_of.year) & (df["Month"] == as_of.month)).astype(np.int32)
     current_quarter = (as_of.month - 1) // 3 + 1
-    df["IsCurrentQuarter"] = ((df["Year"] == as_of.year) & (df["Quarter"] == current_quarter)).astype(np.int8)
+    df["IsCurrentQuarter"] = ((df["Year"] == as_of.year) & (df["Quarter"] == current_quarter)).astype(np.int32)
     df["CurrentDayOffset"] = (df["Date"] - as_of).dt.days.astype(np.int32)
 
     # Offsets (relative to as_of) for fast "last N" slicing in Power BI

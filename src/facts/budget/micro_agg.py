@@ -143,7 +143,7 @@ def _decode_flat_key(
         "category_id": out_cat.astype(np.int32),
         "year": (out_year_idx + min_year).astype(np.int16),
         "month": (out_month_idx + 1).astype(np.int8),
-        "channel_key": channel_uniq[out_ch_idx.astype(np.intp)].astype(np.int16),
+        "channel_key": channel_uniq[out_ch_idx.astype(np.intp)].astype(np.int32),
     }
 
 
@@ -240,7 +240,7 @@ def micro_aggregate_sales(
         "category_id": np.empty(0, dtype=np.int32),
         "year": np.empty(0, dtype=np.int16),
         "month": np.empty(0, dtype=np.int8),
-        "channel_key": np.empty(0, dtype=np.int16),
+        "channel_key": np.empty(0, dtype=np.int32),
         "sales_amount": np.empty(0, dtype=np.float64),
         "sales_qty": np.empty(0, dtype=np.float64),
     }

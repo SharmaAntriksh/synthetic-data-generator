@@ -196,8 +196,7 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
         return s.strip("_") or "UNKNOWN"
 
     def _derive_flags(df: pd.DataFrame) -> pd.DataFrame:
-        # Ensure base types (SMALLINT in SQL schema)
-        df["SalesChannelKey"] = df["SalesChannelKey"].astype(np.int16)
+        df["SalesChannelKey"] = df["SalesChannelKey"].astype(np.int32)
 
         # Defaults
         if "SalesChannelDescription" not in df.columns:
@@ -214,7 +213,7 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
             df["SalesChannelCode"] = df["SalesChannel"].map(_normalize_code)
 
         if "SortOrder" not in df.columns:
-            df["SortOrder"] = df["SalesChannelKey"].astype(np.int16)
+            df["SortOrder"] = df["SalesChannelKey"].astype(np.int32)
 
         # Derive based on ChannelGroup + name heuristics
         grp = df["ChannelGroup"].astype(str).str.strip().str.lower()
@@ -255,10 +254,10 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
             )
 
         # Hard-cast
-        df["SortOrder"] = df["SortOrder"].astype(np.int16)
+        df["SortOrder"] = df["SortOrder"].astype(np.int32)
         for c in ["IsDigital", "IsPhysical", "IsThirdParty", "IsB2B", "IsAssisted", "IsOwnedChannel", "Is24x7"]:
             df[c] = df[c].astype(bool)
-        df["TypicalFulfillmentDays"] = df["TypicalFulfillmentDays"].astype(np.int16)
+        df["TypicalFulfillmentDays"] = df["TypicalFulfillmentDays"].astype(np.int32)
 
         return df
 
@@ -380,7 +379,7 @@ def _df_loyalty_tiers(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     override = _maybe_override_rows(dim_cfg, required_cols=required)
     if override is not None:
         override["LoyaltyTierKey"] = override["LoyaltyTierKey"].astype(np.int32)
-        override["TierRank"] = override["TierRank"].astype(np.int8)
+        override["TierRank"] = override["TierRank"].astype(np.int32)
         override["PointsMultiplier"] = override["PointsMultiplier"].astype(float)
         return override
 
@@ -392,7 +391,7 @@ def _df_loyalty_tiers(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
     ]
     df = pd.DataFrame(rows, columns=required)
     df["LoyaltyTierKey"] = df["LoyaltyTierKey"].astype(np.int32)
-    df["TierRank"] = df["TierRank"].astype(np.int8)
+    df["TierRank"] = df["TierRank"].astype(np.int32)
     df["PointsMultiplier"] = df["PointsMultiplier"].astype(float)
     return df
 

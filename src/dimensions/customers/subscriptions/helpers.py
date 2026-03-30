@@ -140,9 +140,9 @@ def build_dim_plans(g_start: pd.Timestamp) -> pd.DataFrame:
         "AnnualPrice":      pd.array([r[8] for r in PLANS_CATALOG], dtype="Float64"),
         "Tier":             [r[9] for r in PLANS_CATALOG],
         "MaxUsers":         np.array([r[10] for r in PLANS_CATALOG], dtype=np.int32),
-        "HasFreeTrial":     np.array([r[11] for r in PLANS_CATALOG], dtype=np.int8),
+        "HasFreeTrial":     np.array([r[11] for r in PLANS_CATALOG], dtype=np.int32),
         "LaunchDate":       launch_dates,
-        "IsActiveFlag":     np.ones(k, dtype=np.int8),
+        "IsActiveFlag":     np.ones(k, dtype=np.int32),
     })
 
 
@@ -224,9 +224,9 @@ def bridge_schema() -> pa.Schema:
         pa.field("PeriodStartDate", pa.date32()),
         pa.field("PeriodEndDate", pa.date32()),
         pa.field("PeriodPrice", pa.float64()),
-        pa.field("IsFirstPeriod", pa.int8()),
-        pa.field("IsChurnPeriod", pa.int8()),
-        pa.field("IsTrialPeriod", pa.int8()),
+        pa.field("IsFirstPeriod", pa.int32()),
+        pa.field("IsChurnPeriod", pa.int32()),
+        pa.field("IsTrialPeriod", pa.int32()),
         pa.field("BillingCycleNumber", pa.int32()),
     ])
 

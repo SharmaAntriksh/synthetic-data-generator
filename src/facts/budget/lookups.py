@@ -103,11 +103,11 @@ def build_budget_lookups(parquet_dims: Path) -> dict:
     sc_path = parquet_dims / "sales_channels.parquet"
     if sc_path.exists():
         sc = pd.read_parquet(sc_path)
-        channel_keys = sc["SalesChannelKey"].to_numpy(dtype=np.int16)
+        channel_keys = sc["SalesChannelKey"].to_numpy(dtype=np.int32)
         is_digital = sc.get("IsDigital", pd.Series(dtype="int8")).to_numpy()
         is_physical = sc.get("IsPhysical", pd.Series(dtype="int8")).to_numpy()
     else:
-        channel_keys = np.arange(1, 6, dtype=np.int16)
+        channel_keys = np.arange(1, 6, dtype=np.int32)
         is_digital = np.zeros(5, dtype=np.int8)
         is_physical = np.zeros(5, dtype=np.int8)
 

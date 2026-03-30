@@ -286,7 +286,7 @@ def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
         table = table.set_column(
             idx,
             "IsOrderDelayed",
-            pc.cast(pc.fill_null(table["IsOrderDelayed"], 0), pa.int8()),
+            pc.cast(pc.fill_null(table["IsOrderDelayed"], 0), pa.int32()),
         )
     return table
 

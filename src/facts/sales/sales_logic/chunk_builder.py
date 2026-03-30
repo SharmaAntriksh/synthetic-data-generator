@@ -83,11 +83,11 @@ def _get_brand_flat_cache(brand_to_rows: list, B: int) -> tuple:
     lengths = np.zeros(B, dtype=np.int64)
     for b, bucket in enumerate(brand_to_rows):
         if bucket is not None and len(bucket) > 0:
-            flat_parts.append(np.asarray(bucket, dtype="int32"))
+            flat_parts.append(np.asarray(bucket, dtype=np.int32))
             lengths[b] = len(bucket)
     offsets = np.zeros(B + 1, dtype="int64")
     np.cumsum(lengths, out=offsets[1:])
-    flat_idx = np.concatenate(flat_parts) if flat_parts else np.empty(0, dtype="int32")
+    flat_idx = np.concatenate(flat_parts) if flat_parts else np.empty(0, dtype=np.int32)
     _brand_flat_cache_ref = brand_to_rows
     _brand_flat_cache_data = (flat_idx, offsets)
     return flat_idx, offsets
@@ -200,7 +200,7 @@ def _sample_product_row_indices(
 
     # Within-brand weighted sampling when product_weight is available
     if product_weight is not None:
-        out = np.empty(n_int, dtype="int32")
+        out = np.empty(n_int, dtype=np.int32)
         # Group orders by brand via argsort (avoids O(B×n) per-brand mask scans)
         _brand_order = np.argsort(brand_ids, kind="stable")
         _brand_counts = np.bincount(brand_ids, minlength=B)
@@ -506,7 +506,7 @@ def _eligible_counts_fast(
     if T <= 0:
         return np.zeros(0, dtype="float64")
 
-    is_active_in_sales = np.asarray(is_active_in_sales, dtype="int32", order="C")
+    is_active_in_sales = np.asarray(is_active_in_sales, dtype=np.int32, order="C")
     start_month = np.asarray(start_month, dtype="int64", order="C")
     end_month_norm = np.asarray(end_month_norm, dtype="int64", order="C")
 
@@ -783,7 +783,7 @@ def build_chunk_table(
     customer_keys = _get_state_attr("customer_keys", "customers")
     if customer_keys is None:
         raise SalesError("State must provide customer_keys/customers")
-    customer_keys = np.asarray(customer_keys, dtype="int32")
+    customer_keys = np.asarray(customer_keys, dtype=np.int32)
 
     # is_active_in_sales (new contract)
     is_active_in_sales = _get_state_attr("customer_is_active_in_sales", "is_active_in_sales")
@@ -791,15 +791,15 @@ def build_chunk_table(
         # backward compat: if State.active_customer_keys exists, treat those as active
         active_keys = getattr(State, "active_customer_keys", None)
         if active_keys is not None:
-            is_active_in_sales = np.zeros(customer_keys.shape[0], dtype="int32")
-            idx = (np.asarray(active_keys, dtype="int32") - 1)
+            is_active_in_sales = np.zeros(customer_keys.shape[0], dtype=np.int32)
+            idx = (np.asarray(active_keys, dtype=np.int32) - 1)
             idx = idx[(idx >= 0) & (idx < customer_keys.shape[0])]
             is_active_in_sales[idx] = 1
         else:
             # assume all active
-            is_active_in_sales = np.ones(customer_keys.shape[0], dtype="int32")
+            is_active_in_sales = np.ones(customer_keys.shape[0], dtype=np.int32)
     else:
-        is_active_in_sales = np.asarray(is_active_in_sales, dtype="int32")
+        is_active_in_sales = np.asarray(is_active_in_sales, dtype=np.int32)
 
     start_month = _get_state_attr("customer_start_month")
     if start_month is None:
@@ -1290,7 +1290,7 @@ def build_chunk_table(
                  if int(s) < len(_store_ch_keys) and _store_ch_keys[int(s)] is not None),
                 default=len(SALES_CHANNEL_CORE_KEYS),
             )
-            _ch_keys_2d = np.full((_max_sk_ch, _max_n_ch), SALES_CHANNEL_CORE_KEYS[0], dtype=np.int16)
+            _ch_keys_2d = np.full((_max_sk_ch, _max_n_ch), SALES_CHANNEL_CORE_KEYS[0], dtype=np.int32)
             _ch_cdf_2d = np.ones((_max_sk_ch, _max_n_ch), dtype=np.float64)
 
             for _sk_v in _unique_sk_all:

@@ -127,7 +127,7 @@ def generate_employee_store_assignments(
         "EndDate": end,
         "FTE": emp["FTE"].fillna(1.0).astype(np.float64),
         "RoleAtStore": emp["Title"].astype(str),
-        "IsPrimary": np.int8(1),
+        "IsPrimary": np.int32(1),
         "TransferReason": "Initial",
         "Status": np.where(is_terminated, "Completed", "Active"),
     })
@@ -138,7 +138,7 @@ def generate_employee_store_assignments(
     out = out.sort_values(["EmployeeKey", "StartDate"]).reset_index(drop=True)
 
     # Per-employee sequential number (1, 2, 3, ... for each employee's assignments)
-    out["AssignmentSequence"] = (out.groupby("EmployeeKey").cumcount() + 1).astype(np.int16)
+    out["AssignmentSequence"] = (out.groupby("EmployeeKey").cumcount() + 1).astype(np.int32)
 
     # Enforce column order to match static schema (BULK INSERT is positional)
     out = out[out_cols]

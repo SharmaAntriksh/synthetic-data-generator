@@ -27,49 +27,51 @@ _SUPPORTS_LEVEL = {"zstd", "gzip", "brotli", "lz4"}
 # ── Per-table INT downcast rules ──
 # Maps column name → smallest safe Arrow type.
 # Applied across all tables; columns not present are silently skipped.
+# NOTE: Do NOT downcast below int32 — Power Query reads int8/int16 from
+# Parquet as Decimal instead of Integer.
 _INT_DOWNCASTS: dict[str, pa.DataType] = {
     # Sales fact
-    "SalesOrderLineNumber": pa.int8(),
-    "Quantity":             pa.int8(),
-    "IsOrderDelayed":       pa.int8(),
-    "CurrencyKey":          pa.int8(),
-    "PromotionKey":         pa.int8(),
-    "ReturnQuantity":       pa.int8(),
-    "SalesChannelKey":      pa.int16(),
-    "TimeKey":              pa.int16(),
-    "StoreKey":             pa.int16(),
-    "ProductKey":           pa.int16(),
-    "ReturnReasonKey":      pa.int16(),
+    "SalesOrderLineNumber": pa.int32(),
+    "Quantity":             pa.int32(),
+    "IsOrderDelayed":       pa.int32(),
+    "CurrencyKey":          pa.int32(),
+    "PromotionKey":         pa.int32(),
+    "ReturnQuantity":       pa.int32(),
+    "SalesChannelKey":      pa.int32(),
+    "TimeKey":              pa.int32(),
+    "StoreKey":             pa.int32(),
+    "ProductKey":           pa.int32(),
+    "ReturnReasonKey":      pa.int32(),
     # Inventory
-    "ReorderFlag":          pa.int8(),
-    "StockoutFlag":         pa.int8(),
-    "DaysOutOfStock":       pa.int8(),
-    "QuantityOnHand":       pa.int16(),
-    "QuantityOnOrder":      pa.int16(),
-    "QuantitySold":         pa.int16(),
-    "QuantityReceived":     pa.int16(),
+    "ReorderFlag":          pa.int32(),
+    "StockoutFlag":         pa.int32(),
+    "DaysOutOfStock":       pa.int32(),
+    "QuantityOnHand":       pa.int32(),
+    "QuantityOnOrder":      pa.int32(),
+    "QuantitySold":         pa.int32(),
+    "QuantityReceived":     pa.int32(),
     # Customers
     "HouseholdKey":         pa.int32(),
-    "GeographyKey":         pa.int16(),
-    "LoyaltyTierKey":       pa.int8(),
-    "CustomerAcquisitionChannelKey": pa.int8(),
+    "GeographyKey":         pa.int32(),
+    "LoyaltyTierKey":       pa.int32(),
+    "CustomerAcquisitionChannelKey": pa.int32(),
     # Subscriptions
-    "PlanKey":              pa.int16(),
-    "BillingCycleNumber":   pa.int16(),
-    "IsFirstPeriod":        pa.int8(),
-    "IsChurnPeriod":        pa.int8(),
-    "IsTrialPeriod":        pa.int8(),
+    "PlanKey":              pa.int32(),
+    "BillingCycleNumber":   pa.int32(),
+    "IsFirstPeriod":        pa.int32(),
+    "IsChurnPeriod":        pa.int32(),
+    "IsTrialPeriod":        pa.int32(),
     # Budget
-    "BudgetYear":           pa.int16(),
+    "BudgetYear":           pa.int32(),
     # Wishlists
-    "ResponseDays":         pa.int16(),
+    "ResponseDays":         pa.int32(),
     # Products
-    "SubcategoryKey":       pa.int16(),
-    "VariantIndex":         pa.int8(),
-    "VersionNumber":        pa.int8(),
-    "IsCurrent":            pa.int8(),
+    "SubcategoryKey":       pa.int32(),
+    "VariantIndex":         pa.int32(),
+    "VersionNumber":        pa.int32(),
+    "IsCurrent":            pa.int32(),
     # Employees
-    "StoreKey":             pa.int16(),
+    "StoreKey":             pa.int32(),
 }
 
 # ── Columns to convert from float64 → float32 ──

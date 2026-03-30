@@ -281,7 +281,7 @@ class State(metaclass=_SealableMeta):
     promo_channel_group = None       # int8: per promo — 0=any, 1=physical, 2=digital
 
     # Channel-aware delivery
-    channel_fulfillment_days = None  # dense int16: SalesChannelKey -> typical fulfillment days
+    channel_fulfillment_days = None  # dense int32: SalesChannelKey -> typical fulfillment days
 
     # --------------------------------------------------------------
     # Budget streaming aggregation (worker-side lookups)

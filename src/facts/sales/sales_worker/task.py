@@ -318,8 +318,8 @@ def _sales_channels_spec() -> tuple[np.ndarray, np.ndarray]:
         pth = folder / "sales_channels.parquet"
         if pth.exists():
             tab = pq.read_table(pth, columns=["SalesChannelKey"])
-            arr = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int16)
-            arr = arr[arr != np.int16(0)]  # don't sample Unknown
+            arr = np.asarray(tab["SalesChannelKey"].to_numpy(), dtype=np.int32)
+            arr = arr[arr != np.int32(0)]  # don't sample Unknown
             if arr.size:
                 keys = arr
 
@@ -343,8 +343,8 @@ def _ensure_sales_channel_key_on_lines(
     rng = np.random.default_rng(seed)
 
     if order_enc is not None:
-        per_order = rng.choice(keys, size=order_enc.n_orders, p=p).astype(np.int16, copy=False)
-        per_order_arr = pa.array(per_order, type=pa.int16())
+        per_order = rng.choice(keys, size=order_enc.n_orders, p=p).astype(np.int32, copy=False)
+        per_order_arr = pa.array(per_order, type=pa.int32())
         col = pc.take(per_order_arr, order_enc.enc.indices)
     elif "SalesOrderNumber" in table.column_names:
         order_col = table["SalesOrderNumber"]
@@ -354,12 +354,12 @@ def _ensure_sales_channel_key_on_lines(
         enc = pc.dictionary_encode(order_col)
         n_orders = len(enc.dictionary)
 
-        per_order = rng.choice(keys, size=n_orders, p=p).astype(np.int16, copy=False)
-        per_order_arr = pa.array(per_order, type=pa.int16())
+        per_order = rng.choice(keys, size=n_orders, p=p).astype(np.int32, copy=False)
+        per_order_arr = pa.array(per_order, type=pa.int32())
         col = pc.take(per_order_arr, enc.indices)
     else:
-        per_row = rng.choice(keys, size=table.num_rows, p=p).astype(np.int16, copy=False)
-        col = pa.array(per_row, type=pa.int16())
+        per_row = rng.choice(keys, size=table.num_rows, p=p).astype(np.int32, copy=False)
+        col = pa.array(per_row, type=pa.int32())
 
     return table.append_column("SalesChannelKey", col)
 
@@ -367,10 +367,10 @@ def _ensure_sales_channel_key_on_lines(
 def _sample_hour_weighted_minute(rng: np.random.Generator, size: int, hour_p: np.ndarray) -> np.ndarray:
     """Sample minute-of-day values given pre-normalized hour probabilities."""
     if size <= 0:
-        return np.empty(0, dtype=np.int16)
+        return np.empty(0, dtype=np.int32)
     hours = rng.choice(24, size=size, p=hour_p).astype(np.int32)
     mins = rng.integers(0, 60, size=size, dtype=np.int32)
-    return (hours * 60 + mins).astype(np.int16, copy=False)
+    return (hours * 60 + mins).astype(np.int32, copy=False)
 
 
 _cached_digital_w: np.ndarray | None = None
@@ -383,9 +383,9 @@ def _sample_time_keys_by_channel(
 ) -> np.ndarray:
     """Sample minute-of-day TimeKey values using per-channel hour weights."""
     global _cached_digital_w
-    keys = np.asarray(channel_keys, dtype=np.int16)
+    keys = np.asarray(channel_keys, dtype=np.int32)
     n_total = keys.shape[0]
-    out = np.empty(n_total, dtype=np.int16)
+    out = np.empty(n_total, dtype=np.int32)
 
     if _cached_digital_w is None:
         _cached_digital_w = _normalize_hour_prob(DIGITAL_HOUR_W)
@@ -484,9 +484,9 @@ def _ensure_time_key_on_lines(
         if "TimeKey" in table.column_names:
             tc_np = np.asarray(
                 _combine_if_chunked(table["TimeKey"]).to_numpy(zero_copy_only=False),
-                dtype=np.int16,
+                dtype=np.int32,
             )
-            per_order_arr = pa.array(tc_np[first], type=pa.int16())
+            per_order_arr = pa.array(tc_np[first], type=pa.int32())
             time_col = pc.take(per_order_arr, enc.indices)
             idx = table.schema.get_field_index("TimeKey")
             return table.set_column(idx, "TimeKey", time_col)
@@ -494,15 +494,15 @@ def _ensure_time_key_on_lines(
         if has_channel:
             sc_np = np.asarray(
                 _combine_if_chunked(table["SalesChannelKey"]).to_numpy(zero_copy_only=False),
-                dtype=np.int16,
+                dtype=np.int32,
             )
             per_order_sc = sc_np[first]
             per_order_time = _sample_time_keys_by_channel(rng, per_order_sc, channel_hour_lut)
-            per_order_arr = pa.array(per_order_time, type=pa.int16())
+            per_order_arr = pa.array(per_order_time, type=pa.int32())
             time_col = pc.take(per_order_arr, enc.indices)
         else:
-            per_order = rng.integers(0, 1440, size=n_orders, dtype=np.int16)
-            per_order_arr = pa.array(per_order, type=pa.int16())
+            per_order = rng.integers(0, 1440, size=n_orders, dtype=np.int32)
+            per_order_arr = pa.array(per_order, type=pa.int32())
             time_col = pc.take(per_order_arr, enc.indices)
 
         return table.append_column("TimeKey", time_col)
@@ -523,9 +523,9 @@ def _ensure_time_key_on_lines(
         if "TimeKey" in table.column_names:
             tc_np = np.asarray(
                 _combine_if_chunked(table["TimeKey"]).to_numpy(zero_copy_only=False),
-                dtype=np.int16,
+                dtype=np.int32,
             )
-            per_order_arr = pa.array(tc_np[first], type=pa.int16())
+            per_order_arr = pa.array(tc_np[first], type=pa.int32())
             time_col = pc.take(per_order_arr, enc.indices)
             idx = table.schema.get_field_index("TimeKey")
             return table.set_column(idx, "TimeKey", time_col)
@@ -533,15 +533,15 @@ def _ensure_time_key_on_lines(
         if has_channel:
             sc_np = np.asarray(
                 _combine_if_chunked(table["SalesChannelKey"]).to_numpy(zero_copy_only=False),
-                dtype=np.int16,
+                dtype=np.int32,
             )
             per_order_sc = sc_np[first]
             per_order_time = _sample_time_keys_by_channel(rng, per_order_sc, channel_hour_lut)
-            per_order_arr = pa.array(per_order_time, type=pa.int16())
+            per_order_arr = pa.array(per_order_time, type=pa.int32())
             time_col = pc.take(per_order_arr, enc.indices)
         else:
-            per_order = rng.integers(0, 1440, size=n_orders, dtype=np.int16)
-            per_order_arr = pa.array(per_order, type=pa.int16())
+            per_order = rng.integers(0, 1440, size=n_orders, dtype=np.int32)
+            per_order_arr = pa.array(per_order, type=pa.int32())
             time_col = pc.take(per_order_arr, enc.indices)
 
         return table.append_column("TimeKey", time_col)
@@ -553,13 +553,13 @@ def _ensure_time_key_on_lines(
     if has_channel:
         sc_np = np.asarray(
             _combine_if_chunked(table["SalesChannelKey"]).to_numpy(zero_copy_only=False),
-            dtype=np.int16,
+            dtype=np.int32,
         )
         out = _sample_time_keys_by_channel(rng, sc_np, channel_hour_lut)
-        time_col = pa.array(out, type=pa.int16())
+        time_col = pa.array(out, type=pa.int32())
     else:
-        per_row = rng.integers(0, 1440, size=table.num_rows, dtype=np.int16)
-        time_col = pa.array(per_row, type=pa.int16())
+        per_row = rng.integers(0, 1440, size=table.num_rows, dtype=np.int32)
+        time_col = pa.array(per_row, type=pa.int32())
 
     return table.append_column("TimeKey", time_col)
 
