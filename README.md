@@ -359,11 +359,11 @@ When generating in CSV mode, the output includes auto-generated SQL scripts for 
 
 | Flag | Description |
 |---|---|
-| `-TrustedConnection` | Use Windows Authentication |
-| `-User` / `-Password` | Use SQL Authentication |
+| `-TrustedConnection` | Windows Authentication |
+| `-User`&nbsp;/&nbsp;`-Password` | SQL Authentication |
 | `-ApplyCCI $true` | Create clustered columnstore indexes after load |
-| `-DropPK $true` | Drop primary keys and foreign keys before applying CCI (saved to `[admin].[_PK_Backup]` for restore) |
-| `-Verify` | Run post-import data integrity checks (row counts, FK consistency, cross-table validations) |
+| `-DropPK $true` | Drop PKs and FKs before CCI (saved to `[admin].[_PK_Backup]` for restore) |
+| `-Verify` | Run post-import data integrity checks |
 
 The import creates all dimension and fact tables, applies PK/FK constraints, and creates analytical views. Dropped constraints can be restored with `EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'`.
 
@@ -388,6 +388,7 @@ A web UI (FastAPI + React) is also available for interactive generation:
 ### SQL Server Import
 
 <img src="docs/assets/web-sqlserver-import.png" alt="Pipeline run status" width="700" />
+
 ---
 
 ## Generated Dataset Folder
@@ -395,6 +396,7 @@ A web UI (FastAPI + React) is also available for interactive generation:
 <img src="docs/assets/output.png" alt="Output folder structure" width="700" />
 
 ---
+
 
 ## Power BI Data Model
 
@@ -427,8 +429,3 @@ pytest --lf
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
-
----
-## Releases
-
-See [CHANGELOG.md](CHANGELOG.md) for details on each release.
