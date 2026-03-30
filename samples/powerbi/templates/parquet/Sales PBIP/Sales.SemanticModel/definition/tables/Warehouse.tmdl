@@ -5,7 +5,7 @@ table Warehouse
 		dataType: int64
 		formatString: 0
 		lineageTag: b0d7ced3-9ef0-4aa9-acbc-2d38dcbc7752
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: WarehouseKey
 
 		annotation SummarizationSetBy = Automatic
@@ -54,7 +54,7 @@ table Warehouse
 		dataType: int64
 		formatString: 0
 		lineageTag: d6243fc0-82f5-4940-9fa6-b89697655f1a
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: GeographyKey
 
 		annotation SummarizationSetBy = Automatic
@@ -63,7 +63,7 @@ table Warehouse
 		dataType: int64
 		formatString: 0
 		lineageTag: fec59ed8-17b0-4bf8-a69e-4087fd289485
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: Capacity
 
 		annotation SummarizationSetBy = Automatic
@@ -72,7 +72,7 @@ table Warehouse
 		dataType: int64
 		formatString: 0
 		lineageTag: 422bd2f5-389e-43a2-beb4-710bcabf3900
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: SquareFootage
 
 		annotation SummarizationSetBy = Automatic

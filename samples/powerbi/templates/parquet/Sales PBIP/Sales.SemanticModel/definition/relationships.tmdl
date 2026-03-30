@@ -141,13 +141,13 @@ relationship 89fc9272-3b96-94e2-2786-9c9437c3aee1
 	fromColumn: ProductProfile.SupplierKey
 	toColumn: Supplier.SupplierKey
 
-relationship 77b02a06-070d-5f4a-0784-e5438a4487e7
-	fromColumn: Complaints.CustomerKey
-	toColumn: Customer.CustomerKey
-
-relationship c9a54d6e-a297-70f5-09fa-cee958f192b0
+relationship 0bdb4521-830b-3145-7589-cab0550bba08
 	crossFilteringBehavior: bothDirections
 	fromCardinality: one
 	fromColumn: CustomerProfile.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship 935eba66-7eab-315d-b084-dd857b8a7e7e
+	fromColumn: Complaints.CustomerKey
 	toColumn: Customer.CustomerKey
 

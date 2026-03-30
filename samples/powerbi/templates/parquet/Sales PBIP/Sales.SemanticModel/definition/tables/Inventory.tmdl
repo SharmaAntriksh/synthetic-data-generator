@@ -5,7 +5,7 @@ table Inventory
 		dataType: int64
 		formatString: 0
 		lineageTag: b7b7d0d6-f171-4285-8d01-a4d727a17229
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ProductKey
 
 		annotation SummarizationSetBy = Automatic
@@ -14,7 +14,7 @@ table Inventory
 		dataType: int64
 		formatString: 0
 		lineageTag: 289ad3ad-c83c-401c-a84b-aaa62a894dac
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: WarehouseKey
 
 		annotation SummarizationSetBy = Automatic

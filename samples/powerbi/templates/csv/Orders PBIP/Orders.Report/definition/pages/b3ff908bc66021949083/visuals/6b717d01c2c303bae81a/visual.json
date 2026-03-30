@@ -1,0 +1,67 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
+  "name": "6b717d01c2c303bae81a",
+  "position": {
+    "x": 1051.654011741683,
+    "y": 127.18173515981735,
+    "z": 3,
+    "height": 176.34442270058707,
+    "width": 228.71337247227657,
+    "tabOrder": 3
+  },
+  "visual": {
+    "visualType": "slicer",
+    "query": {
+      "queryState": {
+        "Values": {
+          "projections": [
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EmployeeStoreAssignment"
+                    }
+                  },
+                  "Property": "AssignmentSequence"
+                }
+              },
+              "queryRef": "EmployeeStoreAssignment.AssignmentSequence",
+              "nativeQueryRef": "AssignmentSequence",
+              "active": true
+            }
+          ]
+        }
+      }
+    },
+    "objects": {
+      "data": [
+        {
+          "properties": {
+            "mode": {
+              "expr": {
+                "Literal": {
+                  "Value": "'Basic'"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "general": [
+        {
+          "properties": {
+            "orientation": {
+              "expr": {
+                "Literal": {
+                  "Value": "0D"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "drillFilterOtherVisuals": true
+  }
+}

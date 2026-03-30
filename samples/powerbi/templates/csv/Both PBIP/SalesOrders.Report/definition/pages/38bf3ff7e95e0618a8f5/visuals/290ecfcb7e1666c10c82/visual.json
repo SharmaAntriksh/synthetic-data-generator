@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
   "name": "290ecfcb7e1666c10c82",
   "position": {
     "x": 1014.1179600415015,
@@ -20,7 +20,7 @@
                 "Column": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Customers"
+                      "Entity": "Customer"
                     }
                   },
                   "Property": "Gender"
@@ -57,7 +57,7 @@
                 "From": [
                   {
                     "Name": "c",
-                    "Entity": "Customers",
+                    "Entity": "Customer",
                     "Type": 0
                   }
                 ],

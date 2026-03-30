@@ -9,19 +9,19 @@ model Model
 
 queryGroup 'Parameters & Functions'
 
-	annotation PBI_QueryGroupOrder = 3
+	annotation PBI_QueryGroupOrder = 0
 
 queryGroup Dimensions
 
-	annotation PBI_QueryGroupOrder = 4
+	annotation PBI_QueryGroupOrder = 8
 
 queryGroup Fact
 
-	annotation PBI_QueryGroupOrder = 5
+	annotation PBI_QueryGroupOrder = 9
 
 queryGroup 'SOH Transformation'
 
-	annotation PBI_QueryGroupOrder = 1
+	annotation PBI_QueryGroupOrder = 2
 
 queryGroup 'SOH Transformation\Helper Queries'
 
@@ -29,7 +29,7 @@ queryGroup 'SOH Transformation\Helper Queries'
 
 queryGroup 'SOD Transformations'
 
-	annotation PBI_QueryGroupOrder = 0
+	annotation PBI_QueryGroupOrder = 1
 
 queryGroup 'SOD Transformations\Helper Queries'
 
@@ -37,28 +37,76 @@ queryGroup 'SOD Transformations\Helper Queries'
 
 queryGroup 'Sales Returns Transformations'
 
-	annotation PBI_QueryGroupOrder = 2
+	annotation PBI_QueryGroupOrder = 3
 
 queryGroup 'Sales Returns Transformations\Helper Queries'
 
 	annotation PBI_QueryGroupOrder = 0
 
+queryGroup Fact\Sales
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup Fact\Budget
+
+	annotation PBI_QueryGroupOrder = 1
+
+queryGroup 'Customer Complaints Transformation'
+
+	annotation PBI_QueryGroupOrder = 5
+
+queryGroup 'Customer Complaints Transformation\Helper Queries'
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup Dimensions\Customer
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup Dimensions\Products
+
+	annotation PBI_QueryGroupOrder = 1
+
+queryGroup Fact\ExchangeRates
+
+	annotation PBI_QueryGroupOrder = 2
+
+queryGroup 'Inventory Transformation'
+
+	annotation PBI_QueryGroupOrder = 6
+
+queryGroup 'Inventory Transformation\Helper Queries'
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup 'Wishlist Transformation'
+
+	annotation PBI_QueryGroupOrder = 7
+
+queryGroup 'Wishlist Transformation\Helper Queries'
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup Fact\SecondaryFacts
+
+	annotation PBI_QueryGroupOrder = 3
+
 annotation __PBI_TimeIntelligenceEnabled = 0
 
-annotation PBI_QueryOrder = ["ContosoFolder","FxReadCSVFile","Customers","Dates","Store","Promotions","Products","ProductSubcategory","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRates","SalesReturns","Sample_File_SOH","Parameter_SOH","Sample_SOH","Transform_SOH_File","SalesOrderDetail","Sample_File_SOD","Parameter_SOD","Sample_SOD","Transform_SOD_File","MeasuresTable","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel","Sample_File_SalesReturns","Parameter_SalesReturns","Transform_SalesReturns_File","Sample_SalesReturns","Time"]
+annotation PBI_QueryOrder = ["ContosoFolder","FxReadCSVFile","Customer","CustomerProfile","OrganizationProfile","PlanSubscription","LoyaltyTiers","AcquisitionChannel","Plan","Dates","Store","Promotion","Products","Supplier","ProductSubcategory","ProductProfile","ProductCategory","Geography","Currency","SalesOrderHeader","ExchangeRate","ExchangeRateMonthly","Sample_File_SOH","Parameter_SOH","Transform_Sample_SOH","Transform_SOH_File","SalesOrderDetail","Sample_File_SOD","Parameter_SOD","Transform_Sample_SOD","Transform_SOD_File","MeasuresTable","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel","Sample_File_SalesReturns","Parameter_SalesReturns","Transform_SalesReturns_File","Transform_Sample_SalesReturns","SalesReturn","Time","Budget","BudgetMonthly","Complaints","Sample_File_Complaints","Parameter_Complaints","Transform_Sample_Complaints","Transform_Complaints_File","Warehouse","Inventory","Sample_File_Inventory","Parameter_Inventory","Transform_Sample_Inventory","Transform_Inventory_File","Wishlist","Sample_File_Wishlist","Parameter_Wishlist","Transform_Sample_Wishlist","Transform_Wishlist_File"]
 
 annotation PBI_ProTooling = ["TMDLView_Desktop","DevMode"]
 
-ref table Customers
+ref table Customer
 ref table Dates
 ref table Store
-ref table Promotions
+ref table Promotion
 ref table Products
 ref table ProductSubcategory
 ref table ProductCategory
 ref table Geography
 ref table Currency
-ref table ExchangeRates
+ref table ExchangeRate
 ref table SalesOrderHeader
 ref table SalesOrderDetail
 ref table MeasuresTable
@@ -66,8 +114,23 @@ ref table Employee
 ref table EmployeeStoreAssignment
 ref table ReturnReason
 ref table SalesChannel
-ref table SalesReturns
+ref table SalesReturn
 ref table Time
+ref table CustomerProfile
+ref table OrganizationProfile
+ref table PlanSubscription
+ref table LoyaltyTiers
+ref table AcquisitionChannel
+ref table Plan
+ref table Supplier
+ref table ProductProfile
+ref table ExchangeRateMonthly
+ref table Budget
+ref table BudgetMonthly
+ref table Warehouse
+ref table Complaints
+ref table Inventory
+ref table Wishlist
 
 ref cultureInfo en-US
 

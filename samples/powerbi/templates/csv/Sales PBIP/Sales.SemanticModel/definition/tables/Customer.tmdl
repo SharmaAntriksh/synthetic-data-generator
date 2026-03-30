@@ -1,0 +1,286 @@
+table Customer
+	lineageTag: 674067c5-4401-41cd-b2ef-353674838648
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: d352fa1d-5bd8-4e69-879f-2a5f7904f6c5
+		summarizeBy: none
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerName
+		dataType: string
+		lineageTag: 806d2a55-e606-427f-bea9-5ec5ce714ebd
+		summarizeBy: none
+		sourceColumn: CustomerName
+
+		annotation SummarizationSetBy = Automatic
+
+	column DOB
+		dataType: dateTime
+		formatString: Short Date
+		lineageTag: 5639756d-83ed-468f-ae18-b642da9dd1ab
+		summarizeBy: none
+		sourceColumn: DOB
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column MaritalStatus
+		dataType: string
+		lineageTag: 45c89270-7cb1-4c50-984f-6f753ce0f755
+		summarizeBy: none
+		sourceColumn: MaritalStatus
+
+		annotation SummarizationSetBy = Automatic
+
+	column Gender
+		dataType: string
+		lineageTag: ca0ddd1d-b7a2-44ad-8a25-15d540a1930c
+		summarizeBy: none
+		sourceColumn: Gender
+
+		annotation SummarizationSetBy = Automatic
+
+	column EmailAddress
+		dataType: string
+		lineageTag: d5393a24-7194-4ad7-a85f-3db7ca1c3782
+		summarizeBy: none
+		sourceColumn: EmailAddress
+
+		annotation SummarizationSetBy = Automatic
+
+	column YearlyIncome
+		dataType: int64
+		formatString: #,0
+		lineageTag: 129814d9-3c28-4208-9787-28f5906159bd
+		summarizeBy: sum
+		sourceColumn: YearlyIncome
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerType
+		dataType: string
+		lineageTag: d835c924-2f8f-4b00-aa03-3467617feef7
+		summarizeBy: none
+		sourceColumn: CustomerType
+
+		annotation SummarizationSetBy = Automatic
+
+	column CompanyName
+		dataType: string
+		lineageTag: da6b4a66-256d-47a1-9dca-383e8d95f221
+		summarizeBy: none
+		sourceColumn: CompanyName
+
+		annotation SummarizationSetBy = Automatic
+
+	column GeographyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 268c9fcc-8f44-4865-84dc-6da90d40b2ce
+		summarizeBy: none
+		sourceColumn: GeographyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column LoyaltyTierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 28d21114-407e-40d4-ab3a-6b40b49d2a1d
+		summarizeBy: none
+		sourceColumn: LoyaltyTierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerAcquisitionChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 92faba4d-ea4a-4b10-a976-ec14fc9051fa
+		summarizeBy: count
+		sourceColumn: CustomerAcquisitionChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerID
+		dataType: int64
+		formatString: 0
+		lineageTag: 658c6796-82f2-406c-b4d1-fea9addf40db
+		summarizeBy: count
+		sourceColumn: CustomerID
+
+		annotation SummarizationSetBy = Automatic
+
+	column VersionNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: da817b0b-326d-4c85-8b34-0537a3350056
+		summarizeBy: sum
+		sourceColumn: VersionNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column EffectiveStartDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 12c5ff53-fbda-428c-9997-bbb59596cfb8
+		summarizeBy: none
+		sourceColumn: EffectiveStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column EffectiveEndDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 017110c9-efa1-43d5-bfbd-04a4719a9734
+		summarizeBy: none
+		sourceColumn: EffectiveEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column IsCurrent
+		dataType: int64
+		formatString: 0
+		lineageTag: 15e4414e-a1f2-4f73-b9c8-e1930c2f1089
+		summarizeBy: sum
+		sourceColumn: IsCurrent
+
+		annotation SummarizationSetBy = Automatic
+
+	column PhoneNumber
+		dataType: string
+		lineageTag: c405476c-269b-42b5-93f4-6ed2efd5a8e0
+		summarizeBy: none
+		sourceColumn: PhoneNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column HomeAddress
+		dataType: string
+		lineageTag: f2fab10f-c12e-44ae-88fc-be33491faa0c
+		summarizeBy: none
+		sourceColumn: HomeAddress
+
+		annotation SummarizationSetBy = Automatic
+
+	column WorkAddress
+		dataType: string
+		lineageTag: 4b50cf24-ffd4-4473-a34b-f6ba9cf76750
+		summarizeBy: none
+		sourceColumn: WorkAddress
+
+		annotation SummarizationSetBy = Automatic
+
+	column Latitude
+		dataType: double
+		lineageTag: f67733c9-1436-409f-8b31-ecc66d4aaaa1
+		summarizeBy: sum
+		sourceColumn: Latitude
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Longitude
+		dataType: double
+		lineageTag: 91e1165e-d1eb-48c1-8d28-3e3e6c4dabe2
+		summarizeBy: sum
+		sourceColumn: Longitude
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column PostalCode
+		dataType: string
+		lineageTag: 1ff5f6a0-2747-4d0a-b10d-b55fd5ac887d
+		summarizeBy: none
+		sourceColumn: PostalCode
+
+		annotation SummarizationSetBy = Automatic
+
+	column HouseholdKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 9c2be764-9c43-406b-975d-9f23384ef2c0
+		summarizeBy: count
+		sourceColumn: HouseholdKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column HouseholdRole
+		dataType: string
+		lineageTag: 64f176b2-5971-400e-88e6-b2e7cd439049
+		summarizeBy: none
+		sourceColumn: HouseholdRole
+
+		annotation SummarizationSetBy = Automatic
+
+	column IncomeGroup
+		dataType: string
+		lineageTag: 29eb3cf6-a282-467a-9f50-96534fa32109
+		summarizeBy: none
+		sourceColumn: IncomeGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	column HomeOwnership
+		dataType: string
+		lineageTag: 9a9706d7-eb3a-49bd-bff7-d6553cbc42de
+		summarizeBy: none
+		sourceColumn: HomeOwnership
+
+		annotation SummarizationSetBy = Automatic
+
+	column NumberOfChildren
+		dataType: int64
+		formatString: 0
+		lineageTag: 91724a6f-1f44-4c68-85cb-a05da726f1e2
+		summarizeBy: sum
+		sourceColumn: NumberOfChildren
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerStartDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: c5c50498-3c59-4638-836e-d2092eb891e0
+		summarizeBy: none
+		sourceColumn: CustomerStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column CustomerEndDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: fbc27869-3858-4a29-b98d-d3eb7f5fafc4
+		summarizeBy: none
+		sourceColumn: CustomerEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	partition Customer = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "customers" ),
+				    ChangedType = Table.TransformColumnTypes(Source,{{"CustomerKey", Int64.Type}, {"CustomerID", Int64.Type}, {"VersionNumber", Int64.Type}, {"EffectiveStartDate", type date}, {"EffectiveEndDate", type date}, {"IsCurrent", Int64.Type}, {"CustomerName", type text}, {"DOB", type date}, {"Gender", type text}, {"EmailAddress", type text}, {"PhoneNumber", type text}, {"HomeAddress", type text}, {"WorkAddress", type text}, {"Latitude", type number}, {"Longitude", type number}, {"PostalCode", type text}, {"CustomerType", type text}, {"CompanyName", type text}, {"GeographyKey", Int64.Type}, {"HouseholdKey", Int64.Type}, {"HouseholdRole", type text}, {"LoyaltyTierKey", Int64.Type}, {"CustomerAcquisitionChannelKey", Int64.Type}, {"YearlyIncome", Int64.Type}, {"IncomeGroup", type text}, {"MaritalStatus", type text}, {"HomeOwnership", type text}, {"NumberOfChildren", Int64.Type}, {"CustomerStartDate", type date}, {"CustomerEndDate", type date}})
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

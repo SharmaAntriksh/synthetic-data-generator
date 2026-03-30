@@ -1,9 +1,13 @@
 table MeasuresTable
 	lineageTag: a79715bc-3f48-4e38-a742-77f338a1070a
 
-	measure '# Customers' =
+	measure '# Customers' = ```
 			
-			DISTINCTCOUNT ( SalesOrderHeader[CustomerKey] )
+			CALCULATE ( 
+			    DISTINCTCOUNT ( SalesOrderHeader[CustomerKey] ),
+			    SalesOrderDetail
+			)
+			```
 		formatString: #,0
 		displayFolder: 01 - Base Measures
 		lineageTag: 6ec8f0ae-723d-46cd-b46d-b9c1cedc3068
@@ -17,13 +21,13 @@ table MeasuresTable
 			    SalesOrderDetail[Quantity] * SalesOrderDetail[UnitCost]
 			)
 			```
-		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
+		formatString: #,0
 		displayFolder: 01 - Base Measures
 		lineageTag: 161627e6-1af2-4474-94e3-8f71733d228e
 
 		changedProperty = IsHidden
 
-		annotation PBI_FormatHint = {"currencyCulture":"en-US"}
+		annotation PBI_FormatHint = {"isDecimal":true}
 
 	measure 'Profit Amount' =
 			
@@ -93,7 +97,7 @@ table MeasuresTable
 			            )
 			        ),
 			        SalesOrderHeader[StoreKey],
-			        SalesOrderHeader[SalesPersonEmployeeKey],
+			        SalesOrderHeader[EmployeeKey],
 			        Dates[Date]
 			    )
 			)

@@ -1,0 +1,88 @@
+table Budget
+	lineageTag: dfc6ba3a-23c0-4ae6-ac4e-0e056a4d93d4
+
+	column Country
+		dataType: string
+		lineageTag: 2d193d6c-1f5b-4ae1-b060-e2294113cd19
+		summarizeBy: none
+		sourceColumn: Country
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: 69819543-f007-464c-abe0-72e96ba65f48
+		summarizeBy: none
+		sourceColumn: Category
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetYear
+		dataType: int64
+		formatString: 0
+		lineageTag: 5f1211eb-8150-446f-b0fa-ce15353bba9d
+		summarizeBy: sum
+		sourceColumn: BudgetYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column Scenario
+		dataType: string
+		lineageTag: f83764d0-4397-4d9b-9d53-4ff6015d046d
+		summarizeBy: none
+		sourceColumn: Scenario
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetGrowthPct
+		dataType: double
+		lineageTag: d6d06a4e-7df5-4181-897e-2c8fdb6ff07b
+		summarizeBy: sum
+		sourceColumn: BudgetGrowthPct
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column BudgetSalesAmount
+		dataType: double
+		lineageTag: 07f5b7da-79b2-4390-815c-42dd3eb155d2
+		summarizeBy: sum
+		sourceColumn: BudgetSalesAmount
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column BudgetSalesQuantity
+		dataType: double
+		lineageTag: 69407b83-a0cc-41f3-9592-059291a57de3
+		summarizeBy: sum
+		sourceColumn: BudgetSalesQuantity
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column BudgetMethod
+		dataType: string
+		lineageTag: de5f8e7c-db2c-4d51-9549-2f93062048b9
+		summarizeBy: none
+		sourceColumn: BudgetMethod
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Budget = m
+		mode: import
+		queryGroup: Fact\Budget
+		source =
+				let
+				    Source = FxReadCSVFile ( "facts\budget_yearly\", "budget_yearly" ),
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"Country", type text}, {"Category", type text}, {"BudgetYear", Int64.Type}, {"Scenario", type text}, {"BudgetGrowthPct", type number}, {"BudgetSalesAmount", type number}, {"BudgetSalesQuantity", type number}, {"BudgetMethod", type text}})
+				in
+				    #"Changed Type"
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

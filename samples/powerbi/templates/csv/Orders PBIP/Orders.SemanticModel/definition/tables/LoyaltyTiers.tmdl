@@ -1,0 +1,53 @@
+table LoyaltyTiers
+	lineageTag: 11d80e52-6019-48c6-93e3-185dc9a22797
+
+	column LoyaltyTierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: b18ff653-a4b8-484c-8452-e63dbf25c383
+		summarizeBy: count
+		sourceColumn: LoyaltyTierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column LoyaltyTier
+		dataType: string
+		lineageTag: edbbd37b-209d-4589-bcd1-b4ed4e561f7b
+		summarizeBy: none
+		sourceColumn: LoyaltyTier
+
+		annotation SummarizationSetBy = Automatic
+
+	column TierRank
+		dataType: int64
+		formatString: 0
+		lineageTag: fdb9a849-3dcb-4e06-b505-7ac7b2da2a89
+		summarizeBy: sum
+		sourceColumn: TierRank
+
+		annotation SummarizationSetBy = Automatic
+
+	column PointsMultiplier
+		dataType: double
+		lineageTag: 5eb8877e-4023-4a19-8ec1-70c34628d56d
+		summarizeBy: sum
+		sourceColumn: PointsMultiplier
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition LoyaltyTiers = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "loyalty_tiers" ),
+				    ChangedType = Table.TransformColumnTypes(Source,{{"LoyaltyTierKey", Int64.Type}, {"LoyaltyTier", type text}, {"TierRank", Int64.Type}, {"PointsMultiplier", type number}})
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

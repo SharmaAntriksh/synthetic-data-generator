@@ -105,12 +105,6 @@ createOrReplace
 		fromColumn: Products.ProductKey
 		toColumn: ProductProfile.ProductKey
 
-	relationship 439658a6-7c5b-c238-8249-664035edc06f
-		crossFilteringBehavior: bothDirections
-		fromCardinality: one
-		fromColumn: OrganizationProfile.CustomerKey
-		toColumn: CustomerProfile.CustomerKey
-
 	relationship aff64d2e-2f06-ed79-90ff-21bcb57ae704
 		crossFilteringBehavior: bothDirections
 		fromCardinality: one
@@ -148,4 +142,14 @@ createOrReplace
 	relationship 89fc9272-3b96-94e2-2786-9c9437c3aee1
 		fromColumn: ProductProfile.SupplierKey
 		toColumn: Supplier.SupplierKey
+
+	relationship 0bdb4521-830b-3145-7589-cab0550bba08
+		crossFilteringBehavior: bothDirections
+		fromCardinality: one
+		fromColumn: CustomerProfile.CustomerKey
+		toColumn: Customer.CustomerKey
+
+	relationship 935eba66-7eab-315d-b084-dd857b8a7e7e
+		fromColumn: Complaints.CustomerKey
+		toColumn: Customer.CustomerKey
 

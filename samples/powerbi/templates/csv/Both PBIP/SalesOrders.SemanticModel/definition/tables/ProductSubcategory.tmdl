@@ -38,21 +38,13 @@ table ProductSubcategory
 
 	partition ProductSubcategory = m
 		mode: import
-		queryGroup: Dimensions
+		queryGroup: Dimensions\Products
 		source =
 				let
 				    Source = FxReadCSVFile ( "dimensions", "product_subcategory" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        {
-				            { "SubcategoryKey", Int64.Type },
-				            { "SubcategoryLabel", Int64.Type },
-				            { "Subcategory", type text },
-				            { "CategoryKey", Int64.Type }
-				        }
-				    )
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"SubcategoryKey", Int64.Type}, {"SubcategoryLabel", Int64.Type}, {"Subcategory", type text}, {"CategoryKey", Int64.Type}})
 				in
-				    ChangedType
+				    #"Changed Type"
 
 	annotation PBI_NavigationStepName = Navigation
 

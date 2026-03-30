@@ -5,7 +5,7 @@ table Supplier
 		dataType: int64
 		formatString: 0
 		lineageTag: 490229d4-4b85-4098-8d0d-e6963ebf6bde
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: SupplierKey
 
 		annotation SummarizationSetBy = Automatic
@@ -37,7 +37,7 @@ table Supplier
 	column ReliabilityScore
 		dataType: double
 		lineageTag: ec4f825f-9832-4d68-826d-da2ffb19e6e4
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: ReliabilityScore
 
 		annotation SummarizationSetBy = Automatic

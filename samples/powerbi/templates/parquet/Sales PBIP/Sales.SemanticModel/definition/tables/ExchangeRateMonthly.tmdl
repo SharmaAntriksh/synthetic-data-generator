@@ -18,7 +18,7 @@ table ExchangeRateMonthly
 		dataType: int64
 		formatString: 0
 		lineageTag: 3c58923f-0326-44ea-9d16-03ceabd66bd4
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: FromCurrencyKey
 
 		annotation SummarizationSetBy = Automatic

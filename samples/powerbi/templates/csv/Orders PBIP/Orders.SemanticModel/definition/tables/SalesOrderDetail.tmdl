@@ -1,10 +1,8 @@
 table SalesOrderDetail
-	isHidden
 	lineageTag: 72237aef-7edb-4861-ab7a-68fcd65161ea
 
 	column SalesOrderNumber
 		dataType: int64
-		isHidden
 		formatString: 0
 		lineageTag: 69d80e65-99c7-4ad3-bc29-5f988106b0bc
 		summarizeBy: sum
@@ -16,7 +14,6 @@ table SalesOrderDetail
 
 	column SalesOrderLineNumber
 		dataType: int64
-		isHidden
 		formatString: 0
 		lineageTag: 817e2e59-9fac-4b3e-b9b8-2102970037fc
 		summarizeBy: sum
@@ -28,7 +25,6 @@ table SalesOrderDetail
 
 	column ProductKey
 		dataType: int64
-		isHidden
 		formatString: 0
 		lineageTag: d2f2bd07-44ab-4ba0-a266-f3865e969a07
 		summarizeBy: count
@@ -40,8 +36,7 @@ table SalesOrderDetail
 
 	column DueDate
 		dataType: dateTime
-		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: 59407756-07ac-456c-83fc-ffc6cfb820ba
 		summarizeBy: none
 		sourceColumn: DueDate
@@ -54,8 +49,7 @@ table SalesOrderDetail
 
 	column DeliveryDate
 		dataType: dateTime
-		isHidden
-		formatString: Long Date
+		formatString: Short Date
 		lineageTag: cf365f53-8b76-4e8e-a213-e4bfa4387380
 		summarizeBy: none
 		sourceColumn: DeliveryDate
@@ -68,7 +62,6 @@ table SalesOrderDetail
 
 	column Quantity
 		dataType: int64
-		isHidden
 		formatString: 0
 		lineageTag: 523a6282-164c-4f17-bbba-4257d3ce681e
 		summarizeBy: sum
@@ -80,7 +73,6 @@ table SalesOrderDetail
 
 	column NetPrice
 		dataType: decimal
-		isHidden
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
 		lineageTag: 2b86d8f0-0958-4350-aa4f-e86ac881db2f
 		summarizeBy: sum
@@ -94,7 +86,6 @@ table SalesOrderDetail
 
 	column UnitCost
 		dataType: decimal
-		isHidden
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
 		lineageTag: 58b9a1fd-10b6-4d15-920a-44828545bb6f
 		summarizeBy: sum
@@ -108,7 +99,6 @@ table SalesOrderDetail
 
 	column UnitPrice
 		dataType: decimal
-		isHidden
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
 		lineageTag: 42f8b8f4-d01b-45b5-8dcf-43b0d7724686
 		summarizeBy: sum
@@ -122,7 +112,6 @@ table SalesOrderDetail
 
 	column DiscountAmount
 		dataType: decimal
-		isHidden
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
 		lineageTag: 0061a6d2-3300-47e1-bb0c-5a9eb1714487
 		summarizeBy: sum
@@ -136,7 +125,6 @@ table SalesOrderDetail
 
 	column DeliveryStatus
 		dataType: string
-		isHidden
 		lineageTag: 7ff01fe0-b37e-46e8-8483-3923e1922507
 		summarizeBy: none
 		sourceColumn: DeliveryStatus
@@ -147,7 +135,7 @@ table SalesOrderDetail
 
 	partition SalesOrderDetail = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\Sales
 		source =
 				let
 				    Source = Folder.Files ( ContosoFolder & "\facts\sales_order_detail" ),

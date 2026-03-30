@@ -45,21 +45,25 @@ table Store
 
 	column OpeningDate
 		dataType: dateTime
-		formatString: General Date
+		formatString: Long Date
 		lineageTag: 38713ebc-a588-4f9d-b653-045c9d2f883f
 		summarizeBy: none
 		sourceColumn: OpeningDate
 
 		annotation SummarizationSetBy = Automatic
 
+		annotation UnderlyingDateTimeDataType = Date
+
 	column ClosingDate
 		dataType: dateTime
-		formatString: General Date
+		formatString: Long Date
 		lineageTag: e225643c-a9cd-4b79-a9a3-d999c1e7d19c
 		summarizeBy: none
 		sourceColumn: ClosingDate
 
 		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
 
 	column OpenFlag
 		dataType: int64
@@ -120,33 +124,137 @@ table Store
 
 		annotation SummarizationSetBy = Automatic
 
+	column StoreNumber
+		dataType: string
+		lineageTag: c92662bf-ce99-4fa8-a053-836400dbfec3
+		summarizeBy: none
+		sourceColumn: StoreNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreFormat
+		dataType: string
+		lineageTag: 61c92869-d6da-4d56-bc30-75f5c35132ed
+		summarizeBy: none
+		sourceColumn: StoreFormat
+
+		annotation SummarizationSetBy = Automatic
+
+	column OwnershipType
+		dataType: string
+		lineageTag: e57cee3a-ad94-424f-9b7c-ad67667e73b5
+		summarizeBy: none
+		sourceColumn: OwnershipType
+
+		annotation SummarizationSetBy = Automatic
+
+	column RevenueClass
+		dataType: string
+		lineageTag: 704e83cd-f5ce-4000-b3eb-959bd2fbdf00
+		summarizeBy: none
+		sourceColumn: RevenueClass
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreZone
+		dataType: string
+		lineageTag: 54230d48-f257-4694-9b09-d0d3c3ed66a4
+		summarizeBy: none
+		sourceColumn: StoreZone
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreDistrict
+		dataType: string
+		lineageTag: 06867333-d08b-46f9-8acf-b2b4c71a8d75
+		summarizeBy: none
+		sourceColumn: StoreDistrict
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreRegion
+		dataType: string
+		lineageTag: fc8de0d0-27af-4557-a12b-f8f569052b0a
+		summarizeBy: none
+		sourceColumn: StoreRegion
+
+		annotation SummarizationSetBy = Automatic
+
+	column StoreEmail
+		dataType: string
+		lineageTag: 081c59f0-b1e2-4e50-a4d9-2b76be37a8eb
+		summarizeBy: none
+		sourceColumn: StoreEmail
+
+		annotation SummarizationSetBy = Automatic
+
+	column AvgTransactionValue
+		dataType: double
+		lineageTag: 9957b4fd-ed23-4684-adab-79112980284e
+		summarizeBy: sum
+		sourceColumn: AvgTransactionValue
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column CustomerSatisfactionScore
+		dataType: double
+		lineageTag: 0cb090b5-8da7-46df-b635-202ee1d0e3c4
+		summarizeBy: sum
+		sourceColumn: CustomerSatisfactionScore
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column InventoryTurnoverTarget
+		dataType: double
+		lineageTag: 0f5fe00f-ae32-4a50-9110-cb238022e418
+		summarizeBy: sum
+		sourceColumn: InventoryTurnoverTarget
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column LastAuditScore
+		dataType: int64
+		formatString: 0
+		lineageTag: 7a6c978f-a08c-4695-bea9-dd97feb71953
+		summarizeBy: sum
+		sourceColumn: LastAuditScore
+
+		annotation SummarizationSetBy = Automatic
+
+	column ShrinkageRatePct
+		dataType: double
+		lineageTag: a8d76f67-868e-40be-b811-7b7a409e17e8
+		summarizeBy: sum
+		sourceColumn: ShrinkageRatePct
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column WarehouseKey
+		dataType: int64
+		formatString: 0
+		lineageTag: f94369d4-3316-4921-8e58-327f4bbff4da
+		summarizeBy: count
+		sourceColumn: WarehouseKey
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Store = m
 		mode: import
 		queryGroup: Dimensions
 		source =
 				let
 				    Source = FxReadCSVFile ( "dimensions", "stores" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        {
-				            { "StoreKey", Int64.Type },
-				            { "StoreName", type text },
-				            { "StoreType", type text },
-				            { "Status", type text },
-				            { "GeographyKey", Int64.Type },
-				            { "OpeningDate", type datetime },
-				            { "ClosingDate", type datetime },
-				            { "OpenFlag", Int64.Type },
-				            { "SquareFootage", Int64.Type },
-				            { "EmployeeCount", Int64.Type },
-				            { "StoreManager", type text },
-				            { "Phone", type text },
-				            { "StoreDescription", type text },
-				            { "CloseReason", type text }
-				        }
-				    )
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"StoreKey", Int64.Type}, {"StoreNumber", type text}, {"StoreName", type text}, {"StoreType", type text}, {"StoreFormat", type text}, {"OwnershipType", type text}, {"RevenueClass", type text}, {"Status", type text}, {"GeographyKey", Int64.Type}, {"StoreZone", type text}, {"StoreDistrict", type text}, {"StoreRegion", type text}, {"OpeningDate", type date}, {"ClosingDate", type date}, {"OpenFlag", Int64.Type}, {"SquareFootage", Int64.Type}, {"EmployeeCount", Int64.Type}, {"StoreManager", type text}, {"Phone", type text}, {"StoreEmail", type text}, {"StoreDescription", type text}, {"CloseReason", type text}, {"AvgTransactionValue", type number}, {"CustomerSatisfactionScore", type number}, {"InventoryTurnoverTarget", type number}, {"LastAuditScore", Int64.Type}, {"ShrinkageRatePct", type number}, {"WarehouseKey", Int64.Type}})
 				in
-				    ChangedType
+				    #"Changed Type"
 
 	annotation PBI_NavigationStepName = Navigation
 

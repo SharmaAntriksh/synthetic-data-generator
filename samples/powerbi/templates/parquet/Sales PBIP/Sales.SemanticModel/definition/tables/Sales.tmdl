@@ -23,7 +23,7 @@ table Sales
 		dataType: int64
 		formatString: 0
 		lineageTag: a11fe6cc-89a2-4b6e-8edc-ca885d76dc79
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CustomerKey
 
 		annotation SummarizationSetBy = Automatic
@@ -32,7 +32,7 @@ table Sales
 		dataType: int64
 		formatString: 0
 		lineageTag: 951cd628-b7c3-466d-b5ab-fb86ee9f8738
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: ProductKey
 
 		annotation SummarizationSetBy = Automatic
@@ -41,7 +41,7 @@ table Sales
 		dataType: int64
 		formatString: 0
 		lineageTag: 931d0f55-d725-4261-8208-814f9768316c
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: StoreKey
 
 		annotation SummarizationSetBy = Automatic
@@ -50,7 +50,7 @@ table Sales
 		dataType: int64
 		formatString: 0
 		lineageTag: b55b4fe8-65d4-4d71-8ba0-7eb1fe5f86ca
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: EmployeeKey
 
 		annotation SummarizationSetBy = Automatic
@@ -59,7 +59,7 @@ table Sales
 		dataType: int64
 		formatString: 0
 		lineageTag: c200961a-2509-4ddf-89fb-db9b7a15c021
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: PromotionKey
 
 		annotation SummarizationSetBy = Automatic
@@ -68,7 +68,7 @@ table Sales
 		dataType: int64
 		formatString: 0
 		lineageTag: f496762d-edd6-4a6b-af87-b5a36c7704eb
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CurrencyKey
 
 		annotation SummarizationSetBy = Automatic
@@ -77,7 +77,7 @@ table Sales
 		dataType: int64
 		formatString: 0
 		lineageTag: db59f6e0-4d73-471e-8d09-184c1093beef
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: SalesChannelKey
 
 		annotation SummarizationSetBy = Automatic
@@ -86,7 +86,7 @@ table Sales
 		dataType: int64
 		formatString: 0
 		lineageTag: e66f0cc1-833c-4ee5-8bee-8c5e2c110a79
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: TimeKey
 
 		annotation SummarizationSetBy = Automatic

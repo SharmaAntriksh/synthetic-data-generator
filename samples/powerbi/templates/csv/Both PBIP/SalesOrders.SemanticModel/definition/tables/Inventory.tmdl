@@ -1,0 +1,123 @@
+table Inventory
+	lineageTag: ca61bda6-0b34-45f0-bf7f-f12f1eb38e77
+
+	column ProductKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 84045cd8-72f4-4a8a-8461-f1aaa39f3fd3
+		summarizeBy: count
+		sourceColumn: ProductKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarehouseKey
+		dataType: int64
+		formatString: 0
+		lineageTag: b2735356-09a4-4b62-b22a-ece90dae5d13
+		summarizeBy: count
+		sourceColumn: WarehouseKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SnapshotDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 60dedab8-56f7-47e3-8bec-16333516ea62
+		summarizeBy: none
+		sourceColumn: SnapshotDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column QuantityOnHand
+		dataType: int64
+		formatString: 0
+		lineageTag: 042bf528-b1d7-45e9-8b17-9ae8157ed314
+		summarizeBy: sum
+		sourceColumn: QuantityOnHand
+
+		annotation SummarizationSetBy = Automatic
+
+	column QuantityOnOrder
+		dataType: int64
+		formatString: 0
+		lineageTag: dfd62092-3f78-48d9-950e-9fcd679ddbda
+		summarizeBy: sum
+		sourceColumn: QuantityOnOrder
+
+		annotation SummarizationSetBy = Automatic
+
+	column QuantitySold
+		dataType: int64
+		formatString: 0
+		lineageTag: 48ff22b0-01c3-4990-99c3-2acefc85435e
+		summarizeBy: sum
+		sourceColumn: QuantitySold
+
+		annotation SummarizationSetBy = Automatic
+
+	column QuantityReceived
+		dataType: int64
+		formatString: 0
+		lineageTag: dd65cb71-48ad-4c7a-8927-f6fb79c22a73
+		summarizeBy: sum
+		sourceColumn: QuantityReceived
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReorderFlag
+		dataType: int64
+		formatString: 0
+		lineageTag: 0678dcaa-6d7b-4dfa-98fb-4c7555cae0c3
+		summarizeBy: sum
+		sourceColumn: ReorderFlag
+
+		annotation SummarizationSetBy = Automatic
+
+	column StockoutFlag
+		dataType: int64
+		formatString: 0
+		lineageTag: 323187c9-dba9-4dbd-bf9e-3d0630d939ca
+		summarizeBy: sum
+		sourceColumn: StockoutFlag
+
+		annotation SummarizationSetBy = Automatic
+
+	column DaysOutOfStock
+		dataType: int64
+		formatString: 0
+		lineageTag: 4282e15c-a43c-4561-b078-fd76c549c17e
+		summarizeBy: sum
+		sourceColumn: DaysOutOfStock
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Inventory = m
+		mode: import
+		queryGroup: Fact\SecondaryFacts
+		source = ```
+				let
+				    Source = Folder.Files ( ContosoFolder & "\facts\inventory_snapshot" ),
+				    RemoveCols = Table.SelectColumns ( Source, { "Content" } ),
+				    RemoveHidden = Table.SelectRows ( RemoveCols, each [Attributes]?[Hidden]? <> true ),
+				    InvokeCustom = Table.AddColumn (
+				        RemoveHidden,
+				        "Transform File",
+				        each Transform_Complaints_File ( [Content] )
+				    ),
+				    RemoveOtherCol = Table.SelectColumns ( InvokeCustom, { "Transform File" } ),
+				    CombineTables = Table.ExpandTableColumn (
+				        RemoveOtherCol,
+				        "Transform File",
+				        Table.ColumnNames ( Transform_Inventory_File ( Sample_File_Inventory ) )
+				    ),
+				    ChangedType = Table.TransformColumnTypes(CombineTables,{{"ProductKey", Int64.Type}, {"WarehouseKey", Int64.Type}, {"SnapshotDate", type date}, {"QuantityOnHand", Int64.Type}, {"QuantityOnOrder", Int64.Type}, {"QuantitySold", Int64.Type}, {"QuantityReceived", Int64.Type}, {"ReorderFlag", Int64.Type}, {"StockoutFlag", Int64.Type}, {"DaysOutOfStock", Int64.Type}})
+				in 
+				    ChangedType
+				```
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

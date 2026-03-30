@@ -19,23 +19,22 @@ table ProductCategory
 		annotation SummarizationSetBy = Automatic
 
 	column CategoryLabel
-		dataType: int64
-		formatString: 0
+		dataType: string
 		lineageTag: 81a069e3-c3b8-4d46-91c1-288590d4f108
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: CategoryLabel
 
 		annotation SummarizationSetBy = Automatic
 
 	partition ProductCategory = m
 		mode: import
-		queryGroup: Dimensions
+		queryGroup: Dimensions\Products
 		source =
 				let
 				    Source = FxReadCSVFile ( "dimensions", "product_category" ),
 				    ChangedType = Table.TransformColumnTypes (
 				        Source,
-				        { { "CategoryKey", Int64.Type }, { "Category", type text }, { "CategoryLabel", Int64.Type } }
+				        { { "CategoryKey", Int64.Type }, { "Category", type text }, { "CategoryLabel", type text } }
 				    )
 				in
 				    ChangedType

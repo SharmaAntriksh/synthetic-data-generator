@@ -1,0 +1,42 @@
+table AcquisitionChannel
+	lineageTag: 9444cc94-324f-4f68-8545-4df0bed38d09
+
+	column CustomerAcquisitionChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 9d7bea44-320e-4334-a0c3-2809398b167d
+		summarizeBy: count
+		sourceColumn: CustomerAcquisitionChannelKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column AcquisitionChannel
+		dataType: string
+		lineageTag: 19758c35-874a-4eb7-8e40-1c8a6ea4636c
+		summarizeBy: none
+		sourceColumn: AcquisitionChannel
+
+		annotation SummarizationSetBy = Automatic
+
+	column ChannelGroup
+		dataType: string
+		lineageTag: d9dee558-904a-48da-abbb-32f9f24803c2
+		summarizeBy: none
+		sourceColumn: ChannelGroup
+
+		annotation SummarizationSetBy = Automatic
+
+	partition AcquisitionChannel = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "customer_acquisition_channels" ),
+				    ChangedType = Table.TransformColumnTypes(Source,{{"CustomerAcquisitionChannelKey", Int64.Type}, {"AcquisitionChannel", type text}, {"ChannelGroup", type text}})
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

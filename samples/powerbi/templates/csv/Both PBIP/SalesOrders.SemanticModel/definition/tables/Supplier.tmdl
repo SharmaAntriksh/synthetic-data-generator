@@ -1,0 +1,60 @@
+table Supplier
+	lineageTag: bfbd343f-9b97-4266-b12a-84a82cbaabac
+
+	column SupplierKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 0db1d89c-b0a4-44f2-93ed-d76fecd6b28a
+		summarizeBy: count
+		sourceColumn: SupplierKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SupplierName
+		dataType: string
+		lineageTag: 0baa7d9c-8fc9-4669-a768-4f66cd977b0e
+		summarizeBy: none
+		sourceColumn: SupplierName
+
+		annotation SummarizationSetBy = Automatic
+
+	column SupplierType
+		dataType: string
+		lineageTag: 26e95c2f-0315-4c23-b80c-a6ca9a5155b5
+		summarizeBy: none
+		sourceColumn: SupplierType
+
+		annotation SummarizationSetBy = Automatic
+
+	column Country
+		dataType: string
+		lineageTag: 93f1edf7-b06f-4992-8a15-9ea61a941c91
+		summarizeBy: none
+		sourceColumn: Country
+
+		annotation SummarizationSetBy = Automatic
+
+	column ReliabilityScore
+		dataType: double
+		lineageTag: 86f8b355-2730-4ce3-975c-c166691319ba
+		summarizeBy: sum
+		sourceColumn: ReliabilityScore
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition Supplier = m
+		mode: import
+		queryGroup: Dimensions\Products
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "suppliers" ),
+				    ChangedType = Table.TransformColumnTypes(Source,{{"SupplierKey", Int64.Type}, {"SupplierName", type text}, {"SupplierType", type text}, {"Country", type text}, {"ReliabilityScore", type number}})
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

@@ -1,10 +1,8 @@
 table SalesOrderHeader
-	isHidden
 	lineageTag: a6858967-9b2f-4631-b1db-1fc3279814ea
 
 	column SalesOrderNumber
 		dataType: int64
-		isHidden
 		formatString: 0
 		lineageTag: f54cd52d-191e-41c3-9c06-c3c4c0b2941a
 		summarizeBy: sum
@@ -16,7 +14,6 @@ table SalesOrderHeader
 
 	column CustomerKey
 		dataType: int64
-		isHidden
 		formatString: 0
 		lineageTag: e494926b-c112-4d65-a2f5-d01b8272d2e0
 		summarizeBy: count
@@ -28,7 +25,6 @@ table SalesOrderHeader
 
 	column OrderDate
 		dataType: dateTime
-		isHidden
 		formatString: Short Date
 		lineageTag: cfc3783a-99e1-4910-a1f6-077df3c58ad9
 		summarizeBy: none
@@ -42,7 +38,6 @@ table SalesOrderHeader
 
 	column IsOrderDelayed
 		dataType: int64
-		isHidden
 		formatString: 0
 		lineageTag: 7d1250a8-8b99-4926-a95c-848b1126a628
 		summarizeBy: sum
@@ -55,60 +50,72 @@ table SalesOrderHeader
 	column StoreKey
 		dataType: int64
 		formatString: 0
-		lineageTag: c6de61ed-9c88-4584-ae76-8598ee7f63f0
+		lineageTag: 98c12d4c-86d6-41fb-bb4c-ce3fe3ce58a4
 		summarizeBy: count
 		sourceColumn: StoreKey
 
-		annotation SummarizationSetBy = Automatic
-
-	column SalesPersonEmployeeKey
-		dataType: int64
-		formatString: 0
-		lineageTag: f54e80d1-5c2d-41aa-8f61-f426eaa1b705
-		summarizeBy: count
-		sourceColumn: SalesPersonEmployeeKey
-
-		annotation SummarizationSetBy = Automatic
-
-	column SalesChannelKey
-		dataType: int64
-		formatString: 0
-		lineageTag: 78c48ce5-30fd-4308-b810-f163066f69a0
-		summarizeBy: count
-		sourceColumn: SalesChannelKey
-
-		annotation SummarizationSetBy = Automatic
-
-	column TimeKey
-		dataType: int64
-		formatString: 0
-		lineageTag: db48e0cf-c154-4d04-8389-419e19135993
-		summarizeBy: count
-		sourceColumn: TimeKey
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column PromotionKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 51bef817-8d62-4a1a-b275-720d9c63f5b4
+		lineageTag: 6780fdb5-040c-4943-be69-38d879da1f07
 		summarizeBy: count
 		sourceColumn: PromotionKey
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column CurrencyKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 63147d3e-3fe5-4120-a595-3fcf282a3ecb
+		lineageTag: 00eb9a70-0ba3-468e-9569-2bc7d9c18b67
 		summarizeBy: count
 		sourceColumn: CurrencyKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesChannelKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 1e5cec2c-633d-40c2-8b4e-c787cc16de2a
+		summarizeBy: count
+		sourceColumn: SalesChannelKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column TimeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 597de895-c94c-4af2-90a6-cc70f49c9ec9
+		summarizeBy: count
+		sourceColumn: TimeKey
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column EmployeeKey
+		dataType: int64
+		formatString: 0
+		lineageTag: e2ff98df-9bd1-48a3-9950-c348c8a58338
+		summarizeBy: count
+		sourceColumn: EmployeeKey
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	partition SalesOrderHeader = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\Sales
 		source =
 				let
 				    Source = Folder.Files ( ContosoFolder & "\facts\sales_order_header" ),
@@ -131,7 +138,7 @@ table SalesOrderHeader
 				            { "SalesOrderNumber", Int64.Type },
 				            { "CustomerKey", Int64.Type },
 				            { "StoreKey", Int64.Type },
-				            { "SalesPersonEmployeeKey", Int64.Type },
+				            { "EmployeeKey", Int64.Type },
 				            { "SalesChannelKey", Int64.Type },
 				            { "OrderDate", type date },
 				            { "TimeKey", Int64.Type },

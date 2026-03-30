@@ -54,7 +54,7 @@ table EmployeeStoreAssignment
 		annotation PBI_FormatHint = {"isCustom":true}
 
 	column FTE
-		dataType: double
+		dataType: int64
 		lineageTag: f99cdc08-1a77-4981-af24-6cce8198f111
 		summarizeBy: sum
 		sourceColumn: FTE
@@ -97,27 +97,40 @@ table EmployeeStoreAssignment
 
 		annotation SummarizationSetBy = Automatic
 
+	column AssignmentKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 35a6b2ed-2c09-4a01-ab11-b54e6a94af7e
+		summarizeBy: count
+		sourceColumn: AssignmentKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TransferReason
+		dataType: string
+		lineageTag: 4973b30f-02c2-48e9-aca3-b1d4c65c0ce5
+		summarizeBy: none
+		sourceColumn: TransferReason
+
+		annotation SummarizationSetBy = Automatic
+
+	column Status
+		dataType: string
+		lineageTag: 77796edd-1c24-41a1-80e7-9fc517584e40
+		summarizeBy: none
+		sourceColumn: Status
+
+		annotation SummarizationSetBy = Automatic
+
 	partition EmployeeStoreAssignment = m
 		mode: import
 		queryGroup: Dimensions
 		source =
 				let
 				    Source = FxReadCSVFile ( "dimensions", "employee_store_assignments" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        {
-				            { "EmployeeKey", Int64.Type },
-				            { "StoreKey", Int64.Type },
-				            { "StartDate", type date },
-				            { "EndDate", type date },
-				            { "FTE", type number },
-				            { "RoleAtStore", type text },
-				            { "IsPrimary", Int64.Type },
-				            { "AssignmentSequence", Int64.Type }
-				        }
-				    )
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"AssignmentKey", Int64.Type}, {"EmployeeKey", Int64.Type}, {"AssignmentSequence", Int64.Type}, {"StoreKey", Int64.Type}, {"StartDate", type date}, {"EndDate", type date}, {"FTE", Int64.Type}, {"RoleAtStore", type text}, {"IsPrimary", Int64.Type}, {"TransferReason", type text}, {"Status", type text}})
 				in
-				    ChangedType
+				    #"Changed Type"
 
 	changedProperty = IsHidden
 

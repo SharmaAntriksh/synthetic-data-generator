@@ -1,30 +1,36 @@
 table EmployeeStoreAssignment
-	lineageTag: 9ea6a6fd-674f-4b0a-8d7a-c13aebfb56fe
+	lineageTag: 1454de38-631b-4308-9560-8def0bdf1a09
 
 	column EmployeeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 4c104e3d-41a0-4ce7-827f-8e940331563f
+		lineageTag: 97d1104d-2a2b-43c7-a85f-e8d8104f9675
 		summarizeBy: count
 		sourceColumn: EmployeeKey
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 5d90c23e-6fe0-46ba-a74c-5e3075dbfed8
+		lineageTag: 0e4a66d3-9e7b-4380-a1c1-8f722ca3bc8e
 		summarizeBy: count
 		sourceColumn: StoreKey
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column StartDate
 		dataType: dateTime
 		formatString: yyyy-mm-dd
-		lineageTag: 1fe8125c-0bf1-444f-8a2d-ff7e061c0df3
+		lineageTag: c7658cc4-37e6-41bf-a885-fdf2856452a6
 		summarizeBy: none
 		sourceColumn: StartDate
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
@@ -35,9 +41,11 @@ table EmployeeStoreAssignment
 	column EndDate
 		dataType: dateTime
 		formatString: yyyy-mm-dd
-		lineageTag: 9928dd29-fb19-4393-b881-f43458fe761b
+		lineageTag: d7748d6a-78a9-432b-80f8-27b2a4903278
 		summarizeBy: none
 		sourceColumn: EndDate
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
@@ -46,10 +54,12 @@ table EmployeeStoreAssignment
 		annotation PBI_FormatHint = {"isCustom":true}
 
 	column FTE
-		dataType: double
-		lineageTag: 15abbe00-407b-4051-bd43-c1e27afa15d9
+		dataType: int64
+		lineageTag: f99cdc08-1a77-4981-af24-6cce8198f111
 		summarizeBy: sum
 		sourceColumn: FTE
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
@@ -57,27 +67,58 @@ table EmployeeStoreAssignment
 
 	column RoleAtStore
 		dataType: string
-		lineageTag: ac504002-f189-4b50-94e0-84d2bbbf3c01
+		lineageTag: cf067b92-f1d2-451c-b8cf-153168aa6835
 		summarizeBy: none
 		sourceColumn: RoleAtStore
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsPrimary
 		dataType: int64
 		formatString: 0
-		lineageTag: 6c7f9937-0586-4e0c-b59a-fd682a1237cc
+		lineageTag: 2dba3339-4950-4115-ad05-1509751bd9dd
 		summarizeBy: sum
 		sourceColumn: IsPrimary
+
+		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column AssignmentSequence
 		dataType: int64
 		formatString: 0
-		lineageTag: 1f1c59b1-26d4-4ec5-a6e2-a3d2db520ecf
+		lineageTag: 84c9528d-96ad-4b64-af58-5be3b02047f4
 		summarizeBy: sum
 		sourceColumn: AssignmentSequence
+
+		changedProperty = IsHidden
+
+		annotation SummarizationSetBy = Automatic
+
+	column AssignmentKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 35a6b2ed-2c09-4a01-ab11-b54e6a94af7e
+		summarizeBy: count
+		sourceColumn: AssignmentKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TransferReason
+		dataType: string
+		lineageTag: 4973b30f-02c2-48e9-aca3-b1d4c65c0ce5
+		summarizeBy: none
+		sourceColumn: TransferReason
+
+		annotation SummarizationSetBy = Automatic
+
+	column Status
+		dataType: string
+		lineageTag: 77796edd-1c24-41a1-80e7-9fc517584e40
+		summarizeBy: none
+		sourceColumn: Status
 
 		annotation SummarizationSetBy = Automatic
 
@@ -87,21 +128,11 @@ table EmployeeStoreAssignment
 		source =
 				let
 				    Source = FxReadCSVFile ( "dimensions", "employee_store_assignments" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        {
-				            { "EmployeeKey", Int64.Type },
-				            { "StoreKey", Int64.Type },
-				            { "StartDate", type date },
-				            { "EndDate", type date },
-				            { "FTE", type number },
-				            { "RoleAtStore", type text },
-				            { "IsPrimary", Int64.Type },
-				            { "AssignmentSequence", Int64.Type }
-				        }
-				    )
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"AssignmentKey", Int64.Type}, {"EmployeeKey", Int64.Type}, {"AssignmentSequence", Int64.Type}, {"StoreKey", Int64.Type}, {"StartDate", type date}, {"EndDate", type date}, {"FTE", Int64.Type}, {"RoleAtStore", type text}, {"IsPrimary", Int64.Type}, {"TransferReason", type text}, {"Status", type text}})
 				in
-				    ChangedType
+				    #"Changed Type"
+
+	changedProperty = IsHidden
 
 	annotation PBI_NavigationStepName = Navigation
 

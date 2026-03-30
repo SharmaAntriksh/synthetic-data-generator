@@ -1,0 +1,93 @@
+table Warehouse
+	lineageTag: ab771463-a7bb-4a0b-be63-fc68500c4113
+
+	column WarehouseKey
+		dataType: int64
+		formatString: 0
+		lineageTag: ed059d8a-1e0e-4a77-ba2a-995732d2dea9
+		summarizeBy: count
+		sourceColumn: WarehouseKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarehouseName
+		dataType: string
+		lineageTag: 7a4c7096-9ff1-49f7-be7e-76b13505cc09
+		summarizeBy: none
+		sourceColumn: WarehouseName
+
+		annotation SummarizationSetBy = Automatic
+
+	column WarehouseType
+		dataType: string
+		lineageTag: 2b23cf84-0260-49bf-bcf6-1c67d93b380b
+		summarizeBy: none
+		sourceColumn: WarehouseType
+
+		annotation SummarizationSetBy = Automatic
+
+	column Zone
+		dataType: string
+		lineageTag: 7c6e1dd7-5de4-4a78-9210-bfc19642a545
+		summarizeBy: none
+		sourceColumn: Zone
+
+		annotation SummarizationSetBy = Automatic
+
+	column Country
+		dataType: string
+		lineageTag: 22c26728-6dc3-49d4-8297-4ea018a45ef8
+		summarizeBy: none
+		sourceColumn: Country
+
+		annotation SummarizationSetBy = Automatic
+
+	column Territory
+		dataType: string
+		lineageTag: 8618c94a-62ed-465a-b31f-7328c95ecb0e
+		summarizeBy: none
+		sourceColumn: Territory
+
+		annotation SummarizationSetBy = Automatic
+
+	column GeographyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: d73d72f7-60cf-400b-b786-f2c174a43105
+		summarizeBy: count
+		sourceColumn: GeographyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column Capacity
+		dataType: int64
+		formatString: 0
+		lineageTag: 21937d72-5a6b-4d2d-9c1c-44fe2f2d097e
+		summarizeBy: sum
+		sourceColumn: Capacity
+
+		annotation SummarizationSetBy = Automatic
+
+	column SquareFootage
+		dataType: int64
+		formatString: 0
+		lineageTag: 564905c0-7005-4e6e-be3d-2b76df1940ea
+		summarizeBy: sum
+		sourceColumn: SquareFootage
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Warehouse = m
+		mode: import
+		queryGroup: Dimensions
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "warehouses" ),
+				    ChangedType = Table.TransformColumnTypes(Source,{{"WarehouseKey", Int64.Type}, {"WarehouseName", type text}, {"WarehouseType", type text}, {"Zone", type text}, {"Country", type text}, {"Territory", type text}, {"GeographyKey", Int64.Type}, {"Capacity", Int64.Type}, {"SquareFootage", Int64.Type}})
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

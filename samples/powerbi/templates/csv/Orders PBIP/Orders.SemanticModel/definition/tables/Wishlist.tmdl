@@ -1,0 +1,95 @@
+table Wishlist
+	lineageTag: 3ff4cb33-b82c-4f31-b465-aa1c50eb834f
+
+	column WishlistKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 6f1b6a33-8fd4-4858-a8b8-e692d4a8d9e9
+		summarizeBy: count
+		sourceColumn: WishlistKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 8cd69ec4-024a-4c7b-a3b9-24f9f6757f56
+		summarizeBy: count
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column ProductKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 1cd19fc1-6807-41b2-b52e-f8da2bf3fe10
+		summarizeBy: count
+		sourceColumn: ProductKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column AddedDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: d75939ee-9428-4ce0-803e-f47caf810aea
+		summarizeBy: none
+		sourceColumn: AddedDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column Priority
+		dataType: string
+		lineageTag: ee0a940d-1cd2-4ce1-9d9a-0a5006dc4f28
+		summarizeBy: none
+		sourceColumn: Priority
+
+		annotation SummarizationSetBy = Automatic
+
+	column Quantity
+		dataType: int64
+		formatString: 0
+		lineageTag: cb7d33da-e417-47b9-86d2-851dd6773ae6
+		summarizeBy: sum
+		sourceColumn: Quantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column NetPrice
+		dataType: double
+		lineageTag: 6378e33c-816b-43ea-93d9-6e10e355aa4b
+		summarizeBy: sum
+		sourceColumn: NetPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	partition Wishlist = m
+		mode: import
+		queryGroup: Fact\SecondaryFacts
+		source =
+				let
+				    Source = Folder.Files ( ContosoFolder & "\facts\customer_wishlists" ),
+				    RemoveCols = Table.SelectColumns ( Source, { "Content" } ),
+				    RemoveHidden = Table.SelectRows ( RemoveCols, each [Attributes]?[Hidden]? <> true ),
+				    InvokeCustom = Table.AddColumn (
+				        RemoveHidden,
+				        "Transform File",
+				        each Transform_Complaints_File ( [Content] )
+				    ),
+				    RemoveOtherCol = Table.SelectColumns ( InvokeCustom, { "Transform File" } ),
+				    CombineTables = Table.ExpandTableColumn (
+				        RemoveOtherCol,
+				        "Transform File",
+				        Table.ColumnNames ( Transform_Wishlist_File ( Sample_File_Wishlist ) )
+				    ),
+				    ChangedType = Table.TransformColumnTypes(CombineTables,{{"WishlistKey", Int64.Type}, {"CustomerKey", Int64.Type}, {"ProductKey", Int64.Type}, {"AddedDate", type date}, {"Priority", type text}, {"Quantity", Int64.Type}, {"NetPrice", type number}})
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

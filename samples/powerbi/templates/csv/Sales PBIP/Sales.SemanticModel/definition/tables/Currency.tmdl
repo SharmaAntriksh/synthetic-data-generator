@@ -18,11 +18,28 @@ table Currency
 
 		annotation SummarizationSetBy = Automatic
 
-	column ToCurrency
+	column CurrencyCode
 		dataType: string
-		lineageTag: b5b079c9-2563-4898-916f-56bfef58d097
+		lineageTag: 3baa434f-4bcf-479e-b4c9-71a7826560e6
 		summarizeBy: none
-		sourceColumn: ToCurrency
+		sourceColumn: CurrencyCode
+
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencySymbol
+		dataType: string
+		lineageTag: 5d098d43-ad91-40b2-a6a0-eec02c11a0ac
+		summarizeBy: none
+		sourceColumn: CurrencySymbol
+
+		annotation SummarizationSetBy = Automatic
+
+	column DecimalPlaces
+		dataType: int64
+		formatString: 0
+		lineageTag: 7ff1b987-1597-4011-b1af-9dba09de7844
+		summarizeBy: sum
+		sourceColumn: DecimalPlaces
 
 		annotation SummarizationSetBy = Automatic
 
@@ -31,10 +48,10 @@ table Currency
 		queryGroup: Dimensions
 		source =
 				let
-				    Source      = FxReadCSVFile ( "dimensions", "currency" ),
-				    ChangedType = Table.TransformColumnTypes ( Source, { { "CurrencyKey", Int64.Type } } )
+				    Source          = FxReadCSVFile ( "dimensions", "currency" ),
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"CurrencyKey", Int64.Type}, {"CurrencyCode", type text}, {"CurrencyName", type text}, {"CurrencySymbol", type text}, {"DecimalPlaces", Int64.Type}})
 				in
-				    ChangedType
+				    #"Changed Type"
 
 	annotation PBI_NavigationStepName = Navigation
 

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
   "name": "f36912b401d08120c6e1",
   "position": {
     "x": 0,
@@ -54,7 +54,7 @@
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Sales"
+                      "Entity": "MeasureTable"
                     }
                   },
                   "Property": "Sales Amount"
@@ -69,7 +69,7 @@
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Sales"
+                      "Entity": "MeasureTable"
                     }
                   },
                   "Property": "Cost Amount"
@@ -84,7 +84,7 @@
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Sales"
+                      "Entity": "MeasureTable"
                     }
                   },
                   "Property": "Profit Amount"
@@ -99,7 +99,7 @@
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Sales"
+                      "Entity": "MeasureTable"
                     }
                   },
                   "Property": "Transactions"
@@ -113,7 +113,7 @@
                 "Measure": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Sales"
+                      "Entity": "MeasureTable"
                     }
                   },
                   "Property": "# Customers"
@@ -164,5 +164,107 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "fe2de02220b9cdaf9dca",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "ProductCategory"
+              }
+            },
+            "Property": "Category"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "aca4a54de6a433fe2819",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Products"
+              }
+            },
+            "Property": "Brand"
+          }
+        },
+        "type": "Categorical"
+      },
+      {
+        "name": "39f5b0393f3a8264dffa",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "MeasureTable"
+              }
+            },
+            "Property": "Sales Amount"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "b5ca7c02ece20a15f1be",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "MeasureTable"
+              }
+            },
+            "Property": "Cost Amount"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "2e420cc0bf494b221390",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "MeasureTable"
+              }
+            },
+            "Property": "Profit Amount"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "e2de9e9d055997f187f0",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "MeasureTable"
+              }
+            },
+            "Property": "Transactions"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "63cead2c9559f1504cdb",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "MeasureTable"
+              }
+            },
+            "Property": "# Customers"
+          }
+        },
+        "type": "Advanced"
+      }
+    ]
   }
 }

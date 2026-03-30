@@ -1,10 +1,10 @@
 table SalesChannel
-	lineageTag: de0800c1-321b-4f83-9b7d-f9879932d065
+	lineageTag: 58913eb8-bce8-4850-8386-331ac43caa89
 
 	column SalesChannelKey
 		dataType: int64
 		formatString: 0
-		lineageTag: c0b847b6-31d7-429b-bb1b-f1e8591d082a
+		lineageTag: 48ab08aa-e611-42ad-8dc9-3a58ca6fafaa
 		summarizeBy: count
 		sourceColumn: SalesChannelKey
 
@@ -12,7 +12,7 @@ table SalesChannel
 
 	column SalesChannel
 		dataType: string
-		lineageTag: 94ff381d-02f4-450a-a0e3-acd865b9fa73
+		lineageTag: 274acb0b-4880-4bc2-8d1e-384c8e60d625
 		summarizeBy: none
 		sourceColumn: SalesChannel
 
@@ -20,7 +20,7 @@ table SalesChannel
 
 	column ChannelGroup
 		dataType: string
-		lineageTag: 0d0187d2-af9f-4caa-a185-5115dbed24ef
+		lineageTag: 1304fc2c-567b-4436-add9-07865a12042e
 		summarizeBy: none
 		sourceColumn: ChannelGroup
 
@@ -28,7 +28,7 @@ table SalesChannel
 
 	column SalesChannelCode
 		dataType: string
-		lineageTag: f2597333-d829-4fd9-9e93-4e876a2c4571
+		lineageTag: 34a51e52-ca53-496f-a450-6b522e8a41c4
 		summarizeBy: none
 		sourceColumn: SalesChannelCode
 
@@ -37,7 +37,7 @@ table SalesChannel
 	column SortOrder
 		dataType: int64
 		formatString: 0
-		lineageTag: a88f64d1-09bb-4495-b66c-f9eeafeb841a
+		lineageTag: a3a34e49-2c41-4b1e-aab7-05dd2fefb8fa
 		summarizeBy: sum
 		sourceColumn: SortOrder
 
@@ -46,7 +46,7 @@ table SalesChannel
 	column IsDigital
 		dataType: int64
 		formatString: 0
-		lineageTag: 49ca35ff-3529-4148-b088-266a7944f162
+		lineageTag: c91cef8f-5db5-4ccc-b9aa-156aa5577534
 		summarizeBy: sum
 		sourceColumn: IsDigital
 
@@ -55,7 +55,7 @@ table SalesChannel
 	column IsPhysical
 		dataType: int64
 		formatString: 0
-		lineageTag: 18447dd2-08ea-4fce-87ad-505b369f716c
+		lineageTag: 5ae668c5-f40b-4751-8df9-2281fbda3412
 		summarizeBy: sum
 		sourceColumn: IsPhysical
 
@@ -64,7 +64,7 @@ table SalesChannel
 	column IsThirdParty
 		dataType: int64
 		formatString: 0
-		lineageTag: 2d3b6057-64e3-4b86-9ed0-ed9ef5483f32
+		lineageTag: 0081c3e9-bf30-4d91-93e0-9dacf692969c
 		summarizeBy: sum
 		sourceColumn: IsThirdParty
 
@@ -73,7 +73,7 @@ table SalesChannel
 	column IsB2B
 		dataType: int64
 		formatString: 0
-		lineageTag: e9f50a3a-9a3d-4dd0-b952-2ee857797649
+		lineageTag: bd1bd955-e3b4-4eb4-900d-fff7b0341636
 		summarizeBy: sum
 		sourceColumn: IsB2B
 
@@ -82,7 +82,7 @@ table SalesChannel
 	column IsAssisted
 		dataType: int64
 		formatString: 0
-		lineageTag: d5e375b7-73a4-43d6-b3b5-03d591a5625e
+		lineageTag: d2ca1e20-de7e-44af-9d8c-f5e0c10186db
 		summarizeBy: sum
 		sourceColumn: IsAssisted
 
@@ -91,44 +91,75 @@ table SalesChannel
 	column IsOwnedChannel
 		dataType: int64
 		formatString: 0
-		lineageTag: bf58235a-4910-42ee-b731-c05149c1d0b3
+		lineageTag: 8b6917cf-ee7f-4161-a0c4-c38453f2dc1e
 		summarizeBy: sum
 		sourceColumn: IsOwnedChannel
-
-		annotation SummarizationSetBy = Automatic
-
-	column TimeProfile
-		dataType: string
-		lineageTag: 4ee759e5-7ff0-4a0f-a6d2-9333de65ee63
-		summarizeBy: none
-		sourceColumn: TimeProfile
 
 		annotation SummarizationSetBy = Automatic
 
 	column Is24x7
 		dataType: int64
 		formatString: 0
-		lineageTag: b1505efe-a487-4d9a-87c9-e06d05f9253d
+		lineageTag: 476ff5a1-2bc5-4b98-a929-17c83cefb9a9
 		summarizeBy: sum
 		sourceColumn: Is24x7
 
 		annotation SummarizationSetBy = Automatic
 
-	column OpenMinute
-		dataType: int64
-		formatString: 0
-		lineageTag: 30e86a24-d2e3-484b-b6d7-9d0d2c5a8e56
-		summarizeBy: sum
-		sourceColumn: OpenMinute
+	column SalesChannelDescription
+		dataType: string
+		lineageTag: bad68015-2fe7-4fe4-a9e2-837db1354ea0
+		summarizeBy: none
+		sourceColumn: SalesChannelDescription
 
 		annotation SummarizationSetBy = Automatic
 
-	column CloseMinute
+	column ChannelGroupDescription
+		dataType: string
+		lineageTag: b5de4456-e5d4-4c06-b464-53b3499b5727
+		summarizeBy: none
+		sourceColumn: ChannelGroupDescription
+
+		annotation SummarizationSetBy = Automatic
+
+	column OpenTime
+		dataType: dateTime
+		formatString: Long Time
+		lineageTag: 2f0e45f7-941b-44b1-b009-c5e4245fb2fb
+		summarizeBy: none
+		sourceColumn: OpenTime
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Time
+
+	column CloseTime
+		dataType: dateTime
+		formatString: Long Time
+		lineageTag: c690d805-f1f1-4cdb-9637-bd467f35291f
+		summarizeBy: none
+		sourceColumn: CloseTime
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Time
+
+	column CommissionRate
+		dataType: double
+		lineageTag: 5e1bb1d2-0cf5-4d39-ac3e-34670fa66b5e
+		summarizeBy: sum
+		sourceColumn: CommissionRate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column TypicalFulfillmentDays
 		dataType: int64
 		formatString: 0
-		lineageTag: 14da5b15-542a-43ae-95f6-f218a90290e9
+		lineageTag: b4580071-5fb6-4337-b731-c951beccfc80
 		summarizeBy: sum
-		sourceColumn: CloseMinute
+		sourceColumn: TypicalFulfillmentDays
 
 		annotation SummarizationSetBy = Automatic
 
@@ -138,28 +169,9 @@ table SalesChannel
 		source =
 				let
 				    Source = FxReadCSVFile ( "dimensions", "sales_channels" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        {
-				            { "SalesChannelKey", Int64.Type },
-				            { "SalesChannel", type text },
-				            { "ChannelGroup", type text },
-				            { "SalesChannelCode", type text },
-				            { "SortOrder", Int64.Type },
-				            { "IsDigital", Int64.Type },
-				            { "IsPhysical", Int64.Type },
-				            { "IsThirdParty", Int64.Type },
-				            { "IsB2B", Int64.Type },
-				            { "IsAssisted", Int64.Type },
-				            { "IsOwnedChannel", Int64.Type },
-				            { "TimeProfile", type text },
-				            { "Is24x7", Int64.Type },
-				            { "OpenMinute", Int64.Type },
-				            { "CloseMinute", Int64.Type }
-				        }
-				    )
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"SalesChannelKey", Int64.Type}, {"SalesChannel", type text}, {"SalesChannelDescription", type text}, {"ChannelGroup", type text}, {"ChannelGroupDescription", type text}, {"SalesChannelCode", type text}, {"SortOrder", Int64.Type}, {"IsDigital", Int64.Type}, {"IsPhysical", Int64.Type}, {"IsThirdParty", Int64.Type}, {"IsB2B", Int64.Type}, {"IsAssisted", Int64.Type}, {"IsOwnedChannel", Int64.Type}, {"Is24x7", Int64.Type}, {"OpenTime", type time}, {"CloseTime", type time}, {"CommissionRate", type number}, {"TypicalFulfillmentDays", Int64.Type}})
 				in
-				    ChangedType
+				    #"Changed Type"
 
 	annotation PBI_NavigationStepName = Navigation
 

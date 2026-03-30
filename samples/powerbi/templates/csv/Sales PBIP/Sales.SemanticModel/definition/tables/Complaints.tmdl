@@ -1,0 +1,146 @@
+table Complaints
+	lineageTag: 7348275d-5750-4f5a-b05a-b6a79974cf73
+
+	column ComplaintKey
+		dataType: int64
+		formatString: 0
+		lineageTag: c51bf392-9530-4b53-a9cb-728a9be5eb12
+		summarizeBy: count
+		sourceColumn: ComplaintKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column CustomerKey
+		dataType: int64
+		formatString: 0
+		lineageTag: a5038668-8ffa-40b7-a6b6-5bc8a0e5624c
+		summarizeBy: count
+		sourceColumn: CustomerKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column SalesOrderNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: c23e5a94-b4ef-4572-b574-933b80e343aa
+		summarizeBy: sum
+		sourceColumn: SalesOrderNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column LineNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: af4bb9cf-12fa-4da1-8fdc-fabeabbeb93f
+		summarizeBy: sum
+		sourceColumn: LineNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column ComplaintDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 09829827-de65-4adc-8ee9-1e6090b71f8f
+		summarizeBy: none
+		sourceColumn: ComplaintDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column ResolutionDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 05e0e6eb-27ef-4072-912a-c06071381d88
+		summarizeBy: none
+		sourceColumn: ResolutionDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column ComplaintType
+		dataType: string
+		lineageTag: fabb5496-ecaa-4a67-b174-a9d23fbd2746
+		summarizeBy: none
+		sourceColumn: ComplaintType
+
+		annotation SummarizationSetBy = Automatic
+
+	column ComplaintDetail
+		dataType: string
+		lineageTag: cc7be6b7-5959-4c13-8be5-393c14a9b58a
+		summarizeBy: none
+		sourceColumn: ComplaintDetail
+
+		annotation SummarizationSetBy = Automatic
+
+	column Severity
+		dataType: string
+		lineageTag: 3dc4fd00-1979-4f48-a3e0-d6608f20779c
+		summarizeBy: none
+		sourceColumn: Severity
+
+		annotation SummarizationSetBy = Automatic
+
+	column Channel
+		dataType: string
+		lineageTag: c8c65613-c496-4478-a3b1-0d9205733692
+		summarizeBy: none
+		sourceColumn: Channel
+
+		annotation SummarizationSetBy = Automatic
+
+	column Status
+		dataType: string
+		lineageTag: 0f2fd12d-c598-446a-85c6-772abaeb527a
+		summarizeBy: none
+		sourceColumn: Status
+
+		annotation SummarizationSetBy = Automatic
+
+	column ResolutionType
+		dataType: string
+		lineageTag: c0c82c99-89c2-42c1-82e1-e1221bec9b60
+		summarizeBy: none
+		sourceColumn: ResolutionType
+
+		annotation SummarizationSetBy = Automatic
+
+	column ResponseDays
+		dataType: int64
+		formatString: 0
+		lineageTag: 2875d0a1-fcc2-4f82-9cbf-6ad392c42ef4
+		summarizeBy: sum
+		sourceColumn: ResponseDays
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Complaints = m
+		mode: import
+		queryGroup: Fact\SecondaryFacts
+		source = ```
+				let
+				    Source = Folder.Files ( ContosoFolder & "\facts\complaints" ),
+				    RemoveCols = Table.SelectColumns ( Source, { "Content" } ),
+				    RemoveHidden = Table.SelectRows ( RemoveCols, each [Attributes]?[Hidden]? <> true ),
+				    InvokeCustom = Table.AddColumn (
+				        RemoveHidden,
+				        "Transform File",
+				        each Transform_Complaints_File ( [Content] )
+				    ),
+				    RemoveOtherCol = Table.SelectColumns ( InvokeCustom, { "Transform File" } ),
+				    CombineTables = Table.ExpandTableColumn (
+				        RemoveOtherCol,
+				        "Transform File",
+				        Table.ColumnNames ( Transform_Complaints_File ( Sample_File_Complaints ) )
+				    ),
+				    ChangedType = Table.TransformColumnTypes(CombineTables,{{"ComplaintKey", Int64.Type}, {"CustomerKey", Int64.Type}, {"SalesOrderNumber", Int64.Type}, {"LineNumber", Int64.Type}, {"ComplaintDate", type date}, {"ResolutionDate", type date}, {"ComplaintType", type text}, {"ComplaintDetail", type text}, {"Severity", type text}, {"Channel", type text}, {"Status", type text}, {"ResolutionType", type text}, {"ResponseDays", Int64.Type}})
+				in 
+				    ChangedType
+				```
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

@@ -1,0 +1,153 @@
+table Plan
+	lineageTag: d62f6b9d-93a7-4232-bda4-ec87842a2c6c
+
+	column PlanKey
+		dataType: int64
+		formatString: 0
+		lineageTag: ef75a896-e850-4681-9e21-2824cd8ce4e9
+		summarizeBy: count
+		sourceColumn: PlanKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column PlanName
+		dataType: string
+		lineageTag: 55274741-9053-4b54-aa71-9e4599103701
+		summarizeBy: none
+		sourceColumn: PlanName
+
+		annotation SummarizationSetBy = Automatic
+
+	column PlanType
+		dataType: string
+		lineageTag: 2445f73d-76f0-44b4-884e-b20499a08a78
+		summarizeBy: none
+		sourceColumn: PlanType
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: f86d84a7-7d1d-45ae-a6bf-58780949cb95
+		summarizeBy: none
+		sourceColumn: Category
+
+		annotation SummarizationSetBy = Automatic
+
+	column BillingCycle
+		dataType: string
+		lineageTag: 29f584ba-7da1-4356-8ca1-67255806e6f2
+		summarizeBy: none
+		sourceColumn: BillingCycle
+
+		annotation SummarizationSetBy = Automatic
+
+	column CycleMonths
+		dataType: int64
+		formatString: 0
+		lineageTag: b47f72e4-54e6-4b5a-a31f-512dc53f802a
+		summarizeBy: sum
+		sourceColumn: CycleMonths
+
+		annotation SummarizationSetBy = Automatic
+
+	column BaseMonthlyPrice
+		dataType: double
+		lineageTag: 188d06e0-a596-4f44-b220-75a43225f6f4
+		summarizeBy: sum
+		sourceColumn: BaseMonthlyPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Discount
+		dataType: double
+		lineageTag: 07b7068c-a9c5-440f-996c-89a66fa504f9
+		summarizeBy: sum
+		sourceColumn: Discount
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column CyclePrice
+		dataType: double
+		lineageTag: d7570497-3c88-4a21-8a9f-84e0ad5a39d3
+		summarizeBy: sum
+		sourceColumn: CyclePrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column AnnualPrice
+		dataType: double
+		lineageTag: a52737aa-3cbe-4550-8a02-89cb30ab3c9d
+		summarizeBy: sum
+		sourceColumn: AnnualPrice
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Tier
+		dataType: string
+		lineageTag: 4f8128f3-6a14-4434-9596-8d71a943a12e
+		summarizeBy: none
+		sourceColumn: Tier
+
+		annotation SummarizationSetBy = Automatic
+
+	column MaxUsers
+		dataType: int64
+		formatString: 0
+		lineageTag: 6e27802f-15d2-430d-bddc-27a905d3dbb6
+		summarizeBy: sum
+		sourceColumn: MaxUsers
+
+		annotation SummarizationSetBy = Automatic
+
+	column HasFreeTrial
+		dataType: int64
+		formatString: 0
+		lineageTag: 6608d0a6-73e8-47bc-84d0-ad446e1d5ba9
+		summarizeBy: sum
+		sourceColumn: HasFreeTrial
+
+		annotation SummarizationSetBy = Automatic
+
+	column LaunchDate
+		dataType: dateTime
+		formatString: Long Date
+		lineageTag: 95c89926-874d-4c02-a486-c40a8a1bd4db
+		summarizeBy: none
+		sourceColumn: LaunchDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+	column IsActiveFlag
+		dataType: int64
+		formatString: 0
+		lineageTag: be475248-8c1f-4b2e-8cbc-4a616e444446
+		summarizeBy: sum
+		sourceColumn: IsActiveFlag
+
+		annotation SummarizationSetBy = Automatic
+
+	partition Plan = m
+		mode: import
+		queryGroup: Dimensions\Customer
+		source =
+				let
+				    Source = FxReadCSVFile ( "dimensions", "plans" ),
+				    ChangedType = Table.TransformColumnTypes(Source,{{"PlanKey", Int64.Type}, {"PlanName", type text}, {"PlanType", type text}, {"Category", type text}, {"BillingCycle", type text}, {"CycleMonths", Int64.Type}, {"BaseMonthlyPrice", type number}, {"Discount", type number}, {"CyclePrice", type number}, {"AnnualPrice", type number}, {"Tier", type text}, {"MaxUsers", Int64.Type}, {"HasFreeTrial", Int64.Type}, {"LaunchDate", type date}, {"IsActiveFlag", Int64.Type}})
+				in
+				    ChangedType
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

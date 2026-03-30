@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
   "name": "342b0f9787d888fcc15c",
   "position": {
     "x": 1014.1179600415015,
@@ -50,66 +50,28 @@
       ],
       "general": [
         {
-          "properties": {
-            "filter": {
-              "filter": {
-                "Version": 2,
-                "From": [
-                  {
-                    "Name": "p",
-                    "Entity": "Products",
-                    "Type": 0
-                  }
-                ],
-                "Where": [
-                  {
-                    "Condition": {
-                      "In": {
-                        "Expressions": [
-                          {
-                            "Column": {
-                              "Expression": {
-                                "SourceRef": {
-                                  "Source": "p"
-                                }
-                              },
-                              "Property": "Brand"
-                            }
-                          }
-                        ],
-                        "Values": [
-                          [
-                            {
-                              "Literal": {
-                                "Value": "'Contoso'"
-                              }
-                            }
-                          ],
-                          [
-                            {
-                              "Literal": {
-                                "Value": "'Fabrikam'"
-                              }
-                            }
-                          ],
-                          [
-                            {
-                              "Literal": {
-                                "Value": "'Litware'"
-                              }
-                            }
-                          ]
-                        ]
-                      }
-                    }
-                  }
-                ]
-              }
-            }
-          }
+          "properties": {}
         }
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "897bd400574eabf43a01",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Products"
+              }
+            },
+            "Property": "Brand"
+          }
+        },
+        "type": "Categorical"
+      }
+    ]
   }
 }

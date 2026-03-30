@@ -223,37 +223,6 @@ table Employee
 
 		annotation SummarizationSetBy = Automatic
 
-	column CurrentFlag
-		dataType: int64
-		formatString: 0
-		lineageTag: bb167d8d-97be-4bbc-8050-a699041c5104
-		summarizeBy: sum
-		sourceColumn: CurrentFlag
-
-		annotation SummarizationSetBy = Automatic
-
-	column StartDate
-		dataType: dateTime
-		formatString: Short Date
-		lineageTag: d202d859-ce2c-4aa9-af14-4975a14a12b4
-		summarizeBy: none
-		sourceColumn: StartDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-	column EndDate
-		dataType: dateTime
-		formatString: Long Date
-		lineageTag: 0aeade94-1006-4ce3-8ef6-279ba32cbf9f
-		summarizeBy: none
-		sourceColumn: EndDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
 	column Status
 		dataType: string
 		lineageTag: 331a7cb9-2694-400c-b63a-e98ff6fa1030
@@ -271,15 +240,6 @@ table Employee
 
 		annotation SummarizationSetBy = Automatic
 
-	column IsSalesPerson
-		dataType: int64
-		formatString: 0
-		lineageTag: 23e87ab6-035e-4885-ac7c-6cf75714c4cb
-		summarizeBy: sum
-		sourceColumn: IsSalesPerson
-
-		annotation SummarizationSetBy = Automatic
-
 	column DepartmentName
 		dataType: string
 		lineageTag: 84be157c-c21e-428f-8211-634002751667
@@ -288,51 +248,59 @@ table Employee
 
 		annotation SummarizationSetBy = Automatic
 
+	column StoreKey
+		dataType: int64
+		formatString: 0
+		lineageTag: f236d7d3-f95c-4901-ae9e-9932a17378fe
+		summarizeBy: count
+		sourceColumn: StoreKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column GeographyKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 9aa6f652-0536-4378-9125-7f1374fcd1bd
+		summarizeBy: count
+		sourceColumn: GeographyKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column TerminationReason
+		dataType: string
+		lineageTag: 8eb02a94-3b09-4d85-987f-fa04cf1539e7
+		summarizeBy: none
+		sourceColumn: TerminationReason
+
+		annotation SummarizationSetBy = Automatic
+
+	column EmploymentType
+		dataType: string
+		lineageTag: e52a1ddd-d9c7-4e17-b5c7-4cbd8ffa5d78
+		summarizeBy: none
+		sourceColumn: EmploymentType
+
+		annotation SummarizationSetBy = Automatic
+
+	column FTE
+		dataType: double
+		lineageTag: 031106ac-7e1c-4c76-ba12-447e316bec8f
+		summarizeBy: sum
+		sourceColumn: FTE
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
 	partition Employee = m
 		mode: import
 		queryGroup: Dimensions
 		source =
 				let
 				    Source = FxReadCSVFile ( "dimensions", "employees" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        {
-				            { "EmployeeKey", Int64.Type },
-				            { "ParentEmployeeKey", Int64.Type },
-				            { "EmployeeName", type text },
-				            { "Title", type text },
-				            { "OrgLevel", Int64.Type },
-				            { "OrgUnitType", type text },
-				            { "RegionId", Int64.Type },
-				            { "DistrictId", Int64.Type },
-				            { "HireDate", type date },
-				            { "TerminationDate", type date },
-				            { "IsActive", Int64.Type },
-				            { "Gender", type text },
-				            { "FirstName", type text },
-				            { "LastName", type text },
-				            { "MiddleName", type text },
-				            { "BirthDate", type date },
-				            { "MaritalStatus", type text },
-				            { "EmailAddress", type text },
-				            { "Phone", Int64.Type },
-				            { "EmergencyContactName", type text },
-				            { "EmergencyContactPhone", Int64.Type },
-				            { "SalariedFlag", Int64.Type },
-				            { "PayFrequency", Int64.Type },
-				            { "BaseRate", type number },
-				            { "VacationHours", Int64.Type },
-				            { "CurrentFlag", Int64.Type },
-				            { "StartDate", type date },
-				            { "EndDate", type date },
-				            { "Status", type text },
-				            { "SalesPersonFlag", Int64.Type },
-				            { "IsSalesPerson", Int64.Type },
-				            { "DepartmentName", type text }
-				        }
-				    )
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"EmployeeKey", Int64.Type}, {"ParentEmployeeKey", Int64.Type}, {"EmployeeName", type text}, {"Title", type text}, {"OrgLevel", Int64.Type}, {"OrgUnitType", type text}, {"RegionId", Int64.Type}, {"DistrictId", Int64.Type}, {"StoreKey", Int64.Type}, {"GeographyKey", Int64.Type}, {"HireDate", type date}, {"TerminationDate", type date}, {"TerminationReason", type text}, {"IsActive", Int64.Type}, {"EmploymentType", type text}, {"FTE", type number}, {"Gender", type text}, {"FirstName", type text}, {"LastName", type text}, {"MiddleName", type text}, {"BirthDate", type date}, {"MaritalStatus", type text}, {"EmailAddress", type text}, {"Phone", Int64.Type}, {"EmergencyContactName", type text}, {"EmergencyContactPhone", Int64.Type}, {"SalariedFlag", Int64.Type}, {"PayFrequency", Int64.Type}, {"BaseRate", type number}, {"VacationHours", Int64.Type}, {"Status", type text}, {"SalesPersonFlag", Int64.Type}, {"DepartmentName", type text}})
 				in
-				    ChangedType
+				    #"Changed Type"
 
 	annotation PBI_NavigationStepName = Navigation
 

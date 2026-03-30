@@ -42,26 +42,60 @@ table Geography
 
 		annotation SummarizationSetBy = Automatic
 
+	column ISOCode
+		dataType: string
+		lineageTag: e7b6a0d1-bb61-4d2f-bded-0e6ff917c496
+		summarizeBy: none
+		sourceColumn: ISOCode
+
+		annotation SummarizationSetBy = Automatic
+
+	column Latitude
+		dataType: double
+		lineageTag: 7017c8f4-f92f-4b04-98e3-571aa3da5421
+		summarizeBy: sum
+		sourceColumn: Latitude
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Longitude
+		dataType: double
+		lineageTag: 8d22528c-f931-4a6e-bb86-cc6c56e1222d
+		summarizeBy: sum
+		sourceColumn: Longitude
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column Timezone
+		dataType: string
+		lineageTag: eefc99f9-68eb-4ccc-9641-655d1a41543d
+		summarizeBy: none
+		sourceColumn: Timezone
+
+		annotation SummarizationSetBy = Automatic
+
+	column Population
+		dataType: int64
+		formatString: 0
+		lineageTag: 827c7138-a2fb-4c51-8ee2-6bbf2e70763d
+		summarizeBy: sum
+		sourceColumn: Population
+
+		annotation SummarizationSetBy = Automatic
+
 	partition Geography = m
 		mode: import
 		queryGroup: Dimensions
 		source =
 				let
 				    Source = FxReadCSVFile ( "dimensions", "geography" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        {
-				            { "GeographyKey", Int64.Type },
-				            { "City", type text },
-				            { "State", type text },
-				            { "Country", type text },
-				            { "Continent", type text },
-				            { "ISOCode", type text }
-				        }
-				    ),
-				    RemovedColumns = Table.RemoveColumns ( ChangedType, { "ISOCode" } )
+				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"GeographyKey", Int64.Type}, {"City", type text}, {"State", type text}, {"Country", type text}, {"Continent", type text}, {"ISOCode", type text}, {"Latitude", type number}, {"Longitude", type number}, {"Timezone", type text}, {"Population", Int64.Type}})
 				in
-				    RemovedColumns
+				    #"Changed Type"
 
 	annotation PBI_NavigationStepName = Navigation
 

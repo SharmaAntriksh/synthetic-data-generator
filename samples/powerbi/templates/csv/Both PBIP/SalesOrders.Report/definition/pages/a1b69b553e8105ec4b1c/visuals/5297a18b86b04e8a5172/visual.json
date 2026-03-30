@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.6.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
   "name": "5297a18b86b04e8a5172",
   "position": {
     "x": 0,
@@ -57,11 +57,11 @@
                       "Entity": "MeasuresTable"
                     }
                   },
-                  "Property": "Sales Amount"
+                  "Property": "Sales Amount (SOD)"
                 }
               },
-              "queryRef": "Sales.Sales Amount",
-              "nativeQueryRef": "Sales Amount"
+              "queryRef": "Sales.Sales Amount (SOD )",
+              "nativeQueryRef": "Sales Amount (SOD )"
             },
             {
               "field": {
@@ -71,11 +71,39 @@
                       "Entity": "MeasuresTable"
                     }
                   },
-                  "Property": "Sales Amount (SOD)"
+                  "Property": "Cost Amount"
                 }
               },
-              "queryRef": "Sales.Sales Amount (SOD )",
-              "nativeQueryRef": "Sales Amount (SOD )"
+              "queryRef": "MeasuresTable.Cost Amount",
+              "nativeQueryRef": "Cost Amount"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "MeasuresTable"
+                    }
+                  },
+                  "Property": "Profit Amount"
+                }
+              },
+              "queryRef": "MeasuresTable.Profit Amount",
+              "nativeQueryRef": "Profit Amount"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "MeasuresTable"
+                    }
+                  },
+                  "Property": "Transactions"
+                }
+              },
+              "queryRef": "MeasuresTable.Transactions",
+              "nativeQueryRef": "Transactions"
             }
           ]
         }
@@ -164,7 +192,7 @@
         "type": "Advanced"
       },
       {
-        "name": "bba3bb7b40b748d84e50",
+        "name": "a2eade7358ea8a593f54",
         "field": {
           "Measure": {
             "Expression": {
@@ -172,7 +200,49 @@
                 "Entity": "MeasuresTable"
               }
             },
-            "Property": "Sales Amount"
+            "Property": "Sales Amount (SOD)"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "6f34f7103b53bcf31837",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "MeasuresTable"
+              }
+            },
+            "Property": "Cost Amount"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "bf88161e7d7f6c4db16c",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "MeasuresTable"
+              }
+            },
+            "Property": "Profit Amount"
+          }
+        },
+        "type": "Advanced"
+      },
+      {
+        "name": "b40be0998c807699d9ee",
+        "field": {
+          "Measure": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "MeasuresTable"
+              }
+            },
+            "Property": "Transactions"
           }
         },
         "type": "Advanced"

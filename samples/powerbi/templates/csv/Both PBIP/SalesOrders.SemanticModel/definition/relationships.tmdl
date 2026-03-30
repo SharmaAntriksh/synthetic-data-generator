@@ -1,114 +1,163 @@
-relationship 3bb02a0a-77e9-8fd5-1882-a4bed0493884
-	fromColumn: Customers.GeographyKey
-	toColumn: Geography.GeographyKey
+relationship 1942c651-02bd-465c-9da5-66b9ae660e90
+	crossFilteringBehavior: bothDirections
+	fromCardinality: one
+	fromColumn: ProductProfile.ProductKey
+	toColumn: Products.ProductKey
 
-relationship 525ee982-092b-a66e-0179-255a18f8e461
+relationship 2ca39336-43c9-4d72-a68e-e5c70db8bcae
+	fromColumn: SalesOrderDetail.ProductKey
+	toColumn: Products.ProductKey
+
+relationship 3b4f1ea9-6274-4f44-bdc1-9781e76b6a9b
+	fromColumn: Inventory.ProductKey
+	toColumn: Products.ProductKey
+
+relationship 6bf5ab3d-c9e5-46bb-9fc8-c3b946b2c8f2
+	fromColumn: Wishlist.ProductKey
+	toColumn: Products.ProductKey
+
+relationship eaa81c0b-ab8b-47e7-86e1-9199018ea979
+	fromColumn: Products.SubcategoryKey
+	toColumn: ProductSubcategory.SubcategoryKey
+
+relationship 10a87905-433c-4d23-ab67-e66ce8dfd030
+	fromColumn: ProductSubcategory.CategoryKey
+	toColumn: ProductCategory.CategoryKey
+
+relationship 47643443-0ad8-4b46-99ac-52e130664af9
+	fromColumn: Budget.Category
+	toColumn: ProductCategory.Category
+
+relationship 96d24166-8acf-4bd1-948d-ef335d9309c9
+	fromColumn: BudgetMonthly.Category
+	toColumn: ProductCategory.Category
+
+relationship 1effc57e-80e3-4924-a2ef-69b3c0b1f054
+	fromColumn: ProductProfile.SupplierKey
+	toColumn: Supplier.SupplierKey
+
+relationship 6c4808ed-7393-4823-92bf-f821fff411b5
+	fromColumn: Wishlist.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship c7ab0227-4aba-4a4f-9232-dd6842f222a4
 	isActive: false
 	fromColumn: Store.GeographyKey
 	toColumn: Geography.GeographyKey
 
-relationship d023a999-5449-fd85-6bd5-c77eea3ff127
-	fromColumn: SalesOrderHeader.OrderDate
-	toColumn: Dates.Date
+relationship ac05c826-9a5b-4adb-bf75-c2b1ce8d8454
+	fromColumn: Warehouse.GeographyKey
+	toColumn: Geography.GeographyKey
 
-relationship 9be8d967-d6b9-e0ff-4901-c81ba25499a7
-	fromColumn: SalesOrderDetail.SalesOrderNumber
-	toColumn: SalesOrderHeader.SalesOrderNumber
+relationship f55b7859-c342-472a-bd8e-0cc880a43201
+	fromColumn: PlanSubscription.PlanKey
+	toColumn: Plan.PlanKey
 
-relationship d334731b-09fb-8eb2-3f35-4a7640e7f1ac
-	fromColumn: ExchangeRates.Date
-	toColumn: Dates.Date
-
-relationship 7ca0bd36-df37-71a6-440e-09913b545112
-	fromColumn: ExchangeRates.ToCurrency
-	toColumn: Currency.ToCurrency
-
-relationship 853887d0-e696-5f31-e439-553fe910ddb2
-	fromColumn: Products.SubcategoryKey
-	toColumn: ProductSubcategory.SubcategoryKey
-
-relationship cb4c6f5d-fbe5-091e-e26b-be6cd2a31828
-	fromColumn: ProductSubcategory.CategoryKey
-	toColumn: ProductCategory.CategoryKey
-
-relationship dded5175-84e2-b7b8-6f6d-f340109e64ff
-	fromColumn: SalesOrderDetail.ProductKey
-	toColumn: Products.ProductKey
-
-relationship 4407fcda-70ba-5a9a-d338-638b7def17f6
-	fromColumn: SalesOrderHeader.CustomerKey
-	toColumn: Customers.CustomerKey
-
-relationship 949e15da-96b5-4173-99ce-24dff493793f
-	fromColumn: SalesOrderHeader.StoreKey
-	toColumn: Store.StoreKey
-
-relationship 566aa513-5d46-4e4c-87d4-5dacc8c039b1
+relationship 96343533-82d8-41db-87f5-cda233246821
 	fromColumn: EmployeeStoreAssignment.StoreKey
 	toColumn: Store.StoreKey
 
-relationship 6e410510-fd04-4ba3-a320-e2f3a085d55f
-	fromColumn: SalesOrderHeader.PromotionKey
-	toColumn: Promotions.PromotionKey
+relationship f96ce07e-88ea-4d76-b86d-78c72d33e414
+	fromColumn: SalesOrderHeader.StoreKey
+	toColumn: Store.StoreKey
 
-relationship e512eec8-6f8d-4573-b6a7-939c5ea70297
+relationship 6fe99a4c-0392-4f96-90d6-3568138980fb
+	fromColumn: Inventory.WarehouseKey
+	toColumn: Warehouse.WarehouseKey
+
+relationship 93651748-b5a4-4091-ad97-09c46f045837
+	fromColumn: SalesOrderHeader.PromotionKey
+	toColumn: Promotion.PromotionKey
+
+relationship fa0a3628-d326-4f62-a988-1ed6373b1ae7
 	fromColumn: SalesOrderHeader.CurrencyKey
 	toColumn: Currency.CurrencyKey
 
-relationship 3687eaf9-aa9c-44a7-a33e-20036259f623
-	fromColumn: SalesOrderHeader.SalesChannelKey
-	toColumn: SalesChannel.SalesChannelKey
-
-relationship 692a29e9-90a9-42c9-a45c-fd9fbeae2c48
+relationship 36ddbc15-3886-4a27-8a79-705a2065405a
 	fromColumn: EmployeeStoreAssignment.EmployeeKey
 	toColumn: Employee.EmployeeKey
 
-relationship d706c1c5-4652-4fb8-b1e1-2c4f1d166b15
-	fromColumn: SalesReturns.SalesOrderNumber
-	toColumn: SalesOrderHeader.SalesOrderNumber
+relationship a9584517-d053-42d2-965d-024be09823a1
+	fromColumn: SalesOrderHeader.EmployeeKey
+	toColumn: Employee.EmployeeKey
 
-relationship f8d204e0-0ec2-4a32-a432-867cb7837a21
-	fromColumn: SalesReturns.ReturnReasonKey
+relationship 7b8fb692-822f-4e90-9fa4-25f7b6ef9ef4
+	fromColumn: SalesReturn.ReturnReasonKey
 	toColumn: ReturnReason.ReturnReasonKey
 
-relationship dd2c5cd1-ff39-4e48-9e28-3c9bea7db674
+relationship a478271d-d2f0-4802-85fd-9687f88dcd05
+	fromColumn: SalesOrderHeader.SalesChannelKey
+	toColumn: SalesChannel.SalesChannelKey
+
+relationship e8987ec9-5a25-4485-a1bb-c810b2e37a4b
 	fromColumn: SalesOrderHeader.TimeKey
 	toColumn: Time.TimeKey
 
-relationship 9697844f-4b1b-fa17-8e4a-7098c21d1623
-	fromColumn: SalesOrderHeader.SalesPersonEmployeeKey
-	toColumn: Employee.EmployeeKey
-
-relationship 132f00b8-b8ca-4c81-be69-31ca8cd26b7c
-	fromColumn: Sales.CustomerKey
-	toColumn: Customers.CustomerKey
-
-relationship 3476e585-973b-4006-9636-ae84cbc6affc
-	fromColumn: Sales.StoreKey
-	toColumn: Store.StoreKey
-
-relationship 56f7d9de-c1bf-444d-ab3b-dd1d7cac75e4
-	fromColumn: Sales.PromotionKey
-	toColumn: Promotions.PromotionKey
-
-relationship 345abd36-d3c7-456a-ba80-760f56f4c3f6
-	fromColumn: Sales.ProductKey
-	toColumn: Products.ProductKey
-
-relationship 38f6b706-c5b9-4d3c-82bd-9febe9a3f91e
-	fromColumn: Sales.CurrencyKey
-	toColumn: Currency.CurrencyKey
-
-relationship 441425cc-4013-4707-bb2a-b795c2886829
-	isActive: false
-	fromColumn: Sales.SalesOrderNumber
+relationship 8e2d5f0d-755f-4102-af1d-e29ff0d108d2
+	fromColumn: SalesOrderDetail.SalesOrderNumber
 	toColumn: SalesOrderHeader.SalesOrderNumber
 
-relationship 46311b44-a535-4bd1-bc89-baca60ca9fcc
-	fromColumn: Sales.SalesChannelKey
-	toColumn: SalesChannel.SalesChannelKey
+relationship 7ceb0ba6-ad52-ad79-72de-373802bdb068
+	fromColumn: SalesOrderHeader.OrderDate
+	toColumn: Dates.Date
 
-relationship ea728b08-4f40-4750-8397-0fc20cc30a81
-	fromColumn: Sales.TimeKey
-	toColumn: Time.TimeKey
+relationship fa5a85f7-fe1a-f9d1-42ab-b8fb8c1c04f2
+	fromColumn: SalesReturn.ReturnDate
+	toColumn: Dates.Date
+
+relationship b21c0451-c4d1-f6c6-439a-b256b55f3e43
+	fromColumn: PlanSubscription.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship 88fd9d38-e85e-a411-ecb4-bcbca7216202
+	fromColumn: Inventory.SnapshotDate
+	toColumn: Dates.Date
+
+relationship 4cf93af9-668b-e74c-f035-916e140a57a6
+	fromColumn: ExchangeRate.FromCurrencyKey
+	toColumn: Currency.CurrencyKey
+
+relationship 1d15404d-5baf-0c18-9611-097ac101181a
+	fromColumn: ExchangeRate.Date
+	toColumn: Dates.Date
+
+relationship 550fd709-c0c3-1ed3-6148-d7553edabd05
+	fromColumn: ExchangeRateMonthly.Date
+	toColumn: Dates.Date
+
+relationship 210cb20d-5ade-d808-966e-915e70b73861
+	fromColumn: ExchangeRateMonthly.FromCurrencyKey
+	toColumn: Currency.CurrencyKey
+
+relationship b73a3b27-2cb2-1b7a-4fa9-59e59e8420ca
+	fromColumn: Complaints.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship 4908b1c3-abad-64d3-5307-0f2ca9361f3b
+	crossFilteringBehavior: bothDirections
+	fromCardinality: one
+	fromColumn: OrganizationProfile.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship 11b80c16-9ab3-d621-509e-b52a4ba06190
+	crossFilteringBehavior: bothDirections
+	fromCardinality: one
+	fromColumn: Customer.CustomerKey
+	toColumn: CustomerProfile.CustomerKey
+
+relationship 5bb6bbb1-3342-f463-937c-690a6e718707
+	fromColumn: SalesOrderHeader.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship c6ff77d9-c8ac-c9cd-a971-1e6a9b37417c
+	fromColumn: Customer.GeographyKey
+	toColumn: Geography.GeographyKey
+
+relationship 2e85418b-b886-a44a-f9e0-942eefb80c7d
+	fromColumn: Customer.CustomerAcquisitionChannelKey
+	toColumn: AcquisitionChannel.CustomerAcquisitionChannelKey
+
+relationship 78e74df0-974e-7b48-fd62-3c3d658378fb
+	fromColumn: Customer.LoyaltyTierKey
+	toColumn: LoyaltyTiers.LoyaltyTierKey
 

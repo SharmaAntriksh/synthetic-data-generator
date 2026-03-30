@@ -1,0 +1,80 @@
+table BudgetMonthly
+	lineageTag: a5a61a61-224b-4980-8190-5a3924a07f37
+
+	column Country
+		dataType: string
+		lineageTag: d21fdf7d-29cd-445d-b5ee-3761cb71c3e2
+		summarizeBy: none
+		sourceColumn: Country
+
+		annotation SummarizationSetBy = Automatic
+
+	column Category
+		dataType: string
+		lineageTag: 54a6317b-8cf5-4861-bbf8-8ea044464377
+		summarizeBy: none
+		sourceColumn: Category
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetYear
+		dataType: string
+		lineageTag: 95944c1c-bfd6-4c21-b677-05d568e65926
+		summarizeBy: none
+		sourceColumn: BudgetYear
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetMonthStart
+		dataType: string
+		lineageTag: 41523cff-3805-4beb-91b8-4190c804547e
+		summarizeBy: none
+		sourceColumn: BudgetMonthStart
+
+		annotation SummarizationSetBy = Automatic
+
+	column Scenario
+		dataType: string
+		lineageTag: 8abcea74-a285-4594-b027-a5c3527ce62f
+		summarizeBy: none
+		sourceColumn: Scenario
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetAmount
+		dataType: string
+		lineageTag: 31a1a303-d186-4b26-9c00-1c086e06f5a3
+		summarizeBy: none
+		sourceColumn: BudgetAmount
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetQuantity
+		dataType: string
+		lineageTag: 722078ca-738f-4665-8cee-036ee4d6e4f1
+		summarizeBy: none
+		sourceColumn: BudgetQuantity
+
+		annotation SummarizationSetBy = Automatic
+
+	column BudgetMethod
+		dataType: string
+		lineageTag: 718e9d04-b6be-4ca6-b594-de62af833b73
+		summarizeBy: none
+		sourceColumn: BudgetMethod
+
+		annotation SummarizationSetBy = Automatic
+
+	partition BudgetMonthly = m
+		mode: import
+		queryGroup: Fact\Budget
+		source =
+				let
+				    Source = FxReadCSVFile ( "facts\budget_monthly\", "budget_monthly" )
+				in
+				    Source
+
+	annotation PBI_NavigationStepName = Navigation
+
+	annotation PBI_ResultType = Table
+

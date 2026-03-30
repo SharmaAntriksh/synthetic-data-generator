@@ -1,6 +1,6 @@
 createOrReplace
 
-	expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-03-02 01_59_49 AM Customers 48K Sales 100K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
+	expression ContosoFolder = "C:\Users\antsharma\Downloads\synthetic-data-generator\generated_datasets\2026-03-02 01_57_24 AM Customers 48K Sales 100K CSV" meta [IsParameterQuery=true, Type="Any", IsParameterQueryRequired=true]
 		lineageTag: d1991dc0-64f4-4dae-a1e5-e0122e047e51
 		queryGroup: 'Parameters & Functions'
 
@@ -8,17 +8,23 @@ createOrReplace
 
 		annotation PBI_ResultType = Text
 
-	expression FxReadCSVFile =
-			( TableType as text, FileName as text ) as table =>
-			    let
-			        FileContents = File.Contents ( ContosoFolder & "\" & TableType & "\" & FileName & ".csv" ),
-			        CsvDocument = Csv.Document (
-			            FileContents,
-			            [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
-			        ),
+	expression FxReadCSVFile = ```
+			( 
+			    TableType as text, 
+			    FileName as text
+			) as table =>
+			    let 
+			        FileContents = 
+			            File.Contents ( ContosoFolder & "\" & TableType & "\" & FileName & ".csv" ),
+			        CsvDocument = 
+			            Csv.Document(
+			                FileContents,
+			                [Delimiter=",", Encoding=1252, QuoteStyle=QuoteStyle.None]
+			            ),
 			        PromoteHeaders = Table.PromoteHeaders ( CsvDocument, [ PromoteAllScalars = true ] )
-			    in
+			    in 
 			        PromoteHeaders
+			```
 		lineageTag: d2ba962f-2339-4f99-977a-ef51cbe9f4db
 		queryGroup: 'Parameters & Functions'
 
@@ -57,10 +63,13 @@ createOrReplace
 
 	expression Sample_SOH =
 			let
-			    Source = Csv.Document(Parameter_SOH,[Delimiter=",", Columns=4, Encoding=1252, QuoteStyle=QuoteStyle.None]),
-			    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true])
+			    Source = Csv.Document (
+			        Parameter_SOH,
+			        [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+			    ),
+			    PromoteHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
 			in
-			    #"Promoted Headers"
+			    PromoteHeaders
 		lineageTag: 2af751b9-80d3-463d-88d1-d469a93b71f2
 		queryGroup: 'SOH Transformation'
 
@@ -70,15 +79,11 @@ createOrReplace
 
 	expression Transform_SOH_File =
 			let
-			    Source = ( Parameter1 ) =>
-			        let
-			            Source = Csv.Document (
-			                Parameter1,
-			                [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
-			            ),
-			            PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
-			        in
-			            PromotedHeaders
+			    Source = (Parameter1) => let
+			        Source = Csv.Document(Parameter1,[Delimiter=",", Encoding=1252, QuoteStyle=QuoteStyle.None]),
+			        #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true])
+			    in
+			        #"Promoted Headers"
 			in
 			    Source
 		lineageTag: 8acf9592-37f3-413f-b245-8b02e8405ff3
@@ -138,7 +143,7 @@ createOrReplace
 		annotation PBI_ResultType = Function
 
 	expression Parameter_SalesReturns = Sample_File_SalesReturns meta [IsParameterQuery=true, BinaryIdentifier=Sample_File_SalesReturns, Type="Binary", IsParameterQueryRequired=true]
-		lineageTag: 70fb15da-75f0-4872-943a-103edf9e82bd
+		lineageTag: eaab4cf4-629c-4180-9f22-150004175dd3
 		queryGroup: 'Sales Returns Transformations\Helper Queries'
 
 		annotation PBI_NavigationStepName = Navigation
@@ -151,7 +156,7 @@ createOrReplace
 			    Navigation1 = Source{0}[Content]
 			in
 			    Navigation1
-		lineageTag: 755f3bbf-a773-4211-8724-f1fe8ad3423d
+		lineageTag: 7723c067-bbca-4fc8-b4f8-d37b0130e70c
 		queryGroup: 'Sales Returns Transformations\Helper Queries'
 
 		annotation PBI_NavigationStepName = Navigation
@@ -171,7 +176,7 @@ createOrReplace
 			            PromotedHeaders
 			in
 			    Source
-		lineageTag: 347ed6c1-309e-4837-959a-a02db994e14c
+		lineageTag: b0c4c082-2544-4753-affa-edb2e1357499
 		queryGroup: 'Sales Returns Transformations\Helper Queries'
 
 		annotation PBI_NavigationStepName = Navigation
@@ -187,8 +192,67 @@ createOrReplace
 			    PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
 			in
 			    PromotedHeaders
-		lineageTag: 24f0ce4e-7224-4aa7-8463-5a45464c99f2
+		lineageTag: ff3810cc-5585-4fad-803d-5d7fbf2f8f02
 		queryGroup: 'Sales Returns Transformations'
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Table
+
+	expression Parameter_Sales = Sample_File_Sales meta [IsParameterQuery=true, BinaryIdentifier=Sample_File_Sales, Type="Binary", IsParameterQueryRequired=true]
+		lineageTag: 5f54fd99-2ac5-4f8c-8069-c21b9eb82edd
+		queryGroup: 'Sales Transformations\Helper Queries'
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Binary
+
+	expression Sample_File_Sales =
+			let
+			    Source      = Folder.Files ( ContosoFolder & "\facts\sales" ),
+			    RemoveCols  = Table.SelectColumns ( Source, { "Content" } ),
+			    Navigation1 = RemoveCols{0}[Content]
+			in
+			    Navigation1
+		lineageTag: 227852a2-bf4c-4f12-9868-50930ae367cb
+		queryGroup: 'Sales Transformations\Helper Queries'
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Binary
+
+	expression Transform_Sales_File =
+			let
+			    Source = ( Parameter1 as binary ) =>
+			        let
+			            Source = Csv.Document (
+			                Parameter1,
+			                [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+			            ),
+			            PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+			        in
+			            PromotedHeaders
+			in
+			    Source
+		lineageTag: b0bbc96f-2294-4080-ac91-1a2502ed02e9
+		queryGroup: 'Sales Transformations\Helper Queries'
+
+		annotation PBI_NavigationStepName = Navigation
+
+		annotation PBI_ResultType = Function
+
+	expression Sample_Sales = ```
+			let
+			    Source = Csv.Document (
+			        Parameter_Sales, 
+			        [ Delimiter = ",", Encoding = 1252, QuoteStyle = QuoteStyle.None ]
+			    ), 
+			    PromotedHeaders = Table.PromoteHeaders ( Source, [ PromoteAllScalars = true ] )
+			in
+			    PromotedHeaders
+			```
+		lineageTag: ee12f7c0-61cf-48c4-8079-84edd97c16ba
+		queryGroup: 'Sales Transformations'
 
 		annotation PBI_NavigationStepName = Navigation
 

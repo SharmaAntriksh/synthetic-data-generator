@@ -5,7 +5,7 @@ table Currency
 		dataType: int64
 		formatString: 0
 		lineageTag: 11cc42cd-4b5a-47b8-8ca9-0ce076b1109b
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CurrencyKey
 
 		annotation SummarizationSetBy = Automatic

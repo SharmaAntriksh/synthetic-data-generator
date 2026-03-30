@@ -36,7 +36,7 @@ sales:
   max_lines_per_order: 10
 
   file_format: parquet              # csv | parquet | deltaparquet
-  sales_output: sales_order              # sales | sales_order | both
+  sales_output: sales              # sales | sales_order | both
   skip_order_cols: false
 
   merge:
@@ -200,10 +200,10 @@ dates:
   include:
     calendar: true
     iso: false
-    fiscal: false
+    fiscal: true
 
     weekly_fiscal:
-      enabled: false
+      enabled: true
       first_day_of_week: 0
       weekly_type: "Last" #nearest
       quarter_week_type: "445"
