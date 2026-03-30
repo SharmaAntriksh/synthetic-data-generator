@@ -1,469 +1,197 @@
 table Products
-	lineageTag: a736d030-7050-4b89-afb0-103296247af9
+	lineageTag: 709af7c6-3c93-4a41-980a-b1edae7a2b62
 
 	column ProductKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 817fb5b9-efba-4622-9733-06c52a3785e4
+		lineageTag: a45565aa-25ad-4a90-97d3-d453461a2f62
 		summarizeBy: count
 		sourceColumn: ProductKey
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column ProductID
+		dataType: int64
+		formatString: 0
+		lineageTag: 071c42f3-53c5-42bf-8d51-6a8b66867ff3
+		summarizeBy: count
+		sourceColumn: ProductID
+
+		annotation SummarizationSetBy = Automatic
+
+	column VersionNumber
+		dataType: int64
+		formatString: 0
+		lineageTag: 4cac0607-f768-4b84-879e-0de31793ef29
+		summarizeBy: sum
+		sourceColumn: VersionNumber
+
+		annotation SummarizationSetBy = Automatic
+
+	column EffectiveStartDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 4d0ea868-ddbc-473f-8c2d-e478807c96ca
+		summarizeBy: none
+		sourceColumn: EffectiveStartDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column EffectiveEndDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: d07b3363-3d94-4fa1-8a23-f8f8fdbe2a24
+		summarizeBy: none
+		sourceColumn: EffectiveEndDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
+	column IsCurrent
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: a2c06ad3-f12f-4dda-b4a4-46c1919d4cd0
+		summarizeBy: none
+		sourceColumn: IsCurrent
 
 		annotation SummarizationSetBy = Automatic
 
 	column ProductCode
 		dataType: string
-		lineageTag: 361f0e4b-eb23-4937-8dac-22a201b28459
+		lineageTag: ff2bb14d-6fe7-4bed-9e20-aa0c3b734cbc
 		summarizeBy: none
 		sourceColumn: ProductCode
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column ProductName
 		dataType: string
-		lineageTag: 22321e1c-f522-4b5f-874e-aa5d32b76c35
+		lineageTag: 69a71f28-c1bd-407c-837d-3855e2cd0109
 		summarizeBy: none
 		sourceColumn: ProductName
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column ProductDescription
 		dataType: string
-		lineageTag: 15e4db0b-ef90-4c66-88a9-8b3b8b5e6396
+		lineageTag: acfaa974-3e9d-4f85-9cbe-54fd8f2fb84a
 		summarizeBy: none
 		sourceColumn: ProductDescription
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column SubcategoryKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 169bba0b-83a5-49c2-ae55-f76e8d03183f
+		lineageTag: b319f39d-5e6d-456a-a7d7-c99d3b73db62
 		summarizeBy: count
 		sourceColumn: SubcategoryKey
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column Brand
 		dataType: string
-		lineageTag: a2dc35fb-6ee5-4ff5-9adf-abc288b1c3ef
+		lineageTag: 43d6a1b8-7da5-4b6b-9623-fa929ddeb699
 		summarizeBy: none
 		sourceColumn: Brand
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column Class
 		dataType: string
-		lineageTag: 589d9b5a-c66d-4b43-80bd-0538d5efe4a7
+		lineageTag: e3786881-4254-4ddc-98a5-6863e158ad6e
 		summarizeBy: none
 		sourceColumn: Class
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column Color
 		dataType: string
-		lineageTag: 6ee81513-8370-473a-8cca-279477f735db
+		lineageTag: ead55a68-ac6c-4203-8d86-b939b78f765d
 		summarizeBy: none
 		sourceColumn: Color
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column StockTypeCode
 		dataType: string
-		lineageTag: 29179efc-8bbc-464f-a2ec-9dc6e80bc4a8
+		lineageTag: 34bf8d52-a3a7-4105-8a90-50063b1b7297
 		summarizeBy: none
 		sourceColumn: StockTypeCode
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column StockType
 		dataType: string
-		lineageTag: 74663ff5-bf7e-41b9-b2de-5187e17f5f63
+		lineageTag: d8027369-fbf3-49e5-82ac-e0219f584678
 		summarizeBy: none
 		sourceColumn: StockType
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column UnitCost
-		dataType: decimal
-		formatString: #,0.00
-		lineageTag: 55417800-0963-4dcf-bbb2-b6a61d0f428a
+		dataType: double
+		lineageTag: 55e02ed6-a42b-41cf-ade3-4a300ed9d54c
 		summarizeBy: sum
 		sourceColumn: UnitCost
 
-		changedProperty = IsHidden
-
 		annotation SummarizationSetBy = Automatic
 
-	column UnitPrice
-		dataType: decimal
-		formatString: #,0.00
-		lineageTag: 11e753c5-0f96-43ea-83b7-a269d2c1a0d6
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column ListPrice
+		dataType: double
+		lineageTag: 0947b171-12a3-4ed0-b93b-e6e6d7b7a1a5
 		summarizeBy: sum
-		sourceColumn: UnitPrice
-
-		changedProperty = IsHidden
+		sourceColumn: ListPrice
 
 		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column BaseProductKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 3315b183-a9e3-46db-af75-6c8184b96779
+		lineageTag: 5010270c-bfd5-42e7-a7b0-216fafabf9d4
 		summarizeBy: count
 		sourceColumn: BaseProductKey
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column VariantIndex
 		dataType: int64
 		formatString: 0
-		lineageTag: 8bfef8c9-4eba-459b-bc04-4b51f22907e1
+		lineageTag: 80a6f67b-3cc4-47dd-99b4-f90bb1665ae3
 		summarizeBy: sum
 		sourceColumn: VariantIndex
 
-		changedProperty = IsHidden
-
 		annotation SummarizationSetBy = Automatic
 
-	column IsActiveInSales
-		dataType: int64
-		formatString: 0
-		lineageTag: b73d8354-056d-46fa-acf7-a81e683be4f2
-		summarizeBy: sum
-		sourceColumn: IsActiveInSales
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column LaunchDate
-		dataType: dateTime
-		formatString: Long Date
-		lineageTag: 25c6b1a0-77db-4354-8f15-9405b9210aca
-		summarizeBy: none
-		sourceColumn: LaunchDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-	column LaunchDateKey
-		dataType: int64
-		formatString: 0
-		lineageTag: 51dcd4a5-a05b-42f2-a979-b8594760efb2
-		summarizeBy: count
-		sourceColumn: LaunchDateKey
-
-		annotation SummarizationSetBy = Automatic
-
-	column DiscontinuedDate
-		dataType: dateTime
-		formatString: Long Date
-		lineageTag: 3bf13638-3651-4a94-8969-95c0d66675ba
-		summarizeBy: none
-		sourceColumn: DiscontinuedDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-	column DiscontinuedDateKey
-		dataType: int64
-		formatString: 0
-		lineageTag: 7010eca1-723d-4853-a1f3-23e5e232c58a
-		summarizeBy: count
-		sourceColumn: DiscontinuedDateKey
-
-		annotation SummarizationSetBy = Automatic
-
-	column IsDiscontinued
-		dataType: int64
-		formatString: 0
-		lineageTag: 3db03243-97b7-4256-863b-5631572faa9f
-		summarizeBy: sum
-		sourceColumn: IsDiscontinued
-
-		annotation SummarizationSetBy = Automatic
-
-	column ColorFamily
+	column Source
 		dataType: string
-		lineageTag: e55c7241-1da2-499e-9736-871acd9c88b2
+		lineageTag: 72064f1e-d20c-4925-889c-6cf2a195c4cf
 		summarizeBy: none
-		sourceColumn: ColorFamily
-
-		annotation SummarizationSetBy = Automatic
-
-	column Material
-		dataType: string
-		lineageTag: 5ba70989-ddcd-4c17-9eed-6fbd777821b2
-		summarizeBy: none
-		sourceColumn: Material
-
-		annotation SummarizationSetBy = Automatic
-
-	column Style
-		dataType: string
-		lineageTag: 38dc7604-3e4a-49c7-83e2-ab9d47d78ba2
-		summarizeBy: none
-		sourceColumn: Style
-
-		annotation SummarizationSetBy = Automatic
-
-	column AgeGroup
-		dataType: string
-		lineageTag: 6fca7a80-c1be-460c-992f-b41adc6f9ba1
-		summarizeBy: none
-		sourceColumn: AgeGroup
-
-		annotation SummarizationSetBy = Automatic
-
-	column ProductLine
-		dataType: string
-		lineageTag: 45b45de7-0e41-4ae8-843b-4bca6d770582
-		summarizeBy: none
-		sourceColumn: ProductLine
-
-		annotation SummarizationSetBy = Automatic
-
-	column SeasonalityProfile
-		dataType: string
-		lineageTag: 5771cb9c-96fa-4ab6-ad74-a84bf490df1e
-		summarizeBy: none
-		sourceColumn: SeasonalityProfile
-
-		annotation SummarizationSetBy = Automatic
-
-	column WeightKg
-		dataType: double
-		lineageTag: 63579280-6b4d-435f-a8f4-a80b8c5da59b
-		summarizeBy: sum
-		sourceColumn: WeightKg
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
-
-	column LengthCm
-		dataType: double
-		lineageTag: f00ec155-e772-4aec-a25d-3f87942d3304
-		summarizeBy: sum
-		sourceColumn: LengthCm
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
-
-	column WidthCm
-		dataType: double
-		lineageTag: 2627de29-b340-4cd9-8764-fb0b75d4b155
-		summarizeBy: sum
-		sourceColumn: WidthCm
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
-
-	column HeightCm
-		dataType: double
-		lineageTag: be2bed0c-0ef1-4973-b281-d6fe77410157
-		summarizeBy: sum
-		sourceColumn: HeightCm
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
-
-	column VolumeCm3
-		dataType: double
-		lineageTag: d2ab5e97-c7e0-4942-9e1f-cfb722baff37
-		summarizeBy: sum
-		sourceColumn: VolumeCm3
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
-
-	column ShippingClass
-		dataType: string
-		lineageTag: 3f9f73da-2e18-43ca-8994-2c77a2d28b2f
-		summarizeBy: none
-		sourceColumn: ShippingClass
-
-		annotation SummarizationSetBy = Automatic
-
-	column IsFragile
-		dataType: int64
-		formatString: 0
-		lineageTag: 244e2676-903b-4868-88b4-3584b517fcfd
-		summarizeBy: sum
-		sourceColumn: IsFragile
-
-		annotation SummarizationSetBy = Automatic
-
-	column IsHazmat
-		dataType: int64
-		formatString: 0
-		lineageTag: 8e384256-3856-4d8e-8ed4-0cf10936c04f
-		summarizeBy: sum
-		sourceColumn: IsHazmat
-
-		annotation SummarizationSetBy = Automatic
-
-	column LeadTimeDays
-		dataType: int64
-		formatString: 0
-		lineageTag: d47f180f-d30b-46a0-9711-8c60da28150c
-		summarizeBy: sum
-		sourceColumn: LeadTimeDays
-
-		annotation SummarizationSetBy = Automatic
-
-	column CasePackQty
-		dataType: int64
-		formatString: 0
-		lineageTag: 9a05fbc9-a284-40a4-ac82-8a9599b4e0b6
-		summarizeBy: sum
-		sourceColumn: CasePackQty
-
-		annotation SummarizationSetBy = Automatic
-
-	column FulfillmentType
-		dataType: string
-		lineageTag: fb21c2b6-d2d3-4a55-9f5e-65752aa31aae
-		summarizeBy: none
-		sourceColumn: FulfillmentType
-
-		annotation SummarizationSetBy = Automatic
-
-	column BrandTier
-		dataType: string
-		lineageTag: b438f593-eec5-41fc-b9a0-5d0975fcd1f1
-		summarizeBy: none
-		sourceColumn: BrandTier
-
-		annotation SummarizationSetBy = Automatic
-
-	column EligibleStore
-		dataType: int64
-		formatString: 0
-		lineageTag: 43cfae6b-d53c-4e97-88ba-b359bffa1b4d
-		summarizeBy: sum
-		sourceColumn: EligibleStore
-
-		annotation SummarizationSetBy = Automatic
-
-	column EligibleOnline
-		dataType: int64
-		formatString: 0
-		lineageTag: baed3343-be36-418a-8dd3-7980fae0fe17
-		summarizeBy: sum
-		sourceColumn: EligibleOnline
-
-		annotation SummarizationSetBy = Automatic
-
-	column EligibleMarketplace
-		dataType: int64
-		formatString: 0
-		lineageTag: 17043102-7ed4-4555-829a-88c87a41fd57
-		summarizeBy: sum
-		sourceColumn: EligibleMarketplace
-
-		annotation SummarizationSetBy = Automatic
-
-	column EligibleB2B
-		dataType: int64
-		formatString: 0
-		lineageTag: 84f8b8e4-12fe-4c8a-b537-b8a171310fb2
-		summarizeBy: sum
-		sourceColumn: EligibleB2B
-
-		annotation SummarizationSetBy = Automatic
-
-	column WarrantyMonths
-		dataType: int64
-		formatString: 0
-		lineageTag: 860a22f5-f27d-400c-bee2-790ace295107
-		summarizeBy: sum
-		sourceColumn: WarrantyMonths
-
-		annotation SummarizationSetBy = Automatic
-
-	column ReturnRateBase
-		dataType: double
-		lineageTag: 71fee69d-2a4a-4f6b-bb16-90d2123ba805
-		summarizeBy: sum
-		sourceColumn: ReturnRateBase
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
-
-	column DefectRateBase
-		dataType: double
-		lineageTag: 1a65ac51-dffd-4539-90c5-4a1130dff456
-		summarizeBy: sum
-		sourceColumn: DefectRateBase
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation PBI_FormatHint = {"isGeneralNumber":true}
-
-	column ReturnWindowDays
-		dataType: int64
-		formatString: 0
-		lineageTag: e6f66dd7-1f26-4752-8887-47a47184c3e3
-		summarizeBy: sum
-		sourceColumn: ReturnWindowDays
-
-		annotation SummarizationSetBy = Automatic
-
-	column SupplierKey
-		dataType: int64
-		formatString: 0
-		lineageTag: ed30be91-9786-49a1-a330-be9ca19e5af6
-		summarizeBy: count
-		sourceColumn: SupplierKey
+		sourceColumn: Source
 
 		annotation SummarizationSetBy = Automatic
 
 	partition Products = m
 		mode: import
-		queryGroup: Dimensions
+		queryGroup: Dimensions\Products
 		source =
 				let
-				    Source = FxReadParquetFile ( "dimensions\products" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        { { "UnitCost", Currency.Type }, { "UnitPrice", Currency.Type } }
-				    )
+				    Source = FxReadParquetFile ( "dimensions\products" )
 				in
-				    ChangedType
-
-	changedProperty = IsHidden
-
-	annotation PBI_NavigationStepName = Navigation
+				    Source
 
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

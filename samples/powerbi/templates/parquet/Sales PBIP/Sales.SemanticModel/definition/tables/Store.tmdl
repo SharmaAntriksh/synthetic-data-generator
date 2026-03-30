@@ -126,10 +126,10 @@ table Store
 		annotation PBI_FormatHint = {"isCustom":true}
 
 	column OpenFlag
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 939902b3-b81d-4a59-a569-176806a642c7
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: OpenFlag
 
 		annotation SummarizationSetBy = Automatic

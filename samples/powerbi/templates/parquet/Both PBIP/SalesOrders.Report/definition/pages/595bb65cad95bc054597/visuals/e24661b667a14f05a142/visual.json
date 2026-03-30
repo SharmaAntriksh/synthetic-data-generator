@@ -3,10 +3,10 @@
   "name": "e24661b667a14f05a142",
   "position": {
     "x": 0,
-    "y": 9.8490475299901146,
+    "y": 10.390957521774672,
     "z": 0,
-    "height": 694.90502017152471,
-    "width": 959.73496486681449,
+    "height": 693.88505228739746,
+    "width": 969.82270203230269,
     "tabOrder": 0
   },
   "visual": {
@@ -57,11 +57,25 @@
                       "Entity": "MeasureTable"
                     }
                   },
-                  "Property": "# Customers"
+                  "Property": "Sales Amount"
                 }
               },
-              "queryRef": "MeasureTable.# Customers",
-              "nativeQueryRef": "# Customers1"
+              "queryRef": "MeasureTable.Sales Amount",
+              "nativeQueryRef": "Sales Amount"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "MeasureTable"
+                    }
+                  },
+                  "Property": "Cost Amount"
+                }
+              },
+              "queryRef": "MeasureTable.Cost Amount",
+              "nativeQueryRef": "Cost Amount"
             },
             {
               "field": {
@@ -85,10 +99,10 @@
                       "Entity": "MeasureTable"
                     }
                   },
-                  "Property": "# Customers (SOH)"
+                  "Property": "# Customers"
                 }
               },
-              "queryRef": "Sales.# Customers",
+              "queryRef": "MeasureTable.# Customers",
               "nativeQueryRef": "# Customers"
             },
             {
@@ -99,11 +113,11 @@
                       "Entity": "MeasureTable"
                     }
                   },
-                  "Property": "Profit Amount (SOD)"
+                  "Property": "Transactions"
                 }
               },
-              "queryRef": "MeasureTable.Profit Amount (SOD)",
-              "nativeQueryRef": "Profit Amount (SOD)"
+              "queryRef": "MeasureTable.Transactions",
+              "nativeQueryRef": "Transactions"
             }
           ]
         }

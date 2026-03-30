@@ -90,7 +90,7 @@ table ExchangeRateMonthly
 
 	partition ExchangeRateMonthly = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\ExchangeRates
 		source =
 				let
 				    Source = FxReadParquetFile ( "dimensions\exchange_rates_monthly" )

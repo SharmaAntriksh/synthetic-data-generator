@@ -162,10 +162,11 @@ table SalesChannel
 		queryGroup: Dimensions
 		source =
 				let
-				    Source     = FxReadParquetFile ( "dimensions\sales_channels" ),
-				    ChangeType = Table.TransformColumnTypes ( Source, { { "SalesChannelKey", Int64.Type } } )
+				    Source     = FxReadParquetFile ( "dimensions\sales_channels" )
 				in
-				    ChangeType
+				    Source
 
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.5.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
   "name": "242b6ff16ee889c3dd05",
   "position": {
     "x": 1014.4925377105004,
@@ -81,21 +81,14 @@
                           [
                             {
                               "Literal": {
-                                "Value": "'Contoso'"
+                                "Value": "'Adidas'"
                               }
                             }
                           ],
                           [
                             {
                               "Literal": {
-                                "Value": "'Fabrikam'"
-                              }
-                            }
-                          ],
-                          [
-                            {
-                              "Literal": {
-                                "Value": "'Litware'"
+                                "Value": "'A. Datum'"
                               }
                             }
                           ]

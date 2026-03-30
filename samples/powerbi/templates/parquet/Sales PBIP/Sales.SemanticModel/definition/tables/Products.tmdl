@@ -55,10 +55,10 @@ table Products
 		annotation PBI_FormatHint = {"isCustom":true}
 
 	column IsCurrent
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: c49a81c0-de6c-43f8-b360-ee5a6e3bbcec
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsCurrent
 
 		annotation SummarizationSetBy = Automatic

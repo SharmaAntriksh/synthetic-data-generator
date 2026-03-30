@@ -1,49 +1,41 @@
 table ProductCategory
-	lineageTag: 9e8dfa4d-bbb6-4266-8032-8525a6ffab55
+	lineageTag: 7b1cb4a4-f96d-4901-beb0-4d35535c4660
 
 	column CategoryKey
 		dataType: int64
 		formatString: 0
-		lineageTag: af011566-9475-4ca8-a0e7-04588a8cf00c
+		lineageTag: e65a2755-b556-4ccd-91cd-1aac9b4d0bce
 		summarizeBy: count
 		sourceColumn: CategoryKey
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column Category
 		dataType: string
-		lineageTag: fe316b83-bf3c-40a5-987a-67a17e514cf2
+		lineageTag: 3ef5ee62-4816-4b91-9eaa-b0ffb07b386c
 		summarizeBy: none
 		sourceColumn: Category
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column CategoryLabel
 		dataType: string
-		lineageTag: f8cc84e7-1328-46f7-960a-e474587ae142
+		lineageTag: 81f0153a-0f2b-400f-9141-8fc4664a3322
 		summarizeBy: none
 		sourceColumn: CategoryLabel
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	partition ProductCategory = m
 		mode: import
-		queryGroup: Dimensions
+		queryGroup: Dimensions\Products
 		source =
 				let
 				    Source = FxReadParquetFile ( "dimensions\product_category" )
 				in
 				    Source
 
-	changedProperty = IsHidden
+	annotation PBI_ResultType = Table
 
 	annotation PBI_NavigationStepName = Navigation
-
-	annotation PBI_ResultType = Table
 

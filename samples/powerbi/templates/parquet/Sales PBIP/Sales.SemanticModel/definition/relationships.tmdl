@@ -103,12 +103,6 @@ relationship cc74a95f-0adc-cfeb-7f54-75e4c54f4e8e
 	fromColumn: Products.ProductKey
 	toColumn: ProductProfile.ProductKey
 
-relationship 439658a6-7c5b-c238-8249-664035edc06f
-	crossFilteringBehavior: bothDirections
-	fromCardinality: one
-	fromColumn: OrganizationProfile.CustomerKey
-	toColumn: CustomerProfile.CustomerKey
-
 relationship aff64d2e-2f06-ed79-90ff-21bcb57ae704
 	crossFilteringBehavior: bothDirections
 	fromCardinality: one
@@ -146,4 +140,14 @@ relationship c5b99b63-d83b-0479-a4a2-a3ad7f65ae73
 relationship 89fc9272-3b96-94e2-2786-9c9437c3aee1
 	fromColumn: ProductProfile.SupplierKey
 	toColumn: Supplier.SupplierKey
+
+relationship 77b02a06-070d-5f4a-0784-e5438a4487e7
+	fromColumn: Complaints.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship c9a54d6e-a297-70f5-09fa-cee958f192b0
+	crossFilteringBehavior: bothDirections
+	fromCardinality: one
+	fromColumn: CustomerProfile.CustomerKey
+	toColumn: Customer.CustomerKey
 

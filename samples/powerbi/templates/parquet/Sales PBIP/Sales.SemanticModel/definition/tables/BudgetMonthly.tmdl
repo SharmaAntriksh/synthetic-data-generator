@@ -75,7 +75,7 @@ table BudgetMonthly
 
 	partition BudgetMonthly = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\Budget
 		source =
 				let
 				    Source      = FxReadParquetFile ( "facts\budget_monthly" )
@@ -83,4 +83,6 @@ table BudgetMonthly
 				    Source
 
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

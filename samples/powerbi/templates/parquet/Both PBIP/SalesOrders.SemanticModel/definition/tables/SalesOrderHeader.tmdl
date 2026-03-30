@@ -1,79 +1,46 @@
 table SalesOrderHeader
-	isHidden
-	lineageTag: d0dfbf95-fd25-406d-8448-39d00c0572d6
+	lineageTag: 5eef46cf-46bc-42a2-bd57-f3576ed2f418
 
 	column SalesOrderNumber
 		dataType: int64
-		isHidden
 		formatString: 0
-		lineageTag: f17d5347-259c-4ea8-b3dc-4d2b48560f58
+		lineageTag: ea91cc9f-88ab-4172-874a-c1783cc1e60d
 		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column CustomerKey
 		dataType: int64
-		isHidden
 		formatString: 0
-		lineageTag: da63cb2e-08d8-4c46-a8a4-10e89d95b9f3
+		lineageTag: a5c4d6b4-070a-46f7-8680-1796dbea0044
 		summarizeBy: count
 		sourceColumn: CustomerKey
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-	column OrderDate
-		dataType: dateTime
-		isHidden
-		formatString: Short Date
-		lineageTag: 54f5f09c-2bf8-43cb-92cb-75c72ed4c6be
-		summarizeBy: none
-		sourceColumn: OrderDate
-
-		changedProperty = IsHidden
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-	column IsOrderDelayed
-		dataType: int64
-		isHidden
-		formatString: 0
-		lineageTag: a9c0c2c4-9ff2-4f61-aab2-911d995947be
-		summarizeBy: sum
-		sourceColumn: IsOrderDelayed
-
-		changedProperty = IsHidden
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 31f91d16-dc4c-4237-9421-4fae9d2cfe7a
+		lineageTag: 97744af9-91c7-4809-8423-51578ad34023
 		summarizeBy: count
 		sourceColumn: StoreKey
 
 		annotation SummarizationSetBy = Automatic
 
-	column SalesPersonEmployeeKey
+	column EmployeeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 38218133-6f21-4368-8502-9dee4098e926
+		lineageTag: 58d9f62c-6345-4b1c-961e-89605cdfdc64
 		summarizeBy: count
-		sourceColumn: SalesPersonEmployeeKey
+		sourceColumn: EmployeeKey
 
 		annotation SummarizationSetBy = Automatic
 
 	column PromotionKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 884d1910-8823-4b37-bdf7-a94f6fc5804c
+		lineageTag: bbb79dd5-60a4-4c97-95b6-c2cc215f39e6
 		summarizeBy: count
 		sourceColumn: PromotionKey
 
@@ -82,7 +49,7 @@ table SalesOrderHeader
 	column CurrencyKey
 		dataType: int64
 		formatString: 0
-		lineageTag: af9340e2-d153-4cec-b7a9-d40d2bd9a249
+		lineageTag: caeed81e-dacb-4f22-b868-8e0537953c55
 		summarizeBy: count
 		sourceColumn: CurrencyKey
 
@@ -91,39 +58,51 @@ table SalesOrderHeader
 	column SalesChannelKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 0e066b37-1d3b-4325-8160-90b04f800168
+		lineageTag: d60cf49d-18df-487e-902d-82e1fa06b828
 		summarizeBy: count
 		sourceColumn: SalesChannelKey
 
 		annotation SummarizationSetBy = Automatic
 
+	column OrderDate
+		dataType: dateTime
+		formatString: yyyy-mm-dd
+		lineageTag: 4b033688-1447-4388-b3dc-6ac36aa42519
+		summarizeBy: none
+		sourceColumn: OrderDate
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation UnderlyingDateTimeDataType = Date
+
+		annotation PBI_FormatHint = {"isCustom":true}
+
 	column TimeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 8fd9ba76-bf51-4d00-9c77-f60b697a4578
+		lineageTag: d27ca368-6ae7-42cb-8b6a-00a8411f67f7
 		summarizeBy: count
 		sourceColumn: TimeKey
 
 		annotation SummarizationSetBy = Automatic
 
+	column IsOrderDelayed
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
+		lineageTag: bf2a4ad4-d6f3-497f-82f9-508588b88d7b
+		summarizeBy: none
+		sourceColumn: IsOrderDelayed
+
+		annotation SummarizationSetBy = Automatic
+
 	partition SalesOrderHeader = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\Sales
 		source =
 				let
-				    Source = FxReadParquetFile ( "facts\sales_order_header" ),
-				    ChangedType = Table.TransformColumnTypes (
-				        Source,
-				        {
-				            { "SalesChannelKey", Int64.Type },
-				            { "TimeKey", Int64.Type },
-				            { "IsOrderDelayed", Int64.Type }
-				        }
-				    )
+				    Source = FxReadParquetFile ( "facts\sales_order_header" )
 				in
-				    ChangedType
-
-	changedProperty = IsHidden
+				    Source
 
 	annotation PBI_NavigationStepName = Navigation
 

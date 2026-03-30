@@ -70,7 +70,7 @@ table Wishlist
 
 	partition Wishlist = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\SecondaryFacts
 		source =
 				let
 				    Source      = FxReadParquetFile ( "facts\customer_wishlists" )
@@ -78,4 +78,6 @@ table Wishlist
 				    Source
 
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

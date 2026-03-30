@@ -38,21 +38,16 @@ relationship 1effc57e-80e3-4924-a2ef-69b3c0b1f054
 
 relationship 6c4808ed-7393-4823-92bf-f821fff411b5
 	fromColumn: Wishlist.CustomerKey
-	toColumn: CustomerProfile.CustomerKey
+	toColumn: Customer.CustomerKey
 
 relationship c7ab0227-4aba-4a4f-9232-dd6842f222a4
+	isActive: false
 	fromColumn: Store.GeographyKey
 	toColumn: Geography.GeographyKey
 
 relationship ac05c826-9a5b-4adb-bf75-c2b1ce8d8454
-	crossFilteringBehavior: bothDirections
-	fromCardinality: one
 	fromColumn: Warehouse.GeographyKey
 	toColumn: Geography.GeographyKey
-
-relationship cdedc67a-f519-4f80-a513-77b97c7b8c68
-	fromColumn: Customer.CustomerAcquisitionChannelKey
-	toColumn: AcquisitionChannel.CustomerAcquisitionChannelKey
 
 relationship f55b7859-c342-472a-bd8e-0cc880a43201
 	fromColumn: PlanSubscription.PlanKey
@@ -134,17 +129,35 @@ relationship 210cb20d-5ade-d808-966e-915e70b73861
 	fromColumn: ExchangeRateMonthly.FromCurrencyKey
 	toColumn: Currency.CurrencyKey
 
-relationship bcfd37d9-44b5-9759-5a62-162e303eaffc
-	crossFilteringBehavior: bothDirections
-	fromCardinality: one
-	fromColumn: CustomerProfile.CustomerKey
-	toColumn: Customer.CustomerKey
-
-relationship a6d2b30c-613f-dfc3-4a69-9269d4158e8c
-	fromColumn: SalesOrderHeader.CustomerKey
-	toColumn: Customer.CustomerKey
-
 relationship b73a3b27-2cb2-1b7a-4fa9-59e59e8420ca
 	fromColumn: Complaints.CustomerKey
 	toColumn: Customer.CustomerKey
+
+relationship 4908b1c3-abad-64d3-5307-0f2ca9361f3b
+	crossFilteringBehavior: bothDirections
+	fromCardinality: one
+	fromColumn: OrganizationProfile.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship 11b80c16-9ab3-d621-509e-b52a4ba06190
+	crossFilteringBehavior: bothDirections
+	fromCardinality: one
+	fromColumn: Customer.CustomerKey
+	toColumn: CustomerProfile.CustomerKey
+
+relationship 5bb6bbb1-3342-f463-937c-690a6e718707
+	fromColumn: SalesOrderHeader.CustomerKey
+	toColumn: Customer.CustomerKey
+
+relationship c6ff77d9-c8ac-c9cd-a971-1e6a9b37417c
+	fromColumn: Customer.GeographyKey
+	toColumn: Geography.GeographyKey
+
+relationship 2e85418b-b886-a44a-f9e0-942eefb80c7d
+	fromColumn: Customer.CustomerAcquisitionChannelKey
+	toColumn: AcquisitionChannel.CustomerAcquisitionChannelKey
+
+relationship 78e74df0-974e-7b48-fd62-3c3d658378fb
+	fromColumn: Customer.LoyaltyTierKey
+	toColumn: LoyaltyTiers.LoyaltyTierKey
 

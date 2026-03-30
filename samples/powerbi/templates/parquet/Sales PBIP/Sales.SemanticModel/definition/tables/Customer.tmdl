@@ -55,10 +55,10 @@ table Customer
 		annotation PBI_FormatHint = {"isCustom":true}
 
 	column IsCurrent
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 6ce8f591-f371-44d9-b038-84850781c736
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsCurrent
 
 		annotation SummarizationSetBy = Automatic
@@ -285,10 +285,9 @@ table Customer
 		queryGroup: Dimensions\Customer
 		source =
 				let
-				    Source = FxReadParquetFile ( "dimensions\customers" ),
-				    #"Filtered Rows" = Table.SelectRows(Source, each ([NumberOfChildren] = null))
+				    Source = FxReadParquetFile ( "dimensions\customers" )
 				in
-				    #"Filtered Rows"
+				    Source
 
 	annotation PBI_NavigationStepName = Navigation
 

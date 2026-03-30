@@ -572,7 +572,7 @@
         }
       ],
       "name": "Sales",
-      "zoomValue": 70.955543900968848,
+      "zoomValue": 63.287087723234059,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,
@@ -775,8 +775,8 @@
       "nodes": [
         {
           "location": {
-            "x": 683.75518069650013,
-            "y": 315.043343968881
+            "x": 0,
+            "y": 557.67290327048113
           },
           "nodeIndex": "OrganizationProfile",
           "nodeLineageTag": "ada48175-67bb-4857-a514-cc70000146e5",
@@ -788,7 +788,7 @@
         },
         {
           "location": {
-            "x": 967.39213044259986,
+            "x": 987.50446233199887,
             "y": 0
           },
           "nodeIndex": "CustomerProfile",
@@ -851,10 +851,23 @@
             "width": 234
           },
           "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 723.40526338531754,
+            "y": 409.05226638812195
+          },
+          "nodeIndex": "Complaints",
+          "nodeLineageTag": "565e8a4a-59cc-474a-83e0-30489c52ac17",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 0
         }
       ],
       "name": "Customers",
-      "zoomValue": 79.553182037699813,
+      "zoomValue": 63.287087723234038,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,
@@ -1010,6 +1023,6 @@
       "tablesLocked": false
     }
   ],
-  "selectedDiagram": "ExchangeRates",
+  "selectedDiagram": "Customers",
   "defaultDiagram": "All tables"
 }

@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.5.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
   "name": "5297a18b86b04e8a5172",
   "position": {
     "x": 0,
@@ -57,11 +57,11 @@
                       "Entity": "MeasureTable"
                     }
                   },
-                  "Property": "Sales Amount (SOD)"
+                  "Property": "Sales Amount"
                 }
               },
               "queryRef": "Sales.Sales Amount",
-              "nativeQueryRef": "Sales Amount (SOD)"
+              "nativeQueryRef": "Sales Amount"
             },
             {
               "field": {
@@ -71,11 +71,11 @@
                       "Entity": "MeasureTable"
                     }
                   },
-                  "Property": "Sales Amount"
+                  "Property": "Cost Amount"
                 }
               },
-              "queryRef": "Sales.Sales Amount Wide",
-              "nativeQueryRef": "Sales Amount"
+              "queryRef": "MeasureTable.Cost Amount",
+              "nativeQueryRef": "Cost Amount"
             },
             {
               "field": {
@@ -88,7 +88,7 @@
                   "Property": "Profit Amount"
                 }
               },
-              "queryRef": "MeasureTable.Profit Amount",
+              "queryRef": "MeasureTable.Profit Amount (SOD)",
               "nativeQueryRef": "Profit Amount"
             },
             {
@@ -99,11 +99,25 @@
                       "Entity": "MeasureTable"
                     }
                   },
-                  "Property": "Profit Amount (SOD)"
+                  "Property": "# Customers"
                 }
               },
-              "queryRef": "MeasureTable.Profit Amount (SOD)",
-              "nativeQueryRef": "Profit Amount (SOD)"
+              "queryRef": "MeasureTable.# Customers",
+              "nativeQueryRef": "# Customers"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "MeasureTable"
+                    }
+                  },
+                  "Property": "Transactions"
+                }
+              },
+              "queryRef": "MeasureTable.Transactions",
+              "nativeQueryRef": "Transactions"
             }
           ]
         }
@@ -160,79 +174,5 @@
       ]
     },
     "drillFilterOtherVisuals": true
-  },
-  "filterConfig": {
-    "filters": [
-      {
-        "name": "82985d12b5183f2e47de",
-        "field": {
-          "Column": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "Dates"
-              }
-            },
-            "Property": "Year"
-          }
-        },
-        "type": "Advanced"
-      },
-      {
-        "name": "5f7219da3acc36433f5f",
-        "field": {
-          "Column": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "Dates"
-              }
-            },
-            "Property": "Month"
-          }
-        },
-        "type": "Advanced"
-      },
-      {
-        "name": "1f436f231e5f78e845c1",
-        "field": {
-          "Measure": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "MeasureTable"
-              }
-            },
-            "Property": "Sales Amount (SOD)"
-          }
-        },
-        "type": "Advanced"
-      },
-      {
-        "name": "200ddd8bd00f9feb9a11",
-        "field": {
-          "Measure": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "MeasureTable"
-              }
-            },
-            "Property": "Sales Amount"
-          }
-        },
-        "type": "Advanced"
-      },
-      {
-        "name": "606a777b01f25d135cae",
-        "field": {
-          "Measure": {
-            "Expression": {
-              "SourceRef": {
-                "Entity": "MeasureTable"
-              }
-            },
-            "Property": "Profit Amount"
-          }
-        },
-        "type": "Advanced"
-      }
-    ]
   }
 }

@@ -123,10 +123,10 @@ table Employee
 		annotation SummarizationSetBy = Automatic
 
 	column IsActive
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 06130675-3a9d-482f-b5e8-90b9350e327b
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsActive
 
 		annotation SummarizationSetBy = Automatic
@@ -235,10 +235,10 @@ table Employee
 		annotation SummarizationSetBy = Automatic
 
 	column SalariedFlag
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 0943fee2-3942-454b-8fc7-05aaec31baca
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: SalariedFlag
 
 		annotation SummarizationSetBy = Automatic
@@ -280,10 +280,10 @@ table Employee
 		annotation SummarizationSetBy = Automatic
 
 	column SalesPersonFlag
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: b3ec8d5a-7747-46f7-bb4f-5d70876d6093
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: SalesPersonFlag
 
 		annotation SummarizationSetBy = Automatic

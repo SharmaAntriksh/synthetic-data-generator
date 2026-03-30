@@ -1,12 +1,12 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.5.0/schema.json",
-  "name": "22e996906dda26592d04",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
+  "name": "bee822210888548b059e",
   "position": {
-    "x": 0,
-    "y": 93.449767917551725,
+    "x": 27.342188141859509,
+    "y": 143.02067643434205,
     "z": 0,
-    "height": 374.87320693362705,
-    "width": 1015.0578239320273,
+    "height": 265.00890045186907,
+    "width": 836.03998356839656,
     "tabOrder": 0
   },
   "visual": {
@@ -26,8 +26,22 @@
                   "Property": "StoreKey"
                 }
               },
-              "queryRef": "EmployeesStoreAssignment.StoreKey",
+              "queryRef": "EmployeeStoreAssignment.StoreKey",
               "nativeQueryRef": "StoreKey"
+            },
+            {
+              "field": {
+                "Column": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "EmployeeStoreAssignment"
+                    }
+                  },
+                  "Property": "EmployeeKey"
+                }
+              },
+              "queryRef": "EmployeeStoreAssignment.EmployeeKey",
+              "nativeQueryRef": "EmployeeKey"
             },
             {
               "field": {
@@ -40,7 +54,7 @@
                   "Property": "AssignmentSequence"
                 }
               },
-              "queryRef": "EmployeesStoreAssignment.AssignmentSequence",
+              "queryRef": "EmployeeStoreAssignment.AssignmentSequence",
               "nativeQueryRef": "Seq",
               "displayName": "Seq"
             },
@@ -55,7 +69,7 @@
                   "Property": "StartDate"
                 }
               },
-              "queryRef": "EmployeesStoreAssignment.StartDate",
+              "queryRef": "EmployeeStoreAssignment.StartDate",
               "nativeQueryRef": "StartDate"
             },
             {
@@ -69,7 +83,7 @@
                   "Property": "EndDate"
                 }
               },
-              "queryRef": "EmployeesStoreAssignment.EndDate",
+              "queryRef": "EmployeeStoreAssignment.EndDate",
               "nativeQueryRef": "EndDate"
             },
             {
@@ -84,7 +98,7 @@
                 }
               },
               "queryRef": "MeasureTable.Employee Sales by Store Assgn.",
-              "nativeQueryRef": "Employee Sales by Store Assgn."
+              "nativeQueryRef": "Employee Sales by Store Assgn.1"
             }
           ]
         }
@@ -108,78 +122,6 @@
       }
     },
     "objects": {
-      "columnWidth": [
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "118.16711964423266D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "EmployeesStoreAssignment.StoreKey"
-          }
-        },
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "81.67616965950077D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "EmployeesStoreAssignment.AssignmentSequence"
-          }
-        },
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "163.7486103795918D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "EmployeesStoreAssignment.StartDate"
-          }
-        },
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "138.0279669771754D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "EmployeesStoreAssignment.EndDate"
-          }
-        },
-        {
-          "properties": {
-            "value": {
-              "expr": {
-                "Literal": {
-                  "Value": "242.98989059629278D"
-                }
-              }
-            }
-          },
-          "selector": {
-            "metadata": "MeasureTable.Employee Sales by Store Assgn."
-          }
-        }
-      ],
       "grid": [
         {
           "properties": {
@@ -190,6 +132,36 @@
                 }
               }
             }
+          }
+        }
+      ],
+      "columnWidth": [
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "189.8380963741684D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "MeasureTable.Employee Sales by Store Assgn."
+          }
+        },
+        {
+          "properties": {
+            "value": {
+              "expr": {
+                "Literal": {
+                  "Value": "79.85167970740409D"
+                }
+              }
+            }
+          },
+          "selector": {
+            "metadata": "EmployeeStoreAssignment.AssignmentSequence"
           }
         }
       ]

@@ -82,10 +82,10 @@ table EmployeeStoreAssignment
 		annotation SummarizationSetBy = Automatic
 
 	column IsPrimary
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 30f3cb85-77cc-4f0c-a70a-deeed32a5e10
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsPrimary
 
 		annotation SummarizationSetBy = Automatic

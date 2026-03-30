@@ -1,10 +1,10 @@
 table ReturnReason
-	lineageTag: c60843a1-5d3a-45b2-867e-7f664fff32a0
+	lineageTag: 2515a63f-92f2-4f55-85c5-b3856e68e5c6
 
 	column ReturnReasonKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 5bf84513-cce0-4290-b1f3-df32b9e33e47
+		lineageTag: 5adbee91-ab03-4b44-962b-317732c66f45
 		summarizeBy: count
 		sourceColumn: ReturnReasonKey
 
@@ -12,7 +12,7 @@ table ReturnReason
 
 	column ReturnReason
 		dataType: string
-		lineageTag: 8166aee8-2ec8-4873-b62c-333375fa46fb
+		lineageTag: 8cb29902-6c51-4c42-be94-39eec16784cd
 		summarizeBy: none
 		sourceColumn: ReturnReason
 
@@ -20,7 +20,7 @@ table ReturnReason
 
 	column ReturnReasonCategory
 		dataType: string
-		lineageTag: 93fe5324-6533-432e-a354-a3b37232bb85
+		lineageTag: dbbbd7f3-8e8b-4c4d-8d34-21861debe264
 		summarizeBy: none
 		sourceColumn: ReturnReasonCategory
 
@@ -35,7 +35,7 @@ table ReturnReason
 				in
 				    Source
 
-	annotation PBI_NavigationStepName = Navigation
-
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

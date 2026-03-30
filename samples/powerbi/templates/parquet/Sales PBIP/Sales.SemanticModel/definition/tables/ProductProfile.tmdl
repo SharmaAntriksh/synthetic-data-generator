@@ -117,19 +117,19 @@ table ProductProfile
 		annotation SummarizationSetBy = Automatic
 
 	column IsFragile
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 92a37d5d-1233-4177-9468-d4f207ed8a53
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsFragile
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsHazmat
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 48ca1a2d-bd62-427d-8929-2b600351c808
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsHazmat
 
 		annotation SummarizationSetBy = Automatic
@@ -169,37 +169,37 @@ table ProductProfile
 		annotation SummarizationSetBy = Automatic
 
 	column EligibleStore
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 9d26b56d-8a98-497e-9e34-3bd30285abb6
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: EligibleStore
 
 		annotation SummarizationSetBy = Automatic
 
 	column EligibleOnline
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 84a93bf4-63d6-4433-bb4f-e21aa7ea1b16
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: EligibleOnline
 
 		annotation SummarizationSetBy = Automatic
 
 	column EligibleMarketplace
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: dddba949-7157-4048-85a4-e2e16750469b
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: EligibleMarketplace
 
 		annotation SummarizationSetBy = Automatic
 
 	column EligibleB2B
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 72e98953-6b88-4443-a0c1-cc4d7882c755
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: EligibleB2B
 
 		annotation SummarizationSetBy = Automatic
@@ -268,7 +268,8 @@ table ProductProfile
 		annotation SummarizationSetBy = Automatic
 
 	column AssemblyRequired
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: ce314b0b-45e0-4bdc-a28f-bd3c3e00d7f5
 		summarizeBy: none
 		sourceColumn: AssemblyRequired
@@ -356,7 +357,8 @@ table ProductProfile
 		annotation SummarizationSetBy = Automatic
 
 	column IsGiftEligible
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 7ed095ba-4b46-4e65-90c1-d8b7ed7cf1bb
 		summarizeBy: none
 		sourceColumn: IsGiftEligible
@@ -364,7 +366,8 @@ table ProductProfile
 		annotation SummarizationSetBy = Automatic
 
 	column IsBestseller
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: a3f2fa32-11f0-432f-8d86-d3f174b0cfbb
 		summarizeBy: none
 		sourceColumn: IsBestseller
@@ -372,7 +375,8 @@ table ProductProfile
 		annotation SummarizationSetBy = Automatic
 
 	column IsEcoFriendly
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 7ea2be14-cef9-4f4a-8016-7e79887760cc
 		summarizeBy: none
 		sourceColumn: IsEcoFriendly

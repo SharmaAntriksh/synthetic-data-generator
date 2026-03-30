@@ -1,34 +1,45 @@
 table Currency
-	lineageTag: 6abe0bfa-86b5-4aa4-b99e-18a7cdc2214d
+	lineageTag: 863bcd5a-0562-4905-aea6-302f439d2aff
 
 	column CurrencyKey
 		dataType: int64
 		formatString: 0
-		lineageTag: 05d148a7-8f50-4672-af86-2acd1915bde8
+		lineageTag: 59316051-24df-4dbf-b61b-6082cef8321f
 		summarizeBy: count
 		sourceColumn: CurrencyKey
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencyCode
+		dataType: string
+		lineageTag: e1506ca7-a627-4739-841f-71f0c60d7241
+		summarizeBy: none
+		sourceColumn: CurrencyCode
 
 		annotation SummarizationSetBy = Automatic
 
 	column CurrencyName
 		dataType: string
-		lineageTag: 6a1b6312-51a5-48d6-8ce5-01e59ef35ba2
+		lineageTag: b685d3db-ac79-40a2-a5c3-2451a0f0867a
 		summarizeBy: none
 		sourceColumn: CurrencyName
 
-		changedProperty = IsHidden
+		annotation SummarizationSetBy = Automatic
+
+	column CurrencySymbol
+		dataType: string
+		lineageTag: c810b765-541a-41ec-9ef6-c695f5ec64af
+		summarizeBy: none
+		sourceColumn: CurrencySymbol
 
 		annotation SummarizationSetBy = Automatic
 
-	column ToCurrency
-		dataType: string
-		lineageTag: 4a9fc9fe-b8b2-4780-aa06-5378ebc3ec5d
-		summarizeBy: none
-		sourceColumn: ToCurrency
-
-		changedProperty = IsHidden
+	column DecimalPlaces
+		dataType: int64
+		formatString: 0
+		lineageTag: 027c9253-50f8-47cc-aaf0-060ab5754263
+		summarizeBy: sum
+		sourceColumn: DecimalPlaces
 
 		annotation SummarizationSetBy = Automatic
 
@@ -41,9 +52,7 @@ table Currency
 				in
 				    Source
 
-	changedProperty = IsHidden
+	annotation PBI_ResultType = Table
 
 	annotation PBI_NavigationStepName = Navigation
-
-	annotation PBI_ResultType = Table
 

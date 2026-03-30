@@ -27,6 +27,22 @@ queryGroup Dimensions\Customer
 
 	annotation PBI_QueryGroupOrder = 1
 
+queryGroup Fact\Sales
+
+	annotation PBI_QueryGroupOrder = 0
+
+queryGroup Fact\ExchangeRates
+
+	annotation PBI_QueryGroupOrder = 1
+
+queryGroup Fact\Budget
+
+	annotation PBI_QueryGroupOrder = 2
+
+queryGroup Fact\SecondaryFacts
+
+	annotation PBI_QueryGroupOrder = 3
+
 annotation __PBI_TimeIntelligenceEnabled = 0
 
 annotation PBI_QueryOrder = ["ContosoFolder","FxReadParquetFile","Products","ProductSubcategory","ProductCategory","Supplier","ProductProfile","Customer","PlanSubscription","Plan","CustomerProfile","OrganizationProfile","LoyaltyTiers","AcquisitionChannel","Dates","Store","Promotion","Geography","Currency","Employee","EmployeeStoreAssignment","ReturnReason","SalesChannel","Time","Warehouse","ExchangeRate","ExchangeRateMonthly","SalesOrderHeader","SalesOrderDetail","SalesReturn","Budget","BudgetMonthly","Inventory","Wishlist","Complaints","MeasureTable"]
@@ -67,7 +83,6 @@ ref table Inventory
 ref table Wishlist
 ref table Complaints
 ref table MeasureTable
-ref table Table
 
 ref cultureInfo en-US
 

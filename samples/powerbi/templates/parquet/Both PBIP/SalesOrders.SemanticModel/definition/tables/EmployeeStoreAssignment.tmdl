@@ -1,19 +1,37 @@
 table EmployeeStoreAssignment
-	lineageTag: cfd3a49d-1a68-4509-bdcd-37ddd4d834e0
+	lineageTag: a00ec41d-ba00-4c51-98b3-45f828eecebf
+
+	column AssignmentKey
+		dataType: int64
+		formatString: 0
+		lineageTag: 2c754cd3-ab14-40cc-8a3f-137a61adebc1
+		summarizeBy: count
+		sourceColumn: AssignmentKey
+
+		annotation SummarizationSetBy = Automatic
 
 	column EmployeeKey
 		dataType: int64
 		formatString: 0
-		lineageTag: b1c7f62c-0ac6-4d0f-af5d-3f19a902a059
+		lineageTag: 69fe4ef8-7bc8-4f94-82d2-217fb40a6e61
 		summarizeBy: count
 		sourceColumn: EmployeeKey
+
+		annotation SummarizationSetBy = Automatic
+
+	column AssignmentSequence
+		dataType: int64
+		formatString: 0
+		lineageTag: 31f893ac-6cfb-429d-b864-8404f72ec322
+		summarizeBy: sum
+		sourceColumn: AssignmentSequence
 
 		annotation SummarizationSetBy = Automatic
 
 	column StoreKey
 		dataType: int64
 		formatString: 0
-		lineageTag: b730092b-7a4d-4a4c-a86c-9d38ce127597
+		lineageTag: e4db44c5-4559-40da-99ed-282ecdf64676
 		summarizeBy: count
 		sourceColumn: StoreKey
 
@@ -22,7 +40,7 @@ table EmployeeStoreAssignment
 	column StartDate
 		dataType: dateTime
 		formatString: yyyy-mm-dd
-		lineageTag: 7e328bd2-6b1b-4860-b4db-64b50b3efbae
+		lineageTag: e908ddac-adf4-4b07-b5d2-b15b518108c4
 		summarizeBy: none
 		sourceColumn: StartDate
 
@@ -35,7 +53,7 @@ table EmployeeStoreAssignment
 	column EndDate
 		dataType: dateTime
 		formatString: yyyy-mm-dd
-		lineageTag: 1e36edf5-3aeb-4020-bdea-f27fa9ea710f
+		lineageTag: 52aa71b0-f86f-4ea5-ab8c-3631b8af8139
 		summarizeBy: none
 		sourceColumn: EndDate
 
@@ -47,7 +65,7 @@ table EmployeeStoreAssignment
 
 	column FTE
 		dataType: double
-		lineageTag: 9551a545-c11c-4968-91e2-2f7998b31b27
+		lineageTag: 1c995a40-3e03-4048-85d2-a74a3440b649
 		summarizeBy: sum
 		sourceColumn: FTE
 
@@ -57,7 +75,7 @@ table EmployeeStoreAssignment
 
 	column RoleAtStore
 		dataType: string
-		lineageTag: 5aad777c-d87f-4ed8-a6e4-a7eca48f0dcf
+		lineageTag: d10cf64e-e408-40dc-bb8d-a09b329954e7
 		summarizeBy: none
 		sourceColumn: RoleAtStore
 
@@ -66,18 +84,25 @@ table EmployeeStoreAssignment
 	column IsPrimary
 		dataType: boolean
 		formatString: """TRUE"";""TRUE"";""FALSE"""
-		lineageTag: 689b494f-1348-4314-9d93-1af0cad87817
+		lineageTag: 1552cffa-79b8-425b-9dc2-400a3fc9a748
 		summarizeBy: none
 		sourceColumn: IsPrimary
 
 		annotation SummarizationSetBy = Automatic
 
-	column AssignmentSequence
-		dataType: int64
-		formatString: 0
-		lineageTag: 4c72f374-1ab5-4302-8d51-65437b36d3fa
-		summarizeBy: sum
-		sourceColumn: AssignmentSequence
+	column TransferReason
+		dataType: string
+		lineageTag: 88eb4bfd-88c6-413a-acb5-425cdd938165
+		summarizeBy: none
+		sourceColumn: TransferReason
+
+		annotation SummarizationSetBy = Automatic
+
+	column Status
+		dataType: string
+		lineageTag: 3f52f976-edb5-4f22-82b8-b5035f45eff0
+		summarizeBy: none
+		sourceColumn: Status
 
 		annotation SummarizationSetBy = Automatic
 
@@ -90,7 +115,7 @@ table EmployeeStoreAssignment
 				in
 				    Source
 
-	annotation PBI_NavigationStepName = Navigation
-
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

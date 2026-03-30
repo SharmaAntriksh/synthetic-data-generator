@@ -1,12 +1,12 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.4.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
   "name": "4d6169b40203a252a206",
   "position": {
-    "x": 1014.4925377105004,
-    "y": 470.7419723855383,
+    "x": 1014.8158291113241,
+    "y": 471.12693413665619,
     "z": 3000,
-    "height": 120.95453457128414,
-    "width": 265.88203995849847,
+    "height": 155.64014788443106,
+    "width": 266.06052307270983,
     "tabOrder": 3000
   },
   "visual": {
@@ -20,13 +20,13 @@
                 "Column": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Customers"
+                      "Entity": "Customer"
                     }
                   },
                   "Property": "Gender"
                 }
               },
-              "queryRef": "Customers.Gender",
+              "queryRef": "Customer.Gender",
               "nativeQueryRef": "Gender",
               "active": true
             }
@@ -57,7 +57,7 @@
                 "From": [
                   {
                     "Name": "c",
-                    "Entity": "Customers",
+                    "Entity": "Customer",
                     "Type": 0
                   }
                 ],
@@ -81,7 +81,7 @@
                           [
                             {
                               "Literal": {
-                                "Value": "'Male'"
+                                "Value": "'Female'"
                               }
                             }
                           ]
@@ -97,5 +97,23 @@
       ]
     },
     "drillFilterOtherVisuals": true
+  },
+  "filterConfig": {
+    "filters": [
+      {
+        "name": "a76fe0fb8e2798689b40",
+        "field": {
+          "Column": {
+            "Expression": {
+              "SourceRef": {
+                "Entity": "Customer"
+              }
+            },
+            "Property": "Gender"
+          }
+        },
+        "type": "Categorical"
+      }
+    ]
   }
 }

@@ -232,127 +232,131 @@ table Dates
 		annotation SummarizationSetBy = Automatic
 
 	column IsWeekend
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: c8772435-44a4-4804-8366-f1493d9db84a
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsWeekend
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsBusinessDay
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 82290672-05cb-40e3-94e6-770e773e3fd7
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsBusinessDay
 
 		annotation SummarizationSetBy = Automatic
 
 	column NextBusinessDay
 		dataType: dateTime
-		formatString: General Date
+		formatString: Long Date
 		lineageTag: 47bd6e2a-da34-493c-8bac-729c3d53257e
 		summarizeBy: none
 		sourceColumn: NextBusinessDay
 
 		annotation SummarizationSetBy = Automatic
 
+		annotation UnderlyingDateTimeDataType = Date
+
 	column PreviousBusinessDay
 		dataType: dateTime
-		formatString: General Date
+		formatString: Long Date
 		lineageTag: f4bddf5c-853e-4bf1-89c8-4be499fbd220
 		summarizeBy: none
 		sourceColumn: PreviousBusinessDay
 
 		annotation SummarizationSetBy = Automatic
 
+		annotation UnderlyingDateTimeDataType = Date
+
 	column IsYearStart
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: ce50030a-fef2-46b3-8446-8ff01375633b
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsYearStart
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsYearEnd
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 25a28cfa-6935-4dfd-9dd5-fa2844a91295
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsYearEnd
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsQuarterStart
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 40210282-e150-47bc-8c92-41f13aa5918f
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsQuarterStart
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsQuarterEnd
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 8d2217c5-af1c-43a1-b32c-19eca40b8652
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsQuarterEnd
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsMonthStart
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 67a7b864-8109-45ad-97e4-b5d38b224c62
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsMonthStart
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsMonthEnd
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 02a6e343-db21-4f60-b675-f3d6598e2dd5
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsMonthEnd
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsToday
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 1717693d-8add-4fa7-8223-c52c2a43de25
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsToday
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsCurrentYear
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 3c479cd9-f9df-45e6-b164-20d55e1c7314
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsCurrentYear
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsCurrentMonth
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 124891e3-354f-4ca8-ac62-ffb29fbc2fe2
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsCurrentMonth
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsCurrentQuarter
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 95167473-85ca-4758-9ca9-acac78acd881
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsCurrentQuarter
 
 		annotation SummarizationSetBy = Automatic
@@ -393,206 +397,6 @@ table Dates
 
 		annotation SummarizationSetBy = Automatic
 
-	column FiscalYearStartYear
-		dataType: int64
-		formatString: 0
-		lineageTag: 5cd51b6a-6857-40ed-bbd9-a15077a1aec9
-		summarizeBy: sum
-		sourceColumn: FiscalYearStartYear
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalMonthNumber
-		dataType: int64
-		formatString: 0
-		lineageTag: cf3ba6b0-6614-44d1-9eed-d0392f8d4b91
-		summarizeBy: sum
-		sourceColumn: FiscalMonthNumber
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalQuarterNumber
-		dataType: int64
-		formatString: 0
-		lineageTag: 8e6157f4-0c68-45ea-ae8c-e7ea29764734
-		summarizeBy: sum
-		sourceColumn: FiscalQuarterNumber
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalMonthIndex
-		dataType: int64
-		formatString: 0
-		lineageTag: fc2579c2-def5-4ce3-8634-652007487906
-		summarizeBy: sum
-		sourceColumn: FiscalMonthIndex
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalQuarterIndex
-		dataType: int64
-		formatString: 0
-		lineageTag: a910984c-aca9-426d-bf52-273c035fbe76
-		summarizeBy: sum
-		sourceColumn: FiscalQuarterIndex
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalMonthOffset
-		dataType: int64
-		formatString: 0
-		lineageTag: 4aa518d8-cdbc-4ade-8486-375654b6d123
-		summarizeBy: sum
-		sourceColumn: FiscalMonthOffset
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalQuarterOffset
-		dataType: int64
-		formatString: 0
-		lineageTag: b28f9dc5-44b3-4242-8ae7-fc4a22be0554
-		summarizeBy: sum
-		sourceColumn: FiscalQuarterOffset
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalQuarterName
-		dataType: string
-		lineageTag: 11f379bc-b8d3-49bc-808a-db645162d4fa
-		summarizeBy: none
-		sourceColumn: FiscalQuarterName
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalYearBin
-		dataType: string
-		lineageTag: 5dca605c-5363-4e46-a575-cb8a94b9fb9c
-		summarizeBy: none
-		sourceColumn: FiscalYearBin
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalYearStartDate
-		dataType: dateTime
-		formatString: yyyy-mm-dd
-		lineageTag: 4405155e-ef9f-423d-a0a2-269bf641ad59
-		summarizeBy: none
-		sourceColumn: FiscalYearStartDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-		annotation PBI_FormatHint = {"isCustom":true}
-
-	column FiscalYearEndDate
-		dataType: dateTime
-		formatString: yyyy-mm-dd
-		lineageTag: 7e5b205f-9d83-498b-9bfd-13d36135218c
-		summarizeBy: none
-		sourceColumn: FiscalYearEndDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-		annotation PBI_FormatHint = {"isCustom":true}
-
-	column FiscalQuarterStartDate
-		dataType: dateTime
-		formatString: yyyy-mm-dd
-		lineageTag: b59c1eb5-e9da-42f3-983f-dd120189bb75
-		summarizeBy: none
-		sourceColumn: FiscalQuarterStartDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-		annotation PBI_FormatHint = {"isCustom":true}
-
-	column FiscalQuarterEndDate
-		dataType: dateTime
-		formatString: yyyy-mm-dd
-		lineageTag: 79d633c1-3f21-4f8a-b89b-bb47d25529d1
-		summarizeBy: none
-		sourceColumn: FiscalQuarterEndDate
-
-		annotation SummarizationSetBy = Automatic
-
-		annotation UnderlyingDateTimeDataType = Date
-
-		annotation PBI_FormatHint = {"isCustom":true}
-
-	column IsFiscalYearStart
-		dataType: int64
-		formatString: 0
-		lineageTag: 8e680024-9beb-4c9e-a34b-e672f8fe757e
-		summarizeBy: sum
-		sourceColumn: IsFiscalYearStart
-
-		annotation SummarizationSetBy = Automatic
-
-	column IsFiscalYearEnd
-		dataType: int64
-		formatString: 0
-		lineageTag: 3255a78e-ce3f-4045-8876-b1f82405fffe
-		summarizeBy: sum
-		sourceColumn: IsFiscalYearEnd
-
-		annotation SummarizationSetBy = Automatic
-
-	column IsFiscalQuarterStart
-		dataType: int64
-		formatString: 0
-		lineageTag: e24b1cdb-3d34-49fb-bec4-de48e8026ae4
-		summarizeBy: sum
-		sourceColumn: IsFiscalQuarterStart
-
-		annotation SummarizationSetBy = Automatic
-
-	column IsFiscalQuarterEnd
-		dataType: int64
-		formatString: 0
-		lineageTag: 86e63990-cc28-42a5-bc0c-1c671204f102
-		summarizeBy: sum
-		sourceColumn: IsFiscalQuarterEnd
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalYear
-		dataType: int64
-		formatString: 0
-		lineageTag: c9d90636-92e9-4006-8a33-5ee3794b67db
-		summarizeBy: sum
-		sourceColumn: FiscalYear
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalYearLabel
-		dataType: string
-		lineageTag: 00ea2d7f-8017-447d-827a-0a04d4baf6a4
-		summarizeBy: none
-		sourceColumn: FiscalYearLabel
-
-		annotation SummarizationSetBy = Automatic
-
-	column FiscalSystem
-		dataType: string
-		lineageTag: 9d9b891e-4c6b-4bc2-a84a-e347e86ec4cf
-		summarizeBy: none
-		sourceColumn: FiscalSystem
-
-		annotation SummarizationSetBy = Automatic
-
-	column WeeklyFiscalSystem
-		dataType: string
-		lineageTag: ff2e92de-f24d-4879-b9e7-8d985c0d03d3
-		summarizeBy: none
-		sourceColumn: WeeklyFiscalSystem
-
-		annotation SummarizationSetBy = Automatic
-
 	partition Dates = m
 		mode: import
 		queryGroup: Dimensions
@@ -603,4 +407,6 @@ table Dates
 				    Source
 
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

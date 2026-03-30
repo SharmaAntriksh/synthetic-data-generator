@@ -14,7 +14,7 @@ table Complaints
 		dataType: int64
 		formatString: 0
 		lineageTag: 7343ff92-785e-4f21-9b0f-f52f836ca5b3
-		summarizeBy: count
+		summarizeBy: none
 		sourceColumn: CustomerKey
 
 		annotation SummarizationSetBy = Automatic
@@ -122,7 +122,7 @@ table Complaints
 
 	partition Complaints = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\SecondaryFacts
 		source =
 				let
 				    Source      = FxReadParquetFile ( "facts\complaints" )
@@ -130,4 +130,6 @@ table Complaints
 				    Source
 
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

@@ -109,10 +109,10 @@ table Plan
 		annotation SummarizationSetBy = Automatic
 
 	column HasFreeTrial
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 13a7f8c6-2a14-46d3-83c5-26098ecb5216
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: HasFreeTrial
 
 		annotation SummarizationSetBy = Automatic
@@ -131,10 +131,10 @@ table Plan
 		annotation PBI_FormatHint = {"isCustom":true}
 
 	column IsActiveFlag
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 0923231a-6dc9-461d-b966-3e91f15574d8
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsActiveFlag
 
 		annotation SummarizationSetBy = Automatic

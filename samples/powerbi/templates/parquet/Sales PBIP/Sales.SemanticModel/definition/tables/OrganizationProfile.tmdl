@@ -46,7 +46,8 @@ table OrganizationProfile
 		annotation SummarizationSetBy = Automatic
 
 	column IsPubliclyTraded
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 2ede6141-4055-438e-bc73-22838e65b5ef
 		summarizeBy: none
 		sourceColumn: IsPubliclyTraded
@@ -160,7 +161,8 @@ table OrganizationProfile
 		annotation SummarizationSetBy = Automatic
 
 	column HasDedicatedAccountTeam
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: bba129b1-cd50-4dcd-a535-1ad27facb1c7
 		summarizeBy: none
 		sourceColumn: HasDedicatedAccountTeam
@@ -178,7 +180,8 @@ table OrganizationProfile
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column IsStrategicAccount
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 47097c61-9c00-4645-bac1-b4c9b77620e4
 		summarizeBy: none
 		sourceColumn: IsStrategicAccount
@@ -204,7 +207,8 @@ table OrganizationProfile
 		annotation SummarizationSetBy = Automatic
 
 	column HasExclusiveDeal
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: a1992a15-9035-4b83-a946-4073949d7bc9
 		summarizeBy: none
 		sourceColumn: HasExclusiveDeal

@@ -1,13 +1,13 @@
 {
   "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
-  "name": "8ab01e68e481aecf63ef",
+  "name": "a7cbfc828e69e1c7cde8",
   "position": {
-    "x": 1014.1403026134801,
-    "y": 470.61412735658229,
-    "z": 3000,
-    "height": 152.4524637915689,
-    "width": 266.23944763600076,
-    "tabOrder": 3000
+    "x": 993.28367585030969,
+    "y": 127.42947739986239,
+    "z": 2000,
+    "height": 176.44081486134792,
+    "width": 286.71632414969037,
+    "tabOrder": 1000
   },
   "visual": {
     "visualType": "slicer",
@@ -20,14 +20,14 @@
                 "Column": {
                   "Expression": {
                     "SourceRef": {
-                      "Entity": "Customer"
+                      "Entity": "EmployeeStoreAssignment"
                     }
                   },
-                  "Property": "Gender"
+                  "Property": "AssignmentSequence"
                 }
               },
-              "queryRef": "Customer.Gender",
-              "nativeQueryRef": "Gender",
+              "queryRef": "EmployeeStoreAssignment.AssignmentSequence",
+              "nativeQueryRef": "AssignmentSequence",
               "active": true
             }
           ]
@@ -50,7 +50,15 @@
       ],
       "general": [
         {
-          "properties": {}
+          "properties": {
+            "orientation": {
+              "expr": {
+                "Literal": {
+                  "Value": "0D"
+                }
+              }
+            }
+          }
         }
       ]
     },

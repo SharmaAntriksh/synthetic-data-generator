@@ -4,7 +4,7 @@
     {
       "ordinal": 0,
       "scrollPosition": {
-        "x": 1133.5107164036795,
+        "x": 1134.2287816054679,
         "y": 0
       },
       "nodes": [
@@ -456,16 +456,6 @@
             "width": 234
           },
           "zIndex": 0
-        },
-        {
-          "location": {},
-          "nodeIndex": "Table",
-          "nodeLineageTag": "8520b5e2-6bf2-4568-89bf-74578b07eadc",
-          "size": {
-            "height": 200,
-            "width": 234
-          },
-          "zIndex": 0
         }
       ],
       "name": "All tables",
@@ -819,13 +809,13 @@
       "ordinal": 5,
       "scrollPosition": {
         "x": 0,
-        "y": 0
+        "y": 1.6206690163209567
       },
       "nodes": [
         {
           "location": {
-            "x": 255.11110730368216,
-            "y": 560.1623888709322
+            "x": 0,
+            "y": 315.44504173009773
           },
           "nodeIndex": "OrganizationProfile",
           "nodeLineageTag": "7db111d9-3709-453f-8a59-9be2d3d0d438",
@@ -837,8 +827,8 @@
         },
         {
           "location": {
-            "x": 705.93181588041182,
-            "y": 0
+            "x": 0,
+            "y": 658.06746742339556
           },
           "nodeIndex": "CustomerProfile",
           "nodeLineageTag": "e02d81bc-ab02-4df1-a28f-695bd7c941de",
@@ -850,8 +840,8 @@
         },
         {
           "location": {
-            "x": 418.58790744811836,
-            "y": 213.69352632486527
+            "x": 700.76298234886133,
+            "y": 384.49516626763887
           },
           "nodeIndex": "Customer",
           "nodeLineageTag": "dbb05d43-2c7a-4482-bb97-3c7ff62ad985",
@@ -863,8 +853,8 @@
         },
         {
           "location": {
-            "x": 0,
-            "y": 316.0457829895937
+            "x": 387.00098408738279,
+            "y": 677.56646495880227
           },
           "nodeIndex": "PlanSubscription",
           "nodeLineageTag": "8e7638d9-caf6-4a4d-9b9e-f83c3e21f65a",
@@ -876,11 +866,11 @@
         },
         {
           "location": {
-            "x": 0,
-            "y": 0
+            "x": 674.46566678086015,
+            "y": 900.489447520678
           },
           "nodeIndex": "Plan",
-          "nodeLineageTag": "4ef57bdb-be02-4455-a8d7-9d6a33f7e2a8",
+          "nodeLineageTag": "b23aff23-74c9-417c-b9e2-81114ba6c505",
           "size": {
             "height": 104,
             "width": 234
@@ -890,7 +880,7 @@
         },
         {
           "location": {
-            "x": 257.17541059819467,
+            "x": 928.4276128612629,
             "y": 0
           },
           "nodeIndex": "LoyaltyTiers",
@@ -903,8 +893,8 @@
         },
         {
           "location": {
-            "x": 732.93167302125357,
-            "y": 445.6194496673902
+            "x": 1097.1647730195875,
+            "y": 570.69204751158929
           },
           "nodeIndex": "SalesOrderHeader",
           "nodeLineageTag": "5eef46cf-46bc-42a2-bd57-f3576ed2f418",
@@ -916,8 +906,8 @@
         },
         {
           "location": {
-            "x": 1134.2315620088655,
-            "y": 544.94096516360321
+            "x": 1471.5674668194288,
+            "y": 670.9289045839497
           },
           "nodeIndex": "SalesOrderDetail",
           "nodeLineageTag": "b5d9ca22-fe9a-4d5c-a566-8dde89571287",
@@ -929,21 +919,8 @@
         },
         {
           "location": {
-            "x": 1462.8926009077034,
-            "y": 225.76053315607754
-          },
-          "nodeIndex": "Products",
-          "nodeLineageTag": "709af7c6-3c93-4a41-980a-b1edae7a2b62",
-          "size": {
-            "height": 300,
-            "width": 234
-          },
-          "zIndex": 0
-        },
-        {
-          "location": {
-            "x": 672.84202663165024,
-            "y": 781.956137446419
+            "x": 1269.246201398679,
+            "y": 0
           },
           "nodeIndex": "Complaints",
           "nodeLineageTag": "a451593d-f046-4dd1-95b2-f8b2568f7db0",
@@ -952,11 +929,50 @@
             "width": 234
           },
           "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 0,
+            "y": 0
+          },
+          "nodeIndex": "Wishlist",
+          "nodeLineageTag": "5930d4e6-3e72-4e58-8604-a76bd6c3c044",
+          "size": {
+            "height": 248,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 302.3266194808553,
+            "y": 0
+          },
+          "nodeIndex": "Geography",
+          "nodeLineageTag": "86a55658-9f3f-4432-b520-6fb158c1344b",
+          "size": {
+            "height": 251.37992951037131,
+            "width": 234
+          },
+          "zIndex": 0
+        },
+        {
+          "location": {
+            "x": 586.72814329589232,
+            "y": 0
+          },
+          "nodeIndex": "AcquisitionChannel",
+          "nodeLineageTag": "af9a6576-c7d6-4459-8628-0d3a0e4bd5db",
+          "size": {
+            "height": 152,
+            "width": 234
+          },
+          "zIndex": 0
         }
       ],
       "name": "Customers",
-      "zoomValue": 55.0344269078726,
-      "pinKeyFieldsToTop": false,
+      "zoomValue": 61.702913422141982,
+      "pinKeyFieldsToTop": true,
       "showExtraHeaderInfo": true,
       "hideKeyFieldsWhenCollapsed": false,
       "tablesLocked": false
@@ -1129,7 +1145,7 @@
       "ordinal": 8,
       "scrollPosition": {
         "x": 0,
-        "y": 0
+        "y": 310.61368632270796
       },
       "nodes": [
         {
@@ -1143,7 +1159,7 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 5
+          "zIndex": 8
         },
         {
           "location": {
@@ -1156,7 +1172,7 @@
             "height": 152,
             "width": 234
           },
-          "zIndex": 4
+          "zIndex": 7
         },
         {
           "location": {
@@ -1169,12 +1185,12 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 1
+          "zIndex": 4
         },
         {
           "location": {
-            "x": 727.889243821909,
-            "y": 546.94192736174568
+            "x": 571.715553124315,
+            "y": 679.77626342453254
           },
           "nodeIndex": "SalesOrderHeader",
           "nodeLineageTag": "5eef46cf-46bc-42a2-bd57-f3576ed2f418",
@@ -1182,7 +1198,7 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 2
+          "zIndex": 5
         },
         {
           "location": {
@@ -1195,7 +1211,7 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 3
+          "zIndex": 6
         },
         {
           "location": {
@@ -1208,11 +1224,76 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 6
+          "zIndex": 10
+        },
+        {
+          "location": {
+            "x": 1717.2068119362689,
+            "y": 561.81110047085167
+          },
+          "nodeIndex": "Warehouse",
+          "nodeLineageTag": "2a5da76a-3008-41dc-b8ea-99d3a0bc0dea",
+          "size": {
+            "height": 296,
+            "width": 234
+          },
+          "zIndex": 3
+        },
+        {
+          "location": {
+            "x": 1346.2041624138838,
+            "y": 569.57971618127283
+          },
+          "nodeIndex": "Geography",
+          "nodeLineageTag": "86a55658-9f3f-4432-b520-6fb158c1344b",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 11
+        },
+        {
+          "location": {
+            "x": -37.283674919322948,
+            "y": 626.02532700000017
+          },
+          "nodeIndex": "OrganizationProfile",
+          "nodeLineageTag": "7db111d9-3709-453f-8a59-9be2d3d0d438",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 9
+        },
+        {
+          "location": {
+            "x": 890.89598513184,
+            "y": 535.46035827228991
+          },
+          "nodeIndex": "SalesOrderDetail",
+          "nodeLineageTag": "b5d9ca22-fe9a-4d5c-a566-8dde89571287",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 1
+        },
+        {
+          "location": {
+            "x": 984.12195289641431,
+            "y": 971.56827527267092
+          },
+          "nodeIndex": "Store",
+          "nodeLineageTag": "b8c1f6c1-8576-4e0a-b2e1-08824be19226",
+          "size": {
+            "height": 300,
+            "width": 234
+          },
+          "zIndex": 2
         }
       ],
       "name": "Layout 1",
-      "zoomValue": 70.95554390096882,
+      "zoomValue": 56.447393005377776,
       "pinKeyFieldsToTop": false,
       "showExtraHeaderInfo": false,
       "hideKeyFieldsWhenCollapsed": false,

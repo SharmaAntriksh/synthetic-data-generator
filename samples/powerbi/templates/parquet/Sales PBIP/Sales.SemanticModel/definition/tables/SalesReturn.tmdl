@@ -51,7 +51,7 @@ table SalesReturn
 		annotation SummarizationSetBy = Automatic
 
 	column ReturnNetPrice
-		dataType: decimal
+		dataType: double
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
 		lineageTag: b1e2351f-57c7-4783-a669-82d58d182208
 		summarizeBy: sum
@@ -81,13 +81,14 @@ table SalesReturn
 
 	partition SalesReturn = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\SecondaryFacts
 		source =
 				let
-				    Source      = FxReadParquetFile ( "facts\sales_return" ),
-				    ChangedType = Table.TransformColumnTypes ( Source, { { "ReturnNetPrice", Currency.Type } } )
+				    Source      = FxReadParquetFile ( "facts\sales_return" )
 				in
-				    ChangedType
+				    Source
 
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

@@ -5,7 +5,7 @@ table SalesOrderHeader
 		dataType: int64
 		formatString: 0
 		lineageTag: ea91cc9f-88ab-4172-874a-c1783cc1e60d
-		summarizeBy: none
+		summarizeBy: sum
 		sourceColumn: SalesOrderNumber
 
 		annotation SummarizationSetBy = Automatic
@@ -14,7 +14,7 @@ table SalesOrderHeader
 		dataType: int64
 		formatString: 0
 		lineageTag: a5c4d6b4-070a-46f7-8680-1796dbea0044
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CustomerKey
 
 		annotation SummarizationSetBy = Automatic
@@ -23,7 +23,7 @@ table SalesOrderHeader
 		dataType: int64
 		formatString: 0
 		lineageTag: 97744af9-91c7-4809-8423-51578ad34023
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: StoreKey
 
 		annotation SummarizationSetBy = Automatic
@@ -32,7 +32,7 @@ table SalesOrderHeader
 		dataType: int64
 		formatString: 0
 		lineageTag: 58d9f62c-6345-4b1c-961e-89605cdfdc64
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: EmployeeKey
 
 		annotation SummarizationSetBy = Automatic
@@ -41,7 +41,7 @@ table SalesOrderHeader
 		dataType: int64
 		formatString: 0
 		lineageTag: bbb79dd5-60a4-4c97-95b6-c2cc215f39e6
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: PromotionKey
 
 		annotation SummarizationSetBy = Automatic
@@ -50,7 +50,7 @@ table SalesOrderHeader
 		dataType: int64
 		formatString: 0
 		lineageTag: caeed81e-dacb-4f22-b868-8e0537953c55
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: CurrencyKey
 
 		annotation SummarizationSetBy = Automatic
@@ -59,7 +59,7 @@ table SalesOrderHeader
 		dataType: int64
 		formatString: 0
 		lineageTag: d60cf49d-18df-487e-902d-82e1fa06b828
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: SalesChannelKey
 
 		annotation SummarizationSetBy = Automatic
@@ -81,23 +81,23 @@ table SalesOrderHeader
 		dataType: int64
 		formatString: 0
 		lineageTag: d27ca368-6ae7-42cb-8b6a-00a8411f67f7
-		summarizeBy: none
+		summarizeBy: count
 		sourceColumn: TimeKey
 
 		annotation SummarizationSetBy = Automatic
 
 	column IsOrderDelayed
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: bf2a4ad4-d6f3-497f-82f9-508588b88d7b
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsOrderDelayed
 
 		annotation SummarizationSetBy = Automatic
 
 	partition SalesOrderHeader = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\Sales
 		source =
 				let
 				    Source = FxReadParquetFile ( "facts\sales_order_header" )

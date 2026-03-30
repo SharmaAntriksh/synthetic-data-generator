@@ -123,10 +123,10 @@ table Employee
 		annotation SummarizationSetBy = Automatic
 
 	column IsActive
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 92ddbede-c993-4b4d-a33f-e6b38924a848
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsActive
 
 		annotation SummarizationSetBy = Automatic
@@ -235,10 +235,10 @@ table Employee
 		annotation SummarizationSetBy = Automatic
 
 	column SalariedFlag
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: b007c7b8-7b56-4262-bb3e-266f199c802e
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: SalariedFlag
 
 		annotation SummarizationSetBy = Automatic
@@ -280,10 +280,10 @@ table Employee
 		annotation SummarizationSetBy = Automatic
 
 	column SalesPersonFlag
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 0586e3c7-e1f3-48f1-b322-9c2ba4c4ad07
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: SalesPersonFlag
 
 		annotation SummarizationSetBy = Automatic
@@ -307,4 +307,6 @@ table Employee
 				    ChangedType
 
 	annotation PBI_ResultType = Table
+
+	annotation PBI_NavigationStepName = Navigation
 

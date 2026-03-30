@@ -1,5 +1,5 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.5.0/schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.7.0/schema.json",
   "name": "5297a18b86b04e8a5172",
   "position": {
     "x": 0,
@@ -71,11 +71,53 @@
                       "Entity": "MeasureTable"
                     }
                   },
+                  "Property": "Cost Amount"
+                }
+              },
+              "queryRef": "MeasureTable.Cost Amount",
+              "nativeQueryRef": "Cost Amount"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "MeasureTable"
+                    }
+                  },
                   "Property": "Profit Amount"
                 }
               },
               "queryRef": "MeasureTable.Profit Amount",
               "nativeQueryRef": "Profit Amount"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "MeasureTable"
+                    }
+                  },
+                  "Property": "Transactions"
+                }
+              },
+              "queryRef": "MeasureTable.Transactions",
+              "nativeQueryRef": "Transactions"
+            },
+            {
+              "field": {
+                "Measure": {
+                  "Expression": {
+                    "SourceRef": {
+                      "Entity": "MeasureTable"
+                    }
+                  },
+                  "Property": "# Customers"
+                }
+              },
+              "queryRef": "MeasureTable.# Customers",
+              "nativeQueryRef": "# Customers"
             }
           ]
         }

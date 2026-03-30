@@ -2,14 +2,7 @@ createOrReplace
 
 	ref table MeasureTable
 
-		measure '# Customers' =
-				
-				DISTINCTCOUNT ( Sales[CustomerKey] )
-			formatString: #,0
-			displayFolder: 01 - Base Measures
-			lineageTag: 174e935b-1f31-468a-b9a3-8e4c43aa2487
-
-		measure '# Customers (SOH)' = ```
+		measure '# Customers' = ```
 				
 				CALCULATE ( 
 				    DISTINCTCOUNT ( SalesOrderHeader[CustomerKey] ),
@@ -23,19 +16,6 @@ createOrReplace
 		measure 'Cost Amount' = ```
 				
 				SUMX ( 
-				    Sales, 
-				    Sales[Quantity] * Sales[UnitCost]
-				)
-				```
-			formatString: #,0
-			displayFolder: 01 - Base Measures
-			lineageTag: 316bc9a9-7992-4938-830c-767ce80a76be
-
-			annotation PBI_FormatHint = {"isDecimal":true}
-
-		measure 'Cost Amount (SOD)' = ```
-				
-				SUMX ( 
 				    SalesOrderDetail, 
 				    SalesOrderDetail[Quantity] * SalesOrderDetail[UnitCost]
 				)
@@ -46,47 +26,9 @@ createOrReplace
 
 			annotation PBI_FormatHint = {"isDecimal":true}
 
-		measure 'Employee Sales by Store Assgn.' = ```
-				
-				CALCULATE ( 
-				    [Sales Amount],
-				    TREATAS ( 
-				        GENERATE ( 
-				            SUMMARIZE ( 
-				                EmployeeStoreAssignment, 
-				                EmployeeStoreAssignment[StoreKey],
-				                Employee[EmployeeKey]
-				            ),
-				            DATESBETWEEN ( 
-				                Dates[Date],
-				                CALCULATE ( MIN ( EmployeeStoreAssignment[StartDate] ) ),
-				                CALCULATE ( MAX ( EmployeeStoreAssignment[EndDate] ) )
-				            )
-				        ),
-				        SalesOrderHeader[StoreKey],
-				        SalesOrderHeader[SalesPersonEmployeeKey],
-				        Dates[Date]
-				    )
-				)
-				```
-			formatString: #,0
-			displayFolder: 01 - Base Measures
-			lineageTag: e6394245-c2f1-49c2-9253-94f0fae7af02
-
-			annotation PBI_FormatHint = {"isDecimal":true}
-
 		measure 'Profit Amount' =
 				
 				[Sales Amount] - [Cost Amount]
-			formatString: #,0
-			displayFolder: 01 - Base Measures
-			lineageTag: a95a2156-9a97-45f8-b9a9-08a4ef5a8d06
-
-			annotation PBI_FormatHint = {"isDecimal":true}
-
-		measure 'Profit Amount (SOD)' =
-				
-				[Sales Amount (SOD)] - [Cost Amount (SOD)]
 			formatString: #,0
 			displayFolder: 01 - Base Measures
 			lineageTag: 2a2235d4-e261-4801-84e5-a5284e715773
@@ -94,21 +36,6 @@ createOrReplace
 			annotation PBI_FormatHint = {"isDecimal":true}
 
 		measure 'Sales Amount' = ```
-				
-				SUMX ( 
-				    Sales,
-				    Sales[Quantity] * Sales[NetPrice]
-				)
-				```
-			formatString: #,0
-			displayFolder: 01 - Base Measures
-			lineageTag: 0d511203-d4fa-4fbf-bed4-84ce7a184526
-
-			changedProperty = IsHidden
-
-			annotation PBI_FormatHint = {"isDecimal":true}
-
-		measure 'Sales Amount (SOD)' = ```
 				
 				SUMX ( 
 				    SalesOrderDetail, 

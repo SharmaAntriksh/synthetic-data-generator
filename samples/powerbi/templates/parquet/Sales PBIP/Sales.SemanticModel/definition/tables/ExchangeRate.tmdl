@@ -49,7 +49,7 @@ table ExchangeRate
 		annotation SummarizationSetBy = Automatic
 
 	column Rate
-		dataType: decimal
+		dataType: double
 		formatString: \$#,0.###############;(\$#,0.###############);\$#,0.###############
 		lineageTag: 5dca116e-61f7-48bb-bdc5-7f9a2019c498
 		summarizeBy: sum
@@ -61,14 +61,12 @@ table ExchangeRate
 
 	partition ExchangeRate = m
 		mode: import
-		queryGroup: Fact
+		queryGroup: Fact\ExchangeRates
 		source =
 				let
-				    Source = FxReadParquetFile ( "dimensions\exchange_rates" ),
-				    #"Changed Type" = Table.TransformColumnTypes(Source,{{"Rate", Currency.Type}}),
-				    #"Rounded Off" = Table.TransformColumns(#"Changed Type",{{"Rate", each Number.Round(_, 2), Currency.Type}})
+				    Source = FxReadParquetFile ( "dimensions\exchange_rates" )
 				in
-				    #"Rounded Off"
+				    Source
 
 	annotation PBI_NavigationStepName = Navigation
 

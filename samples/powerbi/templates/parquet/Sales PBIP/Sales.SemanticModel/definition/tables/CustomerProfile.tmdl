@@ -35,7 +35,7 @@ table CustomerProfile
 		annotation SummarizationSetBy = Automatic
 
 	column NumberOfCars
-		dataType: double
+		dataType: int64
 		lineageTag: 54ca78f8-b5c1-4fe2-8de4-2f0a13362008
 		summarizeBy: sum
 		sourceColumn: NumberOfCars
@@ -45,7 +45,7 @@ table CustomerProfile
 		annotation PBI_FormatHint = {"isGeneralNumber":true}
 
 	column CreditScore
-		dataType: double
+		dataType: int64
 		lineageTag: 3ffe5202-0ae9-41d6-97fa-5bbbd22fb597
 		summarizeBy: sum
 		sourceColumn: CreditScore
@@ -105,7 +105,8 @@ table CustomerProfile
 		annotation SummarizationSetBy = Automatic
 
 	column HasOnlineAccount
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 6253ee93-7975-4839-9465-c65cd04ae309
 		summarizeBy: none
 		sourceColumn: HasOnlineAccount
@@ -113,7 +114,8 @@ table CustomerProfile
 		annotation SummarizationSetBy = Automatic
 
 	column OptInMarketing
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 39d773ba-d435-4497-af5d-a9bbc0a4b866
 		summarizeBy: none
 		sourceColumn: OptInMarketing
@@ -121,7 +123,8 @@ table CustomerProfile
 		annotation SummarizationSetBy = Automatic
 
 	column SocialMediaFollower
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: c92e2f3c-5aa8-4f07-b23b-3db04751b7eb
 		summarizeBy: none
 		sourceColumn: SocialMediaFollower
@@ -129,7 +132,8 @@ table CustomerProfile
 		annotation SummarizationSetBy = Automatic
 
 	column AppInstalled
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 448adff3-94de-4349-904e-254557142ebf
 		summarizeBy: none
 		sourceColumn: AppInstalled
@@ -203,7 +207,8 @@ table CustomerProfile
 		annotation PBI_FormatHint = {"isCustom":true}
 
 	column IsEmployee
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: fcbb66b1-c009-4824-8b56-149ff146add9
 		summarizeBy: none
 		sourceColumn: IsEmployee
@@ -219,7 +224,8 @@ table CustomerProfile
 		annotation SummarizationSetBy = Automatic
 
 	column HasGiftCardBalance
-		dataType: string
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: 062dadde-9911-4d77-97ae-da6e169f0464
 		summarizeBy: none
 		sourceColumn: HasGiftCardBalance

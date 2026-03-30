@@ -188,10 +188,10 @@ table Sales
 		annotation SummarizationSetBy = Automatic
 
 	column IsOrderDelayed
-		dataType: int64
-		formatString: 0
+		dataType: boolean
+		formatString: """TRUE"";""TRUE"";""FALSE"""
 		lineageTag: fc008f34-915c-4119-a119-a7cca614ad5b
-		summarizeBy: sum
+		summarizeBy: none
 		sourceColumn: IsOrderDelayed
 
 		annotation SummarizationSetBy = Automatic
