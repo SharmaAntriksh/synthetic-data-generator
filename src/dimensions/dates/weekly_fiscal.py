@@ -62,11 +62,11 @@ def _weekly_fiscal_year_bounds(
 
     if weekly_type == "Last":
         offset_start_current = 1 - dow_cur
-        offset_start_next = -dow_next
+        offset_start_next = 1 - dow_next
     else:
         # "Nearest"
         offset_start_current = (8 - dow_cur) if dow_cur >= 5 else (1 - dow_cur)
-        offset_start_next = (7 - dow_next) if dow_next >= 5 else (-dow_next)
+        offset_start_next = (8 - dow_next) if dow_next >= 5 else (1 - dow_next)
 
     start_of_year = (first_day_current + pd.Timedelta(days=int(offset_start_current))).normalize()
     # end_of_year is the day *before* the next fiscal year starts (inclusive boundary).
