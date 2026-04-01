@@ -151,18 +151,19 @@ def _promo_total(promos) -> int:
 
 
 def _set_promotions_total(promos, total: int):
-    """Distribute total across buckets proportionally."""
+    """Distribute total across all promo buckets proportionally."""
     total = max(0, int(total))
-    keys = ["num_seasonal", "num_clearance", "num_limited"]
+    keys = list(_PROMO_KEYS)
+    n = len(keys)
     if isinstance(promos, dict):
-        if all(k in promos for k in keys):
+        if any(k in promos for k in keys):
             cur = [int(promos.get(k, 0) or 0) for k in keys]
-            s = sum(cur) or 3
-            base = cur if sum(cur) > 0 else [1, 1, 1]
+            s = sum(cur) or n
+            base = cur if sum(cur) > 0 else [1] * n
             scaled = [b * total / s for b in base]
             floors = [int(x) for x in scaled]
             remainder = total - sum(floors)
-            fracs = sorted(range(3), key=lambda i: scaled[i] - floors[i], reverse=True)
+            fracs = sorted(range(n), key=lambda i: scaled[i] - floors[i], reverse=True)
             for i in range(min(remainder, len(fracs))):
                 floors[fracs[i]] += 1
             for i, k in enumerate(keys):
@@ -171,14 +172,14 @@ def _set_promotions_total(promos, total: int):
             promos["total_promotions"] = total
     else:
         # Pydantic model path
-        if all(hasattr(promos, k) for k in keys):
+        if any(hasattr(promos, k) for k in keys):
             cur = [int(getattr(promos, k, 0) or 0) for k in keys]
-            s = sum(cur) or 3
-            base = cur if sum(cur) > 0 else [1, 1, 1]
+            s = sum(cur) or n
+            base = cur if sum(cur) > 0 else [1] * n
             scaled = [b * total / s for b in base]
             floors = [int(x) for x in scaled]
             remainder = total - sum(floors)
-            fracs = sorted(range(3), key=lambda i: scaled[i] - floors[i], reverse=True)
+            fracs = sorted(range(n), key=lambda i: scaled[i] - floors[i], reverse=True)
             for i in range(min(remainder, len(fracs))):
                 floors[fracs[i]] += 1
             for i, k in enumerate(keys):
