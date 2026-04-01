@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import zlib
 from collections.abc import Mapping
@@ -12,11 +13,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as _pq
 
 from src.defaults import ONLINE_SALES_REP_ROLE
 from src.exceptions import PackagingError, SalesError
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
-from src.utils.logging_utils import debug, done, info, skip, work
+from src.utils.logging_utils import debug, info, skip, warn, work
 from src.utils.shared_arrays import SharedArrayGroup
 from .sales_logic import State
 from .sales_worker import PoolRunSpec, iter_imap_unordered, _worker_task, init_sales_worker
@@ -70,6 +72,110 @@ class SalesRunManifest:
     file_format: str
     out_folder: str
     tables: dict[str, TableOutputs]
+
+
+@dataclass
+class SalesFactResult:
+    """Structured return from generate_sales_fact()."""
+    chunk_files: List[str]
+    manifest: SalesRunManifest
+    budget_acc: Any = None
+    inventory_acc: Any = None
+    wishlists_acc: Any = None
+    complaints_acc: Any = None
+
+
+class ChunkResultCollector:
+    """Collects per-chunk results from the multiprocessing pool.
+
+    Replaces the _record_chunk_result closure with explicit state.
+    """
+
+    _TABLE_SHORT = {
+        TABLE_SALES: "sales",
+        TABLE_SALES_ORDER_DETAIL: "detail",
+        TABLE_SALES_ORDER_HEADER: "header",
+        TABLE_SALES_RETURN: "return",
+    }
+
+    def __init__(
+        self,
+        tables: list[str],
+        budget_acc,
+        inventory_acc,
+        wishlists_acc,
+        complaints_acc,
+    ):
+        self.tables = tables
+        self.budget_acc = budget_acc
+        self.inventory_acc = inventory_acc
+        self.wishlists_acc = wishlists_acc
+        self.complaints_acc = complaints_acc
+        self.created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
+        self.created_files: List[str] = []
+
+    @staticmethod
+    def _chunk_tag(path_like: str) -> str:
+        b = os.path.basename(path_like)
+        i = b.find("chunk")
+        if i < 0:
+            return b
+        j = i + 5
+        while j < len(b) and b[j].isdigit():
+            j += 1
+        return b[i:j]
+
+    def record(self, r: Any, completed_units: int, total_units: int) -> None:
+        # Extract streaming micro-aggregates (if present)
+        if self.budget_acc is not None and isinstance(r, Mapping):
+            self.budget_acc.add_sales(r.pop("_budget_agg", None))
+            self.budget_acc.add_returns(r.pop("_returns_agg", None))
+
+        if self.inventory_acc is not None and isinstance(r, Mapping):
+            self.inventory_acc.add(r.pop("_inventory_agg", None))
+
+        if self.wishlists_acc is not None and isinstance(r, Mapping):
+            self.wishlists_acc.add(r.pop("_wishlists_agg", None))
+
+        if self.complaints_acc is not None and isinstance(r, Mapping):
+            self.complaints_acc.add(r.pop("_complaints_agg", None))
+
+        if isinstance(r, str):
+            self.created_by_table.setdefault(TABLE_SALES, []).append(r)
+            self.created_files.append(r)
+            work(f"[{completed_units}/{total_units}] {self._chunk_tag(r)} -> sales")
+            return
+
+        if isinstance(r, Mapping):
+            ordered_keys = (
+                [t for t in self.tables if t in r]
+                + [k for k in r.keys() if k not in set(self.tables)]
+            )
+
+            tag = None
+            for k in ordered_keys:
+                v = r.get(k)
+                if isinstance(v, str):
+                    tag = self._chunk_tag(v)
+                    break
+
+            produced: list[str] = []
+            for table_name in ordered_keys:
+                val = r.get(table_name)
+                self.created_by_table.setdefault(table_name, []).append(val)
+                if isinstance(val, str):
+                    self.created_files.append(val)
+                    produced.append(self._TABLE_SHORT.get(table_name, table_name))
+                elif isinstance(val, Mapping) and "part" in val:
+                    produced.append(self._TABLE_SHORT.get(table_name, table_name))
+
+            if produced:
+                if tag is None:
+                    tag = "chunk"
+                work(f"[{completed_units}/{total_units}] {tag} -> " + ", ".join(produced))
+            return
+
+        info(f"[{completed_units}/{total_units}] Worker returned unsupported result type: {type(r).__name__}")
 
 
 # =====================================================================
@@ -548,244 +654,24 @@ def _merge_fact_csv_chunks(
 
 
 # =====================================================================
-# Main Fact Generation
+# Dimension Loading Helpers
 # =====================================================================
 
-def generate_sales_fact(
+def _load_customers(
+    parquet_folder_p: Path,
     cfg,
-    parquet_folder,
-    out_folder,
-    total_rows,
-    chunk_size=2_000_000,
-    start_date=None,
-    end_date=None,
-    row_group_size=2_000_000,
-    compression="snappy",
-    merge_parquet=False,
-    merged_file="sales.parquet",
-    delete_chunks=False,
-    seed=42,
-    file_format="parquet",
-    workers=None,
-    tune_chunk=False,
-    write_delta=False,     # legacy (ignored)
-    delta_output_folder=None,
-    skip_order_cols=False,
-    partition_enabled=False,
-    partition_cols=None,
-    return_manifest: bool = False,
-):
-    # ------------------------------------------------------------
-    # Normalize cfg defaults (cfg is source-of-truth when call-site omits)
-    # ------------------------------------------------------------
-    cfg = cfg if isinstance(cfg, Mapping) else {}
-    sales_cfg = getattr(cfg, "sales", None)
-    sales_cfg = sales_cfg if isinstance(sales_cfg, Mapping) else {}
+    start_date,
+    seed: int,
+) -> dict:
+    """Load customer dimension arrays for the sales pool.
 
-    file_format_cfg = getattr(sales_cfg, "file_format", None)
-    if file_format_cfg is not None:
-        file_format = _apply_cfg_default(file_format, "parquet", _str_or(file_format_cfg, "parquet").lower())
-
-    merge_parquet = _apply_cfg_default(
-        merge_parquet, False,
-        _bool_or(getattr(sales_cfg, "merge_parquet", None), merge_parquet) if hasattr(sales_cfg, "merge_parquet") else None
-    )
-    merged_file = _apply_cfg_default(merged_file, "sales.parquet", getattr(sales_cfg, "merged_file", None) if hasattr(sales_cfg, "merged_file") else None)
-
-    delete_chunks = _apply_cfg_default(
-        delete_chunks, False,
-        _bool_or(getattr(sales_cfg, "delete_chunks", None), delete_chunks) if hasattr(sales_cfg, "delete_chunks") else None
-    )
-
-    chunk_size = _apply_cfg_default(chunk_size, 2_000_000, _int_or(getattr(sales_cfg, "chunk_size", None), chunk_size) if hasattr(sales_cfg, "chunk_size") else None)
-    row_group_size = _apply_cfg_default(row_group_size, 2_000_000, _int_or(sales_cfg.row_group_size, row_group_size))
-    compression = _apply_cfg_default(compression, "snappy", sales_cfg.compression)
-    workers = _apply_cfg_default(workers, None, sales_cfg.workers)
-    tune_chunk = _apply_cfg_default(tune_chunk, False, _bool_or(sales_cfg.tune_chunk, tune_chunk))
-    skip_order_cols = _apply_cfg_default(
-        skip_order_cols,
-        False,
-        _bool_or(getattr(sales_cfg, "skip_order_cols", None), skip_order_cols) if hasattr(sales_cfg, "skip_order_cols") else None,
-    )
-
-    start_date, end_date = _resolve_date_range(cfg, start_date, end_date)
-    optimize_after_merge = _bool_or(getattr(sales_cfg, "sort_merged_parquet", None), False)
-
-    seed = _resolve_seed(cfg, seed, default_seed=42)
-    partition_enabled, partition_cols = _resolve_partitioning(cfg, partition_enabled, partition_cols)
-
-    # ------------------------------------------------------------
-    # Paths / folders
-    # ------------------------------------------------------------
-    parquet_folder_p = Path(str(parquet_folder))
-    out_folder_p = Path(str(out_folder))
-
-    # Resolve delta folder early (so OutputPaths is built with final values)
-    if file_format == "deltaparquet":
-        if delta_output_folder is None:
-            delta_output_folder = str(out_folder_p / "delta")
-        delta_output_folder = os.path.abspath(str(delta_output_folder))
-
-    output_paths = OutputPaths(
-        file_format=file_format,
-        out_folder=str(out_folder_p),
-        merged_file=str(merged_file),
-        delta_output_folder=(str(delta_output_folder) if file_format == "deltaparquet" else None),
-    )
-
-    sales_output = _str_or(getattr(sales_cfg, "sales_output", None), "sales").lower()
-    if sales_output not in {"sales", "sales_order", "both"}:
-        raise SalesError(f"Invalid sales_output: {sales_output}")
-
-    # ------------------------------------------------------------
-    # Returns (optional)
-    # ------------------------------------------------------------
-    facts_enabled = _cfg_get(cfg, ["facts", "enabled"], default=[])
-    facts_enabled = facts_enabled if isinstance(facts_enabled, list) else []
-
-    _returns_obj = getattr(cfg, "returns", None)
-    returns_cfg = _returns_obj if isinstance(_returns_obj, Mapping) else {}
-    returns_enabled = _bool_or(returns_cfg.get("enabled"), False)
-
-    # If facts.enabled is used, treat it as an additional "feature gate"
-    if facts_enabled:
-        returns_enabled = bool(returns_enabled and ("returns" in {str(x).lower() for x in facts_enabled}))
-
-    returns_rate = _float_or(returns_cfg.get("return_rate", 0.0), 0.0)
-    if not np.isfinite(returns_rate):
-        returns_rate = 0.0
-    # keep within [0, 1]
-    returns_rate = max(0.0, min(1.0, returns_rate))
-
-    returns_min_lag_days = _int_or(
-        returns_cfg.get("min_days_after_sale", returns_cfg.get("returns_min_lag_days", 0)),
-        0,
-    )
-    returns_min_lag_days = max(0, returns_min_lag_days)
-
-    returns_max_lag_days = _int_or(
-        returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)),
-        60,
-    )
-    returns_max_lag_days = max(0, returns_max_lag_days)
-
-    # Ensure min <= max (swap/clamp defensively)
-    if returns_min_lag_days > returns_max_lag_days:
-        returns_min_lag_days = returns_max_lag_days
-
-    # Extract multi-event returns config from models.yaml
-    _models_returns = getattr(State.models_cfg, "returns", None)
-    _ret_qty_cfg = getattr(_models_returns, "quantity", None)
-    _ret_lag_cfg = getattr(_models_returns, "lag_days", None)
-
-    returns_full_line_prob = _float_or(getattr(_ret_qty_cfg, "full_line_probability", 0.85), 0.85)
-    returns_split_rate = _float_or(getattr(_ret_qty_cfg, "split_return_rate", 0.0), 0.0)
-    returns_max_splits = _int_or(getattr(_ret_qty_cfg, "max_splits", 3), 3)
-    returns_split_min_gap = _int_or(getattr(_ret_lag_cfg, "split_min_gap", 3), 3)
-    returns_split_max_gap = _int_or(getattr(_ret_lag_cfg, "split_max_gap", 20), 20)
-
-    # Merge models.yaml weight overrides with defaults.py canonical reasons
-    from src.defaults import (
-        RETURN_REASON_KEYS as _RR_KEYS,
-        RETURN_REASON_DEFAULT_WEIGHTS as _RR_DEFAULTS,
-        RETURN_REASON_LOGISTICS_KEYS as _RR_LOGISTICS,
-    )
-    _models_reasons = getattr(_models_returns, "reasons", None)
-    if _models_reasons and len(_models_reasons) > 0:
-        _weight_overrides = {int(r.key): float(r.weight) for r in _models_reasons}
-    else:
-        _weight_overrides = {}
-    returns_reason_keys = list(_RR_KEYS)
-    returns_reason_probs = [_weight_overrides.get(k, _RR_DEFAULTS[k]) for k in _RR_KEYS]
-    returns_logistics_keys = list(_RR_LOGISTICS)
-
-    # Event key capacity per chunk (for globally unique sequential keys)
-    _chunk_size = _int_or(sales_cfg.chunk_size, 1_000_000)
-    returns_event_key_capacity = int(_chunk_size * max(returns_rate, 0.01) * max(returns_max_splits, 1)) + 1000
-
-    # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
-
-    # Keep "requested" vs "effective" separate so we can warn+continue.
-    returns_enabled_requested = bool(returns_enabled)
-    returns_enabled_effective = bool(returns_enabled)
-
-    # Allow returns for ALL modes (sales / sales_order / both),
-    # but if sales_output == "sales" and skip_order_cols == True, we cannot derive returns
-    # (no order identifiers), so disable returns and warn.
-    if returns_enabled_requested and sales_output == "sales" and bool(skip_order_cols):
-        info("Disabling returns: skip_order_cols removes order IDs needed by returns")
-        returns_enabled_effective = False
-
-    tables: list[str] = []
-    if sales_output in {"sales", "both"}:
-        tables.append(TABLE_SALES)
-    if sales_output in {"sales_order", "both"}:
-        tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
-
-    # Returns table is independent of which sales family tables you output
-    # (as long as returns_enabled_effective == True).
-    if returns_enabled_effective:
-        tables.append(TABLE_SALES_RETURN)
-
-    for t in tables:
-        output_paths.ensure_dirs(t)
-
-    # Normalize delta_output_folder after OutputPaths decides defaults/abspath (if your class does that)
-    delta_output_folder = output_paths.delta_output_folder
-
-    def _empty_manifest() -> SalesRunManifest:
-        """Build an empty manifest for early-exit paths."""
-        per_table: dict[str, TableOutputs] = {}
-        for t in tables:
-            per_table[t] = TableOutputs(
-                table=t,
-                file_format=file_format,
-                chunks=[],
-                merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
-                delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
-                delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
-            )
-
-        return SalesRunManifest(
-            sales_output=sales_output,
-            file_format=file_format,
-            out_folder=str(out_folder_p),
-            tables=per_table,
-        )
-
-    # ------------------------------------------------------------
-    # Optional auto chunk sizing
-    # ------------------------------------------------------------
-    total_rows = _int_or(total_rows, 0)
-    if total_rows > 1_073_741_823:  # > int32_max / 2
-        warn(
-            f"total_rows={total_rows:,} exceeds half of int32 max. "
-            "SalesOrderNumber will use int64 in parquet output."
-        )
-    if total_rows <= 0:
-        skip("No sales rows to generate (total_rows <= 0).")
-        if return_manifest:
-            return ([], _empty_manifest())
-        return []
-
-    if workers is None:
-        n_workers_planned = max(1, cpu_count() - 1)
-    else:
-        n_workers_planned = max(1, _int_or(workers, cpu_count() - 1))
-
-    if tune_chunk:
-        chunk_size = suggest_chunk_size(total_rows, target_workers=n_workers_planned, preferred_chunks_per_worker=2)
-
-    chunk_size = max(1_000, _int_or(chunk_size, 1_000_000))
-
-    # ------------------------------------------------------------
-    # Load dimensions
-    # ------------------------------------------------------------
+    Returns a dict with all customer-related arrays that the caller
+    needs for worker_cfg and correlation lookups.
+    """
     customers_path = parquet_folder_p / "customers.parquet"
 
     # Single parquet read: discover available columns via schema, then
     # load ALL needed columns in one I/O call instead of 3-5 separate opens.
-    import pyarrow.parquet as _pq
     _cust_schema_names = set(_pq.read_schema(str(customers_path)).names)
 
     _cust_load_cols = ["CustomerKey", "CustomerStartDate", "CustomerEndDate"]
@@ -888,7 +774,60 @@ def generate_sales_fact(
             customer_base_weight = _as_np(cust_df[wcol], np.float64)
             break
 
-    # Products: respect runner-bound active_product_np
+    # --- Resolve customer_geo_key (for correlation lookups) ---
+    customer_geo_key = None
+    if _cust_geo_full is not None:
+        if _cust_scd2_detected and _cust_is_current_full is not None:
+            # Filter to IsCurrent=1 rows (same filter applied to cust_df)
+            customer_geo_key = _cust_geo_full[_cust_is_current_full == 1]
+        else:
+            customer_geo_key = _cust_geo_full
+    elif "GeographyKey" in cust_df.columns:
+        customer_geo_key = _as_np(cust_df["GeographyKey"], np.int32)
+    del _cust_geo_full, _cust_is_current_full
+
+    # --- Build customer SCD2 version tables ---
+    _customer_scd2_active = False
+    _customer_scd2_starts = None
+    _customer_scd2_keys = None
+    _cust_key_to_pool_idx = None
+
+    if _cust_scd2_detected and _cust_pool_ids is not None:
+        _cust_result = _build_scd2_customer_versions(
+            customers_path, customer_keys, _cust_pool_ids,
+        )
+        if _cust_result is not None:
+            _customer_scd2_starts, _customer_scd2_keys, _cust_key_to_pool_idx = _cust_result
+            _customer_scd2_active = True
+            info(f"Customer SCD2: {_customer_scd2_starts.shape[1]} max versions × "
+                 f"{_customer_scd2_starts.shape[0]:,} customers")
+
+    return {
+        "customer_keys": customer_keys,
+        "customer_start_month": customer_start_month,
+        "customer_end_month": customer_end_month,
+        "is_active_in_sales": is_active_in_sales,
+        "customer_base_weight": customer_base_weight,
+        "customer_geo_key": customer_geo_key,
+        "customer_scd2_active": _customer_scd2_active,
+        "customer_scd2_starts": _customer_scd2_starts,
+        "customer_scd2_keys": _customer_scd2_keys,
+        "cust_key_to_pool_idx": _cust_key_to_pool_idx,
+    }
+
+
+def _load_products(
+    parquet_folder_p: Path,
+    cfg,
+    seed: int,
+    start_date,
+    end_date,
+    active_product_np=None,
+) -> dict:
+    """Load product dimension arrays, profile, date pool, and SCD2 versions.
+
+    Returns a dict with all product-related arrays plus date_pool/date_prob.
+    """
     product_brand_key = None
     brand_names = None
     product_subcat_key = None
@@ -918,8 +857,8 @@ def generate_sales_fact(
     # Cached full product DataFrame — reused for SCD2 version table building
     _prod_df_full = None
 
-    if getattr(State, "active_product_np", None) is not None:
-        product_np = State.active_product_np
+    if active_product_np is not None:
+        product_np = active_product_np
         active_keys = np.asarray(product_np[:, 0], dtype=np.int32)
 
         # Single load: Brand + optional SubcategoryKey + SCD2 columns (one parquet open)
@@ -1045,14 +984,10 @@ def generate_sales_fact(
     # Weighted date pool (deterministic) — needed by SCD2 grid builders below
     date_pool, date_prob = build_weighted_date_pool(start_date, end_date, seed)
 
-    # --- SCD2 version lookup tables (per-entity, per-row resolution) ---
+    # --- SCD2 product version lookup tables ---
     _product_scd2_active = False
     _product_scd2_starts = None   # (N_pool, max_ver) int64
     _product_scd2_data = None     # (N_pool, max_ver, 3) float64
-    _customer_scd2_active = False
-    _customer_scd2_starts = None  # (N_pool, max_ver) int64
-    _customer_scd2_keys = None    # (N_pool, max_ver) int32
-    _cust_key_to_pool_idx = None
 
     # Detect product SCD2 and build version tables (reusing _prod_df_full
     # from the single product load above — no extra parquet opens).
@@ -1093,16 +1028,283 @@ def generate_sales_fact(
     # Free the full product DataFrame now that SCD2 is built
     del _prod_df_full
 
-    # Build customer SCD2 version tables (if dedup detected earlier)
-    if _cust_scd2_detected and _cust_pool_ids is not None:
-        _cust_result = _build_scd2_customer_versions(
-            customers_path, customer_keys, _cust_pool_ids,
+    return {
+        "product_np": product_np,
+        "product_brand_key": product_brand_key,
+        "brand_names": brand_names,
+        "product_subcat_key": product_subcat_key,
+        "product_popularity": product_popularity,
+        "product_seasonality": product_seasonality,
+        "date_pool": date_pool,
+        "date_prob": date_prob,
+        "product_scd2_active": _product_scd2_active,
+        "product_scd2_starts": _product_scd2_starts,
+        "product_scd2_data": _product_scd2_data,
+        "assortment_cfg": assortment_cfg,
+    }
+
+
+# =====================================================================
+# Main Fact Generation
+# =====================================================================
+
+def generate_sales_fact(
+    cfg,
+    parquet_folder,
+    out_folder,
+    total_rows,
+    chunk_size=2_000_000,
+    start_date=None,
+    end_date=None,
+    row_group_size=2_000_000,
+    compression="snappy",
+    merge_parquet=False,
+    merged_file="sales.parquet",
+    delete_chunks=False,
+    seed=42,
+    file_format="parquet",
+    workers=None,
+    tune_chunk=False,
+    write_delta=False,     # legacy (ignored)
+    delta_output_folder=None,
+    skip_order_cols=False,
+    partition_enabled=False,
+    partition_cols=None,
+) -> SalesFactResult:
+    # ------------------------------------------------------------
+    # Normalize cfg defaults (cfg is source-of-truth when call-site omits)
+    # ------------------------------------------------------------
+    cfg = cfg if isinstance(cfg, Mapping) else {}
+    sales_cfg = getattr(cfg, "sales", None)
+    sales_cfg = sales_cfg if isinstance(sales_cfg, Mapping) else {}
+
+    file_format_cfg = getattr(sales_cfg, "file_format", None)
+    if file_format_cfg is not None:
+        file_format = _apply_cfg_default(file_format, "parquet", _str_or(file_format_cfg, "parquet").lower())
+
+    merge_parquet = _apply_cfg_default(
+        merge_parquet, False,
+        _bool_or(getattr(sales_cfg, "merge_parquet", None), merge_parquet) if hasattr(sales_cfg, "merge_parquet") else None
+    )
+    merged_file = _apply_cfg_default(merged_file, "sales.parquet", getattr(sales_cfg, "merged_file", None) if hasattr(sales_cfg, "merged_file") else None)
+
+    delete_chunks = _apply_cfg_default(
+        delete_chunks, False,
+        _bool_or(getattr(sales_cfg, "delete_chunks", None), delete_chunks) if hasattr(sales_cfg, "delete_chunks") else None
+    )
+
+    chunk_size = _apply_cfg_default(chunk_size, 2_000_000, _int_or(getattr(sales_cfg, "chunk_size", None), chunk_size) if hasattr(sales_cfg, "chunk_size") else None)
+    row_group_size = _apply_cfg_default(row_group_size, 2_000_000, _int_or(getattr(sales_cfg, "row_group_size", None), row_group_size))
+    compression = _apply_cfg_default(compression, "snappy", getattr(sales_cfg, "compression", None))
+    workers = _apply_cfg_default(workers, None, getattr(sales_cfg, "workers", None))
+    tune_chunk = _apply_cfg_default(tune_chunk, False, _bool_or(getattr(sales_cfg, "tune_chunk", None), tune_chunk))
+    skip_order_cols = _apply_cfg_default(
+        skip_order_cols,
+        False,
+        _bool_or(getattr(sales_cfg, "skip_order_cols", None), skip_order_cols) if hasattr(sales_cfg, "skip_order_cols") else None,
+    )
+
+    start_date, end_date = _resolve_date_range(cfg, start_date, end_date)
+    optimize_after_merge = _bool_or(getattr(sales_cfg, "sort_merged_parquet", None), False)
+
+    seed = _resolve_seed(cfg, seed, default_seed=42)
+    partition_enabled, partition_cols = _resolve_partitioning(cfg, partition_enabled, partition_cols)
+
+    # ------------------------------------------------------------
+    # Paths / folders
+    # ------------------------------------------------------------
+    parquet_folder_p = Path(str(parquet_folder))
+    out_folder_p = Path(str(out_folder))
+
+    # Resolve delta folder early (so OutputPaths is built with final values)
+    if file_format == "deltaparquet":
+        if delta_output_folder is None:
+            delta_output_folder = str(out_folder_p / "delta")
+        delta_output_folder = os.path.abspath(str(delta_output_folder))
+
+    output_paths = OutputPaths(
+        file_format=file_format,
+        out_folder=str(out_folder_p),
+        merged_file=str(merged_file),
+        delta_output_folder=(str(delta_output_folder) if file_format == "deltaparquet" else None),
+    )
+
+    sales_output = _str_or(getattr(sales_cfg, "sales_output", None), "sales").lower()
+    if sales_output not in {"sales", "sales_order", "both"}:
+        raise SalesError(f"Invalid sales_output: {sales_output}")
+
+    # ------------------------------------------------------------
+    # Returns (optional)
+    # ------------------------------------------------------------
+    facts_enabled = _cfg_get(cfg, ["facts", "enabled"], default=[])
+    facts_enabled = facts_enabled if isinstance(facts_enabled, list) else []
+
+    _returns_obj = getattr(cfg, "returns", None)
+    returns_cfg = _returns_obj if isinstance(_returns_obj, Mapping) else {}
+    returns_enabled = _bool_or(returns_cfg.get("enabled"), False)
+
+    # If facts.enabled is used, treat it as an additional "feature gate"
+    if facts_enabled:
+        returns_enabled = bool(returns_enabled and ("returns" in {str(x).lower() for x in facts_enabled}))
+
+    returns_rate = _float_or(returns_cfg.get("return_rate", 0.0), 0.0)
+    if not np.isfinite(returns_rate):
+        returns_rate = 0.0
+    # keep within [0, 1]
+    returns_rate = max(0.0, min(1.0, returns_rate))
+
+    returns_min_lag_days = _int_or(
+        returns_cfg.get("min_days_after_sale", returns_cfg.get("returns_min_lag_days", 0)),
+        0,
+    )
+    returns_min_lag_days = max(0, returns_min_lag_days)
+
+    returns_max_lag_days = _int_or(
+        returns_cfg.get("max_days_after_sale", returns_cfg.get("returns_max_lag_days", 60)),
+        60,
+    )
+    returns_max_lag_days = max(0, returns_max_lag_days)
+
+    # Ensure min <= max (swap/clamp defensively)
+    if returns_min_lag_days > returns_max_lag_days:
+        returns_min_lag_days = returns_max_lag_days
+
+    # Extract multi-event returns config from models.yaml
+    _models_returns = getattr(State.models_cfg, "returns", None)
+    _ret_qty_cfg = getattr(_models_returns, "quantity", None)
+    _ret_lag_cfg = getattr(_models_returns, "lag_days", None)
+
+    returns_full_line_prob = _float_or(getattr(_ret_qty_cfg, "full_line_probability", 0.85), 0.85)
+    returns_split_rate = _float_or(getattr(_ret_qty_cfg, "split_return_rate", 0.0), 0.0)
+    returns_max_splits = _int_or(getattr(_ret_qty_cfg, "max_splits", 3), 3)
+    returns_split_min_gap = _int_or(getattr(_ret_lag_cfg, "split_min_gap", 3), 3)
+    returns_split_max_gap = _int_or(getattr(_ret_lag_cfg, "split_max_gap", 20), 20)
+
+    # Merge models.yaml weight overrides with defaults.py canonical reasons
+    from src.defaults import (
+        RETURN_REASON_KEYS as _RR_KEYS,
+        RETURN_REASON_DEFAULT_WEIGHTS as _RR_DEFAULTS,
+        RETURN_REASON_LOGISTICS_KEYS as _RR_LOGISTICS,
+    )
+    _models_reasons = getattr(_models_returns, "reasons", None)
+    if _models_reasons and len(_models_reasons) > 0:
+        _weight_overrides = {int(r.key): float(r.weight) for r in _models_reasons}
+    else:
+        _weight_overrides = {}
+    returns_reason_keys = list(_RR_KEYS)
+    returns_reason_probs = [_weight_overrides.get(k, _RR_DEFAULTS[k]) for k in _RR_KEYS]
+    returns_logistics_keys = list(_RR_LOGISTICS)
+
+    # Event key capacity per chunk (for globally unique sequential keys)
+    _chunk_size = _int_or(getattr(sales_cfg, "chunk_size", None), 1_000_000)
+    returns_event_key_capacity = int(_chunk_size * max(returns_rate, 0.01) * max(returns_max_splits, 1)) + 1000
+
+    # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
+
+    # Keep "requested" vs "effective" separate so we can warn+continue.
+    returns_enabled_requested = bool(returns_enabled)
+    returns_enabled_effective = bool(returns_enabled)
+
+    # Allow returns for ALL modes (sales / sales_order / both),
+    # but if sales_output == "sales" and skip_order_cols == True, we cannot derive returns
+    # (no order identifiers), so disable returns and warn.
+    if returns_enabled_requested and sales_output == "sales" and bool(skip_order_cols):
+        info("Disabling returns: skip_order_cols removes order IDs needed by returns")
+        returns_enabled_effective = False
+
+    tables: list[str] = []
+    if sales_output in {"sales", "both"}:
+        tables.append(TABLE_SALES)
+    if sales_output in {"sales_order", "both"}:
+        tables += [TABLE_SALES_ORDER_DETAIL, TABLE_SALES_ORDER_HEADER]
+
+    # Returns table is independent of which sales family tables you output
+    # (as long as returns_enabled_effective == True).
+    if returns_enabled_effective:
+        tables.append(TABLE_SALES_RETURN)
+
+    for t in tables:
+        output_paths.ensure_dirs(t)
+
+    # Normalize delta_output_folder after OutputPaths decides defaults/abspath (if your class does that)
+    delta_output_folder = output_paths.delta_output_folder
+
+    def _empty_manifest() -> SalesRunManifest:
+        """Build an empty manifest for early-exit paths."""
+        per_table: dict[str, TableOutputs] = {}
+        for t in tables:
+            per_table[t] = TableOutputs(
+                table=t,
+                file_format=file_format,
+                chunks=[],
+                merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
+                delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
+                delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
+            )
+
+        return SalesRunManifest(
+            sales_output=sales_output,
+            file_format=file_format,
+            out_folder=str(out_folder_p),
+            tables=per_table,
         )
-        if _cust_result is not None:
-            _customer_scd2_starts, _customer_scd2_keys, _cust_key_to_pool_idx = _cust_result
-            _customer_scd2_active = True
-            info(f"Customer SCD2: {_customer_scd2_starts.shape[1]} max versions × "
-                 f"{_customer_scd2_starts.shape[0]:,} customers")
+
+    # ------------------------------------------------------------
+    # Optional auto chunk sizing
+    # ------------------------------------------------------------
+    total_rows = _int_or(total_rows, 0)
+    if total_rows > 1_073_741_823:  # > int32_max / 2
+        warn(
+            f"total_rows={total_rows:,} exceeds half of int32 max. "
+            "SalesOrderNumber will use int64 in parquet output."
+        )
+    if total_rows <= 0:
+        skip("No sales rows to generate (total_rows <= 0).")
+        return SalesFactResult(chunk_files=[], manifest=_empty_manifest())
+
+    if workers is None:
+        n_workers_planned = max(1, cpu_count() - 1)
+    else:
+        n_workers_planned = max(1, _int_or(workers, cpu_count() - 1))
+
+    if tune_chunk:
+        chunk_size = suggest_chunk_size(total_rows, target_workers=n_workers_planned, preferred_chunks_per_worker=2)
+
+    chunk_size = max(1_000, _int_or(chunk_size, 1_000_000))
+
+    # ------------------------------------------------------------
+    # Load dimensions
+    # ------------------------------------------------------------
+    _cust = _load_customers(parquet_folder_p, cfg, start_date, seed)
+    customer_keys = _cust["customer_keys"]
+    customer_start_month = _cust["customer_start_month"]
+    customer_end_month = _cust["customer_end_month"]
+    is_active_in_sales = _cust["is_active_in_sales"]
+    customer_base_weight = _cust["customer_base_weight"]
+    customer_geo_key = _cust["customer_geo_key"]
+    _customer_scd2_active = _cust["customer_scd2_active"]
+    _customer_scd2_starts = _cust["customer_scd2_starts"]
+    _customer_scd2_keys = _cust["customer_scd2_keys"]
+    _cust_key_to_pool_idx = _cust["cust_key_to_pool_idx"]
+    del _cust
+
+    _prod = _load_products(
+        parquet_folder_p, cfg, seed, start_date, end_date,
+        active_product_np=getattr(State, "active_product_np", None),
+    )
+    product_np = _prod["product_np"]
+    product_brand_key = _prod["product_brand_key"]
+    brand_names = _prod["brand_names"]
+    product_subcat_key = _prod["product_subcat_key"]
+    product_popularity = _prod["product_popularity"]
+    product_seasonality = _prod["product_seasonality"]
+    date_pool = _prod["date_pool"]
+    date_prob = _prod["date_prob"]
+    _product_scd2_active = _prod["product_scd2_active"]
+    _product_scd2_starts = _prod["product_scd2_starts"]
+    _product_scd2_data = _prod["product_scd2_data"]
+    assortment_cfg = _prod["assortment_cfg"]
+    del _prod
 
     # Stores: read ONCE (keys + geography + StoreType + dates for eligibility)
     _store_cols = ["StoreKey", "GeographyKey"]
@@ -1287,19 +1489,6 @@ def generate_sales_fact(
         for cid in range(_n_countries)
     ]
 
-    # customer_geo_key: customer pool index -> GeographyKey
-    # Reuse data from the consolidated customer load (no extra parquet open).
-    customer_geo_key = None
-    if _cust_geo_full is not None:
-        if _cust_scd2_detected and _cust_is_current_full is not None:
-            # Filter to IsCurrent=1 rows (same filter applied to cust_df)
-            customer_geo_key = _cust_geo_full[_cust_is_current_full == 1]
-        else:
-            customer_geo_key = _cust_geo_full
-    elif "GeographyKey" in cust_df.columns:
-        customer_geo_key = _as_np(cust_df["GeographyKey"], np.int32)
-    # Free the full-length arrays now that they've been consumed
-    del _cust_geo_full, _cust_is_current_full
 
     # 2) Store type -> valid SalesChannelKeys mapping
     # Channel classification:
@@ -1450,9 +1639,7 @@ def generate_sales_fact(
 
     if not tasks:
         skip("No sales rows to generate.")
-        if return_manifest:
-            return ([], _empty_manifest())
-        return []
+        return SalesFactResult(chunk_files=[], manifest=_empty_manifest())
 
     # ------------------------------------------------------------
     # Worker count
@@ -1498,7 +1685,7 @@ def generate_sales_fact(
     # SalesOrderNumber RunId:
     # - If configured: sales.order_id_run_id (0..999)
     # - Else derive a stable 0..999 id from output folder + seed (unique per run folder)
-    order_id_run_id_raw = sales_cfg.order_id_run_id
+    order_id_run_id_raw = getattr(sales_cfg, "order_id_run_id", None)
     if order_id_run_id_raw is None:
         key = f"{out_folder_p.resolve()}|{int(seed)}".encode("utf-8")
         order_id_run_id = int(zlib.crc32(key) % 1000)
@@ -1947,91 +2134,7 @@ def generate_sales_fact(
             )
             del _brand_prob
 
-    # Track outputs per logical table (Sales / SalesOrderDetail / SalesOrderHeader)
-    created_by_table: Dict[str, List[Any]] = {t: [] for t in tables}
-    created_files: List[str] = []  # flat list of chunk file paths (csv/parquet), kept for backward-compat
-
-    def _record_chunk_result(r: Any, completed_units: int, total_units: int) -> None:
-        """
-        r can be:
-        - str (legacy 'sales' mode): path
-        - dict(table_name -> write_result): multi-table modes
-            write_result is str for csv/parquet, or {"part":..., "rows":...} for delta
-            May also contain _budget_agg / _returns_agg (popped before recording).
-        """
-
-        # ---- Extract budget micro-aggregates (if present) ----
-        if budget_acc is not None and isinstance(r, Mapping):
-            budget_acc.add_sales(r.pop("_budget_agg", None))
-            budget_acc.add_returns(r.pop("_returns_agg", None))
-
-        if inventory_acc is not None and isinstance(r, Mapping):
-            inventory_acc.add(r.pop("_inventory_agg", None))
-
-        if wishlists_acc is not None and isinstance(r, Mapping):
-            wishlists_acc.add(r.pop("_wishlists_agg", None))
-
-        if complaints_acc is not None and isinstance(r, Mapping):
-            complaints_acc.add(r.pop("_complaints_agg", None))
-        def _chunk_tag(path_like: str) -> str:
-            b = os.path.basename(path_like)
-            i = b.find("chunk")
-            if i < 0:
-                return b
-            j = i + 5
-            while j < len(b) and b[j].isdigit():
-                j += 1
-            return b[i:j]  # e.g. "chunk0004"
-
-        short = {
-            TABLE_SALES: "sales",
-            TABLE_SALES_ORDER_DETAIL: "detail",
-            TABLE_SALES_ORDER_HEADER: "header",
-            TABLE_SALES_RETURN: "return",
-        }
-
-        if isinstance(r, str):
-            created_by_table.setdefault(TABLE_SALES, []).append(r)
-            created_files.append(r)
-            work(f"[{completed_units}/{total_units}] {_chunk_tag(r)} -> sales")
-            return
-
-        if isinstance(r, Mapping):
-            # stable display order: configured tables first, then any extras
-            ordered_keys = [t for t in tables if t in r] + [k for k in r.keys() if k not in set(tables)]
-
-            # pick any string path to extract the chunk tag (parquet/csv)
-            tag = None
-            for k in ordered_keys:
-                v = r.get(k)
-                if isinstance(v, str):
-                    tag = _chunk_tag(v)
-                    break
-
-            produced: list[str] = []
-
-            for table_name in ordered_keys:
-                val = r.get(table_name)
-
-                # record outputs (preserve manifest + created_files behavior)
-                created_by_table.setdefault(table_name, []).append(val)
-
-                if isinstance(val, str):
-                    created_files.append(val)
-                    produced.append(short.get(table_name, table_name))
-                elif isinstance(val, Mapping) and "part" in val:
-                    # delta mode: no file name spam; just note table produced a part
-                    produced.append(short.get(table_name, table_name))
-
-            if produced:
-                if tag is None:
-                    tag = "chunk"
-                work(f"[{completed_units}/{total_units}] {tag} -> " + ", ".join(produced))
-            return
-
-        # Unknown / unexpected return type: log (helps catch worker bugs)
-        info(f"[{completed_units}/{total_units}] Worker returned unsupported result type: {type(r).__name__}")
-        return
+    collector = ChunkResultCollector(tables, budget_acc, inventory_acc, wishlists_acc, complaints_acc)
 
     # ------------------------------------------------------------
     # Multiprocessing (batched)
@@ -2060,10 +2163,10 @@ def generate_sales_fact(
             if isinstance(result, list):
                 for r in result:
                     completed_units += 1
-                    _record_chunk_result(r, completed_units, total_units)
+                    collector.record(r, completed_units, total_units)
             else:
                 completed_units += 1
-                _record_chunk_result(result, completed_units, total_units)
+                collector.record(result, completed_units, total_units)
     finally:
         _shm.cleanup()
 
@@ -2077,7 +2180,7 @@ def generate_sales_fact(
             per_table[t] = TableOutputs(
                 table=t,
                 file_format=file_format,
-                chunks=list(created_by_table.get(t, [])),
+                chunks=list(collector.created_by_table.get(t, [])),
                 merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
                 delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
                 delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
@@ -2124,7 +2227,14 @@ def generate_sales_fact(
             raise SalesError(f"No delta parts found for any table. {msg}")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
+        return SalesFactResult(
+            chunk_files=collector.created_files,
+            manifest=manifest,
+            budget_acc=collector.budget_acc,
+            inventory_acc=collector.inventory_acc,
+            wishlists_acc=collector.wishlists_acc,
+            complaints_acc=collector.complaints_acc,
+        )
 
     if file_format == "csv":
         # Merge small CSV chunk files into chunk_size-respecting files.
@@ -2139,7 +2249,14 @@ def generate_sales_fact(
             _merge_fact_csv_chunks(csv_chunks, csv_dir, spec.chunk_prefix, chunk_size, delete_chunks)
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
+        return SalesFactResult(
+            chunk_files=collector.created_files,
+            manifest=manifest,
+            budget_acc=collector.budget_acc,
+            inventory_acc=collector.inventory_acc,
+            wishlists_acc=collector.wishlists_acc,
+            complaints_acc=collector.complaints_acc,
+        )
 
     if file_format == "parquet":
         if merge_parquet:
@@ -2197,6 +2314,13 @@ def generate_sales_fact(
                 info("Merge parquet: none")
 
         manifest = _build_sales_manifest()
-        return (created_files, manifest, budget_acc, inventory_acc, wishlists_acc, complaints_acc) if return_manifest else created_files
+        return SalesFactResult(
+            chunk_files=collector.created_files,
+            manifest=manifest,
+            budget_acc=collector.budget_acc,
+            inventory_acc=collector.inventory_acc,
+            wishlists_acc=collector.wishlists_acc,
+            complaints_acc=collector.complaints_acc,
+        )
 
     raise SalesError(f"Unknown file_format: {file_format}")

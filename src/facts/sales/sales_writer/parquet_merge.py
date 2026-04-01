@@ -611,6 +611,7 @@ def optimize_parquet(
         write_statistics=True,
     )
 
+    ok = False
     try:
         for start in range(0, n_rg, batch_row_groups):
             end = min(start + batch_row_groups, n_rg)
@@ -624,12 +625,15 @@ def optimize_parquet(
 
             writer.write_table(batch, row_group_size=row_group_size)
             del batch
+        ok = True
     finally:
         writer.close()
         try:
             pf.close() if hasattr(pf, "close") else None
         except OSError:
             pass
+        if not ok and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
     # Replace original with optimized file
     os.replace(tmp_path, file_path)

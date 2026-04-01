@@ -923,10 +923,13 @@ def build_chunk_table(
         seasonal_spikes_raw = _DEFAULT_SEASONAL_SPIKES
     seasonal_spike_map: dict[int, float] = {}
     for entry in seasonal_spikes_raw:
-        if isinstance(entry, dict) and "month" in entry and "boost" in entry:
-            cal_month = int(entry["month"])
+        # Support both dicts (fallback defaults) and Pydantic models (trend presets)
+        month = entry.get("month") if isinstance(entry, dict) else getattr(entry, "month", None)
+        boost = entry.get("boost") if isinstance(entry, dict) else getattr(entry, "boost", None)
+        if month is not None and boost is not None:
+            cal_month = int(month)
             if 1 <= cal_month <= 12:
-                seasonal_spike_map[cal_month] = float(entry["boost"])
+                seasonal_spike_map[cal_month] = float(boost)
 
     use_discovery = new_customer_share > 0.0
 

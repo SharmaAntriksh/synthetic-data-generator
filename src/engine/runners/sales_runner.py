@@ -305,18 +305,11 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
             partition_cols=ctx.partition_cols,
             delta_output_folder=str(ctx.sales_out_folder),
             skip_order_cols=ctx.skip_order_cols,
-            return_manifest=True,
         )
-        if isinstance(result, tuple):
-            # result layout: (chunk_files, row_count, budget_acc?, inventory_acc?, wishlists_acc?, complaints_acc?)
-            if len(result) >= 6:
-                _chunk_files, _row_count, budget_acc, inventory_acc, wishlists_acc, complaints_acc = result[:6]
-            elif len(result) >= 5:
-                _chunk_files, _row_count, budget_acc, inventory_acc, wishlists_acc = result[:5]
-            elif len(result) >= 4:
-                _chunk_files, _row_count, budget_acc, inventory_acc = result[:4]
-            elif len(result) >= 3:
-                _chunk_files, _row_count, budget_acc = result[:3]
+        budget_acc = result.budget_acc
+        inventory_acc = result.inventory_acc
+        wishlists_acc = result.wishlists_acc
+        complaints_acc = result.complaints_acc
 
     _run_step("Generating Sales", _do_generate)
 

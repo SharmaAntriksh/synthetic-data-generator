@@ -586,6 +586,8 @@ def _ensure_salesperson_employee_key_effective(
         return table
     if "StoreKey" not in col_names or "OrderDate" not in col_names:
         return table
+    if table.num_rows == 0:
+        return table
 
     store = table.column("StoreKey").to_numpy(zero_copy_only=False).astype("int64", copy=False)
     od = table.column("OrderDate").to_numpy(zero_copy_only=False)

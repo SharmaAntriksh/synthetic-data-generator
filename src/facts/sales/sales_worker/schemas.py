@@ -166,7 +166,7 @@ def build_worker_schemas(
     #   - Detail remains line-level for product/pricing/shipping facts
     # ---------------------------------------------------------------------
     detail_fields = [
-        pa.field("SalesOrderNumber", pa.int32()),
+        pa.field("SalesOrderNumber", order_num_type),
         pa.field("SalesOrderLineNumber", pa.int32()),
         pa.field("ProductKey", pa.int32()),
         pa.field("DueDate", pa.date32()),
@@ -181,7 +181,7 @@ def build_worker_schemas(
     detail_schema = pa.schema(detail_fields + delta_fields) if is_delta else pa.schema(detail_fields)
 
     header_fields = [
-        pa.field("SalesOrderNumber", pa.int32()),
+        pa.field("SalesOrderNumber", order_num_type),
         pa.field("CustomerKey", pa.int32()),
         pa.field("StoreKey", pa.int32()),
         pa.field("EmployeeKey", pa.int32()),

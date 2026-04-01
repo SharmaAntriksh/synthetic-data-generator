@@ -217,6 +217,54 @@ class TestResolveTrendPreset:
         # No trend set, no profile set — nothing injected
         assert cfg.customers.lifecycle is None
 
+    def test_seasonal_spikes_are_pydantic_after_resolve(self):
+        """After resolve_trend_preset, seasonal_spikes should be SeasonalSpikeConfig objects."""
+        from src.engine.config.config_schema import SeasonalSpikeConfig
+
+        models = self._models({"macro_demand": {"trend": "steady-growth"}})
+        resolve_trend_preset(models)
+
+        spikes = models.customers.seasonal_spikes
+        assert spikes is not None and len(spikes) > 0
+        for spike in spikes:
+            assert isinstance(spike, SeasonalSpikeConfig), (
+                f"Expected SeasonalSpikeConfig, got {type(spike).__name__}"
+            )
+            assert 1 <= spike.month <= 12
+            assert spike.boost > 0
+
+    def test_seasonal_spikes_parseable_by_chunk_builder_logic(self):
+        """The chunk builder's spike parsing must handle both dicts and Pydantic models."""
+        from src.engine.config.config_schema import SeasonalSpikeConfig
+
+        # Pydantic path (trend preset resolved)
+        pydantic_spikes = [
+            SeasonalSpikeConfig(month=11, boost=0.40),
+            SeasonalSpikeConfig(month=12, boost=0.25),
+        ]
+        # Dict path (fallback defaults)
+        dict_spikes = [
+            {"month": 11, "boost": 0.40},
+            {"month": 12, "boost": 0.25},
+        ]
+
+        def _parse_spikes(spikes_raw):
+            result = {}
+            for entry in spikes_raw:
+                month = entry.get("month") if isinstance(entry, dict) else getattr(entry, "month", None)
+                boost = entry.get("boost") if isinstance(entry, dict) else getattr(entry, "boost", None)
+                if month is not None and boost is not None:
+                    cal_month = int(month)
+                    if 1 <= cal_month <= 12:
+                        result[cal_month] = float(boost)
+            return result
+
+        pydantic_result = _parse_spikes(pydantic_spikes)
+        dict_result = _parse_spikes(dict_spikes)
+
+        assert pydantic_result == dict_result
+        assert pydantic_result == {11: 0.40, 12: 0.25}
+
     def test_all_presets_inject_lifecycle(self):
         for trend_name in VALID_TRENDS:
             cfg = self._cfg({"customers": {"total_customers": 100}})

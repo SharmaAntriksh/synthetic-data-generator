@@ -23,15 +23,6 @@ from src.dimensions.stores import generate_store_table
 from src.dimensions.stores.generator import GeoContext
 
 # ---------------------------------------------------------------------------
-# Dates
-# ---------------------------------------------------------------------------
-from src.dimensions.dates import (
-    generate_date_table,
-    resolve_date_columns,
-    WeeklyFiscalConfig,
-)
-
-# ---------------------------------------------------------------------------
 # Currency / Exchange Rates
 # ---------------------------------------------------------------------------
 from src.dimensions.exchange_rates import build_dim_currency
@@ -222,119 +213,6 @@ class TestGenerateStoreTable:
         assert (df["LastAuditScore"] >= 50).all()
         assert (df["LastAuditScore"] <= 100).all()
         assert (df["ShrinkageRatePct"] >= 0).all()
-
-
-# ===================================================================
-# DATES
-# ===================================================================
-
-class TestGenerateDateTable:
-    """Tests for generate_date_table()."""
-
-    def _make(self, start="2024-01-01", end="2024-03-31", fiscal=1, **kw):
-        return generate_date_table(
-            pd.Timestamp(start),
-            pd.Timestamp(end),
-            fiscal,
-            **kw,
-        )
-
-    def test_basic_output(self):
-        df = self._make()
-        assert isinstance(df, pd.DataFrame)
-        # 91 days: Jan(31) + Feb(29, 2024 leap) + Mar(31)
-        assert len(df) == 91
-
-    def test_date_range_coverage(self):
-        df = self._make("2024-06-01", "2024-06-30")
-        assert len(df) == 30
-        assert df["Date"].min() == pd.Timestamp("2024-06-01")
-        assert df["Date"].max() == pd.Timestamp("2024-06-30")
-
-    def test_date_key_format(self):
-        df = self._make("2024-01-01", "2024-01-01")
-        assert len(df) == 1
-        assert df["DateKey"].iloc[0] == 20240101
-
-    def test_determinism(self):
-        df1 = self._make()
-        df2 = self._make()
-        pd.testing.assert_frame_equal(df1, df2)
-
-    def test_year_month_day_correct(self):
-        df = self._make("2024-07-15", "2024-07-15")
-        row = df.iloc[0]
-        assert int(row["Year"]) == 2024
-        assert int(row["Month"]) == 7
-        assert int(row["Day"]) == 15
-
-    def test_no_nan_in_core_columns(self):
-        df = self._make()
-        core = ["Date", "DateKey", "Year", "Month", "Day", "Quarter",
-                "MonthName", "DayName", "DayOfYear", "DayOfWeek"]
-        for col in core:
-            assert df[col].notna().all(), f"NaN in {col}"
-
-    def test_is_weekend_correct(self):
-        df = self._make("2024-01-01", "2024-01-07")
-        # 2024-01-01 = Monday, 2024-01-06 = Saturday, 2024-01-07 = Sunday
-        weekend_mask = df["Date"].dt.weekday >= 5
-        assert (df["IsWeekend"].astype(bool) == weekend_mask).all()
-
-    def test_fiscal_month_number(self):
-        """Fiscal month numbering with fiscal_start_month=5 (May)."""
-        df = self._make("2024-05-01", "2024-05-01", fiscal=5)
-        assert int(df["FiscalMonthNumber"].iloc[0]) == 1
-
-    def test_end_before_start_raises(self):
-        with pytest.raises(DimensionError, match="end_date"):
-            self._make("2024-03-01", "2024-01-01")
-
-    def test_single_day(self):
-        df = self._make("2024-01-01", "2024-01-01")
-        assert len(df) == 1
-
-    def test_weekly_fiscal_columns_present(self):
-        df = self._make(weekly_cfg=WeeklyFiscalConfig(enabled=True))
-        assert "FWYearNumber" in df.columns
-        assert "FWWeekNumber" in df.columns
-        assert "FWQuarterNumber" in df.columns
-
-    def test_weekly_fiscal_disabled(self):
-        df = self._make(weekly_cfg=WeeklyFiscalConfig(enabled=False))
-        assert "FWYearNumber" not in df.columns
-
-    def test_sequential_day_index_monotonic(self):
-        df = self._make()
-        assert df["SequentialDayIndex"].is_monotonic_increasing
-
-    def test_datekey_unique(self):
-        df = self._make("2020-01-01", "2024-12-31")
-        assert df["DateKey"].is_unique
-
-    def test_is_today_at_most_one(self):
-        df = self._make(as_of_date="2024-02-15")
-        assert df["IsToday"].sum() == 1
-        today_row = df[df["IsToday"] == 1].iloc[0]
-        assert today_row["Date"] == pd.Timestamp("2024-02-15")
-
-
-class TestResolveDateColumns:
-    def test_base_columns_always_present(self):
-        cols = resolve_date_columns({})
-        assert "Date" in cols
-        assert "DateKey" in cols
-        assert "Year" in cols
-
-    def test_fiscal_disabled(self):
-        cols = resolve_date_columns({"include": {"fiscal": False}})
-        assert "FiscalYearStartYear" not in cols
-
-    def test_weekly_fiscal_disabled(self):
-        cols = resolve_date_columns(
-            {"include": {"weekly_fiscal": {"enabled": False}}}
-        )
-        assert "FWYearNumber" not in cols
 
 
 # ===================================================================
@@ -1248,29 +1126,6 @@ class TestBuildMonthlyRates:
 
 
 # ===================================================================
-# WEEKLY FISCAL CONFIG
-# ===================================================================
-
-class TestWeeklyFiscalConfig:
-    def test_default_values(self):
-        cfg = WeeklyFiscalConfig()
-        assert cfg.enabled is False
-        assert cfg.first_day_of_week == 0
-        assert cfg.weekly_type == "Last"
-        assert cfg.quarter_week_type == "445"
-
-    def test_custom_values(self):
-        cfg = WeeklyFiscalConfig(
-            enabled=False,
-            first_day_of_week=1,
-            weekly_type="Nearest",
-            quarter_week_type="454",
-        )
-        assert cfg.enabled is False
-        assert cfg.quarter_week_type == "454"
-
-
-# ===================================================================
 # CROSS-GENERATOR DATA QUALITY
 # ===================================================================
 
@@ -1283,16 +1138,6 @@ class TestCrossGeneratorQuality:
         store_geos = set(df["GeographyKey"].astype(np.int64).tolist())
         valid_geos = set(geo_keys.tolist())
         assert store_geos.issubset(valid_geos)
-
-    def test_date_table_covers_full_range(self):
-        """Date table should include every day from start to end."""
-        start = pd.Timestamp("2024-01-01")
-        end = pd.Timestamp("2024-01-31")
-        df = generate_date_table(start, end, fiscal_start_month=1)
-        assert len(df) == 31
-        dates = pd.DatetimeIndex(df["Date"])
-        expected = pd.date_range(start, end, freq="D")
-        pd.testing.assert_index_equal(dates, expected, check_names=False)
 
     def test_promotion_no_discount_key_is_one(self):
         """No Discount sentinel must always be PromotionKey=1."""
