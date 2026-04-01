@@ -1197,6 +1197,8 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
                 unchanged_df = customers_df[~_change_mask]
                 changed_df = customers_df[_change_mask]
 
+                geography, _ = load_dimension("geography", parquet_dims_folder, cfg.geography)
+                geo_lookup = geography.set_index("GeographyKey")[["City", "State", "Country"]]
                 geo_keys = geography["GeographyKey"].to_numpy()
                 loyalty_dim = read_parquet_dim(parquet_dims_folder, "loyalty_tiers")
                 loyalty_key_col = first_existing_col(loyalty_dim, ["LoyaltyTierKey", "TierKey", "Key"])
