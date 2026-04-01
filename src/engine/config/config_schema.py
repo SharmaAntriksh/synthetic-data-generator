@@ -279,7 +279,7 @@ class DefaultsConfig(_Base):
     seed: int = 42
     random: bool = False
     dates: GlobalDatesConfig = GlobalDatesConfig()
-    paths: Optional[Dict[str, str]] = None
+    final_output: str = "./generated_datasets"
     view_schema: str = "dbo"
 
 
@@ -330,7 +330,7 @@ class ExchangeRatesConfig(_Base):
     base_currency: str = "USD"
     future_annual_drift: float = 0.02
     include_monthly: bool = True
-    master_file: Optional[str] = None
+    master_file: str = "./data/exchange_rates_master/fx_master.parquet"
     # Injected by dimensions_runner
     global_dates: Optional[Any] = None
 
@@ -391,15 +391,6 @@ class PackagingConfig(_Base):
     dim_parquet_compression: str = "snappy"
     dim_parquet_compression_level: Optional[int] = None
     dim_force_date32: bool = True
-
-
-# -- Paths --
-
-class PathsConfig(_Base):
-    geography: Optional[str] = None
-    names_folder: Optional[str] = None
-    fx_master: Optional[str] = None
-    final_output: Optional[str] = None
 
 
 # -- SCD Type 2 sub-models --
@@ -671,7 +662,6 @@ class AppConfig(_Base):
 
     scale: Optional[ScaleConfig] = None
     defaults: DefaultsConfig = DefaultsConfig()
-    paths: Optional[PathsConfig] = None
 
     sales: SalesConfig = SalesConfig()
     returns: ReturnsConfig = ReturnsConfig()
@@ -704,11 +694,9 @@ class AppConfig(_Base):
     customer_acquisition_channels: Optional[Dict[str, Any]] = None
     return_reason: Optional[Dict[str, Any]] = None
 
-    # Top-level keys set by pipeline_runner or path distribution
-    final_output_folder: Optional[str] = None
+    # Top-level keys set by pipeline_runner
     config_yaml_path: Optional[str] = None
     model_yaml_path: Optional[str] = None
-    names: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_raw_dict(cls, raw: Dict[str, Any]) -> "AppConfig":

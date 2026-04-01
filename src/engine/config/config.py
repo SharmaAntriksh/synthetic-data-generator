@@ -45,7 +45,7 @@ SectionNormalizer = Callable[[Dict[str, Any]], Dict[str, Any]]
 
 # Sections that must be mappings if present but do not have a normalizer.
 # Keep this small; normalizer keys are automatically treated as mapping sections.
-_SECTION_MAPPING_ONLY_KEYS: frozenset[str] = frozenset({"scale", "paths"})
+_SECTION_MAPPING_ONLY_KEYS: frozenset[str] = frozenset({"scale"})
 
 # For config files that intentionally don't have defaults (e.g. models.yaml),
 # we keep normalization deliberately narrow to avoid surprising validation failures.
@@ -196,9 +196,6 @@ def _load_and_normalize(
     cfg = _expand_region_mix(cfg)
     cfg = _strip_deprecated_keys(cfg)
     cfg = _fold_facts_enabled(cfg)
-
-    # Normalize consolidated paths into per-section path keys
-    cfg = _distribute_paths(cfg)
 
     # Expand simplified product pricing knobs into full pricing dict
     cfg = _expand_products_pricing(cfg)
@@ -434,37 +431,6 @@ def _fold_facts_enabled(cfg: Dict[str, Any]) -> Dict[str, Any]:
             cfg.setdefault("returns", {})["enabled"] = True
 
     cfg.pop("facts", None)
-    return cfg
-
-
-def _distribute_paths(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Populate per-section path keys from the consolidated ``paths`` block."""
-    paths = cfg.get("paths")
-    if not isinstance(paths, Mapping):
-        return cfg
-
-    # final_output_folder (top-level)
-    final_out = paths.get("final_output")
-    if final_out:
-        cfg.setdefault("final_output_folder", final_out)
-
-    # names.people_folder
-    names_folder = paths.get("names_folder")
-    if names_folder:
-        cfg.setdefault("names", {}).setdefault("people_folder", names_folder)
-
-    # defaults.paths.geography
-    geo_path = paths.get("geography")
-    if geo_path:
-        cfg.setdefault("defaults", {}).setdefault("paths", {}).setdefault("geography", geo_path)
-
-    # exchange_rates.master_file (paths.fx_master → section-level)
-    er = cfg.get("exchange_rates")
-    if isinstance(er, Mapping) and "master_file" not in er:
-        er["master_file"] = paths.get(
-            "fx_master", "./data/exchange_rates_master/fx_master.parquet"
-        )
-
     return cfg
 
 

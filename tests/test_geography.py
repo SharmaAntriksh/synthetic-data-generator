@@ -115,7 +115,7 @@ class TestNormalizeGeographyConfig:
         assert "override" in result
         assert result["override"]["seed"] is None
         assert isinstance(result["override"]["dates"], dict)
-        assert isinstance(result["override"]["paths"], dict)
+        assert "paths" not in result["override"]
 
     def test_override_seed_coerced_to_int(self):
         result = normalize_geography_config({"override": {"seed": "42"}})

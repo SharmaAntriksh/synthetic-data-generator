@@ -8,7 +8,7 @@ import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Dict, Optional
 
 import numpy as np
 
@@ -80,80 +80,26 @@ class PeopleNamePools:
 # ======================================================================================
 
 def resolve_people_folder(
-    cfg: Mapping[str, Any],
-    *,
-    per_module_folder: Optional[str] = None,
     default_folder: str = "./data/name_pools/people",
-    legacy_folders: Iterable[str] = (),
 ) -> str:
-    """
-    Resolve a names folder consistently across generators.
-
-    Lookup order:
-      1) per_module_folder argument (e.g., customers.names_folder / employees.names_folder)
-      2) cfg["names"]["people_folder"] (shared)
-      3) default_folder
-      4) legacy_folders (first existing)
-    """
-    if per_module_folder:
-        return str(Path(per_module_folder))
-
-    names_block = cfg.get("names") if isinstance(cfg, Mapping) else None
-    if isinstance(names_block, Mapping):
-        pf = names_block.get("people_folder")
-        if pf:
-            p = Path(pf)
-            if not p.exists():
-                raise FileNotFoundError(f"names.people_folder does not exist: {p}")
-            return str(p)
-
-    # Fall back to default_folder
-    default_path = Path(default_folder)
-    if default_path.exists():
-        return str(default_path)
-
-    # Try legacy folders
-    for lf in legacy_folders:
-        lp = Path(lf)
-        if lp.exists():
-            return str(lp)
-
-    raise ValueError("Missing config: names.people_folder (expected a valid folder path)")
+    """Validate that the default people name-pool folder exists and return its path."""
+    p = Path(default_folder)
+    if not p.exists():
+        raise FileNotFoundError(f"People name-pool folder does not exist: {p}")
+    return str(p)
 
 # --- Org name pool -----------------------------------------------------
 
 _slug_re = re.compile(r"[^a-z0-9\-]+")
 
 def resolve_org_names_file(
-    cfg: Mapping[str, Any],
-    *,
-    default_relpath: str = "org/org_names.csv",
+    default_file: str = "./data/name_pools/org/org_names.csv",
 ) -> str:
-    """
-    Resolve org name list file path.
-
-    Priority:
-      1) cfg["names"]["org_names_file"] (explicit)
-      2) sibling of people_folder: <parent_of_people_folder>/org/org_names.csv
-    """
-    names_block = cfg.get("names") if isinstance(cfg, Mapping) else None
-    if isinstance(names_block, Mapping):
-        explicit = names_block.get("org_names_file")
-        if explicit:
-            p = Path(explicit)
-            if not p.exists():
-                raise FileNotFoundError(f"names.org_names_file does not exist: {p}")
-            return str(p)
-
-        pf = names_block.get("people_folder")
-        if pf:
-            p = Path(pf)
-            org_path = p.parent / default_relpath
-            if not org_path.exists():
-                raise FileNotFoundError(f"Expected org names at: {org_path} (derived from names.people_folder)")
-            return str(org_path)
-
-    raise ValueError("Missing config: names.people_folder (needed to derive org/org_names.csv), or set names.org_names_file.")
+    """Validate that the default org names file exists and return its path."""
+    p = Path(default_file)
+    if not p.is_file():
+        raise FileNotFoundError(f"Org names file does not exist: {p}")
+    return str(p)
 
 
 @lru_cache(maxsize=64)

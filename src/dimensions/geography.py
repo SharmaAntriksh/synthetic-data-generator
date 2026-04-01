@@ -260,19 +260,16 @@ def normalize_geography_config(geo_cfg: Dict) -> Dict:
                 f"Remove this key from config.yaml to silence this warning."
             )
 
-    # override sub-block (kept for seed/dates/paths compatibility)
+    # override sub-block (kept for seed/dates compatibility)
     override = geo_cfg.get("override") or {}
     if not isinstance(override, Mapping):
         raise ConfigError("geography.override must be a mapping")
     override.setdefault("seed", None)
     override.setdefault("dates", {})
-    override.setdefault("paths", {})
     if override["seed"] is not None:
         override["seed"] = int(override["seed"])
     if not isinstance(override["dates"], Mapping):
         raise ConfigError("geography.override.dates must be a mapping")
-    if not isinstance(override["paths"], Mapping):
-        raise ConfigError("geography.override.paths must be a mapping")
     geo_cfg["override"] = override
 
     return geo_cfg

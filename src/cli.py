@@ -240,8 +240,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if not isinstance(cfg, Mapping):
                 cfg = {}
             master_path = (
-                cfg.get("paths", {}).get("fx_master")
-                or cfg.get("exchange_rates", {}).get("master_file")
+                cfg.get("exchange_rates", {}).get("master_file")
                 or "./data/exchange_rates_master/fx_master.parquet"
             )
             refresh_fx_master(master_path)

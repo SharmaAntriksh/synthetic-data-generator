@@ -29,9 +29,9 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     file_format = str(sales_cfg.file_format).lower()
     is_csv = file_format == "csv"
 
-    _raw_folder = unquote(str(cfg.final_output_folder))
+    _raw_folder = unquote(str(cfg.defaults.final_output))
     if ".." in _raw_folder:
-        raise ValueError(f"final_output_folder must not contain '..': {_raw_folder}")
+        raise ValueError(f"defaults.final_output must not contain '..': {_raw_folder}")
     final_root = Path(_raw_folder).resolve()
 
     config_yaml_path = get_first_existing_path(

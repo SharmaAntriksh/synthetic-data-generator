@@ -850,7 +850,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         skip("Employees up-to-date")
         return
 
-    people_folder = resolve_people_folder(cfg)
+    people_folder = resolve_people_folder()
     pf = Path(people_folder)
 
     enable_asia = (

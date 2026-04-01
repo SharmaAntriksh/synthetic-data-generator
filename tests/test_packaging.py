@@ -752,7 +752,7 @@ class TestPackageOutputSecurity:
         from src.engine.packaging.package_output import package_output
 
         cfg = AppConfig.model_validate({
-            "final_output_folder": "../../../etc/evil",
+            "defaults": {"final_output": "../../../etc/evil"},
             "sales": {"sales_output": "sales"},
         })
         sales_cfg = SalesConfig.model_validate({
@@ -767,7 +767,7 @@ class TestPackageOutputSecurity:
         from src.engine.packaging.package_output import package_output
 
         cfg = AppConfig.model_validate({
-            "final_output_folder": "..%2F..%2Fetc%2Fevil",
+            "defaults": {"final_output": "..%2F..%2Fetc%2Fevil"},
             "sales": {"sales_output": "sales"},
         })
         sales_cfg = SalesConfig.model_validate({

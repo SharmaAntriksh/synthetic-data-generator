@@ -1432,10 +1432,6 @@ def generate_sales_fact(
     _CHANNEL_TO_ELIG_GROUP[9] = 3   # PartnerReseller -> EligibleB2B
     _CHANNEL_TO_ELIG_GROUP[10] = 0  # Kiosk -> EligibleStore
 
-    info(f"Column correlations: {_n_countries} countries, "
-         f"product eligibility {'loaded' if product_channel_eligible is not None else 'not available'}, "
-         f"promo channel groups {int((promo_channel_group > 0).sum())}/{len(promo_channel_group)}")
-
     # ------------------------------------------------------------
     # Chunk scheduling
     # ------------------------------------------------------------

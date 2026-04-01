@@ -90,7 +90,7 @@ def small_stores(geo_keys, iso_by_geo):
 def people_pools():
     """Load real name pools from data folder (skip if unavailable)."""
     from src.utils.name_pools import load_people_pools, resolve_people_folder
-    folder = resolve_people_folder({})
+    folder = resolve_people_folder()
     pf = Path(folder)
     if not pf.exists():
         pytest.skip("Name pool data not available")
@@ -913,7 +913,6 @@ class TestCustomerGenerator:
                 "pct_org": 5,
             },
             "geography": {},
-            "paths": {"names_folder": "./data/name_pools/people"},
         })
 
     def _fake_geography(self, n=10):
@@ -962,8 +961,7 @@ class TestCustomerGenerator:
         geo_df = self._fake_geography()
 
         # Load real people pools from disk (they exist in ./data/name_pools/people)
-        paths = getattr(cfg, "paths", None)
-        people_folder = getattr(paths, "names_folder", "./data/name_pools/people") if paths else "./data/name_pools/people"
+        people_folder = "./data/name_pools/people"
         pf = Path(people_folder)
         if not pf.exists():
             pytest.skip("Name pool data not available")

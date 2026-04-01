@@ -371,11 +371,7 @@ def _apply_overrides(cfg, sales_cfg, overrides: PipelineOverrides):
 
 def _clean_final_outputs(cfg) -> None:
     info("Cleaning final output folders before run.")
-    gen_root = (
-        getattr(cfg, "generated_datasets_root", None)
-        or cfg.final_output_folder
-        or getattr(cfg, "final_output_root", None)
-    )
+    gen_root = cfg.defaults.final_output
     if gen_root:
         try:
             shutil.rmtree(gen_root)

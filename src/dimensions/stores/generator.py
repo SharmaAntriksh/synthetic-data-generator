@@ -1184,7 +1184,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     use_name_pools = bool(store_cfg.use_name_pools)
     people_pools = None
     if use_name_pools:
-        people_folder = resolve_people_folder(cfg)
+        people_folder = resolve_people_folder()
         pf = Path(people_folder)
         enable_asia = (
             (pf / "asia_male_first.csv").exists()

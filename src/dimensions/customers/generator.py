@@ -169,7 +169,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     p_in, p_us, p_eu, p_as = validate_percentages(pct_india, pct_us, pct_eu, pct_asia)
 
     # --- shared name pools ---
-    names_folder = resolve_people_folder(cfg)
+    names_folder = resolve_people_folder()
     enable_asia = p_as > 0.0
     people_pools = load_people_pools(names_folder, enable_asia=enable_asia, legacy_support=True)
 
@@ -266,7 +266,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     # -----------------------------------------------------
     # Organization handling (meaningful org names from pool)
     # -----------------------------------------------------
-    org_file = resolve_org_names_file(cfg)
+    org_file = resolve_org_names_file()
     org_pool = load_org_names(org_file)
     OrgName = assign_org_names(
         keys=CustomerKey,
@@ -1133,7 +1133,7 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
         # Load name pools for org_profile
         pct_asia = float(getattr(cust_cfg, "pct_asia", 0.0))
         enable_asia = pct_asia > 0.0
-        names_folder = resolve_people_folder(cfg)
+        names_folder = resolve_people_folder()
         people_pools = load_people_pools(names_folder, enable_asia=enable_asia, legacy_support=True)
 
         # Re-derive Region from customer config percentages for org_profile

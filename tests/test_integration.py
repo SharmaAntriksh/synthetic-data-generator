@@ -51,12 +51,10 @@ def minimal_config(tmp_path):
     """Write a minimal valid config.yaml to tmp_path and return its path."""
     cfg = {
         "scale": {"sales_rows": 100, "products": 10, "customers": 20, "stores": 2},
-        "defaults": {"seed": 42, "dates": {"start": "2024-01-01", "end": "2024-12-31"}},
-        "paths": {
-            "geography": "./data/parquet_dims/geography.parquet",
-            "names_folder": "./data/name_pools/people",
-            "fx_master": "./data/exchange_rates_master/fx_master.parquet",
+        "defaults": {
+            "seed": 42,
             "final_output": str(tmp_path / "generated_datasets"),
+            "dates": {"start": "2024-01-01", "end": "2024-12-31"},
         },
         "sales": {
             "max_lines_per_order": 3,
