@@ -367,6 +367,34 @@ When generating in CSV mode, the output includes auto-generated SQL scripts for 
 
 The import creates all dimension and fact tables, applies PK/FK constraints, and creates analytical views. Dropped constraints can be restored with `EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'`.
 
+### Post-Import Stored Procedures
+
+The import generates stored procedures in the `admin` and `verify` schemas for ongoing management and data validation:
+
+**Admin procedures:**
+
+| Procedure | Description |
+|---|---|
+| `admin.ManageColumnstoreIndexes` | Create, drop, or rebuild clustered columnstore indexes on fact tables |
+| `admin.ManagePrimaryKeys` | Backup, drop, restore, or recreate PK/FK constraints (enables CCI swap) |
+
+**Verification procedures** (run individually or all at once with `verify.RunAll`):
+
+| Procedure | Description |
+|---|---|
+| `verify.RunAll` | Execute all verification checks and return a combined summary |
+| `verify.CrossDimension` | FK integrity between dimension tables (geography → stores, etc.) |
+| `verify.Customers` | Customer demographics: type distribution, household coverage, SCD2 validity |
+| `verify.EmployeeStoreSales` | Employee-store assignment coverage and sales attribution |
+| `verify.FactDistributions` | Sales amount, quantity, and discount statistical distributions |
+| `verify.Geography` | Geography completeness: all countries, states, and cities populated |
+| `verify.Products` | Product pricing sanity: margin ranges, active ratios, SCD2 consistency |
+| `verify.SalesRelationships` | FK integrity from sales → all dimension tables |
+| `verify.SecondaryFacts` | Budget, inventory, wishlists, and complaints row counts and FK checks |
+| `verify.Stores` | Store types, opening/closing dates, online vs physical distribution |
+| `verify.TemporalCoverage` | Date range coverage: sales span matches date dimension |
+| `verify.Warehouses` | Warehouse-store assignments and geographic coverage |
+
 ---
 
 ## Web Interface
@@ -408,7 +436,7 @@ Each output includes a Power BI Project (`.pbip`) template with pre-configured f
 
 ## Testing
 
-The project includes 1338+ tests covering config validation, pricing pipeline, quantity model, geography, trend presets, version store, state management, determinism guarantees, edge-case guards, web API, packaging, sales logic, schema validation, product dimensions, sales writer, and SQL tools.
+The project includes 1371+ tests covering config validation, pricing pipeline, quantity model, geography, trend presets, version store, state management, determinism guarantees, edge-case guards, web API, packaging, sales logic, schema validation, product dimensions, sales writer, SQL tools, and date dimension edge cases.
 
 ```bash
 # Run all tests
