@@ -2,7 +2,7 @@
 
 This file controls product-level sales behavior: basket sizes, pricing dynamics, brand popularity, and return patterns. Unlike `config.yaml` (which controls shape and scale), `models.yaml` controls *how* sales behave at the transaction level.
 
-Customer behavior (lifecycle, demand shape, growth curves) is controlled by `customers.profile` in `config.yaml`, not here.
+Business shape (revenue trajectory, customer lifecycle, demand curves) is controlled by the `macro_demand.trend` preset — see [Macro Demand](#macro-demand) below.
 
 > **Note:** `models.yaml` is not overridable via CLI flags. Edit it directly or use the web UI's Models tab.
 
@@ -10,24 +10,40 @@ Customer behavior (lifecycle, demand shape, growth curves) is controlled by `cus
 
 ## Macro Demand
 
-Controls the overall demand curve across the simulation period. These factors multiply on top of the customer acquisition profile to shape total sales volume over time.
+Controls the overall demand shape via a **trend preset**. Each preset defines a coherent story across revenue curve, customer lifecycle, and demand behavior.
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `macro_demand.yearly_growth` | Smooth compound annual growth rate applied to sales volume. 0.08 = 8% year-over-year growth in total demand. | `0.08` |
-| `macro_demand.row_share_of_growth` | How much of the growth is expressed as more rows (transactions) vs. higher quantities per order. 1.0 = all growth comes from more transactions. 0.5 = half from more transactions, half from larger baskets. | `1.0` |
-| `macro_demand.shock_probability` | Per-month probability of a random demand shock (sudden spike or dip). 0.0 = smooth demand. 0.03 = ~3% chance each month of an unexpected swing. | `0.0` |
-| `macro_demand.seasonality_amplitude` | Magnitude of within-year seasonal swings. 0.08 = ~8% peak-to-trough variation driven by month-of-year patterns (e.g., holiday uplift in Nov/Dec). | `0.08` |
-| `macro_demand.noise_std` | Standard deviation of random month-to-month noise layered on top of the seasonal curve. Keeps the demand curve from looking too smooth. | `0.02` |
+| `macro_demand.trend` | Named preset that controls the business shape. See the preset table below. | `"gradual-growth"` |
 
-### Year-level factors
+### Available presets
 
-Per-year multipliers applied on top of the baseline demand curve. Use these to model specific business events like a recession year, a product launch year, or a market expansion.
+**Directional presets** (extend over time):
 
-| Key | Description | Example |
-|-----|-------------|---------|
-| `macro_demand.year_level_factors.mode` | How the factor list is applied. `"once"` = each value maps to one year in sequence. `"cycle"` = the list repeats if the simulation has more years than values. | `"once"` |
-| `macro_demand.year_level_factors.values` | List of multipliers, one per year. 1.0 = follow the baseline. <1.0 = demand dip (e.g., 0.85 = 15% below baseline). >1.0 = demand peak (e.g., 1.2 = 20% above baseline). | `[1.0, 1.0, 1.0, 1.0, 1.0]` |
+| Preset | Revenue Shape | Customer Curve |
+|--------|--------------|----------------|
+| `steady-growth` | Gentle 5%/yr upward line | Stable base, gradual acquisition |
+| `strong-growth` | Exponential acceleration | Continuously growing |
+| `gradual-growth` | S-curve with dips | Ramp then level off |
+| `hockey-stick` | Explosive years 4-6 | Rapid ramp |
+| `decline` | Steady erosion | Shrinking (high churn) |
+| `new-market-entry` | Near-zero then accelerating | Very slow then ramping |
+| `slow-decline` | Gentle ~10%/yr drop | Gradual erosion |
+
+**Cyclical presets** (repeat every 10 years):
+
+| Preset | Revenue Shape | Customer Curve |
+|--------|--------------|----------------|
+| `boom-and-bust` | Rapid rise then collapse | Rise then crash |
+| `recession-recovery` | U-shape dip | Stable (dip from orders) |
+| `seasonal-dominant` | Flat trend, strong seasonal | Flat with seasonal waves |
+| `seasonal-with-growth` | Growth + retail seasonality | Growing with seasonal waves |
+| `plateau` | Growth then flatline | Growth then stable |
+| `volatile` | Wild year-to-year swings | Flat with noise |
+| `double-dip` | Two downturns | Gradual decline |
+| `stagnation` | Perfectly flat | Perfectly flat (no churn) |
+
+Each preset internally controls: `year_level_factors`, `row_share_of_growth`, `noise_std`, `shock_probability`, `monthly_seasonality`, `bootstrap_months`, `early_month_cap`, and embedded `lifecycle` (acquisition curve, churn, initial customer spread) + `customers` (participation ratios, discovery, seasonal spikes) sub-dicts.
 
 ---
 
@@ -40,7 +56,7 @@ Controls basket size — how many items a customer buys per order line.
 | `quantity.base_poisson_lambda` | Mean of the Poisson distribution used to sample raw quantity. Higher values = larger typical baskets. 2.1 means most orders have 1-3 items per line. | `2.1` |
 | `quantity.min_qty` | Floor clamp on quantity. No order line will have fewer than this many items. | `1` |
 | `quantity.max_qty` | Ceiling clamp on quantity. Prevents unrealistically large single-line orders. | `4` |
-| `quantity.noise_sigma` | Standard deviation of multiplicative noise applied to the monthly-adjusted lambda. Adds randomness so not every order in the same month has the same basket size distribution. | `0.03` |
+| `quantity.noise_sigma` | Standard deviation of multiplicative noise applied to the monthly-adjusted lambda. Adds randomness so not every order in the same month has the same basket size distribution. | `0.12` |
 
 ### Monthly factors
 
@@ -75,7 +91,7 @@ Simulates gradual price increases over time. Each product's `UnitPrice` drifts u
 | Key | Description | Example |
 |-----|-------------|---------|
 | `pricing.inflation.annual_rate` | Annual inflation rate applied to unit prices. 0.10 = 10% per year. Compounded monthly — a product priced at $100 in year 1 costs ~$110 in year 2. | `0.10` |
-| `pricing.inflation.month_volatility_sigma` | Monthly noise on the inflation factor. Adds micro-variation so prices don't increase in a perfectly smooth line. | `0.003` |
+| `pricing.inflation.month_volatility_sigma` | Monthly noise on the inflation factor. Adds micro-variation so prices don't increase in a perfectly smooth line. | `0.015` |
 | `pricing.inflation.factor_clip` | `[min, max]` bounds on the cumulative inflation factor. Prevents prices from deflating below the floor or inflating beyond the ceiling. `[1.00, 1.50]` = prices can rise up to 50% but never drop below the original. | `[1.00, 1.50]` |
 | `pricing.inflation.volatility_seed` | Random seed for inflation noise. Change this to get a different inflation trajectory with the same parameters. | `123` |
 
@@ -166,7 +182,7 @@ Simulates a "winner" brand that rotates each year. The winning brand gets a dema
 
 ## Returns
 
-Controls the return reason distribution and return timing. The overall return rate is set in `config.yaml` (`returns.return_rate`); this section controls the *characteristics* of those returns.
+Controls the return reason distribution, timing, and quantity behavior. The overall return rate is set in `config.yaml` (`returns.return_rate`); this section controls the *characteristics* of those returns.
 
 | Key | Description | Example |
 |-----|-------------|---------|
@@ -174,22 +190,21 @@ Controls the return reason distribution and return timing. The overall return ra
 
 ### Reasons
 
-A weighted list of return reasons. Each return event picks one reason based on the weights. Weights must sum to 1.0.
+A weighted list of return reasons. Each return event picks one reason based on the weights. Weights must sum to 1.0. Labels and categories are defined in `defaults.py` — only the `key` and `weight` are set here.
 
 ```yaml
 returns.reasons:
-  - { key: 1, label: "Damaged / Defective",    weight: 0.28 }   # most common
-  - { key: 2, label: "Wrong Item",              weight: 0.12 }
-  - { key: 3, label: "Not as Described",        weight: 0.14 }
-  - { key: 4, label: "Arrived Late",            weight: 0.08 }
-  - { key: 5, label: "Better Price Elsewhere",  weight: 0.06 }
-  - { key: 6, label: "No Longer Needed",        weight: 0.20 }   # second most common
-  - { key: 7, label: "Size / Fit",              weight: 0.07 }
-  - { key: 8, label: "Other",                   weight: 0.05 }
+  - { key: 1, weight: 0.20 }   # Defective (Quality)
+  - { key: 2, weight: 0.12 }   # Damaged in shipping (Logistics)
+  - { key: 3, weight: 0.14 }   # Wrong item (Fulfillment)
+  - { key: 4, weight: 0.10 }   # Not as described (Customer)
+  - { key: 5, weight: 0.14 }   # No longer needed (Customer)
+  - { key: 6, weight: 0.08 }   # Late delivery (Logistics)
+  - { key: 7, weight: 0.07 }   # Better price found (Customer)
+  - { key: 8, weight: 0.15 }   # Other (Other)
 ```
 
 - `key` — integer key written to the `ReturnReasonKey` column (joins to the `ReturnReason` dimension)
-- `label` — human-readable reason text written to the dimension table
 - `weight` — probability of this reason being selected
 
 ### Return timing
@@ -200,9 +215,13 @@ Controls the delay between the sale date and the return date.
 |-----|-------------|---------|
 | `returns.lag_days.distribution` | Statistical distribution for the return delay. `"triangular"` produces a realistic right-skewed shape (most returns happen quickly, a long tail of late returns). | `"triangular"` |
 | `returns.lag_days.mode` | Mode (peak) of the triangular distribution in days. 7 = most returns happen about a week after purchase. The min/max bounds come from `config.yaml` (`returns.min_days_after_sale` / `returns.max_days_after_sale`). | `7` |
+| `returns.lag_days.split_min_gap` | Minimum days between split return events when a return is spread across multiple shipments. | `3` |
+| `returns.lag_days.split_max_gap` | Maximum days between split return events. | `20` |
 
 ### Return quantity
 
 | Key | Description | Example |
 |-----|-------------|---------|
 | `returns.quantity.full_line_probability` | Probability that a return covers the full quantity of the original order line. 0.85 = 85% of returns are full-line returns; 15% are partial returns (random fraction of the original quantity). | `0.85` |
+| `returns.quantity.split_return_rate` | Fraction of returns that are split across multiple return events (e.g., customer returns items in separate shipments). | `0.20` |
+| `returns.quantity.max_splits` | Maximum number of return events per original order line when a return is split. | `3` |

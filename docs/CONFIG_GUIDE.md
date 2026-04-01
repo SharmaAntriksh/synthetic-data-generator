@@ -10,10 +10,10 @@ Top-level entity counts. Start here to size your dataset.
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `scale.sales_rows` | Total sales transaction rows to generate. This is the primary driver of output size and run time. | `2083285` |
+| `scale.sales_rows` | Total sales transaction rows to generate. This is the primary driver of output size and run time. | `1003295` |
 | `scale.products` | Number of products in the product dimension. The base Contoso catalog has 5167 products; values above that expand via stratified duplication, below that trim. | `5167` |
-| `scale.customers` | Number of unique customers. Determines the customer dimension size and how many buyers are in the sales pool. | `48834` |
-| `scale.stores` | Total store count (physical + online combined). | `100` |
+| `scale.customers` | Number of unique customers. Determines the customer dimension size and how many buyers are in the sales pool. | `82851` |
+| `scale.stores` | Total store count (physical + online combined). | `200` |
 | `scale.promotions` | Promotion counts by type. Each type creates that many promo rows per year window. Holiday promos are always auto-generated on top of these. | `{ seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }` |
 
 ---
@@ -26,22 +26,10 @@ Global settings that apply across all generators.
 |-----|-------------|---------|
 | `defaults.seed` | Master random seed. All generators derive sub-seeds from this for reproducibility. Same seed + same config = identical output. | `42` |
 | `defaults.random` | When `true`, ignores all seeds and uses OS entropy. Produces non-deterministic output every run. | `false` |
-| `defaults.view_schema` | SQL schema name for generated views. `"dbo"` creates views with `vw_` prefix in dbo schema. Any other value (e.g. `"report"`, `"bi"`) creates a dedicated schema. | `"report"` |
+| `defaults.view_schema` | SQL schema name for generated views. `"dbo"` creates views with `vw_` prefix in dbo schema. Any other value (e.g. `"report"`, `"bi"`) creates a dedicated schema. | `"bi"` |
+| `defaults.final_output` | Root folder where timestamped output packages are written. Each run creates a subfolder here. | `"./generated_datasets"` |
 | `defaults.dates.start` | Global start date for all time-dependent generators (sales, exchange rates, budget, inventory). Individual sections cannot override this. | `"2021-01-01"` |
 | `defaults.dates.end` | Global end date. Same coupling rules as start. | `"2025-12-31"` |
-
----
-
-## Paths
-
-File system paths for input data and output location.
-
-| Key | Description | Example |
-|-----|-------------|---------|
-| `paths.geography` | Path to the curated geography parquet file used to place customers and stores in real-world locations. | `"./data/parquet_dims/geography.parquet"` |
-| `paths.names_folder` | Folder containing name pool CSVs (first names, last names) used to generate realistic person names. | `"./data/name_pools/people"` |
-| `paths.fx_master` | Path to the master FX rates parquet file. Contains historical daily exchange rates from Yahoo Finance. Use `--refresh-fx-master` CLI flag to top up with new data. | `"./data/exchange_rates_master/fx_master.parquet"` |
-| `paths.final_output` | Root folder where timestamped output packages are written. Each run creates a subfolder here. | `"./generated_datasets"` |
 
 ---
 
@@ -56,7 +44,7 @@ Controls the sales fact table: output format, structure, and performance tuning.
 | `sales.file_format` | Output format for all fact tables. `"csv"` = chunked CSVs + auto-generated SQL scripts. `"parquet"` = merged single parquet file. `"deltaparquet"` = Delta Lake with ACID transactions. | `"csv"` |
 | `sales.sales_output` | Table structure for sales output. `"sales"` = flat denormalized table. `"sales_order"` = normalized header + detail tables. `"both"` = generates all three tables. | `"sales"` |
 | `sales.skip_order_cols` | When `true`, omits `SalesOrderNumber` and `SalesOrderLineNumber` columns. Reduces file size but disables returns generation (returns need order IDs to link back). | `false` |
-| `sales.max_lines_per_order` | Maximum line items per sales order. Orders are randomly sized 1..N. Higher values create more multi-item baskets. | `5` |
+| `sales.max_lines_per_order` | Maximum line items per sales order. Orders are randomly sized 1..N. Higher values create more multi-item baskets. | `8` |
 
 ### Merge & partitioning
 
@@ -71,7 +59,8 @@ Controls the sales fact table: output format, structure, and performance tuning.
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `sales.optimize` | Sort merged parquet files by key columns for better query performance (predicate pushdown). Adds time to the packaging step. | `false` |
+| `sales.sort_merged_parquet` | Sort merged parquet files by key columns for better read performance (predicate pushdown). Only applies to parquet format. Adds time to the packaging step. | `false` |
+| `sales.sort_delta_parts` | Sort each delta partition part by key columns for better read performance. Only applies to deltaparquet format. | `false` |
 | `sales.quality_report` | Generate an HTML data quality report after packaging. Includes row counts, null checks, and distribution summaries. | `false` |
 
 ### Advanced / performance
@@ -92,7 +81,7 @@ Sales return fact table. Generates return events linked to original sales orders
 | Key | Description | Example |
 |-----|-------------|---------|
 | `returns.enabled` | Master toggle. When `false`, no returns are generated. Also auto-disabled if `skip_order_cols=true` (returns need `SalesOrderNumber` to link back). | `true` |
-| `returns.return_rate` | Fraction of sales rows that generate a return event. 0.03 = 3% of sales are returned. | `0.03` |
+| `returns.return_rate` | Fraction of sales rows that generate a return event. 0.08 = 8% of sales are returned. | `0.08` |
 | `returns.min_days_after_sale` | Minimum days between sale date and return date. | `1` |
 | `returns.max_days_after_sale` | Maximum days between sale date and return date. | `60` |
 
@@ -106,7 +95,7 @@ Product dimension configuration: pricing, lifecycle, and SCD2 versioning.
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `products.active_ratio` | Fraction of products marked as active/sellable. Inactive products exist in the dimension but won't appear in new sales. | `0.98` |
+| `products.active_ratio` | Fraction of products marked as active/sellable. Inactive products exist in the dimension but won't appear in new sales. | `0.96` |
 | `products.value_scale` | Global multiplier applied to all base product prices. Use >1 to inflate prices, <1 to deflate. Affects both ListPrice and UnitCost proportionally. | `1` |
 | `products.price_range` | `[min, max]` bounds for ListPrice after scaling. Products outside this range are clamped. | `[20, 4000]` |
 | `products.margin_range` | `[min, max]` cost margin as a fraction. 0.15 = 15% margin between UnitCost and ListPrice. Controls profitability distribution. | `[0.15, 0.45]` |
@@ -137,23 +126,16 @@ Customer dimension: demographics, regional distribution, and SCD2 versioning.
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `customers.active_ratio` | Fraction of customers who are active buyers. Inactive customers exist in the dimension but won't generate sales. | `0.98` |
+| `customers.active_ratio` | Fraction of customers who are active buyers. Inactive customers exist in the dimension but won't generate sales. | `0.95` |
 | `customers.household_pct` | Fraction of individual customers placed into multi-person households (spouse/dependent matching). 0.35 = 35% of customers share a HouseholdKey. | `0.35` |
-| `customers.region_mix` | Regional distribution of customers by weight. Values are relative (auto-normalized to 100%). | `{ US: 51, EU: 39, India: 10 }` |
+| `customers.region_mix` | Regional distribution of customers by weight. Values are relative (auto-normalized to 100%). Accepted keys: `Americas` (aliases: `US`, `USA`), `Europe` (alias: `EU`), `India`, `APAC` (aliases: `Asia`, `Asia-Pacific`). | `{ Americas: 41, Europe: 39, India: 2, APAC: 18 }` |
 | `customers.org_pct` | Percentage of customers that are organizations (B2B accounts) rather than individuals. Organizations get an OrganizationProfile record. | `1` |
-
-### Acquisition profile
-
-| Key | Description | Example |
-|-----|-------------|---------|
-| `customers.profile` | Customer acquisition curve shape. `"gradual"` = slow S-curve ramp. `"steady"` = mature business, even distribution. `"aggressive"` = fast early growth. `"instant"` = all customers exist from day 1. | `steady` |
-| `customers.first_year_pct` | Fraction of total customers that exist in year 1. The rest are acquired gradually over the remaining years based on the profile curve. | `0.27` |
 
 ### SCD Type 2 (life events)
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `customers.scd2.enabled` | Enable SCD Type 2 history tracking. Simulates life events (career changes, marriage, relocation) that create new version rows. | `true` |
+| `customers.scd2.enabled` | Enable SCD Type 2 history tracking. Simulates life events (career changes, marriage, relocation) that create new version rows. | `false` |
 | `customers.scd2.change_rate` | Fraction of customers who experience at least one life event change per year. | `0.15` |
 | `customers.scd2.max_versions` | Maximum version rows per customer. | `4` |
 
@@ -214,7 +196,7 @@ Customer subscription bridge table for DAX many-to-many patterns.
 
 ## Geography
 
-Geography dimension. Derived from curated rows in `geography.py`. Generally left empty — the generator uses built-in curated city/country data.
+Geography dimension. Derived from a curated master file. Generally left empty — the generator uses built-in curated city/country data.
 
 ```yaml
 geography: {}
@@ -242,18 +224,34 @@ Store dimension: physical and online store configuration.
 |-----|-------------|---------|
 | `stores.online_stores` | Number of online-only stores carved from the total store count (`scale.stores`). These get StoreType "Online" instead of physical store types. | `5` |
 | `stores.online_close_share` | Fraction of online stores that close during the simulation period. | `0.20` |
+| `stores.ensure_iso_coverage` | When `true`, ensures at least one store exists per ISO currency code used in exchange rates. Prevents missing-store gaps in cross-currency analytics. | `true` |
+| `stores.staffing_ranges` | `[min, max]` employee count per physical store type. Online stores always have 1 employee. | `{ Supermarket: [8, 20], Hypermarket: [15, 40], Convenience: [2, 6] }` |
 | `stores.closing.enabled` | Master toggle for store closures. When `false`, all stores remain open for the entire date range. | `true` |
 | `stores.closing.close_share` | Fraction of physical stores that close. Closing dates are distributed across the simulation period. | `0.20` |
 
 ---
 
+## Warehouses
+
+Warehouse dimension: distribution centers derived from store geography.
+
+| Key | Description | Example |
+|-----|-------------|---------|
+| `warehouses.seed` | Random seed for warehouse generation. | `42` |
+
+---
+
 ## Employees
 
-Employee dimension: HR configuration. Staff counts are driven by `Stores.EmployeeCount` (see Stores section).
+Employee dimension: HR configuration and inter-store transfers.
 
 | Key | Description | Example |
 |-----|-------------|---------|
 | `employees.hr.email_domain` | Domain suffix for generated employee email addresses. | `"contoso.com"` |
+| `employees.transfers.enabled` | Enable inter-store staff transfers. Creates EmployeeStoreAssignment records showing transfer history. | `true` |
+| `employees.transfers.annual_rate` | Fraction of eligible staff that transfer per year. | `0.40` |
+| `employees.transfers.min_tenure_months` | Minimum months at current store before an employee is eligible for transfer. | `6` |
+| `employees.transfers.same_region_pref` | Probability that a transfer stays within the same geographic region. | `0.70` |
 
 ---
 
@@ -280,7 +278,7 @@ Date dimension: calendar systems and fiscal year configuration.
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `dates.include.weekly_fiscal.enabled` | Include weekly fiscal calendar columns (4-4-5, 4-5-4, or 5-4-4 patterns). Common in retail and CPG industries. | `false` |
+| `dates.include.weekly_fiscal.enabled` | Include weekly fiscal calendar columns (4-4-5, 4-5-4, or 5-4-4 patterns). Common in retail and CPG industries. | `true` |
 | `dates.include.weekly_fiscal.first_day_of_week` | Day the fiscal week starts. 0 = Monday, 6 = Sunday. | `0` |
 | `dates.include.weekly_fiscal.weekly_type` | How the fiscal year end is determined. `"Last"` = last occurrence of the week start day. `"Nearest"` = nearest occurrence. | `"Last"` |
 | `dates.include.weekly_fiscal.quarter_week_type` | Week distribution pattern across fiscal quarters. `"445"` = 4-4-5 weeks per quarter. Also supports `"454"` and `"544"`. | `"445"` |
@@ -294,11 +292,13 @@ Exchange rate dimension: currency pairs and rate simulation.
 
 | Key | Description | Example |
 |-----|-------------|---------|
-| `exchange_rates.use_global_dates` | When `true`, exchange rate date range is overridden to match `defaults.dates.start/end`. You cannot set FX dates independently. | `true` |
-| `exchange_rates.currencies` | List of target currency codes. Rates are generated as `base_currency` -> each target currency. | `["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"]` |
-| `exchange_rates.base_currency` | The reference currency. All rates are expressed as "1 base = X target". | `"USD"` |
-| `exchange_rates.volatility` | Daily rate volatility. Controls how much rates fluctuate day-to-day. 0.02 = ~2% daily noise. | `0.02` |
+| `exchange_rates.from_currencies` | List of source currency codes. Combined with `to_currencies` to determine which pairs to generate. | `["USD"]` |
+| `exchange_rates.to_currencies` | List of target currency codes. Rates are generated as each `from` → each `to` pair via triangulation through USD. | `["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"]` |
+| `exchange_rates.base_currency` | The reference currency for the master FX file. Must be `"USD"` (master file is USD-based). | `"USD"` |
 | `exchange_rates.future_annual_drift` | Annual compounding drift rate applied to project rates beyond today's date. Simulates gradual currency movement for future dates. | `0.02` |
+| `exchange_rates.include_monthly` | Generate `exchange_rates_monthly.parquet` with monthly aggregated rates alongside the daily rates table. | `true` |
+
+> Exchange rate dates are always coupled to `defaults.dates.start/end`. You cannot set FX dates independently.
 
 ---
 
@@ -328,9 +328,10 @@ Inventory snapshot fact table: periodic stock levels by product and store.
 |-----|-------------|---------|
 | `inventory.enabled` | Master toggle for inventory generation. | `true` |
 | `inventory.seed` | Random seed for inventory simulation. | `42` |
-| `inventory.grain` | Snapshot frequency. `"monthly"` = one row per product/store/month. `"quarterly"` = one per quarter. Monthly produces ~12x more rows. | `monthly` |
-| `inventory.partition_by` | Partition columns for deltaparquet output. Set to `null` or `[]` to disable. | `["Year", "Month"]` |
-| `inventory.abc_filter` | Filter products by ABC classification. `null` = include all classes. `["A", "B"]` = exclude C-class products to reduce output size. | `null` |
+| `inventory.grain` | Snapshot frequency. `"monthly"` = one row per product/store/month. `"quarterly"` = one per quarter. Monthly produces ~12x more rows. | `"monthly"` |
+| `inventory.partition_by` | Partition columns for deltaparquet output. Set to `null` or `[]` to disable. | `["Year"]` |
+| `inventory.abc_filter` | Filter products by ABC classification. `null` = include all classes. `["A", "B"]` = exclude C-class products to reduce output size. | `["A", "B"]` |
+| `inventory.write_chunk_rows` | Rows per CSV chunk. Inventory compresses well, so larger chunks are fine. | `3_000_000` |
 
 ### Supply chain simulation
 
