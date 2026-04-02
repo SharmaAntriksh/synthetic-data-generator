@@ -667,10 +667,15 @@ def _run_verify(cursor) -> None:
     passed = 0
     failed = 0
     info = 0
+    seen: set = set()
     for row in rows:
         suite, _cat, check, _desc, result, actual = (
             row[0], row[1], row[2], row[3], row[4], row[5],
         )
+        key = (suite, check, result)
+        if key in seen:
+            continue
+        seen.add(key)
         if result == "PASS":
             passed += 1
             _log("PASS", f"    [{suite}] {check}  ({actual})")

@@ -69,23 +69,33 @@ BEGIN
     -- ================================================================
     -- RETURNS
     -- ================================================================
+    -- Order-level return rate is higher than the per-line config rate
+    -- because one return flags an entire order. Threshold 1-20% covers this.
     IF OBJECT_ID(N'dbo.SalesReturn', N'U') IS NOT NULL
-       AND OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
     BEGIN
-        DECLARE @ret_rate DECIMAL(5,2);
-        SELECT @ret_rate = ISNULL(
-            COUNT(DISTINCT r.SalesOrderNumber) * 100.0
-            / NULLIF((SELECT COUNT(DISTINCT SalesOrderNumber) FROM dbo.Sales), 0), 0)
-        FROM dbo.SalesReturn r;
-        INSERT INTO #R VALUES ('Returns', 'Return rate within 1-10%',
-            'Return rate should match config (~3%)',
-            CASE WHEN @ret_rate BETWEEN 1.0 AND 10.0 THEN 'PASS' ELSE 'FAIL' END,
-            CAST(@ret_rate AS VARCHAR) + '%');
+        DECLARE @ret_total_orders INT;
+        IF OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL
+            SELECT @ret_total_orders = COUNT(DISTINCT SalesOrderNumber) FROM dbo.Sales;
+        ELSE IF OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL
+            SELECT @ret_total_orders = COUNT(DISTINCT SalesOrderNumber) FROM dbo.SalesOrderHeader;
 
-        DECLARE @ret_rows INT;
-        SELECT @ret_rows = COUNT(*) FROM dbo.SalesReturn;
-        INSERT INTO #R VALUES ('Returns', 'Return row count',
-            'Total SalesReturn rows', 'INFO', FORMAT(@ret_rows, 'N0'));
+        IF @ret_total_orders IS NOT NULL AND @ret_total_orders > 0
+        BEGIN
+            DECLARE @ret_rate DECIMAL(5,2);
+            SELECT @ret_rate = ISNULL(
+                COUNT(DISTINCT r.SalesOrderNumber) * 100.0
+                / @ret_total_orders, 0)
+            FROM dbo.SalesReturn r;
+            INSERT INTO #R VALUES ('Returns', 'Return rate within 1-20%',
+                'Order-level return rate (higher than per-line config rate)',
+                CASE WHEN @ret_rate BETWEEN 1.0 AND 20.0 THEN 'PASS' ELSE 'FAIL' END,
+                CAST(@ret_rate AS VARCHAR) + '%');
+
+            DECLARE @ret_rows INT;
+            SELECT @ret_rows = COUNT(*) FROM dbo.SalesReturn;
+            INSERT INTO #R VALUES ('Returns', 'Return row count',
+                'Total SalesReturn rows', 'INFO', FORMAT(@ret_rows, 'N0'));
+        END
     END
 
     -- ================================================================

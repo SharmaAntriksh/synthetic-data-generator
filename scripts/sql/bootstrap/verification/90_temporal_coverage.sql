@@ -7,8 +7,10 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    IF OBJECT_ID(N'dbo.Sales', N'U') IS NULL
-       OR OBJECT_ID(N'dbo.Dates', N'U') IS NULL
+    DECLARE @has_sales BIT = CASE WHEN OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL THEN 1 ELSE 0 END;
+    DECLARE @has_soh   BIT = CASE WHEN OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL THEN 1 ELSE 0 END;
+
+    IF (@has_sales = 0 AND @has_soh = 0) OR OBJECT_ID(N'dbo.Dates', N'U') IS NULL
         RETURN;
 
     CREATE TABLE #R (
@@ -19,22 +21,38 @@ BEGIN
         ActualValue VARCHAR(100) NOT NULL
     );
 
-    -- Sales gap months
+    -- Collect sales date boundaries into variables for reuse
+    DECLARE @min_order DATE, @max_order DATE, @total_months INT;
+    IF @has_sales = 1
+    BEGIN
+        SELECT @min_order = MIN(OrderDate), @max_order = MAX(OrderDate) FROM dbo.Sales;
+        SELECT @total_months = COUNT(DISTINCT YEAR(OrderDate) * 100 + MONTH(OrderDate)) FROM dbo.Sales;
+    END
+    ELSE
+    BEGIN
+        SELECT @min_order = MIN(OrderDate), @max_order = MAX(OrderDate) FROM dbo.SalesOrderHeader;
+        SELECT @total_months = COUNT(DISTINCT YEAR(OrderDate) * 100 + MONTH(OrderDate)) FROM dbo.SalesOrderHeader;
+    END
+
+    -- Sales gap months — load order dates into a temp table for the NOT EXISTS check
+    CREATE TABLE #OrderDates (OrderDate DATE NOT NULL);
+    IF @has_sales = 1
+        INSERT INTO #OrderDates SELECT DISTINCT OrderDate FROM dbo.Sales;
+    ELSE
+        INSERT INTO #OrderDates SELECT DISTINCT OrderDate FROM dbo.SalesOrderHeader;
+
     DECLARE @gap_months INT;
     SELECT @gap_months = COUNT(*) FROM (
         SELECT d.[Year], d.[Month]
         FROM dbo.Dates d
         WHERE d.[Day] = 1
-          AND d.Date BETWEEN (SELECT MIN(OrderDate) FROM dbo.Sales)
-                         AND (SELECT MAX(OrderDate) FROM dbo.Sales)
+          AND d.Date BETWEEN @min_order AND @max_order
           AND NOT EXISTS (
-              SELECT 1 FROM dbo.Sales f
+              SELECT 1 FROM #OrderDates f
               WHERE YEAR(f.OrderDate) = d.[Year]
                 AND MONTH(f.OrderDate) = d.[Month]
           )
     ) x;
-    DECLARE @total_months INT;
-    SELECT @total_months = COUNT(DISTINCT YEAR(OrderDate) * 100 + MONTH(OrderDate)) FROM dbo.Sales;
     INSERT INTO #R VALUES ('Temporal', 'Sales: no gap months',
         'Every month in the sales date range must have transactions',
         CASE WHEN @gap_months = 0 THEN 'PASS' ELSE 'FAIL' END,
@@ -55,7 +73,7 @@ BEGIN
     BEGIN
         DECLARE @fx_gaps INT;
         SELECT @fx_gaps = COUNT(*) FROM (
-            SELECT DISTINCT f.OrderDate FROM dbo.Sales f
+            SELECT DISTINCT f.OrderDate FROM #OrderDates f
             LEFT JOIN dbo.ExchangeRates er ON er.Date = f.OrderDate
             WHERE er.Date IS NULL
         ) x;
@@ -74,6 +92,8 @@ BEGIN
             'Exchange rate date range and currency count',
             'INFO', @fx_start + ' to ' + @fx_end + ' (' + CAST(@fx_currencies AS VARCHAR) + ' currencies)');
     END
+
+    DROP TABLE #OrderDates;
 
     -- Budget temporal
     IF OBJECT_ID(N'dbo.BudgetYearly', N'U') IS NOT NULL
@@ -113,12 +133,9 @@ BEGIN
     END
 
     -- INFO: overall date range
-    DECLARE @sales_range VARCHAR(50);
-    SELECT @sales_range = CONVERT(VARCHAR, MIN(OrderDate), 23) + ' to ' + CONVERT(VARCHAR, MAX(OrderDate), 23)
-    FROM dbo.Sales;
     INSERT INTO #R VALUES ('Temporal', 'Sales date range',
         'Earliest to latest OrderDate',
-        'INFO', @sales_range);
+        'INFO', CONVERT(VARCHAR, @min_order, 23) + ' to ' + CONVERT(VARCHAR, @max_order, 23));
 
     SELECT Category, [Check], Description, Result, ActualValue FROM #R;
     DROP TABLE #R;

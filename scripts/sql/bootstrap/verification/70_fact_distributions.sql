@@ -7,8 +7,10 @@ AS
 BEGIN
     SET NOCOUNT ON;
 
-    IF OBJECT_ID(N'dbo.Sales', N'U') IS NULL
-        RETURN;
+    DECLARE @has_sales BIT = CASE WHEN OBJECT_ID(N'dbo.Sales', N'U') IS NOT NULL THEN 1 ELSE 0 END;
+    DECLARE @has_soh   BIT = CASE WHEN OBJECT_ID(N'dbo.SalesOrderHeader', N'U') IS NOT NULL THEN 1 ELSE 0 END;
+
+    IF @has_sales = 0 AND @has_soh = 0 RETURN;
 
     CREATE TABLE #R (
         Category    VARCHAR(50)  NOT NULL,
@@ -20,11 +22,20 @@ BEGIN
 
     -- Monthly CoV
     DECLARE @cov DECIMAL(5,2);
-    SELECT @cov = ISNULL(STDEV(MonthlySales) / NULLIF(AVG(MonthlySales), 0), 0)
-    FROM (
-        SELECT YEAR(OrderDate) * 100 + MONTH(OrderDate) AS YM, CAST(COUNT(*) AS FLOAT) AS MonthlySales
-        FROM dbo.Sales GROUP BY YEAR(OrderDate), MONTH(OrderDate)
-    ) m;
+    IF @has_sales = 1
+        SELECT @cov = ISNULL(STDEV(MonthlySales) / NULLIF(AVG(MonthlySales), 0), 0)
+        FROM (
+            SELECT YEAR(OrderDate) * 100 + MONTH(OrderDate) AS YM, CAST(COUNT(*) AS FLOAT) AS MonthlySales
+            FROM dbo.Sales GROUP BY YEAR(OrderDate), MONTH(OrderDate)
+        ) m;
+    ELSE
+        SELECT @cov = ISNULL(STDEV(MonthlySales) / NULLIF(AVG(MonthlySales), 0), 0)
+        FROM (
+            SELECT YEAR(h.OrderDate) * 100 + MONTH(h.OrderDate) AS YM, CAST(COUNT(*) AS FLOAT) AS MonthlySales
+            FROM dbo.SalesOrderHeader h
+            JOIN dbo.SalesOrderDetail d ON d.SalesOrderNumber = h.SalesOrderNumber
+            GROUP BY YEAR(h.OrderDate), MONTH(h.OrderDate)
+        ) m;
     INSERT INTO #R VALUES ('Distribution', 'Monthly CoV > 0.10',
         'Monthly sales volume should vary (seasonal demand); flat data suggests broken demand curve',
         CASE WHEN @cov > 0.10 THEN 'PASS' ELSE 'FAIL' END,
@@ -32,21 +43,35 @@ BEGIN
 
     -- Customer concentration
     DECLARE @max_cust_pct DECIMAL(5,2);
-    SELECT @max_cust_pct = ISNULL(MAX(CustPct), 0)
-    FROM (
-        SELECT SUM(NetPrice) * 100.0 / NULLIF((SELECT SUM(NetPrice) FROM dbo.Sales), 0) AS CustPct
-        FROM dbo.Sales GROUP BY CustomerKey
-    ) x;
+    IF @has_sales = 1
+        SELECT @max_cust_pct = ISNULL(MAX(CustPct), 0)
+        FROM (
+            SELECT SUM(NetPrice) * 100.0 / NULLIF((SELECT SUM(NetPrice) FROM dbo.Sales), 0) AS CustPct
+            FROM dbo.Sales GROUP BY CustomerKey
+        ) x;
+    ELSE
+        SELECT @max_cust_pct = ISNULL(MAX(CustPct), 0)
+        FROM (
+            SELECT SUM(d.NetPrice) * 100.0 / NULLIF((SELECT SUM(NetPrice) FROM dbo.SalesOrderDetail), 0) AS CustPct
+            FROM dbo.SalesOrderHeader h
+            JOIN dbo.SalesOrderDetail d ON d.SalesOrderNumber = h.SalesOrderNumber
+            GROUP BY h.CustomerKey
+        ) x;
     INSERT INTO #R VALUES ('Distribution', 'No customer > 5% of revenue',
         'No single customer should dominate total revenue',
         CASE WHEN @max_cust_pct < 5.0 THEN 'PASS' ELSE 'FAIL' END,
         'max = ' + CAST(@max_cust_pct AS VARCHAR) + '%');
 
-    -- Quantity mode (threshold depends on Poisson lambda; lambda=2.1 gives ~12%)
+    -- Quantity mode
     DECLARE @qty1_pct DECIMAL(5,1);
-    SELECT @qty1_pct = ISNULL(
-        SUM(CASE WHEN Quantity = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0)
-    FROM dbo.Sales;
+    IF @has_sales = 1
+        SELECT @qty1_pct = ISNULL(
+            SUM(CASE WHEN Quantity = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0)
+        FROM dbo.Sales;
+    ELSE
+        SELECT @qty1_pct = ISNULL(
+            SUM(CASE WHEN Quantity = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0)
+        FROM dbo.SalesOrderDetail;
     INSERT INTO #R VALUES ('Distribution', 'Quantity distribution peaks at 1',
         'Qty=1 percentage should be non-trivial (>5%); exact value depends on Poisson lambda',
         CASE WHEN @qty1_pct > 5 THEN 'PASS' ELSE 'FAIL' END,
@@ -54,17 +79,25 @@ BEGIN
 
     -- NetPrice <= UnitPrice
     DECLARE @net_exceed INT;
-    SELECT @net_exceed = COUNT(*) FROM dbo.Sales WHERE NetPrice > UnitPrice;
+    IF @has_sales = 1
+        SELECT @net_exceed = COUNT(*) FROM dbo.Sales WHERE NetPrice > UnitPrice;
+    ELSE
+        SELECT @net_exceed = COUNT(*) FROM dbo.SalesOrderDetail WHERE NetPrice > UnitPrice;
     INSERT INTO #R VALUES ('Domain', 'NetPrice <= UnitPrice',
         'Selling price should not exceed sticker price',
         CASE WHEN @net_exceed = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@net_exceed AS VARCHAR) + ' violations');
 
-    -- Delivery delay rate
+    -- Delivery delay rate (IsOrderDelayed is on header in sales_order mode)
     DECLARE @delay_pct DECIMAL(5,1);
-    SELECT @delay_pct = ISNULL(
-        SUM(CAST(IsOrderDelayed AS INT)) * 100.0 / NULLIF(COUNT(*), 0), 0)
-    FROM dbo.Sales;
+    IF @has_sales = 1
+        SELECT @delay_pct = ISNULL(
+            SUM(CAST(IsOrderDelayed AS INT)) * 100.0 / NULLIF(COUNT(*), 0), 0)
+        FROM dbo.Sales;
+    ELSE
+        SELECT @delay_pct = ISNULL(
+            SUM(CAST(IsOrderDelayed AS INT)) * 100.0 / NULLIF(COUNT(*), 0), 0)
+        FROM dbo.SalesOrderHeader;
     INSERT INTO #R VALUES ('Distribution', 'Delayed orders < 35%',
         'Order delay rate should be a minority',
         CASE WHEN @delay_pct < 35 THEN 'PASS' ELSE 'FAIL' END,
@@ -72,16 +105,24 @@ BEGIN
 
     -- INFO: average order value
     DECLARE @aov DECIMAL(10,2);
-    SELECT @aov = ISNULL(AVG(NetPrice * Quantity), 0) FROM dbo.Sales;
+    IF @has_sales = 1
+        SELECT @aov = ISNULL(AVG(NetPrice * Quantity), 0) FROM dbo.Sales;
+    ELSE
+        SELECT @aov = ISNULL(AVG(NetPrice * Quantity), 0) FROM dbo.SalesOrderDetail;
     INSERT INTO #R VALUES ('Info', 'Average order line value',
         'Average NetPrice * Quantity per line item',
         'INFO', '$' + CAST(@aov AS VARCHAR));
 
     -- INFO: discount utilization
     DECLARE @disc_pct DECIMAL(5,1);
-    SELECT @disc_pct = ISNULL(
-        SUM(CASE WHEN DiscountAmount > 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0)
-    FROM dbo.Sales;
+    IF @has_sales = 1
+        SELECT @disc_pct = ISNULL(
+            SUM(CASE WHEN DiscountAmount > 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0)
+        FROM dbo.Sales;
+    ELSE
+        SELECT @disc_pct = ISNULL(
+            SUM(CASE WHEN DiscountAmount > 0 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 0)
+        FROM dbo.SalesOrderDetail;
     INSERT INTO #R VALUES ('Info', 'Discount utilization',
         'Percentage of line items with DiscountAmount > 0',
         'INFO', CAST(@disc_pct AS VARCHAR) + '% discounted');
