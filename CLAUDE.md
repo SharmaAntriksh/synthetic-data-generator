@@ -80,7 +80,7 @@ src/
       weekly_fiscal.py           # WeeklyFiscalConfig + add_weekly_fiscal_columns() — 4-4-5 system
       columns.py                 # resolve_date_columns() — builds ordered output column list per config
       helpers.py                 # Shared constants (_EXCEL_EPOCH, _ISO_WEEK_REF) and utility functions
-      time.py                    # Time-of-day dimension (15-minute grain, 96 rows)
+      time.py                    # Time-of-day dimension (minute grain, 1440 rows)
     employees/                   # Employee dimension package
       __init__.py                # Re-exports run_employees, run_employee_store_assignments
       generator.py               # Employee generation with role profiles, HR fields

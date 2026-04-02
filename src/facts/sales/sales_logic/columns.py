@@ -225,6 +225,12 @@ def _sample_timekey_by_channel(
     return out
 
 
+_TIME_BINS = [
+    ("Bin15mKey", 15), ("Bin30mKey", 30), ("Bin1hKey", 60),
+    ("Bin6hKey", 360), ("Bin12hKey", 720),
+]
+
+
 def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
     schema_types = ctx["schema_types"]
     out: Dict[str, Any] = {}
@@ -302,19 +308,10 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
         out["TimeKey"] = timekey
 
-        # Rollups (timekey is already int32; integer division preserves dtype)
-        if "TimeKey15" in schema_types:
-            out["TimeKey15"] = timekey // 15
-        if "TimeKey30" in schema_types:
-            out["TimeKey30"] = timekey // 30
-        if "TimeKey60" in schema_types:
-            out["TimeKey60"] = timekey // 60
-        if "TimeKey360" in schema_types:
-            out["TimeKey360"] = timekey // 360
-        if "TimeKey720" in schema_types:
-            out["TimeKey720"] = timekey // 720
-        if "TimeBucketKey4" in schema_types:
-            out["TimeBucketKey4"] = timekey // 240
+        # int32 division preserves dtype — no promotion to int64
+        for col, divisor in _TIME_BINS:
+            if col in schema_types:
+                out[col] = timekey // divisor
 
     return out
 

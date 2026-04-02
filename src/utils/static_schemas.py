@@ -567,22 +567,30 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("WeeklyFiscalSystem", VARCHAR(40, not_null=True)),
     ),
     "Time": (
-        ("TimeKey", SMALLINT_NN),  # 0..1439 minute-of-day
-        ("Hour", INT_NN),  # 0..23
-        ("Minute", INT_NN),  # 0..59
-        ("TimeText", VARCHAR(5, not_null=True)),  # "HH:MM"
-        ("TimeKey15", INT_NN),
-        ("Bin15Label", VARCHAR(11, not_null=True)),
-        ("TimeKey30", INT_NN),
-        ("Bin30Label", VARCHAR(11, not_null=True)),
-        ("TimeKey60", INT_NN),
-        ("Bin60Label", VARCHAR(11, not_null=True)),
-        ("TimeKey360", INT_NN),
+        ("TimeKey", SMALLINT_NN),       # 0..1439 minute-of-day
+        ("Hour24", INT_NN),             # 0..23
+        ("Hour12", INT_NN),             # 1..12
+        ("Minute", INT_NN),             # 0..59
+        ("AmPm", VARCHAR(2, not_null=True)),
+        ("Hour12Text", VARCHAR(5, not_null=True)),  # "3 PM"
+        ("TimeText", VARCHAR(5, not_null=True)),     # "HH:MM"
+
+        ("PeriodOfDay", VARCHAR(15, not_null=True)),  # Midnight/Early Morning/Morning/Afternoon/Evening/Night
+        ("PeriodOfDaySort", INT_NN),
+
+        ("Bin15mKey", INT_NN),
+        ("Bin30mKey", INT_NN),
+        ("Bin1hKey", INT_NN),
+        ("Bin6hKey", INT_NN),
+        ("Bin12hKey", INT_NN),
+
+        ("Bin15mLabel", VARCHAR(11, not_null=True)),
+        ("Bin30mLabel", VARCHAR(11, not_null=True)),
+        ("Bin1hLabel", VARCHAR(11, not_null=True)),
         ("Bin6hLabel", VARCHAR(11, not_null=True)),
-        ("TimeKey720", INT_NN),
         ("Bin12hLabel", VARCHAR(11, not_null=True)),
-        ("TimeBucketKey4", INT_NN),
-        ("TimeBucket4", VARCHAR(10, not_null=True)),
+        ("Bin12hName", VARCHAR(12, not_null=True)),  # Before Noon / After Noon
+
         ("TimeSeconds", INT_NN),
         ("TimeOfDay", TIME(0, not_null=True)),
     ),
