@@ -104,7 +104,7 @@ class TestGenerateDateTable:
 
     def test_sequential_day_index_monotonic(self):
         df = _make("2024-01-01", "2024-03-31")
-        assert df["SequentialDayIndex"].is_monotonic_increasing
+        assert df["DateSerialNumber"].is_monotonic_increasing
 
     def test_datekey_unique(self):
         df = _make("2020-01-01", "2024-12-31")
@@ -188,7 +188,7 @@ class TestFiscalBoundaries:
         df = _make("2024-05-01", "2024-05-01", fiscal=5)
         row = df.iloc[0]
         # FY starts in May 2024, FiscalYear label should be 2025 (end-year convention)
-        assert "2025" in str(row["FiscalYearBin"])
+        assert "2025" in str(row["FiscalYearRange"])
 
     def test_all_fiscal_start_months_valid(self):
         """Every fiscal_start_month 1-12 should produce valid data."""
@@ -212,12 +212,12 @@ class TestISOWeekBoundaries:
         df = _make("2024-12-28", "2025-01-03", fiscal=1)
         dec30 = df[df["Date"] == pd.Timestamp("2024-12-30")].iloc[0]
         assert int(dec30["ISOYear"]) == 2025
-        assert int(dec30["WeekOfYearISO"]) == 1
+        assert int(dec30["ISOWeekNumber"]) == 1
 
     def test_iso_week_start_is_always_monday(self):
-        """WeekStartDate should always be a Monday."""
+        """ISOWeekStartDate should always be a Monday."""
         df = _make("2024-01-01", "2024-03-31", fiscal=1)
-        week_starts = pd.to_datetime(df["WeekStartDate"])
+        week_starts = pd.to_datetime(df["ISOWeekStartDate"])
         assert (week_starts.dt.weekday == 0).all()
 
     def test_iso_week_index_monotonic(self):
@@ -231,7 +231,7 @@ class TestISOWeekBoundaries:
         """Year with 53 ISO weeks should have week 53 rows."""
         # 2020 has 53 ISO weeks (starts on Wed, ends on Thu)
         df = _make("2020-12-28", "2020-12-31", fiscal=1)
-        assert (df["WeekOfYearISO"] == 53).any()
+        assert (df["ISOWeekNumber"] == 53).any()
 
 
 # ===================================================================
@@ -357,14 +357,14 @@ class TestWeeklyFiscalColumns:
         assert (week_starts.dt.weekday == 6).all()  # Sunday
 
     def test_offsets_present_when_as_of_in_range(self):
-        """FWYearWeekOffset should be present and include zero for as_of_date."""
+        """FWWeekOffset should be present and include zero for as_of_date."""
         df = self._make_wf(
             start="2024-01-01",
             end="2024-12-31",
             as_of_date="2024-06-15",
         )
-        assert "FWYearWeekOffset" in df.columns
-        assert 0 in df["FWYearWeekOffset"].values
+        assert "FWWeekOffset" in df.columns
+        assert 0 in df["FWWeekOffset"].values
 
 
 # ===================================================================
@@ -413,7 +413,7 @@ class TestColumnResolution:
     def test_iso_enabled(self):
         cols = resolve_date_columns({"include": {"iso": True}})
         assert "ISOYear" in cols
-        assert "WeekOfYearISO" in cols
+        assert "ISOWeekNumber" in cols
 
     def test_weekly_fiscal_enabled(self):
         cols = resolve_date_columns({

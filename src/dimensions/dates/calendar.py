@@ -19,8 +19,8 @@ def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFra
 
     df["DateKey"] = (year * 10000 + month * 100 + day).astype(np.int64)
 
-    # SequentialDayIndex: Excel-like serial (2006-12-31 → 39082).
-    df["SequentialDayIndex"] = (df["Date"] - _EXCEL_EPOCH).dt.days.astype(np.int32)
+    # DateSerialNumber: Excel-like serial (2006-12-31 → 39082).
+    df["DateSerialNumber"] = (df["Date"] - _EXCEL_EPOCH).dt.days.astype(np.int32)
 
     # Basic parts
     df["Year"] = year.astype(np.int32)
@@ -36,7 +36,7 @@ def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFra
     df["DayOfYear"] = df["Date"].dt.dayofyear.astype(np.int32)
 
     df["MonthYear"] = df["Date"].dt.strftime("%b %Y")
-    df["MonthYearNumber"] = (df["Year"].astype(int) * 100 + df["Month"].astype(int)).astype(np.int32)
+    df["MonthYearKey"] = (df["Year"].astype(int) * 100 + df["Month"].astype(int)).astype(np.int32)
 
     # Common BI convenience keys/labels
     df["YearQuarterKey"] = (df["Year"].astype(int) * 10 + df["Quarter"].astype(int)).astype(np.int32)

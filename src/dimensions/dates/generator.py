@@ -52,8 +52,9 @@ def generate_date_table(
     fy_start_month = _clamp_month(fiscal_start_month)
     df = add_weekly_fiscal_columns(df, first_fiscal_month=fy_start_month, cfg=weekly_cfg, as_of=as_of)
 
-    df = df.assign(
-        FiscalSystem="Monthly",
-        WeeklyFiscalSystem=f"Weekly ({weekly_cfg.quarter_week_type} {str(weekly_cfg.weekly_type).strip().title()})",
-    )
+    if weekly_cfg.enabled:
+        df["WeeklyFiscalSystem"] = (
+            f"Weekly ({weekly_cfg.quarter_week_type} "
+            f"{str(weekly_cfg.weekly_type).strip().title()})"
+        )
     return df

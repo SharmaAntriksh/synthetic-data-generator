@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from src.utils.static_schemas import _WF_INTERNAL_COLS
+
 from .helpers import _dedupe_preserve_order
 from .weekly_fiscal import _wf_is_enabled
 
@@ -16,7 +18,7 @@ from .weekly_fiscal import _wf_is_enabled
 #   ─────────────────────────────────────────────────
 #   MonthNameShort         →  MonthShort
 #   DayNameShort           →  DayShort
-#   YearMonthKey           →  MonthYearNumber
+#   YearMonthKey           →  MonthYearKey
 #   YearMonthLabel         →  MonthYear
 #   YearQuarterLabel       →  QuarterYear
 #   FiscalYearMonthNumber  →  FiscalMonthIndex
@@ -44,13 +46,13 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
 
     # Always present: primary keys + fundamental date-part attributes.
     base_cols = [
-        "Date", "DateKey", "SequentialDayIndex",
+        "Date", "DateKey", "DateSerialNumber",
         "Year",
         "Quarter", "QuarterStartDate", "QuarterEndDate",
         "QuarterYear",
         "Month", "MonthName", "MonthShort",
         "MonthStartDate", "MonthEndDate",
-        "MonthYear", "MonthYearNumber",
+        "MonthYear", "MonthYearKey",
         "YearQuarterKey",
         "CalendarMonthIndex", "CalendarQuarterIndex",
         "WeekOfMonth",
@@ -69,59 +71,23 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
     ]
 
     iso_cols = [
-        "WeekOfYearISO",
+        "ISOWeekNumber",
         "ISOYear",
         "ISOYearWeekIndex",
         "ISOWeekOffset",
-        "WeekStartDate",
-        "WeekEndDate",
+        "ISOWeekStartDate",
+        "ISOWeekEndDate",
     ]
 
     fiscal_cols = [
         "FiscalYearStartYear", "FiscalMonthNumber", "FiscalQuarterNumber",
         "FiscalMonthIndex", "FiscalQuarterIndex", "FiscalMonthOffset", "FiscalQuarterOffset",
-        "FiscalQuarterName", "FiscalYearBin",
+        "FiscalQuarterLabel", "FiscalMonthName", "FiscalMonthShort", "FiscalYearRange",
         "FiscalYearStartDate", "FiscalYearEndDate",
         "FiscalQuarterStartDate", "FiscalQuarterEndDate",
         "IsFiscalYearStart", "IsFiscalYearEnd",
         "IsFiscalQuarterStart", "IsFiscalQuarterEnd",
-        "FiscalYear", "FiscalYearLabel", "FiscalSystem", "WeeklyFiscalSystem",
-    ]
-
-    weekly_cols = [
-        "FWYearNumber",
-        "FWYearLabel",
-        "FWQuarterNumber",
-        "FWQuarterLabel",
-        "FWYearQuarterNumber",
-        "FWYearQuarterOffset",
-        "FWMonthNumber",
-        "FWMonthLabel",
-        "FWYearMonthNumber",
-        "FWYearMonthOffset",
-        "FWWeekNumber",
-        "FWWeekLabel",
-        "FWYearWeekNumber",
-        "FWYearWeekOffset",
-        "FWPeriodNumber",
-        "FWPeriodLabel",
-        "FWStartOfYear",
-        "FWEndOfYear",
-        "FWStartOfQuarter",
-        "FWEndOfQuarter",
-        "FWStartOfMonth",
-        "FWEndOfMonth",
-        "FWStartOfWeek",
-        "FWEndOfWeek",
-        "WeekDayNumber",
-        "WeekDayNameShort",
-        "FWDayOfYearNumber",
-        "FWDayOfQuarterNumber",
-        "FWDayOfMonthNumber",
-        "IsWorkingDay",
-        "DayType",
-        "FWWeekInQuarterNumber",
-        "FWYearMonthLabel",
+        "FiscalYear", "FiscalYearLabel",
     ]
 
     cols: List[str] = list(base_cols)
@@ -135,6 +101,6 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
         cols += fiscal_cols
 
     if _wf_is_enabled(wf_cfg):
-        cols += weekly_cols
+        cols += _WF_INTERNAL_COLS
 
     return _dedupe_preserve_order(cols)

@@ -27,10 +27,12 @@ def add_fiscal_columns(
     fiscal_year_end = (df["FiscalYearStartYear"].astype(int) + fy_end_add).astype(np.int32)
 
     if fy_start_month == 1:
-        df["FiscalYearBin"] = df["FiscalYearStartYear"].astype(str)
+        df["FiscalYearRange"] = df["FiscalYearStartYear"].astype(str)
     else:
-        df["FiscalYearBin"] = df["FiscalYearStartYear"].astype(str) + "-" + fiscal_year_end.astype(str)
-    df["FiscalQuarterName"] = "Q" + df["FiscalQuarterNumber"].astype(str) + " FY" + fiscal_year_end.astype(str)
+        df["FiscalYearRange"] = df["FiscalYearStartYear"].astype(str) + "-" + fiscal_year_end.astype(str)
+    df["FiscalQuarterLabel"] = "Q" + df["FiscalQuarterNumber"].astype(str) + " FY" + fiscal_year_end.astype(str)
+    df["FiscalMonthName"] = df["Date"].dt.strftime("%B")
+    df["FiscalMonthShort"] = df["Date"].dt.strftime("%b")
 
     # FiscalMonthIndex / FiscalQuarterIndex (canonical names; former
     # aliases FiscalYearMonthNumber and FiscalYearQuarterNumber removed).

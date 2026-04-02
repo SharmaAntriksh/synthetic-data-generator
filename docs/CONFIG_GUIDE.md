@@ -271,7 +271,7 @@ Date dimension: calendar systems and fiscal year configuration.
 | Key | Description | Example |
 |-----|-------------|---------|
 | `dates.include.calendar` | Include standard Gregorian calendar columns (Year, Quarter, Month, Day, etc.). Always `true`. | `true` |
-| `dates.include.iso` | Include ISO 8601 week-based calendar columns (ISOYear, WeekOfYearISO, etc.). | `false` |
+| `dates.include.iso` | Include ISO 8601 week-based calendar columns (ISOYear, ISOWeekNumber, etc.). | `false` |
 | `dates.include.fiscal` | Include month-based fiscal calendar columns (FiscalYear, FiscalQuarter, FiscalMonth, etc.). | `true` |
 
 ### Weekly fiscal calendar

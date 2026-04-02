@@ -207,20 +207,20 @@ def add_weekly_fiscal_columns(
     tmp = pd.DataFrame(
         {
             "Date": df["Date"],
-            "FWYearMonthNumber": fw_year_month,
-            "FWYearQuarterNumber": fw_year_quarter,
+            "FWMonthIndex": fw_year_month,
+            "FWQuarterIndex": fw_year_quarter,
         },
         index=df.index,
     )
-    fw_start_month = tmp.groupby("FWYearMonthNumber")["Date"].transform("min")
-    fw_end_month = tmp.groupby("FWYearMonthNumber")["Date"].transform("max")
+    fw_start_month = tmp.groupby("FWMonthIndex")["Date"].transform("min")
+    fw_end_month = tmp.groupby("FWMonthIndex")["Date"].transform("max")
     fw_day_of_month = (df["Date"] - fw_start_month).dt.days.add(1).astype(np.int32)
 
-    fw_start_quarter = tmp.groupby("FWYearQuarterNumber")["Date"].transform("min")
-    fw_end_quarter = tmp.groupby("FWYearQuarterNumber")["Date"].transform("max")
+    fw_start_quarter = tmp.groupby("FWQuarterIndex")["Date"].transform("min")
+    fw_end_quarter = tmp.groupby("FWQuarterIndex")["Date"].transform("max")
     fw_day_of_quarter = (df["Date"] - fw_start_quarter).dt.days.add(1).astype(np.int32)
 
-    # DAX-like FWYearWeekNumber (global increasing week index)
+    # DAX-like FWWeekIndex (global increasing week index)
     first_week_reference = pd.Timestamp("1900-12-30") + pd.Timedelta(days=fdow)
     fw_year_week = (((df["Date"] - first_week_reference).dt.days) // 7 + 1).astype(np.int32)
 
@@ -240,27 +240,27 @@ def add_weekly_fiscal_columns(
             "FWYearLabel": fw_year_label,
             "FWStartOfYear": fw_start_year,
             "FWEndOfYear": fw_end_year,
-            "FWDayOfYearNumber": fw_day_of_year,
+            "FWDayOfYear": fw_day_of_year,
             "FWWeekNumber": fw_week,
             "FWPeriodNumber": pd.Series(fw_period, index=df.index).astype(np.int32),
             "FWQuarterNumber": fw_quarter_s.astype(np.int32),
             "FWWeekInQuarterNumber": fw_week_in_quarter,
             "FWMonthNumber": fw_month_s.astype(np.int32),
-            "FWYearQuarterNumber": fw_year_quarter,
-            "FWYearMonthNumber": fw_year_month,
-            "WeekDayNumber": week_day_num,
-            "WeekDayNameShort": week_day_name_short,
+            "FWQuarterIndex": fw_year_quarter,
+            "FWMonthIndex": fw_year_month,
+            "FWWeekDayNumber": week_day_num,
+            "FWWeekDayNameShort": week_day_name_short,
             "FWStartOfWeek": fw_start_week,
             "FWEndOfWeek": fw_end_week,
-            "IsWorkingDay": is_working_day,
-            "DayType": day_type,
+            "FWIsWorkingDay": is_working_day,
+            "FWDayType": day_type,
             "FWStartOfMonth": fw_start_month,
             "FWEndOfMonth": fw_end_month,
-            "FWDayOfMonthNumber": fw_day_of_month,
+            "FWDayOfMonth": fw_day_of_month,
             "FWStartOfQuarter": fw_start_quarter,
             "FWEndOfQuarter": fw_end_quarter,
-            "FWDayOfQuarterNumber": fw_day_of_quarter,
-            "FWYearWeekNumber": fw_year_week,
+            "FWDayOfQuarter": fw_day_of_quarter,
+            "FWWeekIndex": fw_year_week,
             "FWQuarterLabel": fw_quarter_label,
             "FWWeekLabel": fw_week_label,
             "FWPeriodLabel": fw_period_label,
@@ -278,20 +278,20 @@ def add_weekly_fiscal_columns(
 
     if len(asof_idx) > 0:
         _asof = df.loc[asof_idx[0]]
-        as_of_fw_year_week_index = int(_asof["FWYearWeekNumber"])
-        as_of_fw_year_month_index = int(_asof["FWYearMonthNumber"])
-        as_of_fw_year_quarter_index = int(_asof["FWYearQuarterNumber"])
+        as_of_fw_year_week_index = int(_asof["FWWeekIndex"])
+        as_of_fw_year_month_index = int(_asof["FWMonthIndex"])
+        as_of_fw_year_quarter_index = int(_asof["FWQuarterIndex"])
 
         df = df.assign(
-            FWYearWeekOffset=(df["FWYearWeekNumber"].astype(int) - as_of_fw_year_week_index).astype(np.int32),
-            FWYearMonthOffset=(df["FWYearMonthNumber"].astype(int) - as_of_fw_year_month_index).astype(np.int32),
-            FWYearQuarterOffset=(df["FWYearQuarterNumber"].astype(int) - as_of_fw_year_quarter_index).astype(np.int32),
+            FWWeekOffset=(df["FWWeekIndex"].astype(int) - as_of_fw_year_week_index).astype(np.int32),
+            FWMonthOffset=(df["FWMonthIndex"].astype(int) - as_of_fw_year_month_index).astype(np.int32),
+            FWQuarterOffset=(df["FWQuarterIndex"].astype(int) - as_of_fw_year_quarter_index).astype(np.int32),
         )
     else:
         df = df.assign(
-            FWYearWeekOffset=np.int32(0),
-            FWYearMonthOffset=np.int32(0),
-            FWYearQuarterOffset=np.int32(0),
+            FWWeekOffset=np.int32(0),
+            FWMonthOffset=np.int32(0),
+            FWQuarterOffset=np.int32(0),
         )
 
     return df

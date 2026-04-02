@@ -185,7 +185,7 @@ class TestStaticSchemas:
         col_names = {c for c, _ in schema}
         # Defaults include calendar, iso, fiscal
         assert "IsToday" in col_names
-        assert "WeekOfYearISO" in col_names
+        assert "ISOWeekNumber" in col_names
         assert "FiscalYear" in col_names
 
     def test_date_column_groups_keys(self):
