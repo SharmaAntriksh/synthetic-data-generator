@@ -11,6 +11,7 @@ import pytest
 
 from src.dimensions.dates import (
     generate_date_table,
+    get_date_rename_map,
     resolve_date_columns,
     WeeklyFiscalConfig,
 )
@@ -233,6 +234,75 @@ class TestISOWeekBoundaries:
         df = _make("2020-12-28", "2020-12-31", fiscal=1)
         assert (df["ISOWeekNumber"] == 53).any()
 
+    def test_iso_week_date_range_format(self):
+        """ISOWeekDateRange should be 'Mon DD – Mon DD, YYYY'."""
+        df = _make("2026-03-30", "2026-04-05", fiscal=1)
+        row = df[df["Date"] == pd.Timestamp("2026-04-01")].iloc[0]
+        assert row["ISOWeekDateRange"] == "Mar 30 - Apr 05, 2026"
+
+
+# ===================================================================
+# Calendar week (Sunday-based)
+# ===================================================================
+
+class TestCalendarWeek:
+    """Test Sunday-based calendar week columns."""
+
+    def test_calendar_week_start_is_always_sunday(self):
+        """CalendarWeekStartDate should always be a Sunday."""
+        df = _make("2024-01-01", "2024-03-31", fiscal=1)
+        week_starts = pd.to_datetime(df["CalendarWeekStartDate"])
+        # weekday: Mon=0..Sun=6 → Sunday == 6
+        assert (week_starts.dt.weekday == 6).all()
+
+    def test_calendar_week_end_is_always_saturday(self):
+        """CalendarWeekEndDate should always be a Saturday."""
+        df = _make("2024-01-01", "2024-03-31", fiscal=1)
+        week_ends = pd.to_datetime(df["CalendarWeekEndDate"])
+        assert (week_ends.dt.weekday == 5).all()
+
+    def test_calendar_week_span_is_seven_days(self):
+        """Each calendar week should span exactly 7 days."""
+        df = _make("2024-01-01", "2024-06-30", fiscal=1)
+        starts = pd.to_datetime(df["CalendarWeekStartDate"])
+        ends = pd.to_datetime(df["CalendarWeekEndDate"])
+        assert ((ends - starts).dt.days == 6).all()
+
+    def test_calendar_week_differs_from_iso(self):
+        """Calendar (Sun) and ISO (Mon) week starts should differ on most days."""
+        df = _make("2024-01-01", "2024-01-31", fiscal=1)
+        cal_starts = pd.to_datetime(df["CalendarWeekStartDate"])
+        iso_starts = pd.to_datetime(df["ISOWeekStartDate"])
+        # They differ on every day except Monday (where both agree the week just started)
+        mondays = df["Date"].dt.weekday == 0
+        non_mondays = ~mondays
+        if non_mondays.any():
+            assert (cal_starts[non_mondays] != iso_starts[non_mondays]).all()
+
+    def test_calendar_week_number_range(self):
+        """CalendarWeekNumber should be between 1 and 54."""
+        df = _make("2024-01-01", "2024-12-31", fiscal=1)
+        assert df["CalendarWeekNumber"].between(1, 54).all()
+        assert df["CalendarWeekNumber"].iloc[0] >= 1
+
+    def test_calendar_week_index_monotonic(self):
+        """CalendarWeekIndex should be monotonically non-decreasing."""
+        df = _make("2024-01-01", "2024-12-31", fiscal=1)
+        assert (df["CalendarWeekIndex"].diff().dropna() >= 0).all()
+
+    def test_calendar_week_offset_zero_at_as_of(self):
+        """CalendarWeekOffset should be 0 for the week containing as_of."""
+        df = _make("2024-01-01", "2024-12-31", fiscal=1, as_of_date="2024-06-12")
+        as_of_row = df[df["Date"] == pd.Timestamp("2024-06-12")].iloc[0]
+        assert int(as_of_row["CalendarWeekOffset"]) == 0
+
+    def test_calendar_week_date_range_format(self):
+        """CalendarWeekDateRange should be 'Mon DD – Mon DD, YYYY'."""
+        # 2026-04-01 is a Wednesday; calendar week = Sun Mar 29 – Sat Apr 04
+        df = _make("2026-03-29", "2026-04-04", fiscal=1)
+        row = df[df["Date"] == pd.Timestamp("2026-04-01")].iloc[0]
+        assert row["CalendarWeekDateRange"] == "Mar 29 - Apr 04, 2026"
+
 
 # ===================================================================
 # Weekly fiscal (4-4-5) system
@@ -421,6 +491,83 @@ class TestColumnResolution:
         })
         assert "FWYearNumber" in cols
         assert "FWWeekNumber" in cols
+
+
+# ===================================================================
+# Spaced column names
+# ===================================================================
+
+class TestSpacedColumnNames:
+    """Test dates.spaced_column_names feature."""
+
+    def test_disabled_by_default(self):
+        cols = resolve_date_columns({"include": {"iso": True}})
+        assert "DateKey" in cols
+        assert "ISOWeekNumber" in cols
+
+    def test_enabled_renames_base_cols(self):
+        cols = resolve_date_columns({
+            "spaced_column_names": True,
+            "include": {"calendar": False, "iso": False, "fiscal": False},
+        })
+        assert "Date Key" in cols
+        assert "Day Of Week" in cols
+        assert "Calendar Week Start Date" in cols
+        assert "DateKey" not in cols
+
+    def test_enabled_renames_iso_cols(self):
+        cols = resolve_date_columns({
+            "spaced_column_names": True,
+            "include": {"iso": True},
+        })
+        assert "ISO Week Number" in cols
+        assert "ISO Week Date Range" in cols
+        assert "ISOWeekNumber" not in cols
+
+    def test_enabled_renames_fiscal_cols(self):
+        cols = resolve_date_columns({
+            "spaced_column_names": True,
+            "include": {"fiscal": True},
+        })
+        assert "Fiscal Year Label" in cols
+        assert "FiscalYearLabel" not in cols
+
+    def test_enabled_renames_calendar_offset_cols(self):
+        cols = resolve_date_columns({
+            "spaced_column_names": True,
+            "include": {"calendar": True},
+        })
+        assert "Calendar Week Offset" in cols
+        assert "Is Today" in cols
+        assert "CalendarWeekOffset" not in cols
+
+    def test_enabled_renames_weekly_fiscal_cols(self):
+        cols = resolve_date_columns({
+            "spaced_column_names": True,
+            "include": {"weekly_fiscal": {"enabled": True}},
+        })
+        assert "FW Year Number" in cols
+        assert "Weekly Fiscal System" in cols
+        assert "FWYearNumber" not in cols
+
+    def test_rename_map_empty_when_disabled(self):
+        rename = get_date_rename_map({"spaced_column_names": False})
+        assert rename == {}
+
+    def test_rename_map_populated_when_enabled(self):
+        rename = get_date_rename_map({"spaced_column_names": True})
+        assert rename["DateKey"] == "Date Key"
+        assert rename["ISOWeekNumber"] == "ISO Week Number"
+        assert rename["FWYearNumber"] == "FW Year Number"
+
+    def test_dataframe_rename_roundtrip(self):
+        """Verify the rename map works correctly on an actual DataFrame."""
+        df = _make("2024-01-01", "2024-01-07", fiscal=1)
+        rename = get_date_rename_map({"spaced_column_names": True})
+        df_renamed = df.rename(columns=rename)
+        assert "Date Key" in df_renamed.columns
+        assert "Day Of Week" in df_renamed.columns
+        assert "DateKey" not in df_renamed.columns
 
 
 # ===================================================================

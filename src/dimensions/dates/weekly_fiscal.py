@@ -10,7 +10,7 @@ import pandas as pd
 
 from src.utils import warn
 
-from .helpers import _clamp_month
+from .helpers import _clamp_month, _format_week_date_range
 
 
 @dataclass(frozen=True)
@@ -228,6 +228,7 @@ def add_weekly_fiscal_columns(
     y = fw_year_s.astype(str)
     fw_quarter_label = "FQ" + fw_quarter_s.astype(str) + " - " + y
     fw_week_label = "FW" + fw_week.astype(str).str.zfill(2) + " - " + y
+    fw_week_date_range = _format_week_date_range(fw_start_week, fw_end_week)
     fw_period_label = "P" + pd.Series(fw_period, index=df.index).astype(str).str.zfill(2) + " - " + y
     fw_month_label = "FM " + (fw_start_month + pd.Timedelta(days=14)).dt.strftime("%b") + " - " + y
 
@@ -263,6 +264,7 @@ def add_weekly_fiscal_columns(
             "FWWeekIndex": fw_year_week,
             "FWQuarterLabel": fw_quarter_label,
             "FWWeekLabel": fw_week_label,
+            "FWWeekDateRange": fw_week_date_range,
             "FWPeriodLabel": fw_period_label,
             "FWMonthLabel": fw_month_label,
             "FWYearMonthLabel": fw_year_month_label,

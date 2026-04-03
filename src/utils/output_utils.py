@@ -106,7 +106,7 @@ def _guess_date_cols(df: pd.DataFrame) -> list[str]:
     dt_cols: set[str] = set(_datetime_cols(df))
     out: list[str] = []
 
-    dateish_tokens = ("date", "day", "birth", "created", "updated", "effective", "expiry", "valid")
+    dateish_tokens = ("date", "day", "birth", "created", "updated", "effective", "expiry", "valid", "start", "end")
 
     # Rule 1 — proper datetime64 columns with date-like names
     for c in df.columns:

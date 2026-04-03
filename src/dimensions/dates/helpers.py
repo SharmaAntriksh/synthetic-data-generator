@@ -16,6 +16,15 @@ _EXCEL_EPOCH = pd.Timestamp("1899-12-30")
 # ISO week reference: Monday of ISO week 1 in year 2000.
 _ISO_WEEK_REF = pd.Timestamp("2000-01-03")
 
+# Calendar week reference: Sunday of calendar week 1 in year 2000.
+# Calendar weeks start on Sunday (DayOfWeek convention: 0=Sun..6=Sat).
+_CAL_WEEK_REF = pd.Timestamp("2000-01-02")
+
+
+def _format_week_date_range(start_dates: pd.Series, end_dates: pd.Series) -> pd.Series:
+    """Format week date ranges as ``'Mon DD - Mon DD, YYYY'``."""
+    return start_dates.dt.strftime("%b %d") + " - " + end_dates.dt.strftime("%b %d, %Y")
+
 
 def _dedupe_preserve_order(cols: Sequence[str]) -> List[str]:
     """Return *cols* with duplicates removed, preserving first-occurrence order."""

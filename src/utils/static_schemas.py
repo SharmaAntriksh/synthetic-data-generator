@@ -480,6 +480,11 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("IsMonthEnd", BIT(not_null=True)),
 
         ("WeekOfMonth", INT_NN),
+        ("CalendarWeekNumber", INT_NN),
+        ("CalendarWeekStartDate", DATE_NN),
+        ("CalendarWeekEndDate", DATE_NN),
+        ("CalendarWeekDateRange", VARCHAR(30, not_null=True)),
+        ("CalendarWeekIndex", INT_NN),
 
         ("Day", INT_NN),
         ("DayName", VARCHAR(10, not_null=True)),
@@ -499,6 +504,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("YearOffset", SMALLINT(not_null=True)),
         ("CalendarMonthOffset", INT_NN),
         ("CalendarQuarterOffset", INT_NN),
+        ("CalendarWeekOffset", INT_NN),
 
         ("ISOWeekNumber", INT_NN),
         ("ISOYear", INT_NN),
@@ -506,6 +512,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("ISOWeekOffset", INT_NN),
         ("ISOWeekStartDate", DATE_NN),
         ("ISOWeekEndDate", DATE_NN),
+        ("ISOWeekDateRange", VARCHAR(30, not_null=True)),
 
         # Month-based fiscal calendar (kept as "Fiscal ..." to distinguish from Weekly Fiscal)
         ("FiscalYearStartYear", INT_NN),
@@ -529,7 +536,6 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("IsFiscalQuarterEnd", BIT(not_null=True)),
         ("FiscalYear", INT_NN),
         ("FiscalYearLabel", VARCHAR(10, not_null=True)),
-
         # Weekly fiscal calendar (DAX weekly logic), disambiguated with "Weekly Fiscal ..." prefix.
         ("FWYearNumber", INT_NN),
         ("FWYearLabel", VARCHAR(10, not_null=True)),
@@ -543,6 +549,7 @@ DIM_SCHEMAS: Dict[str, Schema] = {
         ("FWMonthOffset", INT_NN),
         ("FWWeekNumber", INT_NN),
         ("FWWeekLabel", VARCHAR(20, not_null=True)),
+        ("FWWeekDateRange", VARCHAR(30, not_null=True)),
         ("FWWeekIndex", INT_NN),
         ("FWWeekOffset", INT_NN),
         ("FWPeriodNumber", INT_NN),
@@ -838,6 +845,7 @@ _WF_INTERNAL_COLS: list[str] = [
     "FWMonthOffset",
     "FWWeekNumber",
     "FWWeekLabel",
+    "FWWeekDateRange",
     "FWWeekIndex",
     "FWWeekOffset",
     "FWPeriodNumber",
@@ -892,6 +900,10 @@ _DATES_BASE_INTERNAL = [
     "YearQuarterKey",
     "CalendarMonthIndex", "CalendarQuarterIndex",
     "WeekOfMonth",
+    "CalendarWeekNumber",
+    "CalendarWeekStartDate", "CalendarWeekEndDate",
+    "CalendarWeekDateRange",
+    "CalendarWeekIndex",
     "Day", "DayName", "DayShort", "DayOfYear", "DayOfWeek",
     "IsWeekend", "IsBusinessDay",
     "NextBusinessDay", "PreviousBusinessDay",
@@ -902,7 +914,8 @@ _DATES_CALENDAR_INTERNAL = [
     "IsQuarterStart", "IsQuarterEnd",
     "IsMonthStart", "IsMonthEnd",
     "IsToday", "IsCurrentYear", "IsCurrentMonth", "IsCurrentQuarter",
-    "CurrentDayOffset", "YearOffset", "CalendarMonthOffset", "CalendarQuarterOffset",
+    "CurrentDayOffset", "YearOffset",
+    "CalendarMonthOffset", "CalendarQuarterOffset", "CalendarWeekOffset",
 ]
 
 _DATES_ISO_INTERNAL = [
@@ -912,6 +925,7 @@ _DATES_ISO_INTERNAL = [
     "ISOWeekOffset",
     "ISOWeekStartDate",
     "ISOWeekEndDate",
+    "ISOWeekDateRange",
 ]
 
 _DATES_FISCAL_INTERNAL = [
@@ -1038,8 +1052,6 @@ def get_dates_schema(dates_cfg: Mapping) -> list[SchemaCol]:
     """
     Return the Dates schema for SQL CREATE TABLE / BULK INSERT.
 
-    The Dates generator emits SQL-friendly internal column names (no spaces).
-
       - Base columns are always included: primary keys (Date, DateKey,
         DateSerialNumber) plus fundamental date-part attributes (Year,
         Month, MonthName, Day, DayName, Quarter, etc.).
@@ -1047,17 +1059,25 @@ def get_dates_schema(dates_cfg: Mapping) -> list[SchemaCol]:
       - include.iso (default True) adds ISO week columns.
       - include.fiscal (default True) adds monthly fiscal columns.
       - include.weekly_fiscal.enabled adds weekly fiscal (4-4-5) columns.
+
+    When ``dates.spaced_column_names`` is true, output column names have
+    spaces (e.g. ``"Calendar Week Start Date"``).
     """
     dates_cfg = dates_cfg or {}
     internal_cols = _dates_internal_columns(dates_cfg)
 
-    types = dict(STATIC_SCHEMAS["Dates"])  # internal, superset
+    # Import here to avoid circular dependency (columns.py imports from us).
+    from src.dimensions.dates.columns import get_date_rename_map
+    rename = get_date_rename_map(dates_cfg)
+
+    types = dict(STATIC_SCHEMAS["Dates"])  # internal PascalCase superset
     out: list[SchemaCol] = []
     for col in internal_cols:
         dtype = types.get(col)
         if dtype is None:
             raise KeyError(f"STATIC_SCHEMAS['Dates'] missing expected column: {col}")
-        out.append((col, dtype))
+        display = rename.get(col, col) if rename else col
+        out.append((display, dtype))
     return out
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .helpers import _EXCEL_EPOCH
+from .helpers import _CAL_WEEK_REF, _EXCEL_EPOCH, _format_week_date_range
 
 
 def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFrame:
@@ -70,6 +70,32 @@ def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFra
     df["IsYearEnd"] = ((df["Month"] == 12) & (df["Day"] == 31)).astype(bool)
 
     df["WeekOfMonth"] = ((df["Day"] - 1) // 7 + 1).astype(np.int32)
+
+    # ------------------------------------------------------------------
+    # Calendar week (Sunday-based)
+    # ------------------------------------------------------------------
+    # DayOfWeek: 0=Sun..6=Sat (set above).  Sunday is the week start.
+    df["CalendarWeekStartDate"] = (df["Date"] - pd.to_timedelta(df["DayOfWeek"], unit="D")).dt.normalize()
+    df["CalendarWeekEndDate"] = (df["CalendarWeekStartDate"] + pd.Timedelta(days=6)).dt.normalize()
+
+    # Week number within the year (1-based, partial first week = week 1).
+    # Compute Jan 1 day-of-week once per unique year, then map back.
+    unique_years = df["Year"].unique()
+    jan1_timestamps = pd.to_datetime(unique_years.astype(str) + "-01-01")
+    jan1_sun0 = ((jan1_timestamps.weekday + 1) % 7).astype(int)  # Sun=0..Sat=6
+    year_to_jan1_sun0 = pd.Series(jan1_sun0, index=unique_years)
+    jan1_mapped = df["Year"].map(year_to_jan1_sun0)
+    df["CalendarWeekNumber"] = ((df["DayOfYear"].astype(int) + jan1_mapped - 1) // 7 + 1).astype(np.int32)
+
+    # Contiguous week index (weeks since _CAL_WEEK_REF) and as-of offset.
+    df["CalendarWeekIndex"] = (((df["CalendarWeekStartDate"] - _CAL_WEEK_REF).dt.days) // 7).astype(np.int32)
+    as_of_cal_week_start = (as_of - pd.Timedelta(days=int((as_of.weekday() + 1) % 7))).normalize()
+    as_of_cal_week_index = int(((as_of_cal_week_start - _CAL_WEEK_REF).days) // 7)
+    df["CalendarWeekOffset"] = (df["CalendarWeekIndex"].astype(int) - as_of_cal_week_index).astype(np.int32)
+
+    df["CalendarWeekDateRange"] = _format_week_date_range(
+        df["CalendarWeekStartDate"], df["CalendarWeekEndDate"],
+    )
 
     # ------------------------------------------------------------------
     # Next/Previous Business Day

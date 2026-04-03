@@ -245,6 +245,7 @@ class DatesIncludeConfig(_Base):
 class DatesTableConfig(_Base):
     fiscal_start_month: int = 5
     as_of_date: Optional[str] = None
+    spaced_column_names: bool = False
 
     @model_validator(mode="before")
     @classmethod

@@ -30,7 +30,7 @@ defaults:
 sales:
   max_lines_per_order: 8
 
-  file_format: csv              # csv | parquet | deltaparquet
+  file_format: parquet              # csv | parquet | deltaparquet
   sales_output: sales              # sales | sales_order | both
   skip_order_cols: false
 
@@ -191,6 +191,7 @@ employees:
 dates:
   fiscal_start_month: 5
   as_of_date: null
+  spaced_column_names: false
 
   include:
     calendar: true

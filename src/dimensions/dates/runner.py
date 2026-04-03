@@ -13,7 +13,7 @@ from src.utils.config_helpers import int_or as _int_or, bool_or as _bool_or, as_
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 
-from .columns import resolve_date_columns
+from .columns import get_date_rename_map, resolve_date_columns
 from .generator import generate_date_table
 from .helpers import _clamp_month, _normalize_override_dates, _require_start_end
 from .weekly_fiscal import WeeklyFiscalConfig
@@ -88,6 +88,10 @@ def run_dates(cfg: Dict, parquet_folder: Path) -> None:
             as_of_date=as_of_date,
             weekly_cfg=wf_cfg,
         )
+
+        rename_map = get_date_rename_map(dates_cfg)
+        if rename_map:
+            df = df.rename(columns=rename_map)
 
         cols = resolve_date_columns(dates_cfg)
         missing = [c for c in cols if c not in df.columns]
