@@ -685,6 +685,9 @@ DEFAULT_CHANNEL_FULFILLMENT_DAYS = np.array(
 CHANNEL_TO_ELIG_GROUP = np.array([0, 0, 1, 2, 3, 1, 1, 1, 2, 3, 0], dtype=np.int8)
 #                                 ^0 ^1 ^2 ^3 ^4 ^5 ^6 ^7 ^8 ^9 ^10
 
+# Nanoseconds per day (used for datetime64[ns] arithmetic)
+NS_PER_DAY: int = 86_400_000_000_000
+
 
 # =================================================================
 #  RETURN REASONS — single source of truth

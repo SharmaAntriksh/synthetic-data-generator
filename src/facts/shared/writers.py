@@ -80,6 +80,8 @@ def write_fact_table(
             row_group_size=row_group_size,
             use_dictionary=True,
         )
+        info(f"Wrote {name}.parquet ({n_rows:,} rows)")
+        return
 
     if file_format == "csv":
         df = table.to_pandas() if isinstance(df_or_table, pa.Table) else df_or_table
@@ -103,5 +105,3 @@ def write_fact_table(
             csv_path = out_dir / f"{name}.csv"
             csv_df.to_csv(str(csv_path), **kwargs)
             info(f"Wrote {csv_path.name} ({n_rows:,} rows)")
-    elif file_format == "parquet":
-        info(f"Wrote {name}.parquet ({n_rows:,} rows)")

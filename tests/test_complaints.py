@@ -292,10 +292,7 @@ class TestGenerateRowsBatch:
             cust_orders=cust_orders,
             g_start_ns=0,
             g_end_ns=365 * self.NS_PER_DAY,
-            resolution_rate=0.85,
-            escalation_rate=0.10,
-            avg_response_days=5,
-            max_response_days=30,
+            cfg=_ComplaintsCfg(),
         )
 
         total = complaints_per.sum()
@@ -326,10 +323,7 @@ class TestGenerateRowsBatch:
             cust_orders={},
             g_start_ns=0,
             g_end_ns=365 * self.NS_PER_DAY,
-            resolution_rate=0.85,
-            escalation_rate=0.10,
-            avg_response_days=5,
-            max_response_days=30,
+            cfg=_ComplaintsCfg(),
         )
         assert len(result["ckey"]) == 0
 
@@ -346,10 +340,7 @@ class TestGenerateRowsBatch:
             cust_orders={},
             g_start_ns=0,
             g_end_ns=365 * self.NS_PER_DAY,
-            resolution_rate=0.85,
-            escalation_rate=0.10,
-            avg_response_days=5,
-            max_response_days=30,
+            cfg=_ComplaintsCfg(),
         )
 
         # All should be general complaints (no order linking possible)
@@ -369,10 +360,7 @@ class TestGenerateRowsBatch:
             cust_orders={},
             g_start_ns=g_start,
             g_end_ns=g_end,
-            resolution_rate=0.85,
-            escalation_rate=0.10,
-            avg_response_days=5,
-            max_response_days=30,
+            cfg=_ComplaintsCfg(),
         )
 
         assert np.all(result["date_ns"] >= g_start)
@@ -390,10 +378,8 @@ class TestGenerateRowsBatch:
             cust_orders={},
             g_start_ns=0,
             g_end_ns=g_end,
-            resolution_rate=1.0,  # all resolved
-            escalation_rate=0.0,
-            avg_response_days=30,  # long response → forces clamping
-            max_response_days=60,
+            cfg=_ComplaintsCfg(resolution_rate=1.0, escalation_rate=0.0,
+                              avg_response_days=30, max_response_days=60),
         )
 
         resolved_mask = result["res_date_ns"] != -1
@@ -410,10 +396,7 @@ class TestGenerateRowsBatch:
             cust_orders={},
             g_start_ns=0,
             g_end_ns=365 * self.NS_PER_DAY,
-            resolution_rate=1.0,  # all resolved
-            escalation_rate=0.0,
-            avg_response_days=5,
-            max_response_days=30,
+            cfg=_ComplaintsCfg(resolution_rate=1.0, escalation_rate=0.0),
         )
 
         # All resolved → all should have resolution types
@@ -431,10 +414,7 @@ class TestGenerateRowsBatch:
             cust_orders={},
             g_start_ns=0,
             g_end_ns=365 * self.NS_PER_DAY,
-            resolution_rate=0.0,  # none resolved
-            escalation_rate=0.5,
-            avg_response_days=5,
-            max_response_days=30,
+            cfg=_ComplaintsCfg(resolution_rate=0.0, escalation_rate=0.5),
         )
 
         # None resolved → all res_type should be None, res_date should be -1
@@ -450,10 +430,7 @@ class TestGenerateRowsBatch:
             cust_orders=cust_orders,
             g_start_ns=0,
             g_end_ns=365 * self.NS_PER_DAY,
-            resolution_rate=0.85,
-            escalation_rate=0.10,
-            avg_response_days=5,
-            max_response_days=30,
+            cfg=_ComplaintsCfg(),
         )
 
         rng1 = np.random.default_rng(99)

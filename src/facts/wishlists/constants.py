@@ -8,14 +8,13 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+from src.defaults import NS_PER_DAY  # noqa: F401 (re-export)
 from src.utils.config_helpers import parse_global_dates as _parse_global_dates_shared
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-NS_PER_DAY: int = 86_400_000_000_000
 
 PRIORITY_VALUES = np.array(["High", "Medium", "Low"], dtype=object)
 PRIORITY_WEIGHTS = np.array([0.20, 0.50, 0.30])
