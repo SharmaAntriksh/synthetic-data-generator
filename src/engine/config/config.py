@@ -228,7 +228,6 @@ def _distribute_scale(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     _map = [
         ("sales_rows",  "sales",      "total_rows"),
-        ("products",    "products",   "num_products"),
         ("customers",   "customers",  "total_customers"),
         ("stores",      "stores",     "num_stores"),
     ]
@@ -238,6 +237,19 @@ def _distribute_scale(cfg: Dict[str, Any]) -> Dict[str, Any]:
             sec = cfg.setdefault(section, {})
             if isinstance(sec, Mapping):
                 sec.setdefault(target_key, v)
+
+    # Products: supports both flat int (backward compat) and dict with rows/catalog
+    prod_scale = scale.get("products")
+    if prod_scale is not None:
+        sec = cfg.setdefault("products", {})
+        if isinstance(sec, Mapping):
+            if isinstance(prod_scale, Mapping):
+                if "rows" in prod_scale:
+                    sec.setdefault("num_products", prod_scale["rows"])
+                if "catalog" in prod_scale:
+                    sec.setdefault("catalog", prod_scale["catalog"])
+            else:
+                sec.setdefault("num_products", prod_scale)
 
     # Promotions: { seasonal: N, clearance: N, limited: N }
     promos = scale.get("promotions")

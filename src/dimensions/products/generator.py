@@ -183,7 +183,9 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         return pd.read_parquet(parquet_path), profile_df, False
 
     # Base catalog
-    base_df = load_contoso_products(output_folder)
+    from src.utils.config_helpers import str_or
+    catalog = str_or(p.get("catalog"), "all").strip().lower()
+    base_df = load_contoso_products(output_folder, catalog=catalog)
     base_count = int(len(base_df))
 
     # Target row count
@@ -199,11 +201,11 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         info("products.use_contoso_products is deprecated; ignoring (num_products is set)")
 
     if target_n < base_count:
-        info(f"Trimming Contoso: {base_count:,} -> {target_n:,} (stratified by SubcategoryKey)")
+        info(f"Trimming catalog ({catalog}): {base_count:,} -> {target_n:,} (stratified by SubcategoryKey)")
     elif target_n == base_count:
-        info(f"Using Contoso catalog (standardized): {target_n:,}")
+        info(f"Using catalog ({catalog}): {target_n:,}")
     else:
-        info(f"Expanding Contoso: {base_count:,} -> {target_n:,} (variants)")
+        info(f"Expanding catalog ({catalog}): {base_count:,} -> {target_n:,} (variants)")
 
     df = expand_contoso_products(
         base_products=base_df,
@@ -364,6 +366,7 @@ def _version_key(p: dict) -> dict:
     Version key for Products. Pricing is the economic source of truth.
     """
     key = {
+        "catalog": p.get("catalog", "all"),
         "num_products": p.get("num_products"),
         "seed": p.get("seed"),
         "pricing": p.get("pricing"),

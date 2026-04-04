@@ -560,6 +560,7 @@ def _build_brand_prob_by_month_rotate_winner(
     min_share: float = 0.02,
     year_len_months: int = 12,
     brand_product_counts: np.ndarray | None = None,
+    count_exponent: float = 0.25,
 ) -> np.ndarray:
     if T <= 0 or B <= 0:
         raise SalesError(f"Invalid T/B for brand_prob_by_month: T={T}, B={B}")
@@ -568,7 +569,8 @@ def _build_brand_prob_by_month_rotate_winner(
 
     if brand_product_counts is not None and len(brand_product_counts) == B:
         counts = np.maximum(brand_product_counts.astype(np.float64), 1.0)
-        base = np.sqrt(counts)
+        exp = float(np.clip(count_exponent, 0.0, 1.0))
+        base = counts ** exp if exp > 0.0 else np.ones_like(counts)
         base = base / base.sum()
     else:
         base = np.ones(B, dtype=np.float64) / float(B)
@@ -1006,6 +1008,7 @@ def init_sales_worker(worker_cfg: dict) -> None:
                     min_share=float_or(brand_cfg.get("min_share"), 0.02),
                     year_len_months=int_or(brand_cfg.get("year_len_months"), 12),
                     brand_product_counts=bp_counts,
+                    count_exponent=float_or(brand_cfg.get("count_exponent"), 0.25),
                 )
 
     store_to_geo_arr = dense_map(store_to_geo) if isinstance(store_to_geo, Mapping) else None

@@ -2128,6 +2128,7 @@ def generate_sales_fact(
                 min_share=float_or(_brand_cfg.get("min_share"), 0.02),
                 year_len_months=int_or(_brand_cfg.get("year_len_months"), 12),
                 brand_product_counts=_bp_counts,
+                count_exponent=float_or(_brand_cfg.get("count_exponent"), 0.25),
             )
             worker_cfg["_prebuilt_brand_prob_by_month"] = _shm.publish(
                 "brand_prob", _brand_prob,

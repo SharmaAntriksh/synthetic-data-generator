@@ -93,14 +93,18 @@ NEW_SUBCATEGORIES = [
 # -----------------------------------------------------------------------
 # Brands per category — real-world names for realistic analytics data
 # -----------------------------------------------------------------------
-BRANDS_CLOTHING = ["Nike", "Adidas", "Levi's", "Under Armour", "Patagonia", "H&M", "Gap", "Puma"]
+BRANDS_CLOTHING = ["Nike", "Adidas", "Levi's", "Under Armour", "Patagonia", "H&M", "Gap", "Puma", "Ralph Lauren", "Calvin Klein"]
 BRANDS_FOOD = ["Nestlé", "Heinz", "Kellogg's", "Del Monte", "Starbucks", "Pepsi"]
 BRANDS_HEALTH = ["Neutrogena", "Dove", "L'Oréal", "Nivea", "Colgate", "Burt's Bees"]
-BRANDS_FURNITURE = ["IKEA", "Ashley Home", "West Elm", "Pottery Barn"]
-BRANDS_SPORTS = ["Columbia", "The North Face", "Callaway", "Wilson", "Speedo"]
+BRANDS_FURNITURE = ["IKEA", "Ashley Home", "West Elm", "Pottery Barn", "Restoration Hardware", "Herman Miller", "Crate & Barrel"]
+BRANDS_SPORTS = ["Columbia", "The North Face", "Callaway", "Wilson", "Speedo", "Peloton", "Bowflex", "Yeti"]
 BRANDS_OFFICE = ["3M", "Moleskine", "Samsonite", "JanSport"]
-BRANDS_GARDEN = ["DeWalt", "Black+Decker", "Weber", "Husqvarna", "Craftsman"]
+BRANDS_GARDEN = ["DeWalt", "Black+Decker", "Weber", "Husqvarna", "Craftsman", "Milwaukee", "Makita"]
 BRANDS_AUTO = ["Meguiar's", "Armor All", "Michelin", "Bosch", "Garmin"]
+
+# Cross-category brand sets (brands that sell in multiple categories)
+_CROSSOVER_ATHLETIC = ["Nike", "Adidas", "Under Armour", "Puma"]
+_CROSSOVER_OUTDOOR = ["Columbia", "The North Face"]
 
 # -----------------------------------------------------------------------
 # Product templates per subcategory
@@ -134,11 +138,11 @@ TEMPLATES: dict[int, dict] = {
     51: {  # Jackets & Coats
         "specs": ["Puffer Jacket", "Rain Jacket", "Denim Jacket",
                   "Fleece Zip-Up", "Wool Overcoat", "Windbreaker",
-                  "Parka"],
+                  "Parka", "Leather Moto Jacket", "Down Expedition Parka"],
         "colors": ["Black", "Grey", "Blue", "Green", "Brown"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (45, 350),
-        "brands": BRANDS_CLOTHING,
+        "price_range": (55, 800),
+        "brands": BRANDS_CLOTHING + _CROSSOVER_OUTDOOR,
     },
     52: {  # Dresses & Skirts
         "specs": ["A-Line Dress", "Wrap Dress", "Midi Skirt",
@@ -155,16 +159,16 @@ TEMPLATES: dict[int, dict] = {
         "colors": ["Black", "Grey", "Blue", "Pink", "Green"],
         "classes": ["Economy", "Regular", "Deluxe"],
         "price_range": (18, 95),
-        "brands": BRANDS_CLOTHING,
+        "brands": BRANDS_CLOTHING + _CROSSOVER_OUTDOOR,
     },
     54: {  # Footwear
         "specs": ["Running Shoe", "Casual Sneaker", "Hiking Boot",
                   "Leather Oxford", "Slip-On Loafer", "Sandal",
-                  "Trail Runner", "Canvas Shoe"],
+                  "Trail Runner", "Canvas Shoe", "Premium Leather Boot"],
         "colors": ["Black", "White", "Brown", "Grey", "Blue"],
         "classes": ["Economy", "Regular", "Deluxe"],
-        "price_range": (30, 250),
-        "brands": BRANDS_CLOTHING,
+        "price_range": (35, 500),
+        "brands": BRANDS_CLOTHING + _CROSSOVER_OUTDOOR,
     },
     55: {  # Fashion Accessories
         "specs": ["Leather Belt", "Canvas Belt", "Knit Scarf",
@@ -264,10 +268,11 @@ TEMPLATES: dict[int, dict] = {
     65: {  # Fragrances
         "specs": ["Eau de Toilette 50ml", "Eau de Parfum 100ml",
                   "Body Mist 250ml", "Cologne 75ml",
-                  "Perfume Gift Set", "Travel Spray 10ml"],
+                  "Perfume Gift Set", "Travel Spray 10ml",
+                  "Luxury Parfum Collection 100ml"],
         "colors": ["N/A"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (15, 200),
+        "price_range": (20, 450),
         "brands": BRANDS_HEALTH,
     },
     66: {  # Oral Care
@@ -284,28 +289,32 @@ TEMPLATES: dict[int, dict] = {
     67: {  # Living Room Furniture
         "specs": ["3-Seater Sofa", "2-Seater Loveseat", "Recliner Chair",
                   "Coffee Table", "TV Stand", "Bookshelf",
-                  "Side Table", "Ottoman"],
+                  "Side Table", "Ottoman",
+                  "Leather Sectional Sofa L-Shape", "Electric Recliner Sofa",
+                  "Home Theater Recliner Set 3pc"],
         "colors": ["Black", "Grey", "Brown", "White", "Blue"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (80, 2500),
+        "price_range": (120, 5500),
         "brands": BRANDS_FURNITURE,
     },
     68: {  # Bedroom Furniture
         "specs": ["Queen Bed Frame", "King Bed Frame", "Nightstand",
                   "Dresser 6-Drawer", "Wardrobe", "Mattress Queen",
-                  "Mattress King", "Vanity Table"],
+                  "Mattress King", "Vanity Table",
+                  "Smart Adjustable Bed Frame King", "Luxury Memory Foam Mattress King"],
         "colors": ["Black", "White", "Brown", "Grey"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (100, 2800),
+        "price_range": (120, 5000),
         "brands": BRANDS_FURNITURE,
     },
     69: {  # Office Furniture
         "specs": ["Executive Desk", "Standing Desk", "Ergonomic Chair",
                   "Filing Cabinet", "Bookcase", "Monitor Arm",
-                  "Desk Lamp LED"],
+                  "Desk Lamp LED",
+                  "Motorized Standing Desk 72in", "Executive Leather Chair"],
         "colors": ["Black", "White", "Grey", "Brown"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (40, 1200),
+        "price_range": (60, 2800),
         "brands": BRANDS_FURNITURE,
     },
     70: {  # Rugs & Carpets
@@ -330,20 +339,23 @@ TEMPLATES: dict[int, dict] = {
     72: {  # Fitness Equipment
         "specs": ["Adjustable Dumbbell Set", "Yoga Mat", "Resistance Bands Set",
                   "Jump Rope", "Pull-Up Bar", "Kettlebell 20lb",
-                  "Exercise Ball 65cm", "Foam Roller"],
+                  "Exercise Ball 65cm", "Foam Roller",
+                  "Smart Treadmill", "Indoor Cycling Bike",
+                  "Home Gym Multi-Station", "Rowing Machine"],
         "colors": ["Black", "Blue", "Grey", "Red"],
         "classes": ["Economy", "Regular", "Deluxe"],
-        "price_range": (10, 350),
-        "brands": BRANDS_SPORTS,
+        "price_range": (15, 3500),
+        "brands": BRANDS_SPORTS + _CROSSOVER_ATHLETIC,
     },
     73: {  # Camping & Hiking
         "specs": ["2-Person Tent", "Sleeping Bag 20F", "Hiking Backpack 40L",
                   "Camping Stove", "Headlamp 300lm", "Trekking Poles",
-                  "Water Filter", "Camp Chair"],
+                  "Water Filter", "Camp Chair",
+                  "4-Season Expedition Tent", "Hardshell Cooler 65qt"],
         "colors": ["Green", "Black", "Blue", "Orange"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (15, 400),
-        "brands": BRANDS_SPORTS,
+        "price_range": (20, 900),
+        "brands": BRANDS_SPORTS + ["Nike", "Patagonia"],
     },
     74: {  # Cycling
         "specs": ["Road Bike Helmet", "Bike Lock U-Style", "Cycling Gloves",
@@ -352,7 +364,7 @@ TEMPLATES: dict[int, dict] = {
         "colors": ["Black", "White", "Red", "Yellow"],
         "classes": ["Economy", "Regular", "Deluxe"],
         "price_range": (8, 180),
-        "brands": BRANDS_SPORTS,
+        "brands": BRANDS_SPORTS + _CROSSOVER_ATHLETIC,
     },
     75: {  # Water Sports
         "specs": ["Swim Goggles", "Snorkel Set", "Life Jacket Adult",
@@ -361,7 +373,7 @@ TEMPLATES: dict[int, dict] = {
         "colors": ["Black", "Blue", "Red", "Yellow"],
         "classes": ["Economy", "Regular"],
         "price_range": (10, 200),
-        "brands": BRANDS_SPORTS,
+        "brands": BRANDS_SPORTS + ["Nike", "Adidas"],
     },
     76: {  # Team Sports
         "specs": ["Soccer Ball Size 5", "Basketball Official", "Football",
@@ -370,7 +382,7 @@ TEMPLATES: dict[int, dict] = {
         "colors": ["White", "Black", "Orange", "Yellow"],
         "classes": ["Economy", "Regular", "Deluxe"],
         "price_range": (8, 250),
-        "brands": BRANDS_SPORTS,
+        "brands": BRANDS_SPORTS + _CROSSOVER_ATHLETIC,
     },
 
     # --- Office & Stationery (cat 14) ---
@@ -407,17 +419,18 @@ TEMPLATES: dict[int, dict] = {
         "colors": ["Black", "Grey", "Brown", "Blue"],
         "classes": ["Economy", "Regular", "Deluxe"],
         "price_range": (15, 180),
-        "brands": BRANDS_OFFICE,
+        "brands": BRANDS_OFFICE + ["Nike", "Adidas", "Under Armour", "The North Face", "Patagonia"],
     },
 
     # --- Garden & Outdoor Living (cat 15) ---
     81: {  # Power Tools
         "specs": ["Cordless Drill 20V", "Circular Saw 7in", "Impact Driver 20V",
                   "Reciprocating Saw", "Angle Grinder 4.5in", "Jigsaw",
-                  "Orbital Sander"],
+                  "Orbital Sander",
+                  "Table Saw 10in", "Miter Saw Sliding 12in", "Air Compressor 6gal"],
         "colors": ["Yellow", "Red", "Blue", "Black"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (30, 350),
+        "price_range": (40, 900),
         "brands": BRANDS_GARDEN,
     },
     82: {  # Hand Tools
@@ -431,18 +444,20 @@ TEMPLATES: dict[int, dict] = {
     },
     83: {  # Outdoor Furniture
         "specs": ["Patio Dining Set 5pc", "Adirondack Chair", "Patio Umbrella 9ft",
-                  "Outdoor Bench", "Hammock with Stand", "Lounge Chair"],
+                  "Outdoor Bench", "Hammock with Stand", "Lounge Chair",
+                  "Premium Patio Dining Set 9pc", "Pergola with Canopy"],
         "colors": ["Brown", "White", "Grey", "Green"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (50, 800),
-        "brands": BRANDS_GARDEN,
+        "price_range": (60, 2200),
+        "brands": BRANDS_GARDEN + ["IKEA", "Pottery Barn", "Crate & Barrel", "West Elm"],
     },
     84: {  # Grills & BBQ
         "specs": ["Gas Grill 3-Burner", "Charcoal Grill 22in", "Portable Grill",
-                  "Smoker Vertical", "Grill Tool Set 18pc", "Grill Cover"],
+                  "Smoker Vertical", "Grill Tool Set 18pc", "Grill Cover",
+                  "Built-In Gas Grill 6-Burner", "Pellet Smoker & Grill"],
         "colors": ["Black", "Silver", "Red"],
         "classes": ["Regular", "Deluxe"],
-        "price_range": (20, 600),
+        "price_range": (30, 2200),
         "brands": BRANDS_GARDEN,
     },
     85: {  # Garden Care
@@ -452,7 +467,7 @@ TEMPLATES: dict[int, dict] = {
         "colors": ["Green", "Black", "Yellow", "Orange"],
         "classes": ["Economy", "Regular"],
         "price_range": (8, 400),
-        "brands": BRANDS_GARDEN,
+        "brands": BRANDS_GARDEN + ["Bosch"],
     },
 
     # --- Automotive (cat 16) ---
@@ -492,10 +507,218 @@ TEMPLATES: dict[int, dict] = {
         "price_range": (8, 250),
         "brands": BRANDS_AUTO,
     },
+
+    # =================================================================
+    # Synthetic brands in Contoso subcategories (keys 1-48)
+    # Real-world electronics/appliance brands competing alongside
+    # Fabrikam, Litware, and other original Contoso brands.
+    # =================================================================
+
+    # --- Audio (cat 1) ---
+    1: {  # MP4 & MP3 / Portable Audio
+        "specs": ["Portable Speaker", "Smart Speaker", "Party Speaker",
+                  "Wireless Speaker Mini", "Bluetooth Speaker Rugged"],
+        "colors": ["Black", "White", "Blue", "Grey"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (30, 400),
+        "brands": ["Sony", "Bose"],
+    },
+    6: {  # Bluetooth Headphones
+        "specs": ["Wireless Earbuds", "Over-Ear NC Headphones",
+                  "Sport Earbuds", "Open-Ear Buds", "Studio Headphones",
+                  "Wireless Earbuds Pro"],
+        "colors": ["Black", "White", "Blue", "Silver"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (30, 500),
+        "brands": ["Samsung", "Sony", "Apple", "Bose"],
+    },
+
+    # --- TV and Video (cat 2) ---
+    9: {  # Televisions
+        "specs": ["55\" 4K OLED TV", "65\" QLED Smart TV", "75\" 4K Smart TV",
+                  "43\" LED TV", "50\" UHD TV", "85\" 8K TV",
+                  "55\" QLED TV", "65\" OLED TV"],
+        "colors": ["Black", "Silver", "White"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (200, 3500),
+        "brands": ["Samsung", "Sony", "LG"],
+    },
+    11: {  # Home Theater System
+        "specs": ["Soundbar 5.1", "AV Receiver 7.2", "Surround System 7.1",
+                  "Soundbar 3.1", "Wireless Subwoofer",
+                  "Soundbar Atmos", "Compact Soundbar 2.1"],
+        "colors": ["Black", "Silver", "White"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (100, 2500),
+        "brands": ["Samsung", "Sony", "LG", "Bose"],
+    },
+
+    # --- Computers (cat 3) ---
+    15: {  # Laptops
+        "specs": ["Laptop 14\" i5", "Laptop 15\" i7", "Laptop 13\" Ultrabook",
+                  "Laptop 16\" Creator", "Laptop 17\" Workstation",
+                  "Laptop 14\" AMD Ryzen", "Laptop 15\" OLED"],
+        "colors": ["Silver", "Black", "White", "Blue"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (400, 2800),
+        "brands": ["Samsung", "Apple", "HP"],
+    },
+    17: {  # Desktops
+        "specs": ["Desktop Tower i7", "All-in-One 27\"", "Mini PC",
+                  "Desktop Workstation", "All-in-One 24\"",
+                  "Desktop Tower i9"],
+        "colors": ["Silver", "Black", "White"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (500, 3200),
+        "brands": ["Apple", "HP"],
+    },
+    18: {  # Monitors
+        "specs": ["Monitor 27\" 4K", "Monitor 32\" Curved", "Monitor 24\" FHD",
+                  "Ultrawide 34\"", "Monitor 27\" 144Hz",
+                  "Monitor 32\" 4K", "Monitor 49\" Super Ultrawide"],
+        "colors": ["Black", "Silver", "White"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (150, 1200),
+        "brands": ["Samsung", "LG", "HP"],
+    },
+    20: {  # Printers, Scanners & Fax
+        "specs": ["LaserJet Mono", "LaserJet Color", "InkJet All-in-One",
+                  "LaserJet Pro MFP", "Portable Printer",
+                  "Tank Printer", "Wide Format Printer"],
+        "colors": ["White", "Black", "Grey"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (80, 600),
+        "brands": ["HP"],
+    },
+    22: {  # Computers Accessories
+        "specs": ["Wireless Mouse", "Mechanical Keyboard", "USB-C Hub",
+                  "Webcam 4K", "External SSD 1TB", "Laptop Stand",
+                  "Wireless Keyboard & Mouse Combo", "Portable Monitor 15\""],
+        "colors": ["Black", "White", "Silver", "Grey"],
+        "classes": ["Economy", "Regular", "Deluxe"],
+        "price_range": (15, 250),
+        "brands": ["Samsung", "Apple", "HP"],
+    },
+
+    # --- Cameras and camcorders (cat 4) ---
+    23: {  # Digital Cameras
+        "specs": ["Mirrorless Camera A7", "Compact Camera RX",
+                  "Action Camera", "Vlog Camera ZV",
+                  "Point & Shoot WX"],
+        "colors": ["Black", "Silver"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (300, 2500),
+        "brands": ["Sony"],
+    },
+    24: {  # Digital SLR Cameras
+        "specs": ["DSLR Body Alpha", "Full Frame Kit 28-70mm",
+                  "APS-C Body", "Pro Body Flagship"],
+        "colors": ["Black"],
+        "classes": ["Deluxe"],
+        "price_range": (800, 3500),
+        "brands": ["Sony"],
+    },
+    27: {  # Camcorders
+        "specs": ["Handycam 4K", "Professional Camcorder",
+                  "Action Cam Mini", "Cinema Camera"],
+        "colors": ["Black", "Silver"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (300, 2000),
+        "brands": ["Sony"],
+    },
+
+    # --- Cell phones (cat 5) ---
+    32: {  # Smart phones & PDAs
+        "specs": ["Smartphone Pro Max", "Smartphone Ultra",
+                  "Smartphone SE", "Smartphone Flip",
+                  "Smartphone Plus", "Smartphone Mini",
+                  "Smartphone FE"],
+        "colors": ["Black", "White", "Blue", "Purple", "Green", "Silver"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (400, 1800),
+        "brands": ["Samsung", "Apple"],
+    },
+    31: {  # Touch Screen Phones (tablets)
+        "specs": ["Tablet 10\" WiFi", "Tablet 12\" 5G",
+                  "Tablet 8\" Lite", "Tablet 11\" Pro",
+                  "Tablet 10\" with Keyboard"],
+        "colors": ["Black", "Silver", "White", "Blue"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (200, 1200),
+        "brands": ["Samsung", "Apple"],
+    },
+
+    # --- Games (cat 7) ---
+    39: {  # Download Games
+        "specs": ["Console Game Action", "Console Game RPG",
+                  "Console Game Sports", "Console Game Racing",
+                  "Console Game Adventure", "Console Game Strategy",
+                  "Console Game Simulation"],
+        "colors": ["N/A"],
+        "classes": ["Economy", "Regular"],
+        "price_range": (15, 70),
+        "brands": ["Sony"],
+    },
+
+    # --- Home Appliances (cat 8) ---
+    41: {  # Washers & Dryers
+        "specs": ["Front Load Washer", "Top Load Washer",
+                  "Washer-Dryer Combo", "Stackable Set",
+                  "Compact Washer", "Steam Washer"],
+        "colors": ["White", "Silver", "Black"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (500, 2500),
+        "brands": ["Samsung", "LG"],
+    },
+    42: {  # Refrigerators
+        "specs": ["French Door Fridge", "Side-by-Side Fridge",
+                  "Top Freezer Fridge", "Mini Fridge",
+                  "Counter Depth Fridge", "4-Door Flex Fridge",
+                  "Bottom Freezer Fridge"],
+        "colors": ["Silver", "Black", "White"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (400, 3500),
+        "brands": ["Samsung", "LG"],
+    },
+    43: {  # Microwaves
+        "specs": ["Countertop Microwave", "Over-Range Microwave",
+                  "Microwave Drawer", "Convection Microwave",
+                  "Compact Microwave"],
+        "colors": ["Silver", "Black", "White"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (80, 600),
+        "brands": ["Samsung", "LG"],
+    },
+    47: {  # Air Conditioners
+        "specs": ["Window AC 8000BTU", "Portable AC 12000BTU",
+                  "Mini Split Inverter", "Smart AC Unit",
+                  "Window AC 12000BTU"],
+        "colors": ["White", "Silver"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (200, 1500),
+        "brands": ["Samsung", "LG"],
+    },
+    48: {  # Fans
+        "specs": ["Tower Fan Smart", "Bladeless Fan",
+                  "Air Purifier Fan", "Ceiling Fan Smart",
+                  "Pedestal Fan"],
+        "colors": ["White", "Black", "Silver"],
+        "classes": ["Regular", "Deluxe"],
+        "price_range": (50, 600),
+        "brands": ["LG"],
+    },
 }
 
 # Pre-built lookup: SubcategoryKey → SubcategoryLabel
+# Covers both Contoso (from parquet) and Synthetic (from NEW_SUBCATEGORIES)
 _SUBCAT_KEY_TO_LABEL = {sk: sl for sk, sl, _, _ in NEW_SUBCATEGORIES}
+if DATA_DIR.joinpath("product_subcategory.parquet").exists():
+    _contoso_subs = pd.read_parquet(DATA_DIR / "product_subcategory.parquet")
+    for _, _row in _contoso_subs.iterrows():
+        _sk = int(_row["SubcategoryKey"])
+        if _sk not in _SUBCAT_KEY_TO_LABEL and "SubcategoryLabel" in _row.index:
+            _SUBCAT_KEY_TO_LABEL[_sk] = str(_row["SubcategoryLabel"])
+    del _contoso_subs
 
 
 # -----------------------------------------------------------------------
@@ -535,9 +758,12 @@ def _generate_products_for_subcategory(
 
     for spec in specs:
         # Multiple brands carry the same product type (like real retail).
-        # Pick at least 2 brands, up to all of them.
-        n_brands = rng.integers(max(2, len(brands) // 2), len(brands) + 1)
-        chosen_brands = rng.choice(brands, size=n_brands, replace=False).tolist()
+        # Pick at least 2 brands, up to all of them (use all when ≤2 brands).
+        if len(brands) <= 2:
+            chosen_brands = list(brands)
+        else:
+            n_brands = rng.integers(max(2, len(brands) // 2), len(brands) + 1)
+            chosen_brands = rng.choice(brands, size=n_brands, replace=False).tolist()
 
         for brand in chosen_brands:
             # Each brand-spec combo comes in a subset of colors
@@ -546,10 +772,14 @@ def _generate_products_for_subcategory(
 
             cls = classes[rng.integers(0, len(classes))]
 
-            # Base price per brand-spec (shared across colors)
-            class_factor = {"Economy": 0.6, "Regular": 1.0, "Deluxe": 1.5}.get(cls, 1.0)
-            mid_price = (price_min + price_max) / 2.0
-            base = rng.uniform(price_min, mid_price) * class_factor
+            # Tiers overlap so mid-range products appear across classes
+            span = price_max - price_min
+            if cls == "Economy":
+                base = rng.uniform(price_min, price_min + span * 0.30)
+            elif cls == "Deluxe":
+                base = rng.uniform(price_min + span * 0.45, price_max)
+            else:  # Regular
+                base = rng.uniform(price_min, price_min + span * 0.65)
             base = float(np.clip(base, price_min, price_max))
 
             cost_ratio = rng.uniform(0.40, 0.75)
@@ -664,6 +894,12 @@ def main():
     # --- Write ---
     final_cats.to_parquet(DATA_DIR / "product_category.parquet", index=False)
     final_subs.to_parquet(DATA_DIR / "product_subcategory.parquet", index=False)
+    # Split source files for catalog selection (contoso / synthetic / all)
+    contoso_prods = final_prods[final_prods["Source"] == "Contoso"].copy()
+    synthetic_prods = final_prods[final_prods["Source"] == "Synthetic"].copy()
+    contoso_prods.to_parquet(DATA_DIR / "contoso_products.parquet", index=False)
+    synthetic_prods.to_parquet(DATA_DIR / "synthetic_products.parquet", index=False)
+    # Combined file for backward compatibility
     final_prods.to_parquet(DATA_DIR / "products.parquet", index=False)
 
     n_new = len(new_prods)

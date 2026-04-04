@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date as _date
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -412,6 +412,7 @@ class ProductsSCD2Config(_Base):
 # -- Products --
 
 class ProductsConfig(_Base):
+    catalog: Literal["contoso", "synthetic", "all"] = "all"
     num_products: Optional[int] = None
     active_ratio: float = 0.98
     value_scale: float = 1.0
@@ -531,9 +532,14 @@ class ScalePromotionsConfig(_Base):
     new_customer: Optional[int] = None
 
 
+class ScaleProductsConfig(_Base):
+    catalog: Literal["contoso", "synthetic", "all"] = "all"
+    rows: Optional[int] = None
+
+
 class ScaleConfig(_Base):
     sales_rows: Optional[int] = None
-    products: Optional[int] = None
+    products: Optional[Union[ScaleProductsConfig, int]] = None
     customers: Optional[int] = None
     stores: Optional[int] = None
     promotions: Optional[Union[ScalePromotionsConfig, Dict[str, int]]] = None
@@ -858,6 +864,7 @@ class BrandPopularityConfig(_Base):
     noise_sd: float = 0.15
     min_share: float = 0.02
     year_len_months: int = 12
+    count_exponent: float = Field(0.25, ge=0.0, le=1.0)
 
     @model_validator(mode="before")
     @classmethod

@@ -7,7 +7,9 @@
 # ------------------------------------------------------------------
 scale:
   sales_rows: 1003295
-  products: 5167                    #5167 total products in base file
+  products:
+    catalog: all                    # contoso (original 2517) | synthetic (4839) | all (combined - 7136)
+    rows: 7136                      # target product count (trims or expands to fit)
   customers: 42851
   stores: 200
   promotions: { seasonal: 11, clearance: 4, limited: 5, flash: 6, volume: 4, loyalty: 3, bundle: 3, new_customer: 3 }
@@ -191,7 +193,7 @@ employees:
 dates:
   fiscal_start_month: 5
   as_of_date: null
-  spaced_column_names: false
+  spaced_column_names: true
 
   include:
     calendar: true
