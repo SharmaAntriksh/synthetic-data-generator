@@ -229,7 +229,7 @@ def _df_sales_channels(dim_cfg: Dict[str, Any]) -> pd.DataFrame:
             df["IsAssisted"] = (grp == "assisted") | nm.str.contains("call|phone|agent", na=False)
 
         if "IsThirdParty" not in df.columns:
-            df["IsThirdParty"] = nm.str.contains("market|reseller|partner", na=False)
+            df["IsThirdParty"] = nm.str.contains("^marketplace$|reseller|partner", na=False)
 
         if "IsOwnedChannel" not in df.columns:
             df["IsOwnedChannel"] = ~df["IsThirdParty"].astype(bool)
