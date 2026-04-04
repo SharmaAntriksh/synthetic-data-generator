@@ -180,12 +180,12 @@ Controls the shape and scale of the dataset: row counts, date ranges, customer p
 
 | Section | What it controls |
 |---|---|
-| `scale` | Row/entity counts — sales rows, products, customers, stores, promotions |
+| `scale` | Row/entity counts — sales rows, products (with catalog selection: `contoso` / `synthetic` / `all`), customers, stores, promotions |
 | `defaults` | Global seed and date range (`start` / `end`) |
 | `sales` | Output format, merge settings, chunk/worker parallelism, compression |
 | `returns` | Return rate, timing window, enable/disable |
 | `customers` | Region mix (US/EU/India/Asia), org percentage, SCD2 versioning, first-year override |
-| `products` | Active ratio, price range, margin range, brand normalization, SCD2 price history |
+| `products` | Active ratio, price range, margin range, brand normalization, SCD2 price history. Catalog source (`contoso`/`synthetic`/`all`) is set via `scale.products.catalog` |
 | `stores` | Districts, regions, opening/closing dates, product assortment filtering |
 | `subscriptions` | Plans + CustomerSubscriptions bridge for DAX many-to-many patterns |
 | `employees` | Staff-per-store range, HR fields, store assignment rules with role profiles |
@@ -436,7 +436,7 @@ Each output includes a Power BI Project (`.pbip`) template with pre-configured f
 
 ## Testing
 
-The project includes 1371+ tests covering config validation, pricing pipeline, quantity model, geography, trend presets, version store, state management, determinism guarantees, edge-case guards, web API, packaging, sales logic, schema validation, product dimensions, sales writer, SQL tools, and date dimension edge cases.
+The project includes 1427+ tests covering config validation, pricing pipeline, quantity model, geography, trend presets, version store, state management, determinism guarantees, edge-case guards, web API, packaging, sales logic, schema validation, product dimensions, sales writer, SQL tools, and date dimension edge cases.
 
 ```bash
 # Run all tests

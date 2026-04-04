@@ -273,6 +273,46 @@ class TestDistributeScale:
 
         assert cfg["sales"]["total_rows"] == 100
 
+    def test_products_dict_format(self):
+        """scale.products as dict with rows and catalog."""
+        cfg = _distribute_scale({
+            "scale": {"products": {"catalog": "contoso", "rows": 2500}},
+        })
+
+        assert cfg["products"]["num_products"] == 2500
+        assert cfg["products"]["catalog"] == "contoso"
+
+    def test_products_dict_rows_only(self):
+        cfg = _distribute_scale({
+            "scale": {"products": {"rows": 3000}},
+        })
+
+        assert cfg["products"]["num_products"] == 3000
+        assert "catalog" not in cfg["products"]
+
+    def test_products_dict_catalog_only(self):
+        cfg = _distribute_scale({
+            "scale": {"products": {"catalog": "synthetic"}},
+        })
+
+        assert cfg["products"]["catalog"] == "synthetic"
+        assert "num_products" not in cfg["products"]
+
+    def test_products_int_backward_compat(self):
+        """Plain int format still works (backward compat)."""
+        cfg = _distribute_scale({"scale": {"products": 5000}})
+
+        assert cfg["products"]["num_products"] == 5000
+
+    def test_products_dict_does_not_override_section(self):
+        cfg = _distribute_scale({
+            "scale": {"products": {"catalog": "contoso", "rows": 2500}},
+            "products": {"catalog": "all", "num_products": 999},
+        })
+
+        assert cfg["products"]["catalog"] == "all"
+        assert cfg["products"]["num_products"] == 999
+
 
 # ===================================================================
 # _expand_merge_block

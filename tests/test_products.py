@@ -664,3 +664,172 @@ class TestSplitmix64:
         x = np.array([0, 1, 2**32], dtype=np.uint64)
         h = _splitmix64(x)
         assert h.dtype == np.uint64
+
+
+# ===================================================================
+# TestLoadContosoProducts — catalog selection
+# ===================================================================
+
+from src.dimensions.products.contoso_loader import (
+    load_contoso_products,
+    _normalize_products,
+    _trim_house_brand,
+)
+
+
+class TestLoadContosoProducts:
+    """Tests for catalog selection in load_contoso_products()."""
+
+    def test_contoso_mode_excludes_synthetic(self):
+        df = load_contoso_products(Path("."), catalog="contoso")
+        if "Source" in df.columns:
+            assert (df["Source"] == "Contoso").all()
+
+    def test_synthetic_mode_excludes_contoso(self):
+        df = load_contoso_products(Path("."), catalog="synthetic")
+        if "Source" in df.columns:
+            assert (df["Source"] == "Synthetic").all()
+
+    def test_all_mode_has_both_sources(self):
+        df = load_contoso_products(Path("."), catalog="all")
+        if "Source" in df.columns:
+            sources = set(df["Source"].unique())
+            assert "Contoso" in sources
+            assert "Synthetic" in sources
+
+    def test_contoso_mode_has_fewer_products_than_all(self):
+        contoso = load_contoso_products(Path("."), catalog="contoso")
+        all_df = load_contoso_products(Path("."), catalog="all")
+        assert len(contoso) < len(all_df)
+
+    def test_synthetic_mode_has_fewer_products_than_all(self):
+        synthetic = load_contoso_products(Path("."), catalog="synthetic")
+        all_df = load_contoso_products(Path("."), catalog="all")
+        assert len(synthetic) < len(all_df)
+
+    def test_all_mode_trims_house_brand(self):
+        df = load_contoso_products(Path("."), catalog="all")
+        contoso_brand = len(df[df["Brand"] == "Contoso"])
+        assert contoso_brand < 710  # trimmed from original 710
+
+    def test_contoso_mode_preserves_full_house_brand(self):
+        df = load_contoso_products(Path("."), catalog="contoso")
+        contoso_brand = len(df[df["Brand"] == "Contoso"])
+        assert contoso_brand == 710  # untrimmed
+
+    def test_required_columns_present(self):
+        for mode in ["contoso", "synthetic", "all"]:
+            df = load_contoso_products(Path("."), catalog=mode)
+            for col in ["ProductKey", "SubcategoryKey", "ListPrice", "UnitCost"]:
+                assert col in df.columns, f"{col} missing in {mode} mode"
+
+    def test_no_negative_prices(self):
+        for mode in ["contoso", "synthetic", "all"]:
+            df = load_contoso_products(Path("."), catalog=mode)
+            assert (df["ListPrice"] >= 0).all()
+            assert (df["UnitCost"] >= 0).all()
+
+    def test_cost_never_exceeds_price(self):
+        for mode in ["contoso", "synthetic", "all"]:
+            df = load_contoso_products(Path("."), catalog=mode)
+            assert (df["UnitCost"] <= df["ListPrice"]).all()
+
+    def test_default_catalog_is_all(self):
+        default = load_contoso_products(Path("."))
+        explicit = load_contoso_products(Path("."), catalog="all")
+        assert len(default) == len(explicit)
+
+
+class TestNormalizeProducts:
+    """Tests for _normalize_products()."""
+
+    def test_renames_unit_price_to_list_price(self):
+        df = pd.DataFrame({
+            "ProductKey": [1], "SubcategoryKey": [10],
+            "UnitPrice": [99.99], "UnitCost": [50.0],
+        })
+        result = _normalize_products(df)
+        assert "ListPrice" in result.columns
+        assert "UnitPrice" not in result.columns
+
+    def test_renames_product_subcategory_key(self):
+        df = pd.DataFrame({
+            "ProductKey": [1], "ProductSubcategoryKey": [10],
+            "ListPrice": [99.99], "UnitCost": [50.0],
+        })
+        result = _normalize_products(df)
+        assert "SubcategoryKey" in result.columns
+
+    def test_raises_on_missing_required_columns(self):
+        df = pd.DataFrame({"ProductKey": [1]})
+        with pytest.raises(DimensionError, match="missing required"):
+            _normalize_products(df)
+
+    def test_clips_negative_prices(self):
+        df = pd.DataFrame({
+            "ProductKey": [1], "SubcategoryKey": [10],
+            "ListPrice": [-5.0], "UnitCost": [-3.0],
+        })
+        result = _normalize_products(df)
+        assert result["ListPrice"].iloc[0] >= 0
+        assert result["UnitCost"].iloc[0] >= 0
+
+    def test_cost_capped_at_price(self):
+        df = pd.DataFrame({
+            "ProductKey": [1], "SubcategoryKey": [10],
+            "ListPrice": [50.0], "UnitCost": [100.0],
+        })
+        result = _normalize_products(df)
+        assert result["UnitCost"].iloc[0] <= result["ListPrice"].iloc[0]
+
+
+class TestTrimHouseBrand:
+    """Tests for _trim_house_brand()."""
+
+    def test_trims_when_above_threshold(self):
+        n = 800
+        df = pd.DataFrame({
+            "Brand": ["Contoso"] * n,
+            "SubcategoryKey": np.tile([1, 2, 3, 4], n // 4),
+        })
+        result = _trim_house_brand(df)
+        assert len(result) < n
+
+    def test_no_trim_when_below_threshold(self):
+        n = 100
+        df = pd.DataFrame({
+            "Brand": ["Contoso"] * n,
+            "SubcategoryKey": np.tile([1, 2], n // 2),
+        })
+        result = _trim_house_brand(df)
+        assert len(result) == n
+
+    def test_preserves_other_brands(self):
+        df = pd.DataFrame({
+            "Brand": ["Contoso"] * 800 + ["Fabrikam"] * 200,
+            "SubcategoryKey": [1] * 1000,
+        })
+        result = _trim_house_brand(df)
+        assert len(result[result["Brand"] == "Fabrikam"]) == 200
+
+    def test_preserves_all_subcategories(self):
+        n = 800
+        subcats = np.tile([1, 2, 3, 4, 5], n // 5)
+        df = pd.DataFrame({"Brand": ["Contoso"] * n, "SubcategoryKey": subcats})
+        result = _trim_house_brand(df)
+        assert set(result["SubcategoryKey"]) == {1, 2, 3, 4, 5}
+
+    def test_no_brand_column_returns_unchanged(self):
+        df = pd.DataFrame({"SubcategoryKey": [1, 2, 3]})
+        result = _trim_house_brand(df)
+        assert len(result) == 3
+
+    def test_deterministic(self):
+        n = 800
+        df = pd.DataFrame({
+            "Brand": ["Contoso"] * n,
+            "SubcategoryKey": np.tile([1, 2, 3, 4], n // 4),
+        })
+        r1 = _trim_house_brand(df.copy())
+        r2 = _trim_house_brand(df.copy())
+        pd.testing.assert_frame_equal(r1, r2)

@@ -401,3 +401,68 @@ class TestMutation:
         app = AppConfig()
         app.update({"config_yaml_path": "/new/path"})
         assert app.config_yaml_path == "/new/path"
+
+
+# ===================================================================
+# Catalog selection + count_exponent schema validation
+# ===================================================================
+
+class TestProductsCatalogSchema:
+    """Tests for catalog field on ProductsConfig and ScaleProductsConfig."""
+
+    def test_products_catalog_default(self):
+        cfg = ProductsConfig()
+        assert cfg.catalog == "all"
+
+    def test_products_catalog_valid_values(self):
+        for val in ["contoso", "synthetic", "all"]:
+            cfg = ProductsConfig(catalog=val)
+            assert cfg.catalog == val
+
+    def test_products_catalog_rejects_invalid(self):
+        with pytest.raises(Exception):
+            ProductsConfig(catalog="invalid")
+
+    def test_scale_products_dict_format(self):
+        from src.engine.config.config_schema import ScaleProductsConfig
+        cfg = ScaleProductsConfig(catalog="contoso", rows=2500)
+        assert cfg.catalog == "contoso"
+        assert cfg.rows == 2500
+
+    def test_scale_products_rejects_invalid_catalog(self):
+        from src.engine.config.config_schema import ScaleProductsConfig
+        with pytest.raises(Exception):
+            ScaleProductsConfig(catalog="bad_value")
+
+    def test_appconfig_with_catalog(self):
+        cfg = AppConfig.from_raw_dict({"products": {"catalog": "contoso"}})
+        assert cfg.products.catalog == "contoso"
+
+    def test_appconfig_rejects_invalid_catalog(self):
+        with pytest.raises(Exception):
+            AppConfig.from_raw_dict({"products": {"catalog": "invalid"}})
+
+
+class TestCountExponentSchema:
+    """Tests for count_exponent field on BrandPopularityConfig."""
+
+    def test_default_value(self):
+        from src.engine.config.config_schema import BrandPopularityConfig
+        cfg = BrandPopularityConfig()
+        assert cfg.count_exponent == 0.25
+
+    def test_valid_range(self):
+        from src.engine.config.config_schema import BrandPopularityConfig
+        for val in [0.0, 0.25, 0.5, 1.0]:
+            cfg = BrandPopularityConfig(count_exponent=val)
+            assert cfg.count_exponent == val
+
+    def test_rejects_below_zero(self):
+        from src.engine.config.config_schema import BrandPopularityConfig
+        with pytest.raises(Exception):
+            BrandPopularityConfig(count_exponent=-0.1)
+
+    def test_rejects_above_one(self):
+        from src.engine.config.config_schema import BrandPopularityConfig
+        with pytest.raises(Exception):
+            BrandPopularityConfig(count_exponent=1.5)
