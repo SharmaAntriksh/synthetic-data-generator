@@ -19,6 +19,7 @@ from .schemas import build_worker_schemas
 from src.exceptions import SalesError
 from src.utils.config_helpers import int_or, float_or, str_or
 from src.utils.shared_arrays import resolve_array
+from ..worker_cfg_schema import SalesWorkerCfg
 
 
 EMPLOYEE_KEY_MIN_NON_MANAGER = 40_000_000
@@ -604,7 +605,7 @@ def _build_brand_prob_by_month_rotate_winner(
 # ---------------------------------------------------------------------
 
 
-def init_sales_worker(worker_cfg: dict) -> None:
+def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
     reset_worker_cdf_cache()
     # Resolve any shared-memory descriptors back into numpy array views.
     # This is a no-op for values that are already plain arrays/None.

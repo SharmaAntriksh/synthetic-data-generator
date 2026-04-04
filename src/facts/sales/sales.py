@@ -24,6 +24,7 @@ from src.defaults import (
     CHANNEL_TO_ELIG_GROUP,
 )
 from src.exceptions import PackagingError, SalesError
+from .worker_cfg_schema import SalesWorkerCfg
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
 from src.utils.logging_utils import debug, info, skip, warn, work
 from src.utils.shared_arrays import SharedArrayGroup
@@ -1052,6 +1053,751 @@ def _load_products(
 
 
 # =====================================================================
+# Helpers (extracted from generate_sales_fact)
+# =====================================================================
+
+def _load_stores(parquet_folder_p, end_date):
+    """Load store dimension arrays for the sales pool."""
+    _store_cols = ["StoreKey", "GeographyKey"]
+    _store_path = parquet_folder_p / "stores.parquet"
+    if _store_path.exists():
+        _store_schema_names = set(_pq.read_schema(str(_store_path)).names)
+        if "StoreType" in _store_schema_names:
+            _store_cols.append("StoreType")
+        if "OpeningDate" in _store_schema_names:
+            _store_cols.append("OpeningDate")
+        if "ClosingDate" in _store_schema_names:
+            _store_cols.append("ClosingDate")
+    store_df = load_parquet_df(_store_path, _store_cols)
+    store_keys = _as_np(store_df["StoreKey"], np.int32)
+    store_to_geo = dict(zip(_as_np(store_df["StoreKey"], np.int32), _as_np(store_df["GeographyKey"], np.int32)))
+
+    store_open_month = None
+    store_close_month = None
+    store_open_day = None
+    store_close_day = None
+    _FAR_PAST_DAY = np.datetime64("1900-01-01", "D")
+    _FAR_FUTURE_DAY = np.datetime64("2262-04-11", "D")
+    if "OpeningDate" in store_df.columns:
+        _open_dt = pd.to_datetime(store_df["OpeningDate"]).values.astype("datetime64[M]")
+        store_open_month = _open_dt.astype("int64").astype(np.int64)
+        _open_dt_d = pd.to_datetime(store_df["OpeningDate"]).values.astype("datetime64[D]")
+        _open_nat = np.isnat(_open_dt_d)
+        _open_dt_d[_open_nat] = _FAR_PAST_DAY
+        store_open_day = _open_dt_d
+    if "ClosingDate" in store_df.columns:
+        _close_dt = pd.to_datetime(store_df["ClosingDate"]).values
+        _close_nat_mask = np.isnat(_close_dt)
+        _close_m = _close_dt.astype("datetime64[M]").astype("int64").astype(np.int64)
+        _close_m[_close_nat_mask] = np.iinfo(np.int64).max
+        store_close_month = _close_m
+        _close_dt_d = _close_dt.astype("datetime64[D]")
+        _close_dt_d[_close_nat_mask] = _FAR_FUTURE_DAY
+        store_close_day = _close_dt_d
+
+    store_type_map = None
+    if "StoreType" in store_df.columns:
+        store_type_map = dict(zip(
+            store_df["StoreKey"].astype(int).tolist(),
+            store_df["StoreType"].astype(str).tolist(),
+        ))
+
+    # Geography + currency mapping
+    geo_df = load_parquet_df(parquet_folder_p / "geography.parquet", ["GeographyKey", "ISOCode"])
+    currency_df = load_parquet_df(parquet_folder_p / "currency.parquet", ["CurrencyKey", "CurrencyCode"])
+
+    geo_df = geo_df.merge(currency_df, left_on="ISOCode", right_on="CurrencyCode", how="left")
+    if geo_df["CurrencyKey"].isna().any():
+        n_missing = int(geo_df["CurrencyKey"].isna().sum())
+        missing_isos = geo_df.loc[geo_df["CurrencyKey"].isna(), "ISOCode"].unique().tolist()
+        default_currency = int(currency_df.iloc[0]["CurrencyKey"])
+        geo_df["CurrencyKey"] = geo_df["CurrencyKey"].fillna(default_currency)
+        info(f"WARNING: {n_missing} geography row(s) have no currency match (ISOs: {missing_isos}); "
+             f"defaulting to CurrencyKey={default_currency}.")
+
+    geo_to_currency = dict(zip(_as_np(geo_df["GeographyKey"], np.int32), _as_np(geo_df["CurrencyKey"], np.int32)))
+
+    return {
+        "store_keys": store_keys,
+        "store_to_geo": store_to_geo,
+        "store_open_month": store_open_month,
+        "store_close_month": store_close_month,
+        "store_open_day": store_open_day,
+        "store_close_day": store_close_day,
+        "store_type_map": store_type_map,
+        "geo_to_currency": geo_to_currency,
+    }
+
+
+def _load_promotions(parquet_folder_p, promo_df=None):
+    """Load promotion arrays for the sales pool."""
+    if promo_df is None:
+        promo_df = load_parquet_df(parquet_folder_p / "promotions.parquet")
+
+    if promo_df.empty:
+        return {
+            "promo_df": promo_df,
+            "promo_keys_all": np.array([], dtype=np.int32),
+            "promo_start_all": np.array([], dtype="datetime64[D]"),
+            "promo_end_all": np.array([], dtype="datetime64[D]"),
+            "new_customer_promo_keys": np.array([], dtype=np.int32),
+        }
+
+    promo_start = _normalize_dt_any(promo_df["StartDate"])
+    promo_end = _normalize_dt_any(promo_df["EndDate"])
+
+    promo_keys_all = _as_np(promo_df["PromotionKey"], np.int32)
+    promo_start_all = _as_np(promo_start, "datetime64[D]")
+    promo_end_all = _as_np(promo_end, "datetime64[D]")
+
+    if "PromotionType" in promo_df.columns:
+        nc_mask = promo_df["PromotionType"].astype(str) == "New Customer"
+        new_customer_promo_keys = _as_np(promo_df.loc[nc_mask, "PromotionKey"], np.int32)
+    else:
+        new_customer_promo_keys = np.array([], dtype=np.int32)
+
+    return {
+        "promo_df": promo_df,
+        "promo_keys_all": promo_keys_all,
+        "promo_start_all": promo_start_all,
+        "promo_end_all": promo_end_all,
+        "new_customer_promo_keys": new_customer_promo_keys,
+    }
+
+
+def _load_employees(parquet_folder_p, cfg, end_date):
+    """Load employee store assignments for salesperson resolution."""
+    emp_assign_path = parquet_folder_p / "employee_store_assignments.parquet"
+
+    if not emp_assign_path.exists():
+        raise FileNotFoundError(
+            f"employee_store_assignments.parquet is required: {emp_assign_path}. "
+            f"Run dimension generation first."
+        )
+
+    salesperson_roles = _cfg_get(cfg, ["sales", "salesperson_roles"], default=None)
+    if not (isinstance(salesperson_roles, list) and salesperson_roles):
+        primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")
+        salesperson_roles = [str(primary), ONLINE_SALES_REP_ROLE]
+
+    _esa_base_cols = [
+        "EmployeeKey", "StoreKey", "StartDate", "EndDate",
+        "FTE", "RoleAtStore",
+    ]
+    try:
+        emp_assign_df = load_parquet_df(
+            emp_assign_path, cols=_esa_base_cols + ["IsPrimary"],
+        )
+    except (KeyError, ValueError):
+        emp_assign_df = load_parquet_df(emp_assign_path, cols=_esa_base_cols)
+
+    if "RoleAtStore" in emp_assign_df.columns:
+        emp_assign_df = emp_assign_df[emp_assign_df["RoleAtStore"].isin(salesperson_roles)].copy()
+
+    if emp_assign_df.empty:
+        raise SalesError(
+            f"No employee assignments with role in {salesperson_roles} found in "
+            f"{emp_assign_path}. Check employees.store_assignments.primary_sales_role "
+            f"and ensure the bridge has been regenerated."
+        )
+
+    end_dt = pd.to_datetime(end_date, errors="coerce").normalize()
+
+    start_dt = pd.to_datetime(emp_assign_df["StartDate"], errors="coerce").dt.normalize()
+    end_dt_col = pd.to_datetime(emp_assign_df["EndDate"], errors="coerce").dt.normalize()
+    end_dt_col = end_dt_col.fillna(end_dt)
+
+    result = {
+        "employee_assign_store_key": _as_np(emp_assign_df["StoreKey"], np.int32),
+        "employee_assign_employee_key": _as_np(emp_assign_df["EmployeeKey"], np.int32),
+        "employee_assign_start_date": _as_np(start_dt, "datetime64[D]"),
+        "employee_assign_end_date": _as_np(end_dt_col, "datetime64[D]"),
+        "employee_assign_role": _as_np(emp_assign_df["RoleAtStore"].astype(str)),
+        "employee_assign_fte": None,
+        "employee_assign_is_primary": None,
+        "salesperson_roles": salesperson_roles,
+    }
+    if "FTE" in emp_assign_df.columns:
+        result["employee_assign_fte"] = _as_np(emp_assign_df["FTE"], np.float64)
+    if "IsPrimary" in emp_assign_df.columns:
+        result["employee_assign_is_primary"] = _as_np(emp_assign_df["IsPrimary"], bool)
+    return result
+
+
+def _build_worker_cfg(
+    cust, prod, stores, emps, corr, promos,
+    cfg, sales_cfg, output_paths, out_folder_p,
+    file_format, chunk_size, total_rows, seed, order_id_run_id,
+    sales_output, skip_order_cols, write_delta, delta_output_folder,
+    partition_enabled, partition_cols, row_group_size, compression,
+    returns_enabled_effective, returns_rate,
+    returns_min_lag_days, returns_max_lag_days,
+    returns_reason_keys, returns_reason_probs,
+    returns_full_line_prob, returns_split_rate,
+    returns_max_splits, returns_split_min_gap, returns_split_max_gap,
+    returns_logistics_keys, returns_event_key_capacity,
+):
+    """Build the worker_cfg dict from typed containers."""
+    worker_cfg: SalesWorkerCfg = SalesWorkerCfg(
+        product_np=prod["product_np"],
+        product_brand_key=prod["product_brand_key"],
+        brand_names=prod["brand_names"],
+        store_keys=stores["store_keys"],
+        store_open_month=stores["store_open_month"],
+        store_close_month=stores["store_close_month"],
+        store_open_day=stores["store_open_day"],
+        store_close_day=stores["store_close_day"],
+        promo_keys_all=promos["promo_keys_all"],
+        promo_start_all=promos["promo_start_all"],
+        promo_end_all=promos["promo_end_all"],
+        new_customer_promo_keys=promos["new_customer_promo_keys"],
+        new_customer_window_months=int((getattr(cfg, "promotions", None) or {}).get("new_customer_window_months", 3)),
+
+        customers=cust["customer_keys"],
+        customer_keys=cust["customer_keys"],
+        customer_is_active_in_sales=cust["is_active_in_sales"],
+        customer_start_month=cust["customer_start_month"],
+        customer_end_month=cust["customer_end_month"],
+        customer_base_weight=cust["customer_base_weight"],
+
+        store_to_geo=stores["store_to_geo"],
+        geo_to_currency=stores["geo_to_currency"],
+        date_pool=prod["date_pool"],
+        date_prob=prod["date_prob"],
+
+        output_paths=output_paths.to_dict() if hasattr(output_paths, "to_dict") else {
+            "file_format": output_paths.file_format,
+            "out_folder": output_paths.out_folder,
+            "merged_file": output_paths.merged_file,
+            "delta_output_folder": output_paths.delta_output_folder,
+        },
+        file_format=file_format,
+        out_folder=str(out_folder_p),
+        row_group_size=_int_or(row_group_size, 2_000_000),
+        compression=_str_or(compression, "snappy"),
+
+        chunk_size=int(chunk_size),
+        order_id_stride_orders=int(chunk_size),
+        total_rows=int(total_rows),
+        order_id_run_id=int(order_id_run_id),
+        max_lines_per_order=int(getattr(sales_cfg, "max_lines_per_order", 5) or 5),
+
+        sales_output=sales_output,
+        no_discount_key=1,
+
+        validate_header_invariants=_bool_or(
+            getattr(sales_cfg, "validate_header_invariants", None), False
+        ),
+
+        delta_output_folder=delta_output_folder,
+        write_delta=write_delta,
+        skip_order_cols=bool(skip_order_cols),
+        skip_order_cols_requested=bool(skip_order_cols),
+
+        partition_enabled=partition_enabled,
+        partition_cols=partition_cols,
+
+        models_cfg=State.models_cfg,
+
+        returns_enabled=bool(returns_enabled_effective),
+        returns_rate=float(returns_rate),
+        returns_min_lag_days=int(returns_min_lag_days),
+        returns_max_lag_days=int(returns_max_lag_days),
+        returns_reason_keys=returns_reason_keys,
+        returns_reason_probs=returns_reason_probs,
+        returns_full_line_probability=float(returns_full_line_prob),
+        returns_split_return_rate=float(returns_split_rate),
+        returns_max_splits=int(returns_max_splits),
+        returns_split_min_gap=int(returns_split_min_gap),
+        returns_split_max_gap=int(returns_split_max_gap),
+        returns_logistics_keys=returns_logistics_keys,
+        returns_event_key_capacity=int(returns_event_key_capacity),
+
+        seed_master=int(seed),
+        employee_salesperson_seed=int(seed) + 99173,
+        employee_primary_boost=2.0,
+
+        employee_assign_store_key=emps["employee_assign_store_key"],
+        employee_assign_employee_key=emps["employee_assign_employee_key"],
+        employee_assign_start_date=emps["employee_assign_start_date"],
+        employee_assign_end_date=emps["employee_assign_end_date"],
+        employee_assign_fte=emps["employee_assign_fte"],
+        employee_assign_is_primary=emps["employee_assign_is_primary"],
+        employee_assign_role=emps["employee_assign_role"],
+        salesperson_roles=emps["salesperson_roles"],
+
+        product_popularity=prod["product_popularity"],
+        product_seasonality=prod["product_seasonality"],
+
+        customer_geo_key=cust["customer_geo_key"],
+        geo_to_country_id=corr["geo_to_country_id"],
+        store_to_country_id=corr["store_to_country_id"],
+        country_to_store_keys=corr["country_to_store_keys"],
+        store_channel_keys=corr["store_channel_keys"],
+        channel_prob_by_store=corr["channel_prob_by_store"],
+        product_channel_eligible=corr["product_channel_eligible"],
+        promo_channel_group=corr["promo_channel_group"],
+        channel_fulfillment_days=corr["channel_fulfillment_days"],
+        _channel_to_elig_group=corr["_channel_to_elig_group"],
+
+        product_scd2_active=prod["product_scd2_active"],
+        product_scd2_starts=prod["product_scd2_starts"],
+        product_scd2_data=prod["product_scd2_data"],
+        customer_scd2_active=cust["customer_scd2_active"],
+        customer_scd2_starts=cust["customer_scd2_starts"],
+        customer_scd2_keys=cust["customer_scd2_keys"],
+        cust_key_to_pool_idx=cust["cust_key_to_pool_idx"],
+    )
+
+    # Store-product assortment (optional)
+    assortment_cfg = prod["assortment_cfg"]
+    product_subcat_key = prod["product_subcat_key"]
+    if assortment_cfg.get("enabled") and product_subcat_key is not None and stores["store_type_map"] is not None:
+        worker_cfg["assortment"] = dict(assortment_cfg)
+        worker_cfg["product_subcat_key"] = product_subcat_key
+        worker_cfg["store_type_map"] = stores["store_type_map"]
+        info("Store-product assortment: enabled")
+
+    return worker_cfg
+
+
+def _build_correlation_lookups(
+    parquet_folder_p, store_keys, store_to_geo, store_type_map,
+    product_np, promo_keys_all, promo_df,
+):
+    """Build all column-correlation lookup arrays for workers."""
+    # 1) Geography: customer -> country, store -> country, country -> stores
+    _geo_country_df = load_parquet_df(parquet_folder_p / "geography.parquet", ["GeographyKey", "Country"])
+    _unique_countries = _geo_country_df["Country"].fillna("Unknown").unique()
+    _country_to_id = {c: i for i, c in enumerate(_unique_countries)}
+    _n_countries = len(_unique_countries)
+
+    _max_geo = int(_geo_country_df["GeographyKey"].max()) if len(_geo_country_df) else 0
+    geo_to_country_id = np.full(_max_geo + 1, 0, dtype=np.int32)
+    _geo_keys = _geo_country_df["GeographyKey"].to_numpy(dtype=np.int32)
+    _geo_countries = _geo_country_df["Country"].fillna("Unknown").map(_country_to_id).to_numpy(dtype=np.int32)
+    geo_to_country_id[_geo_keys] = _geo_countries
+
+    _max_sk = int(store_keys.max()) if store_keys.size else 0
+    store_to_country_id = np.full(_max_sk + 1, 0, dtype=np.int32)
+    _sg_sk = np.fromiter(store_to_geo.keys(), dtype=np.int32, count=len(store_to_geo))
+    _sg_gk = np.fromiter(store_to_geo.values(), dtype=np.int32, count=len(store_to_geo))
+    _sg_valid = (_sg_sk <= _max_sk) & (_sg_gk <= _max_geo)
+    store_to_country_id[_sg_sk[_sg_valid]] = geo_to_country_id[_sg_gk[_sg_valid]]
+
+    _sk_country_ids = store_to_country_id[store_keys.astype(np.int32)]
+    country_to_store_keys = [
+        store_keys[_sk_country_ids == cid].astype(np.int32)
+        for cid in range(_n_countries)
+    ]
+
+    # 2) Store type -> valid SalesChannelKeys
+    store_channel_keys_list = [None] * (_max_sk + 1)
+    channel_prob_by_store_list = [None] * (_max_sk + 1)
+    if store_type_map is not None:
+        for sk in store_keys:
+            sk_int = int(sk)
+            st = store_type_map.get(sk_int, "")
+            keys, probs = STORE_TYPE_CHANNEL_MAP.get(st, DEFAULT_CHANNEL_MAP)
+            store_channel_keys_list[sk_int] = keys
+            channel_prob_by_store_list[sk_int] = probs / probs.sum()
+    else:
+        _uniform_p = np.ones(len(ALL_CHANNELS), dtype=np.float64) / len(ALL_CHANNELS)
+        for sk in store_keys:
+            store_channel_keys_list[int(sk)] = ALL_CHANNELS
+            channel_prob_by_store_list[int(sk)] = _uniform_p
+
+    # 3) Product channel eligibility (from ProductProfile)
+    product_channel_eligible = None
+    _profile_path = parquet_folder_p / "product_profile.parquet"
+    if _profile_path.exists():
+        try:
+            _elig_cols = ["ProductKey", "EligibleStore", "EligibleOnline", "EligibleMarketplace", "EligibleB2B"]
+            _elig_df = pd.read_parquet(str(_profile_path), columns=_elig_cols)
+            _prod_keys_arr = product_np[:, 0].astype(np.int32)
+            _max_pk = int(_prod_keys_arr.max()) if _prod_keys_arr.size else 0
+            _pk_to_row = np.full(_max_pk + 1, -1, dtype=np.int32)
+            _pk_to_row[_prod_keys_arr] = np.arange(len(_prod_keys_arr), dtype=np.int32)
+            product_channel_eligible = np.ones((len(product_np), 4), dtype=np.int8)
+            _elig_pks = _elig_df["ProductKey"].to_numpy(dtype=np.int32)
+            _elig_mask = (_elig_pks <= _max_pk)
+            _elig_pks_valid = _elig_pks[_elig_mask]
+            _elig_rows = _pk_to_row[_elig_pks_valid]
+            _mapped = _elig_rows >= 0
+            _ri = _elig_rows[_mapped]
+            _elig_mask_idx = np.where(_elig_mask)[0][_mapped]
+            for col_idx, col_name in enumerate(["EligibleStore", "EligibleOnline",
+                                                 "EligibleMarketplace", "EligibleB2B"]):
+                product_channel_eligible[_ri, col_idx] = (
+                    _elig_df[col_name].to_numpy(dtype=np.int8)[_elig_mask_idx]
+                )
+        except (KeyError, OSError):
+            pass
+
+    # 4) Promotion channel group
+    promo_channel_group = np.zeros(len(promo_keys_all), dtype=np.int8)
+    if not promo_df.empty and "PromotionCategory" in promo_df.columns:
+        _cat_series = promo_df["PromotionCategory"].astype(str)
+        promo_channel_group[_cat_series.isin({"Store", "Physical"}).to_numpy()] = 1
+        promo_channel_group[_cat_series.isin({"Online", "Digital"}).to_numpy()] = 2
+
+    # 5) Channel fulfillment days
+    channel_fulfillment_days = DEFAULT_CHANNEL_FULFILLMENT_DAYS.copy()
+    _sc_path = parquet_folder_p / "sales_channels.parquet"
+    if _sc_path.exists():
+        try:
+            _sc_df = pd.read_parquet(str(_sc_path))
+            if "TypicalFulfillmentDays" in _sc_df.columns and "SalesChannelKey" in _sc_df.columns:
+                _sc_keys = _sc_df["SalesChannelKey"].to_numpy(dtype=np.int32)
+                _sc_days = _sc_df["TypicalFulfillmentDays"]
+                _sc_valid = (_sc_keys >= 0) & (_sc_keys < len(channel_fulfillment_days)) & _sc_days.notna()
+                channel_fulfillment_days[_sc_keys[_sc_valid]] = _sc_days.to_numpy(dtype=np.int32)[_sc_valid]
+        except (KeyError, OSError):
+            pass
+
+    return {
+        "geo_to_country_id": geo_to_country_id,
+        "store_to_country_id": store_to_country_id,
+        "country_to_store_keys": country_to_store_keys,
+        "store_channel_keys": store_channel_keys_list,
+        "channel_prob_by_store": channel_prob_by_store_list,
+        "product_channel_eligible": product_channel_eligible,
+        "promo_channel_group": promo_channel_group,
+        "channel_fulfillment_days": channel_fulfillment_days,
+        "_channel_to_elig_group": CHANNEL_TO_ELIG_GROUP,
+    }
+
+
+def _prebuild_shared_structures(
+    worker_cfg, _shm, prod, stores, emps, seed,
+):
+    """Pre-build expensive derived structures in main process for shared memory."""
+    product_brand_key = prod["product_brand_key"]
+    store_keys = stores["store_keys"]
+    store_type_map = stores["store_type_map"]
+    product_subcat_key = prod["product_subcat_key"]
+    assortment_cfg = prod["assortment_cfg"]
+    date_pool = prod["date_pool"]
+    employee_assign_store_key = emps["employee_assign_store_key"]
+    employee_assign_employee_key = emps["employee_assign_employee_key"]
+    employee_assign_start_date = emps["employee_assign_start_date"]
+    employee_assign_end_date = emps["employee_assign_end_date"]
+    employee_assign_fte = emps["employee_assign_fte"]
+    employee_assign_is_primary = emps["employee_assign_is_primary"]
+    from .sales_worker.init import (
+        _build_store_subcat_matrix,
+        _build_brand_prob_by_month_rotate_winner,
+        _build_salesperson_effective_by_store,
+        _DEFAULT_ASSORTMENT_COVERAGE,
+        infer_T_from_date_pool,
+        int_or,
+        float_or,
+    )
+
+    # 1) brand_to_row_idx — sorted index + offsets for zero-copy brand buckets
+    _brand_product_counts = None
+    if product_brand_key is not None:
+        _bk = np.asarray(product_brand_key, dtype=np.int32)
+        _brand_product_counts = np.bincount(_bk).astype(np.float64)
+        _brand_order = np.argsort(_bk, kind="mergesort").astype(np.int32)
+        _bk_sorted = _bk[_brand_order]
+        _brand_starts = np.flatnonzero(np.r_[True, _bk_sorted[1:] != _bk_sorted[:-1]])
+        B = int(_bk.max()) + 1
+        _brand_offsets = np.zeros(B + 1, dtype=np.int64)
+        for s_idx in range(len(_brand_starts)):
+            k = int(_bk_sorted[_brand_starts[s_idx]])
+            e = int(_brand_starts[s_idx + 1]) if s_idx + 1 < len(_brand_starts) else len(_bk_sorted)
+            _brand_offsets[k + 1] = e
+        np.maximum.accumulate(_brand_offsets, out=_brand_offsets)
+        worker_cfg["_brand_flat_idx"] = _shm.publish("brand_flat_idx", _brand_order)
+        worker_cfg["_brand_flat_offsets"] = _shm.publish("brand_flat_off", _brand_offsets)
+        del _brand_order, _bk_sorted, _brand_starts, _brand_offsets
+
+    # 2) store-product assortment — compact subcat matrix
+    if assortment_cfg.get("enabled") and product_subcat_key is not None and store_type_map is not None:
+        store_type_arr = np.array(
+            [str(store_type_map.get(int(sk), "Supermarket")) for sk in store_keys],
+            dtype=object,
+        )
+        coverage = assortment_cfg.get("coverage", _DEFAULT_ASSORTMENT_COVERAGE)
+        assort_seed = int(assortment_cfg.get("seed", seed))
+        _unique_subcats, _subcat_matrix = _build_store_subcat_matrix(
+            store_keys=store_keys,
+            store_type_arr=store_type_arr,
+            product_subcat_key=product_subcat_key,
+            coverage_cfg=coverage,
+            seed=assort_seed,
+        )
+        worker_cfg["_assortment_subcat_matrix"] = _shm.publish(
+            "assort_matrix", _subcat_matrix,
+        )
+        worker_cfg["_assortment_unique_subcats"] = _shm.publish(
+            "assort_subcats", _unique_subcats,
+        )
+        del _subcat_matrix, _unique_subcats
+
+    # 3) salesperson_effective_by_store
+    if employee_assign_employee_key is not None and employee_assign_store_key is not None:
+        _sp_eff = _build_salesperson_effective_by_store(
+            store_keys=store_keys,
+            assign_store=employee_assign_store_key,
+            assign_emp=employee_assign_employee_key,
+            assign_start=employee_assign_start_date,
+            assign_end=employee_assign_end_date,
+            assign_fte=employee_assign_fte,
+            assign_is_primary=employee_assign_is_primary,
+            primary_boost=2.0,
+        )
+        worker_cfg["_prebuilt_salesperson_effective_by_store"] = _sp_eff
+        if _sp_eff is not None:
+            _all_sp = np.concatenate([v[0] for v in _sp_eff.values()])
+            worker_cfg["_prebuilt_salesperson_global_pool"] = np.unique(_all_sp).astype(np.int32)
+        del _sp_eff
+
+    # 4) brand_prob_by_month
+    models_cfg = worker_cfg.get("models_cfg")
+    if isinstance(models_cfg, Mapping):
+        _brand_cfg = models_cfg.get("brand_popularity") if isinstance(models_cfg, Mapping) else None
+        if _brand_cfg and product_brand_key is not None and product_brand_key.size > 0:
+            _T = infer_T_from_date_pool(date_pool)
+            _B = int(product_brand_key.max()) + 1
+            _rng_bp = np.random.default_rng(int(int_or(_brand_cfg.get("seed"), 1234)))
+
+            _bp_counts = _brand_product_counts if (_brand_product_counts is not None and len(_brand_product_counts) == _B) else None
+
+            _brand_prob = _build_brand_prob_by_month_rotate_winner(
+                _rng_bp,
+                T=_T, B=_B,
+                winner_boost=float_or(_brand_cfg.get("winner_boost"), 2.5),
+                noise_sd=float_or(_brand_cfg.get("noise_sd"), 0.15),
+                min_share=float_or(_brand_cfg.get("min_share"), 0.02),
+                year_len_months=int_or(_brand_cfg.get("year_len_months"), 12),
+                brand_product_counts=_bp_counts,
+                count_exponent=float_or(_brand_cfg.get("count_exponent"), 0.25),
+            )
+            worker_cfg["_prebuilt_brand_prob_by_month"] = _shm.publish(
+                "brand_prob", _brand_prob,
+            )
+            del _brand_prob
+
+
+def _setup_accumulators(cfg, worker_cfg, parquet_folder_p):
+    """Set up streaming accumulators for budget, inventory, wishlists, complaints."""
+    budget_acc = None
+    inventory_acc = None
+    wishlists_acc = None
+    complaints_acc = None
+
+    # Budget
+    _budget_obj = getattr(cfg, "budget", None)
+    budget_cfg = _budget_obj if isinstance(_budget_obj, Mapping) else {}
+    budget_enabled = _BUDGET_AVAILABLE and bool(budget_cfg.get("enabled", False))
+
+    if budget_enabled:
+        try:
+            budget_lookups = build_budget_lookups(parquet_folder_p)
+            worker_cfg["budget_enabled"] = True
+            worker_cfg["budget_store_to_country"] = budget_lookups["budget_store_to_country"]
+            worker_cfg["budget_product_to_cat"] = budget_lookups["budget_product_to_cat"]
+            worker_cfg["parquet_folder"] = str(parquet_folder_p)
+
+            budget_acc = BudgetAccumulator(
+                country_labels=budget_lookups["budget_country_labels"],
+                category_labels=budget_lookups["budget_category_labels"],
+            )
+            info("Budget streaming aggregation: enabled")
+        except (KeyError, ValueError, TypeError) as exc:
+            info(f"Budget streaming aggregation: disabled ({type(exc).__name__}: {exc})")
+            budget_enabled = False
+            budget_acc = None
+            worker_cfg["budget_enabled"] = False
+    else:
+        worker_cfg["budget_enabled"] = False
+
+    # Inventory
+    _inv_obj = getattr(cfg, "inventory", None)
+    inv_cfg = _inv_obj if isinstance(_inv_obj, Mapping) else {}
+    inventory_enabled = _INVENTORY_AVAILABLE and bool(inv_cfg.get("enabled", False))
+
+    if inventory_enabled:
+        inventory_acc = InventoryAccumulator()
+        worker_cfg["inventory_enabled"] = True
+        _wh_stores_path = parquet_folder_p / "stores.parquet"
+        if _wh_stores_path.exists():
+            _wh_st = pd.read_parquet(str(_wh_stores_path), columns=["StoreKey", "WarehouseKey"])
+            if "WarehouseKey" in _wh_st.columns:
+                _sk = _wh_st["StoreKey"].astype(np.int32).to_numpy()
+                _wk = _wh_st["WarehouseKey"].astype(np.int32).to_numpy()
+                _max_sk = int(_sk.max()) + 1
+                _sk_to_wk = np.full(_max_sk, -1, dtype=np.int32)
+                _sk_to_wk[_sk] = _wk
+                worker_cfg["inventory_store_to_warehouse"] = _sk_to_wk
+        info("Inventory streaming aggregation: enabled")
+    else:
+        worker_cfg["inventory_enabled"] = False
+
+    # Wishlists
+    _wl_obj = getattr(cfg, "wishlists", None)
+    wishlists_enabled = _WISHLISTS_AVAILABLE and bool(getattr(_wl_obj, "enabled", False))
+
+    if wishlists_enabled:
+        wishlists_acc = WishlistAccumulator()
+        worker_cfg["wishlists_enabled"] = True
+        info("Wishlists streaming aggregation: enabled")
+    else:
+        worker_cfg["wishlists_enabled"] = False
+
+    # Complaints
+    _cc_obj = getattr(cfg, "complaints", None)
+    complaints_enabled = _COMPLAINTS_AVAILABLE and bool(getattr(_cc_obj, "enabled", False))
+
+    if complaints_enabled:
+        complaints_acc = ComplaintsAccumulator()
+        worker_cfg["complaints_enabled"] = True
+        info("Complaints streaming aggregation: enabled")
+    else:
+        worker_cfg["complaints_enabled"] = False
+
+    return budget_acc, inventory_acc, wishlists_acc, complaints_acc
+
+
+def _assemble_output(
+    file_format, tables, output_paths, collector,
+    partition_cols, sales_cfg, sales_output, out_folder_p,
+    chunk_size, delete_chunks, merge_parquet, compression,
+    row_group_size, optimize_after_merge,
+):
+    """Post-pool output assembly: delta writes, CSV re-chunking, or parquet merge."""
+    def _build_sales_manifest():
+        per_table = {}
+        for t in tables:
+            per_table[t] = TableOutputs(
+                table=t,
+                file_format=file_format,
+                chunks=list(collector.created_by_table.get(t, [])),
+                merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
+                delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
+                delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
+            )
+        return SalesRunManifest(
+            sales_output=sales_output,
+            file_format=file_format,
+            out_folder=str(out_folder_p),
+            tables=per_table,
+        )
+
+    def _make_result():
+        return SalesFactResult(
+            chunk_files=collector.created_files,
+            manifest=_build_sales_manifest(),
+            budget_acc=collector.budget_acc,
+            inventory_acc=collector.inventory_acc,
+            wishlists_acc=collector.wishlists_acc,
+            complaints_acc=collector.complaints_acc,
+        )
+
+    if file_format == "deltaparquet":
+        from .sales_writer import write_delta_partitioned
+
+        missing_parts = []
+        wrote = 0
+
+        for t in tables:
+            parts_dir = output_paths.delta_parts_dir(t)
+            delta_dir = output_paths.delta_table_dir(t)
+
+            part_files = glob.glob(os.path.join(parts_dir, "**", "*.parquet"), recursive=True)
+            if not part_files:
+                missing_parts.append((t, parts_dir))
+                continue
+
+            write_delta_partitioned(
+                parts_folder=parts_dir,
+                delta_output_folder=delta_dir,
+                partition_cols=partition_cols,
+                table_name=t,
+                sort_small_parts=_bool_or(getattr(sales_cfg, "sort_delta_parts", False), False),
+            )
+            wrote += 1
+
+        if wrote == 0:
+            msg = " | ".join([f"{t} -> {p}" for t, p in missing_parts]) if missing_parts else "no parts found"
+            raise SalesError(f"No delta parts found for any table. {msg}")
+
+        return _make_result()
+
+    if file_format == "csv":
+        for t in tables:
+            csv_dir = Path(output_paths.table_out_dir(t))
+            spec = output_paths.spec(t)
+            csv_chunks = sorted(csv_dir.glob(f"{spec.chunk_prefix}*.csv"))
+            if len(csv_chunks) <= 1:
+                continue
+            _merge_fact_csv_chunks(csv_chunks, csv_dir, spec.chunk_prefix, chunk_size, delete_chunks)
+
+        return _make_result()
+
+    if file_format == "parquet":
+        if merge_parquet:
+            merge_jobs = []
+            skipped = []
+
+            for t in tables:
+                chunks = sorted(
+                    f for f in glob.glob(output_paths.chunk_glob(t, "parquet"))
+                    if os.path.isfile(f)
+                )
+                if not chunks:
+                    skipped.append(t)
+                    continue
+                merge_jobs.append((t, chunks, output_paths.merged_path(t)))
+
+            if merge_jobs:
+                short = {
+                    TABLE_SALES: "sales",
+                    TABLE_SALES_ORDER_DETAIL: "detail",
+                    TABLE_SALES_ORDER_HEADER: "header",
+                    TABLE_SALES_RETURN: "return",
+                }
+
+                counts = [(short.get(t, t), len(chunks)) for (t, chunks, _out) in merge_jobs]
+
+                if len({c for _, c in counts}) == 1:
+                    n = counts[0][1]
+                    info(f"Merge parquet: {n} chunks -> " + ", ".join(name for name, _ in counts))
+                else:
+                    info("Merge parquet: " + ", ".join(f"{name}={n}" for name, n in counts))
+
+                for t, chunks, out in merge_jobs:
+                    merge_parquet_files(
+                        chunks,
+                        out,
+                        delete_after=bool(delete_chunks),
+                        compression=compression,
+                        table_name=t,
+                        log=False,
+                    )
+
+                if optimize_after_merge:
+                    info("Optimize parquet: sorting merged files...")
+                    for t, _chunks, out in merge_jobs:
+                        result = optimize_parquet(
+                            out,
+                            table_name=t,
+                            compression=compression,
+                            row_group_size=row_group_size,
+                        )
+                        if result:
+                            info(f"  Optimized: {os.path.basename(out)}")
+            else:
+                info("Merge parquet: none")
+
+        return _make_result()
+
+    raise SalesError(f"Unknown file_format: {file_format}")
+
+
+# =====================================================================
 # Main Fact Generation
 # =====================================================================
 
@@ -1206,8 +1952,6 @@ def generate_sales_fact(
     _chunk_size = _int_or(getattr(sales_cfg, "chunk_size", None), 1_000_000)
     returns_event_key_capacity = int(_chunk_size * max(returns_rate, 0.01) * max(returns_max_splits, 1)) + 1000
 
-    # Safeguard: if user generates BOTH and keeps order columns in Sales, output balloons.
-
     # Keep "requested" vs "effective" separate so we can warn+continue.
     returns_enabled_requested = bool(returns_enabled)
     returns_enabled_effective = bool(returns_enabled)
@@ -1279,293 +2023,27 @@ def generate_sales_fact(
 
     chunk_size = max(1_000, _int_or(chunk_size, 1_000_000))
 
-    # ------------------------------------------------------------
     # Load dimensions
-    # ------------------------------------------------------------
     _cust = _load_customers(parquet_folder_p, cfg, start_date, seed)
-    customer_keys = _cust["customer_keys"]
-    customer_start_month = _cust["customer_start_month"]
-    customer_end_month = _cust["customer_end_month"]
-    is_active_in_sales = _cust["is_active_in_sales"]
-    customer_base_weight = _cust["customer_base_weight"]
-    customer_geo_key = _cust["customer_geo_key"]
-    _customer_scd2_active = _cust["customer_scd2_active"]
-    _customer_scd2_starts = _cust["customer_scd2_starts"]
-    _customer_scd2_keys = _cust["customer_scd2_keys"]
-    _cust_key_to_pool_idx = _cust["cust_key_to_pool_idx"]
-    del _cust
-
     _prod = _load_products(
         parquet_folder_p, cfg, seed, start_date, end_date,
         active_product_np=getattr(State, "active_product_np", None),
     )
+    _stores = _load_stores(parquet_folder_p, end_date)
+    _promos = _load_promotions(parquet_folder_p)
+    _emps = _load_employees(parquet_folder_p, cfg, end_date)
+
+    # Locals needed by auto-adjust customer discovery and correlation lookups
+    store_keys = _stores["store_keys"]
     product_np = _prod["product_np"]
-    product_brand_key = _prod["product_brand_key"]
-    brand_names = _prod["brand_names"]
-    product_subcat_key = _prod["product_subcat_key"]
-    product_popularity = _prod["product_popularity"]
-    product_seasonality = _prod["product_seasonality"]
     date_pool = _prod["date_pool"]
-    date_prob = _prod["date_prob"]
-    _product_scd2_active = _prod["product_scd2_active"]
-    _product_scd2_starts = _prod["product_scd2_starts"]
-    _product_scd2_data = _prod["product_scd2_data"]
-    assortment_cfg = _prod["assortment_cfg"]
-    del _prod
+    is_active_in_sales = _cust["is_active_in_sales"]
+    customer_start_month = _cust["customer_start_month"]
 
-    # Stores: read ONCE (keys + geography + StoreType + dates for eligibility)
-    _store_cols = ["StoreKey", "GeographyKey"]
-    _store_path = parquet_folder_p / "stores.parquet"
-    if _store_path.exists():
-        _store_schema_names = set(_pq.read_schema(str(_store_path)).names)
-        if "StoreType" in _store_schema_names:
-            _store_cols.append("StoreType")
-        if "OpeningDate" in _store_schema_names:
-            _store_cols.append("OpeningDate")
-        if "ClosingDate" in _store_schema_names:
-            _store_cols.append("ClosingDate")
-    store_df = load_parquet_df(_store_path, _store_cols)
-    store_keys = _as_np(store_df["StoreKey"], np.int32)
-    store_to_geo = dict(zip(_as_np(store_df["StoreKey"], np.int32), _as_np(store_df["GeographyKey"], np.int32)))
-
-    # Store open/close months for eligibility filtering (month-int: months since epoch)
-    store_open_month = None
-    store_close_month = None
-    # Day-level arrays for exact eligibility (indexed by position in store_keys)
-    store_open_day = None
-    store_close_day = None
-    _FAR_PAST_DAY = np.datetime64("1900-01-01", "D")
-    _FAR_FUTURE_DAY = np.datetime64("2262-04-11", "D")
-    if "OpeningDate" in store_df.columns:
-        _open_dt = pd.to_datetime(store_df["OpeningDate"]).values.astype("datetime64[M]")
-        store_open_month = _open_dt.astype("int64").astype(np.int64)
-        # Day-level: NaT → FAR_PAST (always open)
-        _open_dt_d = pd.to_datetime(store_df["OpeningDate"]).values.astype("datetime64[D]")
-        _open_nat = np.isnat(_open_dt_d)
-        _open_dt_d[_open_nat] = _FAR_PAST_DAY
-        store_open_day = _open_dt_d
-    if "ClosingDate" in store_df.columns:
-        _close_dt = pd.to_datetime(store_df["ClosingDate"]).values
-        _close_nat_mask = np.isnat(_close_dt)
-        _close_m = _close_dt.astype("datetime64[M]").astype("int64").astype(np.int64)
-        # NaT → INT64_MAX means "never closed"
-        _close_m[_close_nat_mask] = np.iinfo(np.int64).max
-        store_close_month = _close_m
-        # Day-level: NaT → FAR_FUTURE (never closed)
-        _close_dt_d = _close_dt.astype("datetime64[D]")
-        _close_dt_d[_close_nat_mask] = _FAR_FUTURE_DAY
-        store_close_day = _close_dt_d
-
-    # StoreType map for assortment (StoreKey -> "Supermarket" etc.)
-    store_type_map = None
-    if "StoreType" in store_df.columns:
-        store_type_map = dict(zip(
-            store_df["StoreKey"].astype(int).tolist(),
-            store_df["StoreType"].astype(str).tolist(),
-        ))
-
-    # Geography + currency mapping
-    geo_df = load_parquet_df(parquet_folder_p / "geography.parquet", ["GeographyKey", "ISOCode"])
-    currency_df = load_parquet_df(parquet_folder_p / "currency.parquet", ["CurrencyKey", "CurrencyCode"])
-
-    geo_df = geo_df.merge(currency_df, left_on="ISOCode", right_on="CurrencyCode", how="left")
-    if geo_df["CurrencyKey"].isna().any():
-        n_missing = int(geo_df["CurrencyKey"].isna().sum())
-        missing_isos = geo_df.loc[geo_df["CurrencyKey"].isna(), "ISOCode"].unique().tolist()
-        default_currency = int(currency_df.iloc[0]["CurrencyKey"])
-        geo_df["CurrencyKey"] = geo_df["CurrencyKey"].fillna(default_currency)
-        info(f"WARNING: {n_missing} geography row(s) have no currency match (ISOs: {missing_isos}); "
-             f"defaulting to CurrencyKey={default_currency}.")
-
-    geo_to_currency = dict(zip(_as_np(geo_df["GeographyKey"], np.int32), _as_np(geo_df["CurrencyKey"], np.int32)))
-
-    # Promotions
-    promo_df = load_parquet_df(parquet_folder_p / "promotions.parquet")
-
-    if promo_df.empty:
-        promo_keys_all = np.array([], dtype=np.int32)
-        promo_start_all = np.array([], dtype="datetime64[D]")
-        promo_end_all = np.array([], dtype="datetime64[D]")
-        new_customer_promo_keys = np.array([], dtype=np.int32)
-    else:
-        promo_start = _normalize_dt_any(promo_df["StartDate"])
-        promo_end = _normalize_dt_any(promo_df["EndDate"])
-
-        promo_keys_all = _as_np(promo_df["PromotionKey"], np.int32)
-        promo_start_all = _as_np(promo_start, "datetime64[D]")
-        promo_end_all = _as_np(promo_end, "datetime64[D]")
-
-        if "PromotionType" in promo_df.columns:
-            nc_mask = promo_df["PromotionType"].astype(str) == "New Customer"
-            new_customer_promo_keys = _as_np(promo_df.loc[nc_mask, "PromotionKey"], np.int32)
-        else:
-            new_customer_promo_keys = np.array([], dtype=np.int32)
-
-    # ------------------------------------------------------------
-    # Employees / store assignments -> EmployeeKey
-    # ------------------------------------------------------------
-    emp_assign_path = parquet_folder_p / "employee_store_assignments.parquet"
-
-    # Fail fast: the bridge is the single source of truth for EmployeeKey.
-    # Without it, every Sales row would get EmployeeKey = -1.
-    if not emp_assign_path.exists():
-        raise FileNotFoundError(
-            f"employee_store_assignments.parquet is required: {emp_assign_path}. "
-            f"Run dimension generation first."
-        )
-
-    # config-driven allowlist: which RoleAtStore can appear as EmployeeKey
-    salesperson_roles = _cfg_get(cfg, ["sales", "salesperson_roles"], default=None)
-    if not (isinstance(salesperson_roles, list) and salesperson_roles):
-        primary = _cfg_get(cfg, ["employees", "store_assignments", "primary_sales_role"], default="Sales Associate")
-        salesperson_roles = [str(primary), ONLINE_SALES_REP_ROLE]
-
-    _esa_base_cols = [
-        "EmployeeKey", "StoreKey", "StartDate", "EndDate",
-        "FTE", "RoleAtStore",
-    ]
-    try:
-        emp_assign_df = load_parquet_df(
-            emp_assign_path, cols=_esa_base_cols + ["IsPrimary"],
-        )
-    except (KeyError, ValueError):
-        # Legacy parquet without IsPrimary column
-        emp_assign_df = load_parquet_df(emp_assign_path, cols=_esa_base_cols)
-
-    # Keep only allowed salespeople roles
-    if "RoleAtStore" in emp_assign_df.columns:
-        emp_assign_df = emp_assign_df[emp_assign_df["RoleAtStore"].isin(salesperson_roles)].copy()
-
-    if emp_assign_df.empty:
-        raise SalesError(
-            f"No employee assignments with role in {salesperson_roles} found in "
-            f"{emp_assign_path}. Check employees.store_assignments.primary_sales_role "
-            f"and ensure the bridge has been regenerated."
-        )
-
-    end_dt = pd.to_datetime(end_date, errors="coerce").normalize()
-
-    start_dt = pd.to_datetime(emp_assign_df["StartDate"], errors="coerce").dt.normalize()
-    end_dt_col = pd.to_datetime(emp_assign_df["EndDate"], errors="coerce").dt.normalize()
-    end_dt_col = end_dt_col.fillna(end_dt)
-
-    employee_assign_store_key = _as_np(emp_assign_df["StoreKey"], np.int32)
-    employee_assign_employee_key = _as_np(emp_assign_df["EmployeeKey"], np.int32)
-    employee_assign_start_date = _as_np(start_dt, "datetime64[D]")
-    employee_assign_end_date = _as_np(end_dt_col, "datetime64[D]")
-    employee_assign_role = _as_np(emp_assign_df["RoleAtStore"].astype(str))
-
-    employee_assign_fte = None
-    employee_assign_is_primary = None
-    if "FTE" in emp_assign_df.columns:
-        employee_assign_fte = _as_np(emp_assign_df["FTE"], np.float64)
-    if "IsPrimary" in emp_assign_df.columns:
-        employee_assign_is_primary = _as_np(emp_assign_df["IsPrimary"], bool)
-
-    # ------------------------------------------------------------
-    # Column correlation lookups (customer-geo, store-channel,
-    # product-channel eligibility, promo-channel, delivery days)
-    # ------------------------------------------------------------
-    # 1) Geography: customer -> country, store -> country, country -> stores
-    #    Reuse geo_df (GeographyKey, ISOCode already loaded above) — load Country
-    _geo_country_path = parquet_folder_p / "geography.parquet"
-    _geo_country_df = load_parquet_df(_geo_country_path, ["GeographyKey", "Country"])
-    _unique_countries = _geo_country_df["Country"].fillna("Unknown").unique()
-    _country_to_id = {c: i for i, c in enumerate(_unique_countries)}
-    _n_countries = len(_unique_countries)
-
-    # geo_to_country_id: dense array GeographyKey -> country_id
-    _max_geo = int(_geo_country_df["GeographyKey"].max()) if len(_geo_country_df) else 0
-    geo_to_country_id = np.full(_max_geo + 1, 0, dtype=np.int32)
-    _geo_keys = _geo_country_df["GeographyKey"].to_numpy(dtype=np.int32)
-    _geo_countries = _geo_country_df["Country"].fillna("Unknown").map(_country_to_id).to_numpy(dtype=np.int32)
-    geo_to_country_id[_geo_keys] = _geo_countries
-
-    # store_to_country_id: dense StoreKey -> country_id (via store_to_geo)
-    _max_sk = int(store_keys.max()) if store_keys.size else 0
-    store_to_country_id = np.full(_max_sk + 1, 0, dtype=np.int32)
-    _sg_sk = np.fromiter(store_to_geo.keys(), dtype=np.int32, count=len(store_to_geo))
-    _sg_gk = np.fromiter(store_to_geo.values(), dtype=np.int32, count=len(store_to_geo))
-    _sg_valid = (_sg_sk <= _max_sk) & (_sg_gk <= _max_geo)
-    store_to_country_id[_sg_sk[_sg_valid]] = geo_to_country_id[_sg_gk[_sg_valid]]
-
-    # country_to_store_keys: list of arrays
-    _sk_country_ids = store_to_country_id[store_keys.astype(np.int32)]
-    country_to_store_keys = [
-        store_keys[_sk_country_ids == cid].astype(np.int32)
-        for cid in range(_n_countries)
-    ]
-
-
-    # 2) Store type -> valid SalesChannelKeys (constants from defaults.py)
-    store_channel_keys_list: list = [None] * (_max_sk + 1)
-    channel_prob_by_store_list: list = [None] * (_max_sk + 1)
-    if store_type_map is not None:
-        for sk in store_keys:
-            sk_int = int(sk)
-            st = store_type_map.get(sk_int, "")
-            keys, probs = STORE_TYPE_CHANNEL_MAP.get(st, DEFAULT_CHANNEL_MAP)
-            store_channel_keys_list[sk_int] = keys
-            channel_prob_by_store_list[sk_int] = probs / probs.sum()
-    else:
-        _uniform_p = np.ones(len(ALL_CHANNELS), dtype=np.float64) / len(ALL_CHANNELS)
-        for sk in store_keys:
-            store_channel_keys_list[int(sk)] = ALL_CHANNELS
-            channel_prob_by_store_list[int(sk)] = _uniform_p
-
-    # 3) Product channel eligibility (from ProductProfile)
-    product_channel_eligible = None
-    _profile_path = parquet_folder_p / "product_profile.parquet"
-    if _profile_path.exists():
-        try:
-            _elig_cols = ["ProductKey", "EligibleStore", "EligibleOnline", "EligibleMarketplace", "EligibleB2B"]
-            _elig_df = pd.read_parquet(str(_profile_path), columns=_elig_cols)
-            # Build dense array aligned with product_np rows (ProductKey -> row index)
-            # product_np[:, 0] contains ProductKey
-            _prod_keys_arr = product_np[:, 0].astype(np.int32)
-            _max_pk = int(_prod_keys_arr.max()) if _prod_keys_arr.size else 0
-            # Map ProductKey -> product_np row index
-            _pk_to_row = np.full(_max_pk + 1, -1, dtype=np.int32)
-            _pk_to_row[_prod_keys_arr] = np.arange(len(_prod_keys_arr), dtype=np.int32)
-            # 4 groups: store=0, online=1, marketplace=2, b2b=3
-            product_channel_eligible = np.ones((len(product_np), 4), dtype=np.int8)
-            _elig_pks = _elig_df["ProductKey"].to_numpy(dtype=np.int32)
-            _elig_mask = (_elig_pks <= _max_pk)
-            _elig_pks_valid = _elig_pks[_elig_mask]
-            _elig_rows = _pk_to_row[_elig_pks_valid]
-            _mapped = _elig_rows >= 0
-            _ri = _elig_rows[_mapped]
-            _elig_mask_idx = np.where(_elig_mask)[0][_mapped]
-            for col_idx, col_name in enumerate(["EligibleStore", "EligibleOnline",
-                                                 "EligibleMarketplace", "EligibleB2B"]):
-                product_channel_eligible[_ri, col_idx] = (
-                    _elig_df[col_name].to_numpy(dtype=np.int8)[_elig_mask_idx]
-                )
-        except (KeyError, OSError):
-            pass
-
-    # 4) Promotion channel group (from PromotionCategory)
-    promo_channel_group = np.zeros(len(promo_keys_all), dtype=np.int8)  # 0=any
-    if not promo_df.empty and "PromotionCategory" in promo_df.columns:
-        _cat_series = promo_df["PromotionCategory"].astype(str)
-        promo_channel_group[_cat_series.isin({"Store", "Physical"}).to_numpy()] = 1
-        promo_channel_group[_cat_series.isin({"Online", "Digital"}).to_numpy()] = 2
-
-    # 5) Channel fulfillment days (defaults from defaults.py, overridden by dimension)
-    channel_fulfillment_days = DEFAULT_CHANNEL_FULFILLMENT_DAYS.copy()
-    _sc_path = parquet_folder_p / "sales_channels.parquet"
-    if _sc_path.exists():
-        try:
-            _sc_df = pd.read_parquet(str(_sc_path))
-            if "TypicalFulfillmentDays" in _sc_df.columns and "SalesChannelKey" in _sc_df.columns:
-                _sc_keys = _sc_df["SalesChannelKey"].to_numpy(dtype=np.int32)
-                _sc_days = _sc_df["TypicalFulfillmentDays"]
-                _sc_valid = (_sc_keys >= 0) & (_sc_keys < len(channel_fulfillment_days)) & _sc_days.notna()
-                channel_fulfillment_days[_sc_keys[_sc_valid]] = _sc_days.to_numpy(dtype=np.int32)[_sc_valid]
-        except (KeyError, OSError):
-            pass
-
-    _CHANNEL_TO_ELIG_GROUP = CHANNEL_TO_ELIG_GROUP
+    _corr = _build_correlation_lookups(
+        parquet_folder_p, store_keys, _stores["store_to_geo"], _stores["store_type_map"],
+        product_np, _promos["promo_keys_all"], _promos["promo_df"],
+    )
 
     # ------------------------------------------------------------
     # Chunk scheduling
@@ -1701,230 +2179,25 @@ def generate_sales_fact(
                 _models_copy = _models.model_copy(update={"customers": new_cust})
                 State.models_cfg = _models_copy
 
-    # ------------------------------------------------------------
-    # Worker configuration (keep keys stable for compatibility)
-    # ------------------------------------------------------------
-    worker_cfg = dict(
-        product_np=product_np,
-        product_brand_key=product_brand_key,
-        brand_names=brand_names,
-        store_keys=store_keys,
-        store_open_month=store_open_month,
-        store_close_month=store_close_month,
-        store_open_day=store_open_day,
-        store_close_day=store_close_day,
-        promo_keys_all=promo_keys_all,
-        promo_start_all=promo_start_all,
-        promo_end_all=promo_end_all,
-        new_customer_promo_keys=new_customer_promo_keys,
-        new_customer_window_months=int((getattr(cfg, "promotions", None) or {}).get("new_customer_window_months", 3)),
-
-        # Backward compat: keep 'customers' as keys array (no duplication)
-        customers=customer_keys,
-
-        # New contract for chunk_builder lifecycle eligibility
-        customer_keys=customer_keys,
-        customer_is_active_in_sales=is_active_in_sales,
-        customer_start_month=customer_start_month,
-        customer_end_month=customer_end_month,
-        customer_base_weight=customer_base_weight,
-
-        store_to_geo=store_to_geo,
-        geo_to_currency=geo_to_currency,
-        date_pool=date_pool,
-        date_prob=date_prob,
-
-        output_paths=output_paths.to_dict() if hasattr(output_paths, "to_dict") else {
-            "file_format": output_paths.file_format,
-            "out_folder": output_paths.out_folder,
-            "merged_file": output_paths.merged_file,
-            "delta_output_folder": output_paths.delta_output_folder,
-        },
-        file_format=file_format,
-        out_folder=str(out_folder_p),
-        row_group_size=_int_or(row_group_size, 2_000_000),
-        compression=_str_or(compression, "snappy"),
-
-        # CRITICAL: must be constant across ALL chunks/tasks for SalesOrderNumber uniqueness.
-        # worker/task.py must use this constant (never fall back to per-task batch_i).
-        chunk_size=int(chunk_size),
-
-        # Optional alias (safe to add): lets us rename later without breaking older workers.
-        # In init.py you can do: stride = worker_cfg.get("order_id_stride_orders") or worker_cfg["chunk_size"]
-        order_id_stride_orders=int(chunk_size),
-        total_rows=int(total_rows),
-        order_id_run_id=int(order_id_run_id),
-        max_lines_per_order=int(getattr(sales_cfg, "max_lines_per_order", 5) or 5),
-
-        sales_output=sales_output,
-
-        no_discount_key=1,
-
-        # Disable per-chunk header invariant validation by default (halves
-        # group-by work in build_header_from_detail).  Enable via
-        # sales.validate_header_invariants: true in config for debugging.
-        validate_header_invariants=_bool_or(
-            getattr(sales_cfg, "validate_header_invariants", None), False
-        ),
-
-        delta_output_folder=delta_output_folder,
-        write_delta=write_delta,
-        skip_order_cols=bool(skip_order_cols),
-        skip_order_cols_requested=bool(skip_order_cols),
-
-        partition_enabled=partition_enabled,
-        partition_cols=partition_cols,
-
-        models_cfg=State.models_cfg,
-        # Returns (optional)
-        returns_enabled=bool(returns_enabled_effective),
-        returns_rate=float(returns_rate),
-        returns_min_lag_days=int(returns_min_lag_days),
-        returns_max_lag_days=int(returns_max_lag_days),
-        returns_reason_keys=returns_reason_keys,
-        returns_reason_probs=returns_reason_probs,
-        returns_full_line_probability=float(returns_full_line_prob),
-        returns_split_return_rate=float(returns_split_rate),
-        returns_max_splits=int(returns_max_splits),
-        returns_split_min_gap=int(returns_split_min_gap),
-        returns_split_max_gap=int(returns_split_max_gap),
-        returns_logistics_keys=returns_logistics_keys,
-        returns_event_key_capacity=int(returns_event_key_capacity),
-
-        # deterministic employee assignment lookup
-        seed_master=int(seed),
-        employee_salesperson_seed=int(seed) + 99173,
-        employee_primary_boost=2.0,
-
-        # employee-store assignment pools
-        employee_assign_store_key=employee_assign_store_key,
-        employee_assign_employee_key=employee_assign_employee_key,
-        employee_assign_start_date=employee_assign_start_date,
-        employee_assign_end_date=employee_assign_end_date,
-        employee_assign_fte=employee_assign_fte,
-        employee_assign_is_primary=employee_assign_is_primary,
-        employee_assign_role=employee_assign_role,
-        salesperson_roles=salesperson_roles,
-
-        # Product profile attributes for weighted sampling
-        product_popularity=product_popularity,
-        product_seasonality=product_seasonality,
-
-        # Column correlation data
-        customer_geo_key=customer_geo_key,
-        geo_to_country_id=geo_to_country_id,
-        store_to_country_id=store_to_country_id,
-        country_to_store_keys=country_to_store_keys,
-        store_channel_keys=store_channel_keys_list,
-        channel_prob_by_store=channel_prob_by_store_list,
-        product_channel_eligible=product_channel_eligible,
-        promo_channel_group=promo_channel_group,
-        channel_fulfillment_days=channel_fulfillment_days,
-        _channel_to_elig_group=_CHANNEL_TO_ELIG_GROUP,
-
-        # SCD2 version lookup tables
-        product_scd2_active=_product_scd2_active,
-        product_scd2_starts=_product_scd2_starts,
-        product_scd2_data=_product_scd2_data,
-        customer_scd2_active=_customer_scd2_active,
-        customer_scd2_starts=_customer_scd2_starts,
-        customer_scd2_keys=_customer_scd2_keys,
-        cust_key_to_pool_idx=_cust_key_to_pool_idx,
+    # Worker configuration
+    worker_cfg = _build_worker_cfg(
+        _cust, _prod, _stores, _emps, _corr, _promos,
+        cfg, sales_cfg, output_paths, out_folder_p,
+        file_format, chunk_size, total_rows, seed, order_id_run_id,
+        sales_output, skip_order_cols, write_delta, delta_output_folder,
+        partition_enabled, partition_cols, row_group_size, compression,
+        returns_enabled_effective, returns_rate,
+        returns_min_lag_days, returns_max_lag_days,
+        returns_reason_keys, returns_reason_probs,
+        returns_full_line_prob, returns_split_rate,
+        returns_max_splits, returns_split_min_gap, returns_split_max_gap,
+        returns_logistics_keys, returns_event_key_capacity,
     )
 
-    # ------------------------------------------------------------
-    # Store-product assortment (optional)
-    # ------------------------------------------------------------
-    if assortment_cfg.get("enabled") and product_subcat_key is not None and store_type_map is not None:
-        worker_cfg["assortment"] = dict(assortment_cfg)
-        worker_cfg["product_subcat_key"] = product_subcat_key
-        worker_cfg["store_type_map"] = store_type_map
-        info("Store-product assortment: enabled")
-
-    # ------------------------------------------------------------
-    # Budget streaming aggregation (optional)
-    # ------------------------------------------------------------
-    _budget_obj = getattr(cfg, "budget", None)
-    budget_cfg = _budget_obj if isinstance(_budget_obj, Mapping) else {}
-    budget_enabled = _BUDGET_AVAILABLE and bool(budget_cfg.get("enabled", False))
-    budget_acc = None  # type: Optional[BudgetAccumulator]
-
-    if budget_enabled:
-        try:
-            budget_lookups = build_budget_lookups(parquet_folder_p)
-            # Pass dense arrays to workers via worker_cfg (tiny — few KB, pickle fine)
-            worker_cfg["budget_enabled"] = True
-            worker_cfg["budget_store_to_country"] = budget_lookups["budget_store_to_country"]
-            worker_cfg["budget_product_to_cat"] = budget_lookups["budget_product_to_cat"]
-            worker_cfg["parquet_folder"] = str(parquet_folder_p)
-
-            budget_acc = BudgetAccumulator(
-                country_labels=budget_lookups["budget_country_labels"],
-                category_labels=budget_lookups["budget_category_labels"],
-            )
-            info("Budget streaming aggregation: enabled")
-        except (KeyError, ValueError, TypeError) as exc:
-            info(f"Budget streaming aggregation: disabled ({type(exc).__name__}: {exc})")
-            budget_enabled = False
-            budget_acc = None
-            worker_cfg["budget_enabled"] = False
-    else:
-        worker_cfg["budget_enabled"] = False
-
-    # ------------------------------------------------------------
-    # Inventory
-    # ------------------------------------------------------------
-    _inv_obj = getattr(cfg, "inventory", None)
-    inv_cfg = _inv_obj if isinstance(_inv_obj, Mapping) else {}
-    inventory_enabled = _INVENTORY_AVAILABLE and bool(inv_cfg.get("enabled", False))
-    inventory_acc = None
-
-    if inventory_enabled:
-        inventory_acc = InventoryAccumulator()
-        worker_cfg["inventory_enabled"] = True
-        # Pre-build store→warehouse map so workers aggregate at warehouse grain
-        # (eliminates expensive post-hoc rollup in the inventory runner)
-        _wh_stores_path = parquet_folder_p / "stores.parquet"
-        if _wh_stores_path.exists():
-            _wh_st = pd.read_parquet(str(_wh_stores_path), columns=["StoreKey", "WarehouseKey"])
-            if "WarehouseKey" in _wh_st.columns:
-                _sk = _wh_st["StoreKey"].astype(np.int32).to_numpy()
-                _wk = _wh_st["WarehouseKey"].astype(np.int32).to_numpy()
-                _max_sk = int(_sk.max()) + 1
-                _sk_to_wk = np.full(_max_sk, -1, dtype=np.int32)
-                _sk_to_wk[_sk] = _wk
-                worker_cfg["inventory_store_to_warehouse"] = _sk_to_wk
-        info("Inventory streaming aggregation: enabled")
-    else:
-        worker_cfg["inventory_enabled"] = False
-
-    # ------------------------------------------------------------
-    # Wishlists
-    # ------------------------------------------------------------
-    _wl_obj = getattr(cfg, "wishlists", None)
-    wishlists_enabled = _WISHLISTS_AVAILABLE and bool(getattr(_wl_obj, "enabled", False))
-    wishlists_acc = None
-
-    if wishlists_enabled:
-        wishlists_acc = WishlistAccumulator()
-        worker_cfg["wishlists_enabled"] = True
-        info("Wishlists streaming aggregation: enabled")
-    else:
-        worker_cfg["wishlists_enabled"] = False
-
-    # ------------------------------------------------------------
-    # Complaints
-    # ------------------------------------------------------------
-    _cc_obj = getattr(cfg, "complaints", None)
-    complaints_enabled = _COMPLAINTS_AVAILABLE and bool(getattr(_cc_obj, "enabled", False))
-    complaints_acc = None
-
-    if complaints_enabled:
-        complaints_acc = ComplaintsAccumulator()
-        worker_cfg["complaints_enabled"] = True
-        info("Complaints streaming aggregation: enabled")
-    else:
-        worker_cfg["complaints_enabled"] = False
+    # Streaming accumulators (budget, inventory, wishlists, complaints)
+    budget_acc, inventory_acc, wishlists_acc, complaints_acc = _setup_accumulators(
+        cfg, worker_cfg, parquet_folder_p,
+    )
 
     # ------------------------------------------------------------
     # Shared memory: place large numpy arrays in OS shared memory
@@ -1968,118 +2241,8 @@ def generate_sales_fact(
         "cust_key_to_pool_idx",
     ])
 
-    # ------------------------------------------------------------
-    # Pre-build expensive derived structures once in the main process
-    # instead of redundantly in each worker (saves ~2.4 GB RAM and
-    # eliminates ~4.5 min worker init delay on Windows).
-    # NOTE: local variables (product_np, store_keys, etc.) still
-    # reference the original numpy arrays; worker_cfg values are now
-    # shared-memory descriptors after publish_dict above.
-    # ------------------------------------------------------------
-    from .sales_worker.init import (
-        _build_store_subcat_matrix,
-        _build_brand_prob_by_month_rotate_winner,
-        _build_salesperson_effective_by_store,
-        _DEFAULT_ASSORTMENT_COVERAGE,
-        infer_T_from_date_pool,
-        int_or,
-        float_or,
-    )
-
-    # 1) brand_to_row_idx — pre-compute sorted index + offsets (two compact
-    #    shared arrays) so workers reconstruct buckets without argsort.
-    _brand_product_counts = None  # reused by brand_prob pre-build
-    if product_brand_key is not None:
-        _bk = np.asarray(product_brand_key, dtype=np.int32)
-        _brand_product_counts = np.bincount(_bk).astype(np.float64)
-        # Build flat sorted index + offsets for zero-copy brand bucket access
-        _brand_order = np.argsort(_bk, kind="mergesort").astype(np.int32)
-        _bk_sorted = _bk[_brand_order]
-        _brand_starts = np.flatnonzero(np.r_[True, _bk_sorted[1:] != _bk_sorted[:-1]])
-        B = int(_bk.max()) + 1
-        _brand_offsets = np.zeros(B + 1, dtype=np.int64)
-        for s_idx in range(len(_brand_starts)):
-            k = int(_bk_sorted[_brand_starts[s_idx]])
-            e = int(_brand_starts[s_idx + 1]) if s_idx + 1 < len(_brand_starts) else len(_bk_sorted)
-            _brand_offsets[k + 1] = e
-        # Forward-fill: offsets must be non-decreasing
-        np.maximum.accumulate(_brand_offsets, out=_brand_offsets)
-        worker_cfg["_brand_flat_idx"] = _shm.publish("brand_flat_idx", _brand_order)
-        worker_cfg["_brand_flat_offsets"] = _shm.publish("brand_flat_off", _brand_offsets)
-        del _brand_order, _bk_sorted, _brand_starts, _brand_offsets
-
-    # 2) store-product assortment — compact subcat matrix (stores × subcats bool)
-    #    Workers expand to row indices on-the-fly at init, avoiding a 500MB+
-    #    shared memory allocation that blocks the main process for minutes.
-    if assortment_cfg.get("enabled") and product_subcat_key is not None and store_type_map is not None:
-        store_type_arr = np.array(
-            [str(store_type_map.get(int(sk), "Supermarket")) for sk in store_keys],
-            dtype=object,
-        )
-        coverage = assortment_cfg.get("coverage", _DEFAULT_ASSORTMENT_COVERAGE)
-        assort_seed = int(assortment_cfg.get("seed", seed))
-        _unique_subcats, _subcat_matrix = _build_store_subcat_matrix(
-            store_keys=store_keys,
-            store_type_arr=store_type_arr,
-            product_subcat_key=product_subcat_key,
-            coverage_cfg=coverage,
-            seed=assort_seed,
-        )
-        # Publish tiny matrix via shared memory (~stores × subcats bytes)
-        worker_cfg["_assortment_subcat_matrix"] = _shm.publish(
-            "assort_matrix", _subcat_matrix,
-        )
-        worker_cfg["_assortment_unique_subcats"] = _shm.publish(
-            "assort_subcats", _unique_subcats,
-        )
-        del _subcat_matrix, _unique_subcats
-
-    # 3) salesperson_effective_by_store (dict of small arrays — pickle)
-    if employee_assign_employee_key is not None and employee_assign_store_key is not None:
-        _sp_eff = _build_salesperson_effective_by_store(
-            store_keys=store_keys,
-            assign_store=employee_assign_store_key,
-            assign_emp=employee_assign_employee_key,
-            assign_start=employee_assign_start_date,
-            assign_end=employee_assign_end_date,
-            assign_fte=employee_assign_fte,
-            assign_is_primary=employee_assign_is_primary,
-            primary_boost=2.0,
-        )
-        worker_cfg["_prebuilt_salesperson_effective_by_store"] = _sp_eff
-        # Pre-compute salesperson_global_pool so workers skip employee_assign_role filtering
-        if _sp_eff is not None:
-            _all_sp = np.concatenate([v[0] for v in _sp_eff.values()])
-            worker_cfg["_prebuilt_salesperson_global_pool"] = np.unique(_all_sp).astype(np.int32)
-        del _sp_eff
-
-    # 4) brand_prob_by_month — (T, B) float64 matrix, ~164MB for 72 months × 300K brands.
-    #    Deterministic per seed, so build once and share instead of 8× in workers.
-    models_cfg = worker_cfg.get("models_cfg")
-    if isinstance(models_cfg, Mapping):
-        _brand_cfg = models_cfg.get("brand_popularity") if isinstance(models_cfg, Mapping) else None
-        if _brand_cfg and product_brand_key is not None and product_brand_key.size > 0:
-            _T = infer_T_from_date_pool(date_pool)
-            _B = int(product_brand_key.max()) + 1
-            _rng_bp = np.random.default_rng(int(int_or(_brand_cfg.get("seed"), 1234)))
-
-            # Brand product counts (reused from section 1 if available)
-            _bp_counts = _brand_product_counts if (_brand_product_counts is not None and len(_brand_product_counts) == _B) else None
-
-            _brand_prob = _build_brand_prob_by_month_rotate_winner(
-                _rng_bp,
-                T=_T, B=_B,
-                winner_boost=float_or(_brand_cfg.get("winner_boost"), 2.5),
-                noise_sd=float_or(_brand_cfg.get("noise_sd"), 0.15),
-                min_share=float_or(_brand_cfg.get("min_share"), 0.02),
-                year_len_months=int_or(_brand_cfg.get("year_len_months"), 12),
-                brand_product_counts=_bp_counts,
-                count_exponent=float_or(_brand_cfg.get("count_exponent"), 0.25),
-            )
-            worker_cfg["_prebuilt_brand_prob_by_month"] = _shm.publish(
-                "brand_prob", _brand_prob,
-            )
-            del _brand_prob
+    # Pre-build expensive derived structures (brand buckets, assortment, salesperson, brand probs)
+    _prebuild_shared_structures(worker_cfg, _shm, _prod, _stores, _emps, seed)
 
     collector = ChunkResultCollector(tables, budget_acc, inventory_acc, wishlists_acc, complaints_acc)
 
@@ -2117,157 +2280,10 @@ def generate_sales_fact(
     finally:
         _shm.cleanup()
 
-    # ------------------------------------------------------------
-    # Manifest helper (defined BEFORE returns so it actually runs)
-    # ------------------------------------------------------------
-    def _build_sales_manifest() -> SalesRunManifest:
-        per_table: dict[str, TableOutputs] = {}
-
-        for t in tables:
-            per_table[t] = TableOutputs(
-                table=t,
-                file_format=file_format,
-                chunks=list(collector.created_by_table.get(t, [])),
-                merged_path=(output_paths.merged_path(t) if file_format == "parquet" else None),
-                delta_table_dir=(output_paths.delta_table_dir(t) if file_format == "deltaparquet" else None),
-                delta_parts_dir=(output_paths.delta_parts_dir(t) if file_format == "deltaparquet" else None),
-            )
-
-        return SalesRunManifest(
-            sales_output=sales_output,
-            file_format=file_format,
-            out_folder=str(out_folder_p),
-            tables=per_table,
-        )
-
-    # ------------------------------------------------------------
-    # Final assembly (TABLE-AWARE)
-    # ------------------------------------------------------------
-    if file_format == "deltaparquet":
-        from .sales_writer import write_delta_partitioned
-
-        missing_parts = []
-        wrote = 0
-
-        for t in tables:
-            parts_dir = output_paths.delta_parts_dir(t)
-            delta_dir = output_paths.delta_table_dir(t)
-
-            # parts_dir may exist (pre-created) even if no parts were written;
-            # validate there is at least one parquet file (supports partitioned subfolders).
-            part_files = glob.glob(os.path.join(parts_dir, "**", "*.parquet"), recursive=True)
-            if not part_files:
-                missing_parts.append((t, parts_dir))
-                continue
-
-            write_delta_partitioned(
-                parts_folder=parts_dir,
-                delta_output_folder=delta_dir,
-                partition_cols=partition_cols,
-                table_name=t,
-                sort_small_parts=_bool_or(getattr(sales_cfg, "sort_delta_parts", False), False),
-            )
-            wrote += 1
-
-        if wrote == 0:
-            msg = " | ".join([f"{t} -> {p}" for t, p in missing_parts]) if missing_parts else "no parts found"
-            raise SalesError(f"No delta parts found for any table. {msg}")
-
-        manifest = _build_sales_manifest()
-        return SalesFactResult(
-            chunk_files=collector.created_files,
-            manifest=manifest,
-            budget_acc=collector.budget_acc,
-            inventory_acc=collector.inventory_acc,
-            wishlists_acc=collector.wishlists_acc,
-            complaints_acc=collector.complaints_acc,
-        )
-
-    if file_format == "csv":
-        # Merge small CSV chunk files into chunk_size-respecting files.
-        # Sales chunks are already ~chunk_size rows each, but SalesReturn
-        # chunks are tiny (return_rate × chunk_size per worker).
-        for t in tables:
-            csv_dir = Path(output_paths.table_out_dir(t))
-            spec = output_paths.spec(t)
-            csv_chunks = sorted(csv_dir.glob(f"{spec.chunk_prefix}*.csv"))
-            if len(csv_chunks) <= 1:
-                continue
-            _merge_fact_csv_chunks(csv_chunks, csv_dir, spec.chunk_prefix, chunk_size, delete_chunks)
-
-        manifest = _build_sales_manifest()
-        return SalesFactResult(
-            chunk_files=collector.created_files,
-            manifest=manifest,
-            budget_acc=collector.budget_acc,
-            inventory_acc=collector.inventory_acc,
-            wishlists_acc=collector.wishlists_acc,
-            complaints_acc=collector.complaints_acc,
-        )
-
-    if file_format == "parquet":
-        if merge_parquet:
-            merge_jobs: list[tuple[str, list[str], str]] = []
-            skipped: list[str] = []
-
-            for t in tables:
-                chunks = sorted(
-                    f for f in glob.glob(output_paths.chunk_glob(t, "parquet"))
-                    if os.path.isfile(f)
-                )
-                if not chunks:
-                    skipped.append(t)
-                    continue
-                merge_jobs.append((t, chunks, output_paths.merged_path(t)))
-
-            if merge_jobs:
-                short = {
-                    TABLE_SALES: "sales",
-                    TABLE_SALES_ORDER_DETAIL: "detail",
-                    TABLE_SALES_ORDER_HEADER: "header",
-                    TABLE_SALES_RETURN: "return",
-                }
-
-                counts = [(short.get(t, t), len(chunks)) for (t, chunks, _out) in merge_jobs]
-
-                if len({c for _, c in counts}) == 1:
-                    n = counts[0][1]
-                    info(f"Merge parquet: {n} chunks -> " + ", ".join(name for name, _ in counts))
-                else:
-                    info("Merge parquet: " + ", ".join(f"{name}={n}" for name, n in counts))
-
-                for t, chunks, out in merge_jobs:
-                    merge_parquet_files(
-                        chunks,
-                        out,
-                        delete_after=bool(delete_chunks),
-                        compression=compression,
-                        table_name=t,
-                        log=False,
-                    )
-
-                if optimize_after_merge:
-                    info("Optimize parquet: sorting merged files...")
-                    for t, _chunks, out in merge_jobs:
-                        result = optimize_parquet(
-                            out,
-                            table_name=t,
-                            compression=compression,
-                            row_group_size=row_group_size,
-                        )
-                        if result:
-                            info(f"  Optimized: {os.path.basename(out)}")
-            else:
-                info("Merge parquet: none")
-
-        manifest = _build_sales_manifest()
-        return SalesFactResult(
-            chunk_files=collector.created_files,
-            manifest=manifest,
-            budget_acc=collector.budget_acc,
-            inventory_acc=collector.inventory_acc,
-            wishlists_acc=collector.wishlists_acc,
-            complaints_acc=collector.complaints_acc,
-        )
-
-    raise SalesError(f"Unknown file_format: {file_format}")
+    # Final assembly (delta writes, CSV re-chunking, or parquet merge)
+    return _assemble_output(
+        file_format, tables, output_paths, collector,
+        partition_cols, sales_cfg, sales_output, out_folder_p,
+        chunk_size, delete_chunks, merge_parquet, compression,
+        row_group_size, optimize_after_merge,
+    )
