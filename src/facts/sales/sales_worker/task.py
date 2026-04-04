@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover
 
 from ..sales_logic import State, build_chunk_table
 from ..sales_logic.columns import (
-    RETAIL_HOUR_W, DIGITAL_HOUR_W, BUSINESS_HOUR_W, ASSISTED_HOUR_W,
+    DIGITAL_HOUR_W,
     SALES_CHANNEL_CORE_KEYS,
     _normalize_prob as _normalize_hour_prob,
     _PROFILE_FROM_GROUP,
@@ -71,8 +71,8 @@ TaskArgs = Union[Task, Sequence[Task]]
 class _OrderEncoding:
     """Pre-computed SalesOrderNumber dictionary encoding + first-row indices.
 
-    Eliminates 3x redundant pc.dictionary_encode + np.minimum.at calls
-    across _ensure_sales_channel_key, _ensure_time_key, _ensure_salesperson.
+    Shared by _ensure_sales_channel_key_on_lines and _ensure_time_key_on_lines
+    to avoid redundant pc.dictionary_encode + np.minimum.at calls.
     """
     __slots__ = ("enc", "n_orders", "order_inv", "first_row")
 
@@ -564,187 +564,6 @@ def _ensure_time_key_on_lines(
     return table.append_column("TimeKey", time_col)
 
 
-def _ensure_salesperson_employee_key_effective(
-    table: pa.Table, *, seed: int,
-    order_enc: Optional[_OrderEncoding] = None,
-) -> pa.Table:
-    """
-    Ensure EmployeeKey respects effective-dated EmployeeStoreAssignments.
-
-    Resolves per unique (StoreKey, OrderDate) pair, then batch-samples and broadcasts.
-    When SalesOrderNumber exists, employee is constant within each order.
-
-    If no assignment map is available (State.salesperson_effective_by_store),
-    the table is returned unchanged.
-    """
-    eff = getattr(State, "salesperson_effective_by_store", None)
-    if not eff:
-        return table
-
-    col_names = table.column_names
-    if "EmployeeKey" not in col_names:
-        return table
-    if "StoreKey" not in col_names or "OrderDate" not in col_names:
-        return table
-    if table.num_rows == 0:
-        return table
-
-    store = table.column("StoreKey").to_numpy(zero_copy_only=False).astype("int64", copy=False)
-    od = table.column("OrderDate").to_numpy(zero_copy_only=False)
-    try:
-        odD = od.astype("datetime64[D]")
-    except (ValueError, TypeError, OverflowError):
-        return table
-
-    rng = np.random.default_rng(seed)
-
-    out_emp = table.column("EmployeeKey").to_numpy(zero_copy_only=False).astype("int32", copy=True)
-
-    has_orders = order_enc is not None or "SalesOrderNumber" in col_names
-
-    if has_orders:
-        if order_enc is not None:
-            n_orders = order_enc.n_orders
-            order_inv = order_enc.order_inv
-            first = order_enc.first_row
-        else:
-            order_col = _combine_if_chunked(table["SalesOrderNumber"])
-            enc = pc.dictionary_encode(order_col)
-            n_orders = len(enc.dictionary)
-            order_inv = np.asarray(enc.indices.to_numpy(zero_copy_only=False), dtype=np.int64)
-
-            first = np.full(n_orders, order_inv.size, dtype=np.int64)
-            pos = np.arange(order_inv.size, dtype=np.int64)
-            np.minimum.at(first, order_inv, pos)
-            first[first == order_inv.size] = 0
-
-        ord_store = store[first]
-        ord_date = odD[first]
-    else:
-        ord_store = store
-        ord_date = odD
-        n_orders = len(store)
-        order_inv = None
-
-    day_i64 = ord_date.astype("datetime64[D]").astype("int64")
-    day_min = int(day_i64.min())
-    day_range = int(day_i64.max()) - day_min + 1
-
-    sd_key = ord_store * day_range + (day_i64 - day_min)
-
-    sd_uniq, sd_inv = np.unique(sd_key, return_inverse=True)
-    n_pairs = sd_uniq.size
-
-    pair_store = (sd_uniq // day_range).astype(np.int64)
-    pair_day64 = (sd_uniq % day_range + day_min)
-
-    pair_counts = np.bincount(sd_inv, minlength=n_pairs).astype(np.int64)
-
-    ord_emp = np.full(n_orders, -1, dtype=np.int64)
-
-    pair_order = np.argsort(sd_inv, kind="mergesort")
-    pair_starts = np.zeros(n_pairs + 1, dtype=np.int64)
-    np.cumsum(pair_counts, out=pair_starts[1:])
-
-    # Pre-fetch store keys that actually appear to skip dict lookups for missing stores.
-    unique_stores = np.unique(pair_store)
-
-    # Vectorized: group by store, 2D broadcast eligibility, batch CDF sample
-    _store_pool_cache: Dict[int, Optional[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {}
-    for sk_val in unique_stores:
-        sk = int(sk_val)
-        rec = eff.get(sk)
-        if rec is None:
-            _store_pool_cache[sk] = None
-        else:
-            emp_arr, startD, endD, w_arr = rec
-            non_mgr = (emp_arr < 30_000_000) | (emp_arr >= 40_000_000)
-            if not non_mgr.any():
-                _store_pool_cache[sk] = None
-            else:
-                _store_pool_cache[sk] = (
-                    np.asarray(emp_arr[non_mgr], dtype=np.int64),
-                    startD[non_mgr].astype("datetime64[D]").astype(np.int64),
-                    endD[non_mgr].astype("datetime64[D]").astype(np.int64),
-                    np.asarray(w_arr[non_mgr], dtype=np.float64),
-                )
-
-    _ps_sort = np.argsort(pair_store, kind="mergesort")
-    _ps_sorted = pair_store[_ps_sort]
-    _ps_breaks = np.searchsorted(_ps_sorted, unique_stores, side="left")
-    _ps_breaks_r = np.searchsorted(_ps_sorted, unique_stores, side="right")
-
-    for si in range(len(unique_stores)):
-        sk = int(unique_stores[si])
-        pool = _store_pool_cache.get(sk)
-        if pool is None:
-            continue
-
-        emp2, startD2_i64, endD2_i64, w2 = pool
-
-        _grp = _ps_sort[_ps_breaks[si]:_ps_breaks_r[si]]
-        if _grp.size == 0:
-            continue
-
-        _grp_days = pair_day64[_grp]
-        _grp_counts = pair_counts[_grp]
-
-        _days_col = _grp_days[:, None]
-        _ok = (startD2_i64[None, :] <= _days_col) & (_days_col <= endD2_i64[None, :])
-
-        _w_eff = _ok.astype(np.float64) * w2[None, :]
-        _row_sums = _w_eff.sum(axis=1)
-        _has_eligible = _row_sums > 1e-12
-
-        if not _has_eligible.any():
-            continue
-
-        # Zero-weight but eligible rows: fall back to uniform
-        _any_ok = _ok.any(axis=1)
-        _uniform_rows = ~_has_eligible & _any_ok
-        if _uniform_rows.any():
-            _n_eligible = _ok[_uniform_rows].sum(axis=1).astype(np.float64)
-            _w_eff[_uniform_rows] = _ok[_uniform_rows].astype(np.float64)
-            _row_sums[_uniform_rows] = _n_eligible
-            _has_eligible |= _uniform_rows
-
-        _safe_sums = np.where(_row_sums > 0, _row_sums, 1.0)
-        _cdf = np.cumsum(_w_eff, axis=1) / _safe_sums[:, None]
-        _cdf[:, -1] = 1.0
-
-        _eligible_idx = np.where(_has_eligible)[0]
-        _eligible_counts = _grp_counts[_eligible_idx]
-        _total_store_orders = int(_eligible_counts.sum())
-        if _total_store_orders == 0:
-            continue
-
-        _repeat_idx = np.repeat(_eligible_idx, _eligible_counts)
-
-        _r = rng.random(_total_store_orders)
-        _row_cdf = _cdf[_repeat_idx]
-        _emp_idx = np.argmax(_r[:, None] < _row_cdf, axis=1)
-        _picked = emp2[_emp_idx]
-
-        # Scatter back: map picked employees to their ord_emp slots
-        _eligible_pairs = _grp[_eligible_idx]
-        _pair_s = pair_starts[_eligible_pairs].astype(np.int64)
-        _pair_e = pair_starts[_eligible_pairs + 1].astype(np.int64)
-        # Expand pair_order indices for all eligible orders
-        _slot_idx = np.concatenate([pair_order[s:e] for s, e in zip(_pair_s, _pair_e)])
-        ord_emp[_slot_idx] = _picked
-
-    if has_orders:
-        row_emp = ord_emp[order_inv]
-        valid = row_emp >= 0
-        out_emp[valid] = row_emp[valid]
-    else:
-        valid = ord_emp >= 0
-        out_emp[valid] = ord_emp[valid]
-
-    idx = table.schema.get_field_index("EmployeeKey")
-    return table.set_column(idx, "EmployeeKey", pa.array(out_emp, type=pa.int32()))
-
-
 def build_header_from_detail(detail: pa.Table, *, validate_invariants: bool = True) -> pa.Table:
     inv_cols = ["CustomerKey", "StoreKey", "EmployeeKey", "OrderDate"]
 
@@ -990,8 +809,6 @@ def _worker_task(args):
             detail_table, seed=chunk_seed ^ 0xA11CE, order_enc=order_enc)
         detail_table = _ensure_time_key_on_lines(
             detail_table, seed=chunk_seed ^ 0xC0FFEE, order_enc=order_enc)
-        detail_table = _ensure_salesperson_employee_key_effective(
-            detail_table, seed=chunk_seed ^ 0xE1E1_1337, order_enc=order_enc)
 
         if not isinstance(detail_table, pa.Table):
             raise TypeError("chunk_builder must return pyarrow.Table")

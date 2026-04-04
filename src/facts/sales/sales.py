@@ -15,7 +15,14 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as _pq
 
-from src.defaults import ONLINE_SALES_REP_ROLE
+from src.defaults import (
+    ONLINE_SALES_REP_ROLE,
+    ALL_CHANNELS,
+    STORE_TYPE_CHANNEL_MAP,
+    DEFAULT_CHANNEL_MAP,
+    DEFAULT_CHANNEL_FULFILLMENT_DAYS,
+    CHANNEL_TO_ELIG_GROUP,
+)
 from src.exceptions import PackagingError, SalesError
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
 from src.utils.logging_utils import debug, info, skip, warn, work
@@ -1490,58 +1497,20 @@ def generate_sales_fact(
     ]
 
 
-    # 2) Store type -> valid SalesChannelKeys mapping
-    # Channel classification:
-    #   Physical channels: 1=Store, 10=Kiosk
-    #   Digital channels:  2=Online, 6=Web, 7=MobileApp, 8=SocialCommerce
-    #   Business channels: 4=B2B, 9=PartnerReseller
-    #   Assisted channels: 5=CallCenter
-    #   Marketplace:       3=Marketplace
-    _PHYSICAL_CHANNELS = np.array([1, 5, 10], dtype=np.int16)          # Store, CallCenter, Kiosk
-    _DIGITAL_CHANNELS = np.array([2, 3, 6, 7, 8], dtype=np.int16)     # Online, Marketplace, Web, MobileApp, Social
-    _ALL_CHANNELS = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], dtype=np.int16)
-
-    # StoreType -> channel affinity. Physical stores skew physical+assisted;
-    # Online/fulfillment stores skew digital. All store types can do B2B.
-    _STORE_TYPE_CHANNEL_MAP: dict[str, tuple[np.ndarray, np.ndarray]] = {
-        # (valid_keys, probability_weights)
-        "Online":      (_DIGITAL_CHANNELS, np.array([0.35, 0.10, 0.20, 0.25, 0.10], dtype=np.float64)),
-        "Fulfillment": (_DIGITAL_CHANNELS, np.array([0.35, 0.10, 0.20, 0.25, 0.10], dtype=np.float64)),
-        # Physical store types: mostly physical channels + some digital
-        "Retail":       (np.array([1, 2, 3, 5, 7, 10], dtype=np.int16),
-                         np.array([0.50, 0.15, 0.05, 0.10, 0.10, 0.10], dtype=np.float64)),
-        "Flagship":     (np.array([1, 2, 5, 7, 10], dtype=np.int16),
-                         np.array([0.55, 0.15, 0.10, 0.10, 0.10], dtype=np.float64)),
-        "Hypermarket":  (np.array([1, 2, 3, 5, 10], dtype=np.int16),
-                         np.array([0.55, 0.15, 0.05, 0.10, 0.15], dtype=np.float64)),
-        "Supermarket":  (np.array([1, 2, 5, 10], dtype=np.int16),
-                         np.array([0.60, 0.15, 0.10, 0.15], dtype=np.float64)),
-        "Convenience":  (np.array([1, 5, 10], dtype=np.int16),
-                         np.array([0.70, 0.10, 0.20], dtype=np.float64)),
-        "Outlet":       (np.array([1, 2, 5], dtype=np.int16),
-                         np.array([0.65, 0.20, 0.15], dtype=np.float64)),
-        "Warehouse":    (np.array([1, 2, 4, 9], dtype=np.int16),
-                         np.array([0.30, 0.25, 0.25, 0.20], dtype=np.float64)),
-    }
-    # Default for unknown store types
-    _DEFAULT_CHANNEL_MAP = (np.array([1, 2, 3, 5], dtype=np.int16),
-                            np.array([0.40, 0.30, 0.15, 0.15], dtype=np.float64))
-
-    # Build per-StoreKey channel arrays (dense, indexed by StoreKey)
+    # 2) Store type -> valid SalesChannelKeys (constants from defaults.py)
     store_channel_keys_list: list = [None] * (_max_sk + 1)
     channel_prob_by_store_list: list = [None] * (_max_sk + 1)
     if store_type_map is not None:
         for sk in store_keys:
             sk_int = int(sk)
             st = store_type_map.get(sk_int, "")
-            keys, probs = _STORE_TYPE_CHANNEL_MAP.get(st, _DEFAULT_CHANNEL_MAP)
+            keys, probs = STORE_TYPE_CHANNEL_MAP.get(st, DEFAULT_CHANNEL_MAP)
             store_channel_keys_list[sk_int] = keys
             channel_prob_by_store_list[sk_int] = probs / probs.sum()
     else:
-        # No store types available — uniform across all channels
-        _uniform_p = np.ones(len(_ALL_CHANNELS), dtype=np.float64) / len(_ALL_CHANNELS)
+        _uniform_p = np.ones(len(ALL_CHANNELS), dtype=np.float64) / len(ALL_CHANNELS)
         for sk in store_keys:
-            store_channel_keys_list[int(sk)] = _ALL_CHANNELS
+            store_channel_keys_list[int(sk)] = ALL_CHANNELS
             channel_prob_by_store_list[int(sk)] = _uniform_p
 
     # 3) Product channel eligibility (from ProductProfile)
@@ -1582,19 +1551,8 @@ def generate_sales_fact(
         promo_channel_group[_cat_series.isin({"Store", "Physical"}).to_numpy()] = 1
         promo_channel_group[_cat_series.isin({"Online", "Digital"}).to_numpy()] = 2
 
-    # 5) Channel fulfillment days (from SalesChannels dimension)
-    channel_fulfillment_days = np.full(11, 3, dtype=np.int32)  # default 3 days
-    channel_fulfillment_days[0] = 0   # Unknown
-    channel_fulfillment_days[1] = 0   # Store (immediate)
-    channel_fulfillment_days[2] = 3   # Online
-    channel_fulfillment_days[3] = 5   # Marketplace
-    channel_fulfillment_days[4] = 7   # B2B
-    channel_fulfillment_days[5] = 2   # CallCenter
-    channel_fulfillment_days[6] = 3   # Web
-    channel_fulfillment_days[7] = 3   # MobileApp
-    channel_fulfillment_days[8] = 5   # SocialCommerce
-    channel_fulfillment_days[9] = 7   # PartnerReseller
-    channel_fulfillment_days[10] = 0  # Kiosk (immediate)
+    # 5) Channel fulfillment days (defaults from defaults.py, overridden by dimension)
+    channel_fulfillment_days = DEFAULT_CHANNEL_FULFILLMENT_DAYS.copy()
     _sc_path = parquet_folder_p / "sales_channels.parquet"
     if _sc_path.exists():
         try:
@@ -1607,19 +1565,7 @@ def generate_sales_fact(
         except (KeyError, OSError):
             pass
 
-    # Channel key -> eligibility group index (for product_channel_eligible)
-    # 0=store, 1=online, 2=marketplace, 3=b2b
-    _CHANNEL_TO_ELIG_GROUP = np.zeros(11, dtype=np.int8)
-    _CHANNEL_TO_ELIG_GROUP[1] = 0   # Store -> EligibleStore
-    _CHANNEL_TO_ELIG_GROUP[2] = 1   # Online -> EligibleOnline
-    _CHANNEL_TO_ELIG_GROUP[3] = 2   # Marketplace -> EligibleMarketplace
-    _CHANNEL_TO_ELIG_GROUP[4] = 3   # B2B -> EligibleB2B
-    _CHANNEL_TO_ELIG_GROUP[5] = 1   # CallCenter -> EligibleOnline (same catalog)
-    _CHANNEL_TO_ELIG_GROUP[6] = 1   # Web -> EligibleOnline
-    _CHANNEL_TO_ELIG_GROUP[7] = 1   # MobileApp -> EligibleOnline
-    _CHANNEL_TO_ELIG_GROUP[8] = 2   # SocialCommerce -> EligibleMarketplace
-    _CHANNEL_TO_ELIG_GROUP[9] = 3   # PartnerReseller -> EligibleB2B
-    _CHANNEL_TO_ELIG_GROUP[10] = 0  # Kiosk -> EligibleStore
+    _CHANNEL_TO_ELIG_GROUP = CHANNEL_TO_ELIG_GROUP
 
     # ------------------------------------------------------------
     # Chunk scheduling
