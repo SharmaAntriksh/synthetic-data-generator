@@ -45,6 +45,17 @@ class TestLoadDimension:
             result_df, changed = load_dimension("matched", tmp_path, cfg)
         assert changed is False
 
+    def test_empty_parquet_returns_empty_df(self, tmp_path):
+        from src.engine.dimension_loader import load_dimension
+        df = pd.DataFrame({"A": pd.Series([], dtype="int64")})
+        df.to_parquet(tmp_path / "empty_dim.parquet", index=False)
+
+        with patch("src.engine.dimension_loader.load_version", return_value=None):
+            result_df, changed = load_dimension("empty_dim", tmp_path, {"seed": 42})
+        assert result_df is not None
+        assert len(result_df) == 0
+        assert changed is True
+
     def test_version_mismatch_changed(self, tmp_path):
         from src.engine.dimension_loader import load_dimension
         df = pd.DataFrame({"Z": [1]})

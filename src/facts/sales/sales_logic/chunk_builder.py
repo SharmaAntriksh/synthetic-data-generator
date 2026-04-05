@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pyarrow as pa
 
+from src.defaults import PHYSICAL_CHANNELS, DIGITAL_CHANNELS
 from src.exceptions import SalesError
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or
 from .globals import PA_AVAILABLE, State
@@ -725,6 +726,278 @@ def _empty_table(schema: pa.Schema) -> pa.Table:
 
 
 # ------------------------------------------------------------
+# Correlation helpers
+# ------------------------------------------------------------
+
+def _apply_geo_bias_store_sampling(
+    rng, skip_cols, n_unique_orders, n_lines,
+    customer_keys_for_orders, customer_keys_out,
+    month_stores, order_idx,
+    cust_geo, geo2c, st2c, c2sk,
+):
+    """Sample stores with geographic bias toward customer's home country."""
+    geo_bias = (cust_geo is not None and geo2c is not None
+                and st2c is not None and c2sk is not None)
+
+    if not skip_cols:
+        _n_to_sample = n_unique_orders
+        _cust_for_store = customer_keys_for_orders
+    else:
+        _n_to_sample = n_lines
+        _cust_for_store = customer_keys_out
+
+    if geo_bias:
+        _ck_idx = np.clip(np.asarray(_cust_for_store, dtype=np.int32) - 1, 0, len(cust_geo) - 1)
+        _cust_countries = geo2c[np.clip(cust_geo[_ck_idx], 0, len(geo2c) - 1)]
+        _use_local = rng.random(_n_to_sample) < 0.70
+
+        _month_set = set(month_stores.tolist())
+        _unique_countries = np.unique(_cust_countries)
+        _max_cid = int(_unique_countries.max()) + 1
+
+        _local_pools = [None] * _max_cid
+        _max_pool_len = 0
+        for _cid_v in _unique_countries:
+            _cid_int = int(_cid_v)
+            _country_sk = c2sk[_cid_int] if _cid_int < len(c2sk) else np.array([], dtype=np.int32)
+            if _country_sk.size:
+                _lp = _country_sk[np.array([s in _month_set for s in _country_sk.tolist()], dtype=bool)]
+            else:
+                _lp = np.array([], dtype=np.int32)
+            if _lp.size == 0:
+                _lp = month_stores
+            _local_pools[_cid_int] = _lp
+            if _lp.size > _max_pool_len:
+                _max_pool_len = _lp.size
+
+        _pool_2d = np.empty((_max_cid, _max_pool_len), dtype=np.int32)
+        _pool_lens = np.ones(_max_cid, dtype=np.int64)
+        for _cid_v in _unique_countries:
+            _cid_int = int(_cid_v)
+            _lp = _local_pools[_cid_int]
+            _pool_lens[_cid_int] = _lp.size
+            _pool_2d[_cid_int, :_lp.size] = _lp
+            if _lp.size < _max_pool_len:
+                _pool_2d[_cid_int, _lp.size:] = _lp[0]
+
+        _rand_idx = rng.integers(0, np.iinfo(np.int64).max, size=_n_to_sample).astype(np.int64)
+        _local_pick = _pool_2d[_cust_countries, _rand_idx % _pool_lens[_cust_countries]]
+        _global_pick = month_stores[rng.integers(0, len(month_stores), size=_n_to_sample)]
+
+        order_store = np.where(_use_local, _local_pick, _global_pick).astype(np.int32)
+    else:
+        order_store = month_stores[rng.integers(0, len(month_stores), size=_n_to_sample)]
+
+    if not skip_cols:
+        return order_store[order_idx]
+    return order_store
+
+
+def _resample_stores_for_open_close(
+    rng, store_key_arr, order_dates,
+    store_open_day, store_close_day,
+    store_keys, order_idx,
+):
+    """Resample stores whose order dates fall outside their open/close window."""
+    if store_open_day is None:
+        return store_key_arr
+
+    _max_sk_d = len(store_open_day)
+    _line_dates_d = np.asarray(order_dates, dtype="datetime64[D]")
+    _sk_i = store_key_arr.astype(np.int32)
+    _sk_clipped = np.clip(_sk_i, 0, _max_sk_d - 1)
+    _open_for_row = store_open_day[_sk_clipped]
+    _bad = _line_dates_d < _open_for_row
+    if store_close_day is not None:
+        _max_sk_c = len(store_close_day)
+        _sk_clipped_c = np.clip(_sk_i, 0, _max_sk_c - 1)
+        _close_for_row = store_close_day[_sk_clipped_c]
+        _bad |= _line_dates_d >= _close_for_row
+    else:
+        _max_sk_c = _max_sk_d
+
+    _n_bad = int(_bad.sum())
+    if _n_bad == 0:
+        return store_key_arr
+
+    _bad_idx = np.where(_bad)[0]
+    _bad_dates = _line_dates_d[_bad_idx]
+    _unique_bad_dates = np.unique(_bad_dates)
+    _sk_i32 = store_keys.astype(np.int32)
+    _all_open = store_open_day[np.clip(_sk_i32, 0, _max_sk_d - 1)]
+    _all_close_arr = None
+    if store_close_day is not None:
+        _all_close_arr = store_close_day[np.clip(_sk_i32, 0, _max_sk_c - 1)]
+    for _bd in _unique_bad_dates:
+        _date_mask = _bad_dates == _bd
+        _date_rows = _bad_idx[_date_mask]
+        _day_ok = _all_open <= _bd
+        if _all_close_arr is not None:
+            _day_ok = _day_ok & (_all_close_arr > _bd)
+        _day_stores = store_keys[_day_ok]
+        if _day_stores.size == 0:
+            _day_stores = store_keys
+        if order_idx is not None:
+            _bad_order_ids = order_idx[_date_rows]
+            _uniq_oids, _oid_inv = np.unique(_bad_order_ids, return_inverse=True)
+            _repls = _day_stores[rng.integers(0, len(_day_stores), size=len(_uniq_oids))]
+            store_key_arr[_date_rows] = _repls[_oid_inv]
+        else:
+            store_key_arr[_date_rows] = _day_stores[
+                rng.integers(0, len(_day_stores), size=len(_date_rows))
+            ]
+    return store_key_arr
+
+
+def _apply_store_channel_correlation(
+    rng, store_key_arr, skip_cols,
+    order_idx, order_starts, n_unique_orders, n_lines,
+    store_ch_keys, ch_prob_by_store,
+):
+    """Sample SalesChannelKey per order/line based on store type channel affinity."""
+    if store_ch_keys is None or ch_prob_by_store is None:
+        return None
+
+    _max_sk_ch = max(len(store_ch_keys), len(ch_prob_by_store))
+    _unique_sk_all = np.unique(store_key_arr)
+    _max_n_ch = max(
+        (len(store_ch_keys[int(s)]) for s in _unique_sk_all
+         if int(s) < len(store_ch_keys) and store_ch_keys[int(s)] is not None),
+        default=len(SALES_CHANNEL_CORE_KEYS),
+    )
+    _ch_keys_2d = np.full((_max_sk_ch, _max_n_ch), SALES_CHANNEL_CORE_KEYS[0], dtype=np.int32)
+    _ch_cdf_2d = np.ones((_max_sk_ch, _max_n_ch), dtype=np.float64)
+
+    for _sk_v in _unique_sk_all:
+        _sk_i = int(_sk_v)
+        if _sk_i >= _max_sk_ch:
+            continue
+        _ck = store_ch_keys[_sk_i] if _sk_i < len(store_ch_keys) and store_ch_keys[_sk_i] is not None else SALES_CHANNEL_CORE_KEYS
+        _cp = ch_prob_by_store[_sk_i] if _sk_i < len(ch_prob_by_store) and ch_prob_by_store[_sk_i] is not None else None
+        _nc = len(_ck)
+        _ch_keys_2d[_sk_i, :_nc] = _ck
+        if _nc < _max_n_ch:
+            _ch_keys_2d[_sk_i, _nc:] = _ck[-1]
+        if _cp is not None and len(_cp) == _nc:
+            _cdf = np.cumsum(_cp)
+            _cdf[-1] = 1.0
+            _ch_cdf_2d[_sk_i, :_nc] = _cdf
+        else:
+            _ch_cdf_2d[_sk_i, :_nc] = np.arange(1, _nc + 1, dtype=np.float64) / _nc
+        if _nc < _max_n_ch:
+            _ch_cdf_2d[_sk_i, _nc:] = 1.0
+
+    def _sample_channels_vectorized(_store_arr, _n):
+        _r = rng.random(_n)
+        _sk_clp = np.clip(_store_arr.astype(np.int64), 0, _max_sk_ch - 1)
+        _row_cdf = _ch_cdf_2d[_sk_clp]
+        _ch_idx = np.argmax(_r[:, None] < _row_cdf, axis=1)
+        return _ch_keys_2d[_sk_clp, _ch_idx]
+
+    if not skip_cols and order_idx is not None:
+        _order_stores_for_ch = store_key_arr[order_starts] if order_starts is not None else store_key_arr[:n_unique_orders]
+        _ch_per_order = _sample_channels_vectorized(_order_stores_for_ch, n_unique_orders)
+        return _ch_per_order[order_idx]
+    return _sample_channels_vectorized(store_key_arr, n_lines)
+
+
+def _enforce_channel_product_eligibility(
+    rng, prod_idx, sales_channel_key_arr,
+    pce, ch2eg, product_weight,
+):
+    """Resample products that are ineligible for their assigned sales channel."""
+    if (pce is None or ch2eg is None
+            or sales_channel_key_arr is None
+            or product_weight is None):
+        return prod_idx
+
+    _MAX_RESAMPLE_PASSES = 3
+    for _pass in range(_MAX_RESAMPLE_PASSES):
+        _line_ch = sales_channel_key_arr.astype(np.int32)
+        _line_eg = ch2eg[np.clip(_line_ch, 0, len(ch2eg) - 1)]
+        _line_elig = pce[prod_idx, _line_eg]
+        _bad = _line_elig == 0
+        _n_bad = int(_bad.sum())
+        if _n_bad == 0:
+            break
+        _bad_idx = np.flatnonzero(_bad)
+        for _eg in np.unique(_line_eg[_bad_idx]):
+            _eg_mask = _bad & (_line_eg == _eg)
+            _n_eg = int(_eg_mask.sum())
+            if _n_eg == 0:
+                continue
+            _eligible_rows = np.flatnonzero(pce[:, _eg] == 1)
+            if _eligible_rows.size == 0:
+                continue
+            _ew = product_weight[_eligible_rows]
+            _ews = float(_ew.sum())
+            if _ews > 1e-12:
+                _picks = rng.choice(len(_eligible_rows), size=_n_eg, p=_ew / _ews)
+            else:
+                _picks = rng.integers(0, len(_eligible_rows), size=_n_eg)
+            prod_idx[_eg_mask] = _eligible_rows[_picks]
+    return prod_idx
+
+
+def _apply_new_customer_promo(
+    promo_keys, order_dates, customer_keys_out,
+    sales_channel_key_arr,
+    ckey_to_start_month, nc_min_month,
+    nc_keys, nc_starts, nc_ends,
+    nc_promo_set, nc_window_months,
+    no_discount_key,
+    promo_channel_group, promo_keys_all,
+):
+    """Strip invalid NC promo assignments and force-assign to genuinely new customers."""
+    if ckey_to_start_month is None or nc_keys is None or nc_keys.size == 0:
+        return promo_keys
+
+    order_dates_D = order_dates.astype("datetime64[D]", copy=False)
+    order_month_offset = order_dates.astype("datetime64[M]").astype("int64") - nc_min_month
+    cust_start = ckey_to_start_month[customer_keys_out]
+    months_since = order_month_offset - cust_start
+    is_new = (cust_start >= 0) & (months_since >= 0) & (months_since <= nc_window_months)
+
+    # Step 1: remove NC promo from non-new customers (invalid random assignments)
+    has_nc = np.isin(promo_keys, list(nc_promo_set))
+    invalid_nc = has_nc & ~is_new
+    if invalid_nc.any():
+        promo_keys[invalid_nc] = int(no_discount_key)
+
+    # Step 2: force-assign NC promo to new customers that have no other promo.
+    eligible = is_new & (promo_keys == int(no_discount_key))
+    if not eligible.any():
+        return promo_keys
+
+    new_indices = np.flatnonzero(eligible)
+    new_dates = order_dates_D[new_indices]
+
+    _nc_ch_group = promo_channel_group[np.isin(promo_keys_all, list(nc_promo_set))] if promo_channel_group is not None else None
+    _new_ch = sales_channel_key_arr[new_indices] if sales_channel_key_arr is not None else None
+    _PHYS = frozenset(PHYSICAL_CHANNELS.tolist())
+    _DIGI = frozenset(DIGITAL_CHANNELS.tolist())
+
+    for pi in range(len(nc_keys)):
+        active = (new_dates >= nc_starts[pi]) & (new_dates <= nc_ends[pi])
+        if not active.any():
+            continue
+        if _nc_ch_group is not None and _new_ch is not None and pi < len(_nc_ch_group):
+            _pg = int(_nc_ch_group[pi])
+            if _pg == 1:
+                _ch_ok = np.array([int(c) in _PHYS for c in _new_ch[active]], dtype=bool)
+                active_idx = np.flatnonzero(active)
+                active[active_idx[~_ch_ok]] = False
+            elif _pg == 2:
+                _ch_ok = np.array([int(c) in _DIGI for c in _new_ch[active]], dtype=bool)
+                active_idx = np.flatnonzero(active)
+                active[active_idx[~_ch_ok]] = False
+        if active.any():
+            promo_keys[new_indices[active]] = int(nc_keys[pi])
+
+    return promo_keys
+
+
+# ------------------------------------------------------------
 # Main
 # ------------------------------------------------------------
 def build_chunk_table(
@@ -1155,184 +1428,31 @@ def build_chunk_table(
             if _eligible is not None and len(_eligible) > 0:
                 _month_stores = _eligible
 
-        # --- CORRELATION #2: Customer → Store geographic bias ---
-        # Customers prefer stores in their own country (70% local, 30% any).
-        _cust_geo = getattr(State, "customer_geo_key", None)
-        _geo2c = getattr(State, "geo_to_country_id", None)
-        _st2c = getattr(State, "store_to_country_id", None)
-        _c2sk = getattr(State, "country_to_store_keys", None)
-        _geo_bias = (_cust_geo is not None and _geo2c is not None
-                     and _st2c is not None and _c2sk is not None)
+        # CORRELATION #2: Customer → Store geographic bias
+        store_key_arr = _apply_geo_bias_store_sampling(
+            rng, skip_cols, n_unique_orders, n_lines,
+            customer_keys_for_orders, customer_keys_out,
+            _month_stores, order_idx,
+            getattr(State, "customer_geo_key", None),
+            getattr(State, "geo_to_country_id", None),
+            getattr(State, "store_to_country_id", None),
+            getattr(State, "country_to_store_keys", None),
+        )
 
-        if not skip_cols:
-            _n_to_sample = n_unique_orders
-            _cust_for_store = customer_keys_for_orders  # one per order
-        else:
-            _n_to_sample = n_lines
-            _cust_for_store = customer_keys_out
+        # DAY-LEVEL STORE ELIGIBILITY: resample for open/close dates
+        store_key_arr = _resample_stores_for_open_close(
+            rng, store_key_arr, order_dates,
+            store_open_day, store_close_day,
+            store_keys, order_idx,
+        )
 
-        if _geo_bias:
-            # Get customer countries (pool-index lookup via CustomerKey-1)
-            _ck_idx = np.clip(np.asarray(_cust_for_store, dtype=np.int32) - 1, 0, len(_cust_geo) - 1)
-            _cust_countries = _geo2c[np.clip(_cust_geo[_ck_idx], 0, len(_geo2c) - 1)]
-            _use_local = rng.random(_n_to_sample) < 0.70
-
-            # Vectorized geo-bias: padded 2D pool LUT, one-shot fancy-index sample
-            _month_set = set(_month_stores.tolist())
-            _unique_countries = np.unique(_cust_countries)
-            _max_cid = int(_unique_countries.max()) + 1
-
-            # First pass: compute per-country local pools and max pool length
-            _local_pools = [None] * _max_cid
-            _max_pool_len = 0
-            for _cid_v in _unique_countries:
-                _cid_int = int(_cid_v)
-                _country_sk = _c2sk[_cid_int] if _cid_int < len(_c2sk) else np.array([], dtype=np.int32)
-                if _country_sk.size:
-                    _lp = _country_sk[np.array([s in _month_set for s in _country_sk.tolist()], dtype=bool)]
-                else:
-                    _lp = np.array([], dtype=np.int32)
-                if _lp.size == 0:
-                    _lp = _month_stores
-                _local_pools[_cid_int] = _lp
-                if _lp.size > _max_pool_len:
-                    _max_pool_len = _lp.size
-
-            # Build padded 2D array (needs max_pool_len from first pass)
-            _pool_2d = np.empty((_max_cid, _max_pool_len), dtype=np.int32)
-            _pool_lens = np.ones(_max_cid, dtype=np.int64)  # default 1 avoids mod-by-zero
-            for _cid_v in _unique_countries:
-                _cid_int = int(_cid_v)
-                _lp = _local_pools[_cid_int]
-                _pool_lens[_cid_int] = _lp.size
-                _pool_2d[_cid_int, :_lp.size] = _lp
-                if _lp.size < _max_pool_len:
-                    _pool_2d[_cid_int, _lp.size:] = _lp[0]
-
-            _rand_idx = rng.integers(0, np.iinfo(np.int64).max, size=_n_to_sample).astype(np.int64)
-            _local_pick = _pool_2d[_cust_countries, _rand_idx % _pool_lens[_cust_countries]]
-            _global_pick = _month_stores[rng.integers(0, len(_month_stores), size=_n_to_sample)]
-
-            order_store = np.where(_use_local, _local_pick, _global_pick).astype(np.int32)
-        else:
-            order_store = _month_stores[rng.integers(0, len(_month_stores), size=_n_to_sample)]
-
-        if not skip_cols:
-            store_key_arr = order_store[order_idx]
-        else:
-            store_key_arr = order_store
-
-        # --------------------------------------------------------
-        # DAY-LEVEL STORE ELIGIBILITY: resample stores that have
-        # order dates before opening or after closing.
-        # This only fires in the first/last month of a store's life.
-        # --------------------------------------------------------
-        if store_open_day is not None:
-            _max_sk_d = len(store_open_day)
-            # order_dates aligns with store_key_arr (both n_lines elements)
-            _line_dates_d = np.asarray(order_dates, dtype="datetime64[D]")
-            _sk_i = store_key_arr.astype(np.int32)
-            # Vectorized check: is each row's store valid for its date?
-            _sk_clipped = np.clip(_sk_i, 0, _max_sk_d - 1)
-            _open_for_row = store_open_day[_sk_clipped]
-            _bad = _line_dates_d < _open_for_row
-            if store_close_day is not None:
-                _max_sk_c = len(store_close_day)
-                _sk_clipped_c = np.clip(_sk_i, 0, _max_sk_c - 1)
-                _close_for_row = store_close_day[_sk_clipped_c]
-                _bad |= _line_dates_d >= _close_for_row
-            _n_bad = int(_bad.sum())
-            if _n_bad > 0:
-                # Resample invalid stores: for each bad row, pick from
-                # ALL stores that are open on that specific date (not just
-                # month-eligible ones, to avoid empty fallbacks).
-                _bad_idx = np.where(_bad)[0]
-                _bad_dates = _line_dates_d[_bad_idx]
-                _unique_bad_dates = np.unique(_bad_dates)
-                _sk_i32 = store_keys.astype(np.int32)
-                _all_open = store_open_day[np.clip(_sk_i32, 0, _max_sk_d - 1)]
-                _all_close_arr = None
-                if store_close_day is not None:
-                    _all_close_arr = store_close_day[np.clip(_sk_i32, 0, _max_sk_c - 1)]
-                for _bd in _unique_bad_dates:
-                    _date_mask = _bad_dates == _bd
-                    _date_rows = _bad_idx[_date_mask]
-                    _day_ok = _all_open <= _bd
-                    if _all_close_arr is not None:
-                        _day_ok = _day_ok & (_all_close_arr > _bd)
-                    _day_stores = store_keys[_day_ok]
-                    if _day_stores.size == 0:
-                        _day_stores = store_keys  # last-resort fallback
-                    # Order-level consistency: all lines of the same order
-                    # must share the same replacement store.
-                    if order_idx is not None:
-                        _bad_order_ids = order_idx[_date_rows]
-                        _uniq_oids, _oid_inv = np.unique(_bad_order_ids, return_inverse=True)
-                        _repls = _day_stores[rng.integers(0, len(_day_stores), size=len(_uniq_oids))]
-                        store_key_arr[_date_rows] = _repls[_oid_inv]
-                    else:
-                        store_key_arr[_date_rows] = _day_stores[
-                            rng.integers(0, len(_day_stores), size=len(_date_rows))
-                        ]
-
-        # --------------------------------------------------------
         # CORRELATION #1: Store → SalesChannelKey
-        # Channel is constrained by store type (physical stores
-        # get physical channels, online stores get digital, etc.)
-        # --------------------------------------------------------
-        _store_ch_keys = getattr(State, "store_channel_keys", None)
-        _ch_prob_by_store = getattr(State, "channel_prob_by_store", None)
-        _has_channel_corr = (_store_ch_keys is not None and _ch_prob_by_store is not None)
-
-        if _has_channel_corr:
-            # Vectorized: padded 2D CDF + channel-key LUT, one-shot broadcast sample
-            _max_sk_ch = max(len(_store_ch_keys), len(_ch_prob_by_store))
-            _unique_sk_all = np.unique(store_key_arr)
-            _max_n_ch = max(
-                (len(_store_ch_keys[int(s)]) for s in _unique_sk_all
-                 if int(s) < len(_store_ch_keys) and _store_ch_keys[int(s)] is not None),
-                default=len(SALES_CHANNEL_CORE_KEYS),
-            )
-            _ch_keys_2d = np.full((_max_sk_ch, _max_n_ch), SALES_CHANNEL_CORE_KEYS[0], dtype=np.int32)
-            _ch_cdf_2d = np.ones((_max_sk_ch, _max_n_ch), dtype=np.float64)
-
-            for _sk_v in _unique_sk_all:
-                _sk_i = int(_sk_v)
-                if _sk_i >= _max_sk_ch:
-                    continue
-                _ck = _store_ch_keys[_sk_i] if _sk_i < len(_store_ch_keys) and _store_ch_keys[_sk_i] is not None else SALES_CHANNEL_CORE_KEYS
-                _cp = _ch_prob_by_store[_sk_i] if _sk_i < len(_ch_prob_by_store) and _ch_prob_by_store[_sk_i] is not None else None
-                _nc = len(_ck)
-                _ch_keys_2d[_sk_i, :_nc] = _ck
-                if _nc < _max_n_ch:
-                    _ch_keys_2d[_sk_i, _nc:] = _ck[-1]
-                if _cp is not None and len(_cp) == _nc:
-                    _cdf = np.cumsum(_cp)
-                    _cdf[-1] = 1.0
-                    _ch_cdf_2d[_sk_i, :_nc] = _cdf
-                else:
-                    # Uniform: CDF = [1/n, 2/n, ..., 1.0]
-                    _ch_cdf_2d[_sk_i, :_nc] = np.arange(1, _nc + 1, dtype=np.float64) / _nc
-                if _nc < _max_n_ch:
-                    _ch_cdf_2d[_sk_i, _nc:] = 1.0
-
-            def _sample_channels_vectorized(_store_arr, _n):
-                """Sample channel keys for all rows via 2D CDF lookup."""
-                _r = rng.random(_n)
-                _sk_clp = np.clip(_store_arr.astype(np.int64), 0, _max_sk_ch - 1)
-                _row_cdf = _ch_cdf_2d[_sk_clp]          # shape: (_n, _max_n_ch)
-                _ch_idx = np.argmax(_r[:, None] < _row_cdf, axis=1)  # inverse CDF
-                return _ch_keys_2d[_sk_clp, _ch_idx]
-
-            if not skip_cols and order_idx is not None:
-                _order_stores_for_ch = store_key_arr[order_starts] if order_starts is not None else store_key_arr[:n_unique_orders]
-                _ch_per_order = _sample_channels_vectorized(_order_stores_for_ch, n_unique_orders)
-                sales_channel_key_arr = _ch_per_order[order_idx]
-            else:
-                sales_channel_key_arr = _sample_channels_vectorized(store_key_arr, n_lines)
-        else:
-            # Fallback: uniform channel sampling (old behavior)
-            sales_channel_key_arr = None
+        sales_channel_key_arr = _apply_store_channel_correlation(
+            rng, store_key_arr, skip_cols,
+            order_idx, order_starts, n_unique_orders, n_lines,
+            getattr(State, "store_channel_keys", None),
+            getattr(State, "channel_prob_by_store", None),
+        )
 
         # --------------------------------------------------------
         # PRODUCTS (PER LINE) — each line gets its own product
@@ -1377,43 +1497,11 @@ def build_chunk_table(
                 product_weight=_product_weight,
             )
 
-        # CORRELATION #4: Post-sampling channel eligibility enforcement.
-        # Resample ineligible products per-line using channel-specific
-        # eligible pools.  This handles ALL channels correctly (including
-        # minority channels like Marketplace/SocialCommerce) instead of
-        # only filtering for the dominant channel.
-        _MAX_RESAMPLE_PASSES = 3
-        if (_pce is not None and _ch2eg is not None
-                and sales_channel_key_arr is not None
-                and _product_weight is not None):
-            for _pass in range(_MAX_RESAMPLE_PASSES):
-                # Check eligibility per line
-                _line_ch = sales_channel_key_arr.astype(np.int32)
-                _line_eg = _ch2eg[np.clip(_line_ch, 0, len(_ch2eg) - 1)]
-                _line_elig = _pce[prod_idx, _line_eg]
-                _bad = _line_elig == 0
-                _n_bad = int(_bad.sum())
-                if _n_bad == 0:
-                    break
-                # Resample bad rows: group by eligibility group for efficiency
-                _bad_idx = np.flatnonzero(_bad)
-                for _eg in np.unique(_line_eg[_bad_idx]):
-                    _eg_mask = _bad & (_line_eg == _eg)
-                    _n_eg = int(_eg_mask.sum())
-                    if _n_eg == 0:
-                        continue
-                    # Build eligible product pool for this group
-                    _eligible_rows = np.flatnonzero(_pce[:, _eg] == 1)
-                    if _eligible_rows.size == 0:
-                        continue  # no eligible products at all — keep original
-                    # Weighted resample from eligible pool
-                    _ew = _product_weight[_eligible_rows]
-                    _ews = float(_ew.sum())
-                    if _ews > 1e-12:
-                        _picks = rng.choice(len(_eligible_rows), size=_n_eg, p=_ew / _ews)
-                    else:
-                        _picks = rng.integers(0, len(_eligible_rows), size=_n_eg)
-                    prod_idx[_eg_mask] = _eligible_rows[_picks]
+        # CORRELATION #4: Channel → product eligibility enforcement
+        prod_idx = _enforce_channel_product_eligibility(
+            rng, prod_idx, sales_channel_key_arr,
+            _pce, _ch2eg, _product_weight,
+        )
 
         customer_keys_out = np.asarray(customer_keys_out, dtype=np.int32)
         order_dates = np.asarray(order_dates, dtype="datetime64[D]")
@@ -1496,53 +1584,16 @@ def build_chunk_table(
             )
         promo_keys = np.asarray(promo_keys, dtype=np.int32)
 
-        # New Customer promo: remove invalid assignments, then force-assign to genuinely new customers
-        if _ckey_to_start_month is not None and _nc_keys is not None and _nc_keys.size > 0:
-            order_dates_D = order_dates.astype("datetime64[D]", copy=False)
-            order_month_offset = order_dates.astype("datetime64[M]").astype("int64") - _nc_min_month
-            cust_start = _ckey_to_start_month[customer_keys_out]
-            months_since = order_month_offset - cust_start
-            is_new = (cust_start >= 0) & (months_since >= 0) & (months_since <= nc_window_months)
-
-            # Step 1: remove NC promo from non-new customers (invalid random assignments)
-            has_nc = np.isin(promo_keys, list(nc_promo_set))
-            invalid_nc = has_nc & ~is_new
-            if invalid_nc.any():
-                promo_keys[invalid_nc] = int(no_discount_key)
-
-            # Step 2: force-assign NC promo to new customers that have no other promo.
-            # Respect channel-promo correlation: only assign NC promos whose
-            # PromotionCategory matches the row's channel type.
-            eligible = is_new & (promo_keys == int(no_discount_key))
-            if eligible.any():
-                new_indices = np.flatnonzero(eligible)
-                new_dates = order_dates_D[new_indices]
-
-                # Channel-aware NC promo assignment
-                _nc_ch_group = _pcg[np.isin(promo_keys_all, list(nc_promo_set))] if _pcg is not None else None
-                _new_ch = sales_channel_key_arr[new_indices] if sales_channel_key_arr is not None else None
-                _PHYS = frozenset({1, 5, 10})
-                _DIGI = frozenset({2, 3, 6, 7, 8})
-
-                for pi in range(len(_nc_keys)):
-                    active = (new_dates >= _nc_starts[pi]) & (new_dates <= _nc_ends[pi])
-                    if not active.any():
-                        continue
-                    # Check channel compatibility if data available
-                    if _nc_ch_group is not None and _new_ch is not None and pi < len(_nc_ch_group):
-                        _pg = int(_nc_ch_group[pi])  # 0=any, 1=physical, 2=digital
-                        if _pg == 1:
-                            # Physical-only promo: only assign to physical channel rows
-                            _ch_ok = np.array([int(c) in _PHYS for c in _new_ch[active]], dtype=bool)
-                            active_idx = np.flatnonzero(active)
-                            active[active_idx[~_ch_ok]] = False
-                        elif _pg == 2:
-                            # Digital-only promo: only assign to digital channel rows
-                            _ch_ok = np.array([int(c) in _DIGI for c in _new_ch[active]], dtype=bool)
-                            active_idx = np.flatnonzero(active)
-                            active[active_idx[~_ch_ok]] = False
-                    if active.any():
-                        promo_keys[new_indices[active]] = int(_nc_keys[pi])
+        # New Customer promo: strip invalid + force-assign to new customers
+        promo_keys = _apply_new_customer_promo(
+            promo_keys, order_dates, customer_keys_out,
+            sales_channel_key_arr,
+            _ckey_to_start_month, _nc_min_month,
+            _nc_keys, _nc_starts, _nc_ends,
+            nc_promo_set, nc_window_months,
+            no_discount_key,
+            _pcg, promo_keys_all,
+        )
 
         # --------------------------------------------------------
         # EMPLOYEE (EmployeeKey)

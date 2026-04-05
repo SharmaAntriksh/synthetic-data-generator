@@ -129,3 +129,22 @@ class TestGenerateWarehouseTable:
         )
         assert (wh_df["Capacity"] > 0).all()
         assert (wh_df["SquareFootage"] > 0).all()
+
+    def test_capacity_realistic_ranges(self, small_stores_for_warehouses, tmp_path, geography_parquet):
+        from src.dimensions.warehouses.generator import generate_warehouse_table
+        wh_df, _ = generate_warehouse_table(
+            small_stores_for_warehouses, tmp_path, seed=42,
+        )
+        # Warehouses should have reasonable capacity and square footage
+        assert (wh_df["Capacity"] <= 500_000).all()
+        assert (wh_df["SquareFootage"] >= 1_000).all()
+        assert (wh_df["SquareFootage"] <= 2_000_000).all()
+
+    def test_warehouse_type_present(self, small_stores_for_warehouses, tmp_path, geography_parquet):
+        from src.dimensions.warehouses.generator import generate_warehouse_table
+        wh_df, _ = generate_warehouse_table(
+            small_stores_for_warehouses, tmp_path, seed=42,
+        )
+        assert "WarehouseType" in wh_df.columns
+        # At least one type should be assigned
+        assert wh_df["WarehouseType"].notna().all()

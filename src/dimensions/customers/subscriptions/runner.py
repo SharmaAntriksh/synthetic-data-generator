@@ -67,6 +67,14 @@ def run_subscriptions(cfg: Any, parquet_folder: Path) -> Dict[str, Any]:
         n_rows = 0
         if c.generate_bridge:
             customers = pd.read_parquet(customers_fp)
+            if customers.empty:
+                skip("No customers found — skipping subscription bridge")
+                return {
+                    "_regenerated": True,
+                    "dim": str(out_dim),
+                    "bridge": None,
+                    "bridge_rows": 0,
+                }
 
             n_cust = len(customers)
             estimated_eligible = int(n_cust * c.participation_rate * 0.9)

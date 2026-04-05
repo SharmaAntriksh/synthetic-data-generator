@@ -939,10 +939,8 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             region=Region,
             customer_start_date=CustomerStartDate,
             churn_bias=CustomerChurnBias,
-            customer_weight=CustomerWeight,
             people_pools=people_pools,
             end_date=end_date,
-            seed=int(seed),
         )
 
     # =====================================================
@@ -1165,10 +1163,8 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
             region=Region,
             customer_start_date=CustomerStartDate,
             churn_bias=CustomerChurnBias,
-            customer_weight=CustomerWeight,
             people_pools=people_pools,
             end_date=end_date,
-            seed=int(seed),
         )
 
         # Phase 4: Parallel SCD2 (if enabled)

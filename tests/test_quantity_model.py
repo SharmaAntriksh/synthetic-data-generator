@@ -178,3 +178,48 @@ class TestBuildQuantity:
 
         assert qty.min() >= 1
         assert qty.max() <= 10
+
+    def test_seasonality_affects_mean(self):
+        """Months with higher seasonal factors should produce higher mean qty."""
+        # Factor for June (index 5) = 1.02, January (index 0) = 0.99
+        State.models_cfg = {
+            "quantity": {
+                "base_poisson_lambda": 3.0,
+                "monthly_factors": [0.5, 0.5, 0.5, 0.5, 0.5, 2.0,
+                                    0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+                "noise_sigma": 0.0,
+                "min_qty": 1,
+                "max_qty": 20,
+            },
+        }
+        n = 5000
+        jan_dates = np.array(["2023-01-15"] * n, dtype="datetime64[D]")
+        jun_dates = np.array(["2023-06-15"] * n, dtype="datetime64[D]")
+
+        rng1 = np.random.default_rng(42)
+        jan_qty = build_quantity(rng1, jan_dates)
+        rng2 = np.random.default_rng(42)
+        jun_qty = build_quantity(rng2, jun_dates)
+
+        # June factor (2.0) is 4x January factor (0.5) → mean should be notably higher
+        assert jun_qty.mean() > jan_qty.mean() * 1.5
+
+    def test_noise_increases_variance(self):
+        """Positive noise_sigma should increase output variance vs zero noise."""
+        base_cfg = {
+            "base_poisson_lambda": 3.0,
+            "monthly_factors": [1.0] * 12,
+            "min_qty": 1,
+            "max_qty": 20,
+        }
+        dates = np.array(["2023-03-15"] * 5000, dtype="datetime64[D]")
+
+        State.models_cfg = {"quantity": {**base_cfg, "noise_sigma": 0.0}}
+        _reset_cache()
+        qty_no_noise = build_quantity(np.random.default_rng(42), dates)
+
+        State.models_cfg = {"quantity": {**base_cfg, "noise_sigma": 0.5}}
+        _reset_cache()
+        qty_noisy = build_quantity(np.random.default_rng(42), dates)
+
+        assert qty_noisy.std() > qty_no_noise.std()

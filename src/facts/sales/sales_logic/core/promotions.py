@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from src.defaults import PHYSICAL_CHANNELS, DIGITAL_CHANNELS
 from src.exceptions import SalesError
 
 
@@ -122,8 +123,8 @@ def apply_promotions(
     # Physical: 1=Store, 5=CallCenter, 10=Kiosk
     # Digital:  2=Online, 3=Marketplace, 6=Web, 7=MobileApp, 8=SocialCommerce
     # Business: 4=B2B, 9=PartnerReseller (accept only universal promos)
-    _PHYSICAL_CH = frozenset({1, 5, 10})
-    _DIGITAL_CH = frozenset({2, 3, 6, 7, 8})
+    _PHYSICAL_CH = frozenset(PHYSICAL_CHANNELS.tolist())
+    _DIGITAL_CH = frozenset(DIGITAL_CHANNELS.tolist())
     _BUSINESS_CH = frozenset({4, 9})
     _has_ch_filter = (channel_keys is not None and promo_channel_group is not None
                       and len(promo_channel_group) == P)

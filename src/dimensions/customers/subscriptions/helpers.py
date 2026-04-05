@@ -13,13 +13,11 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from src.defaults import NS_PER_DAY as _NS_PER_DAY
 from src.exceptions import DimensionError
 from src.utils.config_precedence import resolve_seed
 
 from .catalog import PAYMENT_METHODS, _PAYMENT_WEIGHTS, PLANS_CATALOG, _PLAN_TYPE_WEIGHT
-
-
-_NS_PER_DAY: int = 86_400_000_000_000
 
 
 # ---------------------------------------------------------------------------

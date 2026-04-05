@@ -649,6 +649,45 @@ def _validate_probability_arrays() -> None:
 SALES_CHANNEL_CORE_KEYS = np.array([1, 2, 3, 4, 5], dtype=np.int32)
 SALES_CHANNEL_CORE_KEYS.flags.writeable = False
 
+# Channel classification arrays (used by sales pipeline correlation logic)
+PHYSICAL_CHANNELS = np.array([1, 5, 10], dtype=np.int16)          # Store, CallCenter, Kiosk
+DIGITAL_CHANNELS = np.array([2, 3, 6, 7, 8], dtype=np.int16)     # Online, Marketplace, Web, MobileApp, Social
+ALL_CHANNELS = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], dtype=np.int16)
+
+# StoreType -> (valid_channel_keys, probability_weights)
+STORE_TYPE_CHANNEL_MAP = {
+    "Online":      (DIGITAL_CHANNELS, np.array([0.35, 0.10, 0.20, 0.25, 0.10], dtype=np.float64)),
+    "Fulfillment": (DIGITAL_CHANNELS, np.array([0.35, 0.10, 0.20, 0.25, 0.10], dtype=np.float64)),
+    "Retail":       (np.array([1, 2, 3, 5, 7, 10], dtype=np.int16),
+                     np.array([0.50, 0.15, 0.05, 0.10, 0.10, 0.10], dtype=np.float64)),
+    "Flagship":     (np.array([1, 2, 5, 7, 10], dtype=np.int16),
+                     np.array([0.55, 0.15, 0.10, 0.10, 0.10], dtype=np.float64)),
+    "Hypermarket":  (np.array([1, 2, 3, 5, 10], dtype=np.int16),
+                     np.array([0.55, 0.15, 0.05, 0.10, 0.15], dtype=np.float64)),
+    "Supermarket":  (np.array([1, 2, 5, 10], dtype=np.int16),
+                     np.array([0.60, 0.15, 0.10, 0.15], dtype=np.float64)),
+    "Convenience":  (np.array([1, 5, 10], dtype=np.int16),
+                     np.array([0.70, 0.10, 0.20], dtype=np.float64)),
+    "Outlet":       (np.array([1, 2, 5], dtype=np.int16),
+                     np.array([0.65, 0.20, 0.15], dtype=np.float64)),
+    "Warehouse":    (np.array([1, 2, 4, 9], dtype=np.int16),
+                     np.array([0.30, 0.25, 0.25, 0.20], dtype=np.float64)),
+}
+DEFAULT_CHANNEL_MAP = (np.array([1, 2, 3, 5], dtype=np.int16),
+                       np.array([0.40, 0.30, 0.15, 0.15], dtype=np.float64))
+
+# Default channel fulfillment days (overridden at runtime from sales_channels.parquet)
+DEFAULT_CHANNEL_FULFILLMENT_DAYS = np.array(
+    [0, 0, 3, 5, 7, 2, 3, 3, 5, 7, 0], dtype=np.int32,
+)  # [Unknown, Store, Online, Marketplace, B2B, CallCenter, Web, MobileApp, SocialCommerce, PartnerReseller, Kiosk]
+
+# Channel key -> product eligibility group index (0=store, 1=online, 2=marketplace, 3=b2b)
+CHANNEL_TO_ELIG_GROUP = np.array([0, 0, 1, 2, 3, 1, 1, 1, 2, 3, 0], dtype=np.int8)
+#                                 ^0 ^1 ^2 ^3 ^4 ^5 ^6 ^7 ^8 ^9 ^10
+
+# Nanoseconds per day (used for datetime64[ns] arithmetic)
+NS_PER_DAY: int = 86_400_000_000_000
+
 
 # =================================================================
 #  RETURN REASONS — single source of truth

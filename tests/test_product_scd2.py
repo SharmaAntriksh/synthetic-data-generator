@@ -118,6 +118,34 @@ class TestGenerateScd2Versions:
         result = generate_scd2_versions(rng, base_products, cfg, start, end)
         assert (result["EffectiveStartDate"] >= start).all()
 
+    def test_version_dates_sequential(self, base_products):
+        """Within each ProductID, EffectiveStartDate should be non-decreasing."""
+        from src.dimensions.products.scd2 import generate_scd2_versions
+        rng = np.random.default_rng(42)
+        cfg = SimpleNamespace(revision_frequency=6, price_drift=0.05, max_versions=5)
+        result = generate_scd2_versions(
+            rng, base_products, cfg,
+            pd.Timestamp("2023-01-01"), pd.Timestamp("2026-12-31"),
+        )
+        for pid, grp in result.groupby("ProductID"):
+            dates = grp["EffectiveStartDate"].values
+            assert (dates[1:] >= dates[:-1]).all(), f"ProductID {pid} has non-sequential dates"
+
+    def test_drift_bounded(self, base_products):
+        """Price drift should not produce extreme values (>5x or <0.2x original)."""
+        from src.dimensions.products.scd2 import generate_scd2_versions
+        rng = np.random.default_rng(42)
+        cfg = SimpleNamespace(revision_frequency=6, price_drift=0.05, max_versions=5)
+        result = generate_scd2_versions(
+            rng, base_products, cfg,
+            pd.Timestamp("2023-01-01"), pd.Timestamp("2026-12-31"),
+        )
+        for pid, grp in result.groupby("ProductID"):
+            base_price = grp["ListPrice"].iloc[0]
+            if base_price > 0:
+                ratio = grp["ListPrice"].max() / base_price
+                assert ratio < 5.0, f"ProductID {pid} price drifted {ratio:.1f}x"
+
 
 class TestSnapDriftedPrices:
     def test_basic_snap(self):

@@ -78,10 +78,8 @@ def generate_org_profile(
     region: np.ndarray,
     customer_start_date: np.ndarray,
     churn_bias: np.ndarray,
-    customer_weight: np.ndarray,
     people_pools: PeopleNamePools,
     end_date: pd.Timestamp,
-    seed: int,
 ) -> pd.DataFrame:
     """Generate OrganizationProfile for org-type customers only."""
     org_idx = np.where(is_org)[0]
@@ -94,7 +92,6 @@ def generate_org_profile(
     org_names = org_name[org_idx]
     org_start = customer_start_date[org_idx]
     org_churn = churn_bias[org_idx]
-    org_weight = customer_weight[org_idx]
 
     Industry = rng.choice(_ORG_INDUSTRY_LABELS, size=M, p=_ORG_INDUSTRY_PROBS)
     CompanySize = rng.choice(_ORG_SIZE_LABELS, size=M, p=_ORG_SIZE_PROBS)

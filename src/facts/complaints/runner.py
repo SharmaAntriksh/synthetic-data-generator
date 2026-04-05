@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+from src.defaults import NS_PER_DAY as _NS_PER_DAY
 from src.facts.complaints.accumulator import ComplaintsAccumulator
 from src.facts.shared.writers import write_fact_table
 from src.utils.logging_utils import info, skip
@@ -26,8 +27,6 @@ from src.utils.config_helpers import parse_global_dates as _parse_global_dates_s
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-_NS_PER_DAY: int = 86_400_000_000_000
 
 _COMPLAINT_TYPES_ORDER = [
     "Product Defect",
@@ -148,10 +147,7 @@ def _generate_rows_batch(
     cust_orders: Dict[int, Tuple[np.ndarray, np.ndarray]],
     g_start_ns: int,
     g_end_ns: int,
-    resolution_rate: float,
-    escalation_rate: float,
-    avg_response_days: int,
-    max_response_days: int,
+    cfg: "_ComplaintsCfg",
 ) -> Dict[str, np.ndarray]:
     """Fully vectorized complaint generation — no Python row loop.
 
@@ -221,8 +217,8 @@ def _generate_rows_batch(
     res_type_idx = np.searchsorted(_RESOLUTION_CDF, rng.random(total_rows))
     np.clip(res_type_idx, 0, len(_RESOLUTION_TYPES) - 1, out=res_type_idx)
 
-    resp_days_raw = rng.exponential(avg_response_days, size=total_rows).astype(np.int32)
-    np.clip(resp_days_raw, 0, max_response_days, out=resp_days_raw)
+    resp_days_raw = rng.exponential(cfg.avg_response_days, size=total_rows).astype(np.int32)
+    np.clip(resp_days_raw, 0, cfg.max_response_days, out=resp_days_raw)
 
     escalation_rolls = rng.random(total_rows)
 
@@ -274,12 +270,12 @@ def _generate_rows_batch(
     out_detail = np.where(is_order_linked, aod[order_td_idx], agd[general_td_idx])
 
     # --- Resolution logic ---
-    is_resolved = resolution_rolls < resolution_rate
+    is_resolved = resolution_rolls < cfg.resolution_rate
 
     out_status = np.where(
         is_resolved,
         np.where(status_rolls < 0.5, _STATUS_VALUES[0], _STATUS_VALUES[1]),
-        np.where(escalation_rolls < escalation_rate, _STATUS_VALUES[3], _STATUS_VALUES[2]),
+        np.where(escalation_rolls < cfg.escalation_rate, _STATUS_VALUES[3], _STATUS_VALUES[2]),
     )
 
     out_res_type = np.where(is_resolved, _RESOLUTION_TYPES[res_type_idx], None)
@@ -359,7 +355,7 @@ def _complaints_worker_task(args: Tuple) -> Dict[str, np.ndarray]:
         complaints_per_chunk:  np.ndarray[int32] — complaint counts per customer
         order_arrays_chunk:    dict of numpy arrays — order data for this chunk's customers
             Keys: "CustomerKey", "SalesOrderNumber", "SalesOrderLineNumber"
-        config_scalars:        dict — complaint config scalars (resolution_rate, etc.)
+        complaints_cfg:        _ComplaintsCfg — complaint config (frozen dataclass, picklable)
         date_range:            tuple[int, int] — (g_start_ns, g_end_ns)
 
     Returns:
@@ -372,22 +368,15 @@ def _complaints_worker_task(args: Tuple) -> Dict[str, np.ndarray]:
         complainer_keys_chunk,
         complaints_per_chunk,
         order_arrays_chunk,
-        config_scalars,
+        complaints_cfg,
         date_range,
     ) = args
 
-    # Each worker gets its own independent RNG stream
     child_rng = np.random.default_rng(
         np.random.SeedSequence(seed).spawn(n_chunks)[chunk_idx]
     )
 
     g_start_ns, g_end_ns = date_range
-    resolution_rate = config_scalars["resolution_rate"]
-    escalation_rate = config_scalars["escalation_rate"]
-    avg_response_days = config_scalars["avg_response_days"]
-    max_response_days = config_scalars["max_response_days"]
-
-    # Reconstruct per-customer order lookup from the filtered arrays
     cust_orders = _build_order_lookup(order_arrays_chunk)
 
     return _generate_rows_batch(
@@ -397,10 +386,7 @@ def _complaints_worker_task(args: Tuple) -> Dict[str, np.ndarray]:
         cust_orders=cust_orders,
         g_start_ns=g_start_ns,
         g_end_ns=g_end_ns,
-        resolution_rate=resolution_rate,
-        escalation_rate=escalation_rate,
-        avg_response_days=avg_response_days,
-        max_response_days=max_response_days,
+        cfg=complaints_cfg,
     )
 
 
@@ -580,10 +566,7 @@ def _generate_complaints_serial(
         cust_orders=cust_orders,
         g_start_ns=int(g_start_ns),
         g_end_ns=int(g_end_ns),
-        resolution_rate=c.resolution_rate,
-        escalation_rate=c.escalation_rate,
-        avg_response_days=c.avg_response_days,
-        max_response_days=c.max_response_days,
+        cfg=c,
     )
 
     return _arrays_to_table(
@@ -654,12 +637,6 @@ def _generate_complaints_parallel(
 
     chunk_indices = np.array_split(np.arange(n_complainers), n_chunks)
 
-    config_scalars = {
-        "resolution_rate": c.resolution_rate,
-        "escalation_rate": c.escalation_rate,
-        "avg_response_days": c.avg_response_days,
-        "max_response_days": c.max_response_days,
-    }
     date_range = (int(g_start_ns), int(g_end_ns))
 
     tasks = []
@@ -685,7 +662,7 @@ def _generate_complaints_parallel(
             chunk_keys,
             chunk_counts,
             order_arrays_chunk,
-            config_scalars,
+            c,
             date_range,
         ))
 

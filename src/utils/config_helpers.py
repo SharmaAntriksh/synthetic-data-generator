@@ -9,6 +9,7 @@ from typing import Any, Dict, Tuple
 
 import pandas as pd
 
+from src.defaults import NS_PER_DAY as _NS_PER_DAY
 from src.exceptions import ConfigError
 
 import numpy as np
@@ -177,8 +178,8 @@ def rand_dates_between(
     end = pd.to_datetime(end).normalize()
     if end < start:
         start, end = end, start
-    start_i = int(start.value // 86_400_000_000_000)
-    end_i = int(end.value // 86_400_000_000_000)
+    start_i = int(start.value // _NS_PER_DAY)
+    end_i = int(end.value // _NS_PER_DAY)
     days = rng.integers(start_i, end_i + 1, size=int(n), dtype=np.int64)
     dt = pd.to_datetime(days.astype("datetime64[D]")).normalize()
     return pd.Series(dt, dtype="datetime64[ns]")
@@ -190,8 +191,8 @@ def rand_single_date(
     end: pd.Timestamp,
 ) -> pd.Timestamp:
     """Sample one date in ``[start, end]`` without creating a pandas Series."""
-    start_i = int(start.value // 86_400_000_000_000)
-    end_i = int(end.value // 86_400_000_000_000)
+    start_i = int(start.value // _NS_PER_DAY)
+    end_i = int(end.value // _NS_PER_DAY)
     day = int(rng.integers(start_i, end_i + 1))
     return pd.Timestamp(day, unit="D")
 

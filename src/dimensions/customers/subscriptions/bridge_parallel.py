@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -23,55 +23,68 @@ from .helpers import (
 )
 
 
+class _SubWorkerTask(NamedTuple):
+    chunk_idx: int
+    seed: int
+    n_chunks: int
+    eligible_ck: np.ndarray
+    eligible_lo: np.ndarray
+    eligible_hi: np.ndarray
+    eligible_span: np.ndarray
+    plan_keys: np.ndarray
+    plan_cycle_prices: np.ndarray
+    plan_cycle_months: np.ndarray
+    unique_types: np.ndarray
+    type_members: list
+    type_weights: np.ndarray
+    g_end_ns: int
+    max_subs: int
+    avg_subscriptions: float
+    churn_rate: float
+    trial_rate: float
+    trial_conversion_rate: float
+    trial_days: int
+    out_chunk_path: str
+
+
 # ---------------------------------------------------------------------------
 # Worker (must be top-level for Windows spawn pickling)
 # ---------------------------------------------------------------------------
 
-def _subscription_worker_task(args: Tuple) -> Dict[str, Any]:
+def _subscription_worker_task(args: _SubWorkerTask) -> Dict[str, Any]:
     """Generate billing-period rows for a customer chunk and write chunk parquet."""
-    (
-        chunk_idx, seed, n_chunks,
-        eligible_ck, eligible_lo, eligible_hi, eligible_span,
-        plan_keys, plan_cycle_prices, plan_cycle_months,
-        unique_types, type_members, type_weights,
-        g_end_ns, max_subs,
-        avg_subscriptions, churn_rate, trial_rate, trial_conversion_rate,
-        trial_days,
-        out_chunk_path,
-    ) = args
-
-    ss = np.random.SeedSequence(seed)
-    child_seeds = ss.spawn(n_chunks)
-    rng = np.random.default_rng(child_seeds[chunk_idx])
+    ss = np.random.SeedSequence(args.seed)
+    child_seeds = ss.spawn(args.n_chunks)
+    rng = np.random.default_rng(child_seeds[args.chunk_idx])
 
     table = generate_subscriptions_bulk(
-        eligible_ck=eligible_ck,
-        eligible_lo=eligible_lo,
-        eligible_hi=eligible_hi,
-        eligible_span=eligible_span,
-        plan_keys=plan_keys,
-        plan_cycle_prices=plan_cycle_prices,
-        plan_cycle_months=plan_cycle_months,
-        unique_types=unique_types,
-        type_members=type_members,
-        type_weights=type_weights,
-        g_end_ns=g_end_ns,
-        max_subs=max_subs,
-        avg_subscriptions=avg_subscriptions,
-        churn_rate=churn_rate,
-        trial_rate=trial_rate,
-        trial_conversion_rate=trial_conversion_rate,
-        trial_days=trial_days,
+        eligible_ck=args.eligible_ck,
+        eligible_lo=args.eligible_lo,
+        eligible_hi=args.eligible_hi,
+        eligible_span=args.eligible_span,
+        plan_keys=args.plan_keys,
+        plan_cycle_prices=args.plan_cycle_prices,
+        plan_cycle_months=args.plan_cycle_months,
+        unique_types=args.unique_types,
+        type_members=args.type_members,
+        type_weights=args.type_weights,
+        g_end_ns=args.g_end_ns,
+        max_subs=args.max_subs,
+        avg_subscriptions=args.avg_subscriptions,
+        churn_rate=args.churn_rate,
+        trial_rate=args.trial_rate,
+        trial_conversion_rate=args.trial_conversion_rate,
+        trial_days=args.trial_days,
         rng=rng,
     )
 
     n_rows = len(table)
     if n_rows > 0:
-        out_path = Path(out_chunk_path)
+        out_path = Path(args.out_chunk_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        pq.write_table(table, out_chunk_path, compression="snappy", row_group_size=500_000)
+        pq.write_table(table, args.out_chunk_path, compression="snappy", row_group_size=500_000)
 
-    return {"chunk_idx": chunk_idx, "rows": n_rows}
+    return {"chunk_idx": args.chunk_idx, "rows": n_rows}
 
 
 # ---------------------------------------------------------------------------
@@ -179,28 +192,28 @@ def write_bridge_parallel(
         if len(indices) == 0:
             continue
         chunk_path = str(scratch_dir / f"sub_chunk_{idx:05d}.parquet")
-        tasks.append((
-            idx,
-            c.seed,
-            n_chunks,
-            eligible_ck[indices],
-            eligible_lo[indices],
-            eligible_hi[indices],
-            eligible_span[indices],
-            plan_keys,
-            plan_cycle_prices,
-            plan_cycle_months,
-            unique_types,
-            type_members,
-            type_weights,
-            int(g_end_ns),
-            max_subs,
-            c.avg_subscriptions,
-            c.churn_rate,
-            c.trial_rate,
-            c.trial_conversion_rate,
-            c.trial_days,
-            chunk_path,
+        tasks.append(_SubWorkerTask(
+            chunk_idx=idx,
+            seed=c.seed,
+            n_chunks=n_chunks,
+            eligible_ck=eligible_ck[indices],
+            eligible_lo=eligible_lo[indices],
+            eligible_hi=eligible_hi[indices],
+            eligible_span=eligible_span[indices],
+            plan_keys=plan_keys,
+            plan_cycle_prices=plan_cycle_prices,
+            plan_cycle_months=plan_cycle_months,
+            unique_types=unique_types,
+            type_members=type_members,
+            type_weights=type_weights,
+            g_end_ns=int(g_end_ns),
+            max_subs=max_subs,
+            avg_subscriptions=c.avg_subscriptions,
+            churn_rate=c.churn_rate,
+            trial_rate=c.trial_rate,
+            trial_conversion_rate=c.trial_conversion_rate,
+            trial_days=c.trial_days,
+            out_chunk_path=chunk_path,
         ))
 
     actual_n_chunks = len(tasks)
