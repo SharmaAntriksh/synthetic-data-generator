@@ -76,13 +76,14 @@ def _build_region_store_map(
 def _build_store_sp_index(
     sp_mask: np.ndarray,
     skeys: np.ndarray,
-) -> Dict[int, List[int]]:
-    """Build store_key -> [row indices] for salesperson assignments."""
-    store_sp_idx: Dict[int, List[int]] = defaultdict(list)
+) -> Dict[int, np.ndarray]:
+    """Build store_key -> numpy array of row indices for salesperson assignments."""
+    store_sp_idx: Dict[int, list] = defaultdict(list)
     idxs = np.where(sp_mask)[0]
     for i in idxs:
         store_sp_idx[int(skeys[i])].append(i)
-    return store_sp_idx
+    # Convert lists to numpy arrays once (avoids per-call conversion in guard loop)
+    return {sk: np.array(v, dtype=np.intp) for sk, v in store_sp_idx.items()}
 
 
 def _build_open_store_candidates(
@@ -123,14 +124,13 @@ def _count_salespeople_fast(
     on_date_ns: np.datetime64,
     start_ns: np.ndarray,
     end_ns: np.ndarray,
-    store_sp_idx: Dict[int, List[int]],
+    store_sp_idx: Dict[int, np.ndarray],
 ) -> int:
     """Count salespeople actively assigned to *store_key* on *on_date_ns*."""
-    count = 0
-    for i in store_sp_idx.get(store_key, []):
-        if start_ns[i] <= on_date_ns <= end_ns[i]:
-            count += 1
-    return count
+    idx_arr = store_sp_idx.get(store_key)
+    if idx_arr is None or len(idx_arr) == 0:
+        return 0
+    return int(np.sum((start_ns[idx_arr] <= on_date_ns) & (end_ns[idx_arr] >= on_date_ns)))
 
 
 # ---------------------------------------------------------------------------
@@ -255,10 +255,8 @@ def apply_transfers(
             continue
         t_range_days = (t_latest - t_earliest).days
 
-        transfer_dates = [
-            t_earliest + pd.Timedelta(days=int(rng.integers(0, t_range_days + 1)))
-            for _ in chosen_idx
-        ]
+        day_offsets = rng.integers(0, t_range_days + 1, size=len(chosen_idx))
+        transfer_dates = [t_earliest + pd.Timedelta(days=int(d)) for d in day_offsets]
         chronological = sorted(zip(transfer_dates, chosen_idx))
 
         # Writable copies for columns mutated in the transfer loop
@@ -286,13 +284,24 @@ def apply_transfers(
 
         year_new_rows: list[dict] = []
 
-        for transfer_date, idx in chronological:
+        # Pre-generate transfer reasons for the year (avoids per-transfer rng.choice)
+        _reasons_batch = rng.choice(
+            EMPLOYEE_TRANSFER_REASON_LABELS,
+            size=len(chronological),
+            p=EMPLOYEE_TRANSFER_REASON_PROBS,
+        )
+        _reason_idx = 0
+
+        # Pre-convert transfer dates to ns for fast guard checks
+        _td_ns_list = [np.datetime64(td, "ns") for td, _ in chronological]
+
+        for ti, (transfer_date, idx) in enumerate(chronological):
             emp_key = int(col_emp_key[idx])
             source_sk = int(col_store_key[idx])
             source_region = store_region.get(source_sk)
 
             # Guard: source store must retain >= 1 salesperson
-            td_ns = np.datetime64(transfer_date, "ns")
+            td_ns = _td_ns_list[ti]
             source_count = _count_salespeople_fast(
                 source_sk, td_ns, start_ns, end_ns, store_sp_idx,
             )
@@ -320,10 +329,8 @@ def apply_transfers(
             col_is_primary[idx] = np.int32(0)
             col_status[idx] = "Transferred"
 
-            reason = rng.choice(
-                EMPLOYEE_TRANSFER_REASON_LABELS,
-                p=EMPLOYEE_TRANSFER_REASON_PROBS,
-            )
+            reason = _reasons_batch[_reason_idx]
+            _reason_idx += 1
 
             # Clamp EndDate to day before destination store closes or
             # starts renovation (last open day), matching the convention

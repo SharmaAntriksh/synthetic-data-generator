@@ -94,6 +94,12 @@ def check_stores(stores: pd.DataFrame) -> None:
     cat = "Stores"
     n = len(stores)
 
+    # --- Duplicate StoreKey ---
+    dup_sk = stores["StoreKey"].duplicated().sum()
+    _add(cat, "No duplicate StoreKeys",
+         dup_sk == 0,
+         f"{dup_sk} duplicate(s)")
+
     # --- Basic counts ---
     n_phys = int((stores["StoreKey"] < ONLINE_STORE_KEY_BASE).sum())
     n_online = n - n_phys
@@ -102,6 +108,14 @@ def check_stores(stores: pd.DataFrame) -> None:
          n > 0,
          f"{n} stores ({n_phys} physical, {n_online} online). "
          f"Status: {status_vc}")
+
+    # --- Online stores should have StoreType=Online ---
+    online_mask = stores["StoreKey"].astype(int) >= ONLINE_STORE_KEY_BASE
+    if online_mask.any():
+        bad_type = (online_mask & (stores["StoreType"].astype(str) != "Online")).sum()
+        _add(cat, "Online StoreKeys have StoreType=Online",
+             bad_type == 0,
+             f"{bad_type} violation(s)")
 
     # --- Renovation date sanity ---
     has_reno = stores["RenovationStartDate"].notna() & stores["RenovationEndDate"].notna()
@@ -151,6 +165,12 @@ def check_stores(stores: pd.DataFrame) -> None:
 def check_employees(employees: pd.DataFrame) -> None:
     cat = "Employees"
     n = len(employees)
+
+    # --- Duplicate EmployeeKey ---
+    dup_ek = employees["EmployeeKey"].duplicated().sum()
+    _add(cat, "No duplicate EmployeeKeys",
+         dup_ek == 0,
+         f"{dup_ek} duplicate(s)")
 
     hd = _to_dt(employees["HireDate"])
     td = _to_dt(employees["TerminationDate"])
@@ -210,6 +230,12 @@ def check_esa(
     sd = _to_dt(esa["StartDate"])
     ed = _to_dt(esa["EndDate"])
 
+    # --- Duplicate AssignmentKey ---
+    dup_ak = esa["AssignmentKey"].duplicated().sum()
+    _add(cat, "No duplicate AssignmentKeys",
+         dup_ak == 0,
+         f"{dup_ak} duplicate(s)")
+
     # --- StartDate > EndDate ---
     inv = (sd > ed).sum()
     _add(cat, "StartDate <= EndDate",
@@ -240,12 +266,20 @@ def check_esa(
         ].astype(int)
     )
 
+    # Pre-build employee → renovating store lookup (avoids per-call DataFrame scan)
+    _emp_to_reno_store: dict[int, int] = {}
+    if reno_store_keys:
+        esa_at_reno = esa[esa["StoreKey"].astype(int).isin(reno_store_keys)]
+        for ek_val, sk_val in zip(
+            esa_at_reno["EmployeeKey"].astype(int), esa_at_reno["StoreKey"].astype(int)
+        ):
+            _emp_to_reno_store.setdefault(ek_val, sk_val)
+
     def _find_source_reno_store(ek: int) -> int:
         """Find which renovating store an employee came from."""
-        emp_rows = esa[esa["EmployeeKey"] == ek]
-        at_reno = emp_rows[emp_rows["StoreKey"].astype(int).isin(reno_store_keys)]
-        if len(at_reno) > 0:
-            return int(at_reno.iloc[0]["StoreKey"])
+        cached = _emp_to_reno_store.get(ek)
+        if cached is not None:
+            return cached
         # Manager key encoding: 30_000_000 + StoreKey
         if STORE_MGR_KEY_BASE <= ek < STAFF_KEY_BASE:
             return ek - STORE_MGR_KEY_BASE
@@ -321,15 +355,17 @@ def check_esa(
              f"missing reassign={len(miss_reassign_closed)}, unexpected return={len(unexpected_return)}")
 
     # --- No overlapping same-store assignments ---
-    esa_sorted = esa.sort_values(["EmployeeKey", "StoreKey", "StartDate"])
-    grp = esa_sorted.groupby(["EmployeeKey", "StoreKey"])
-    overlap_count = 0
-    for _, g in grp:
-        if len(g) < 2:
-            continue
-        ends = _to_dt(g["EndDate"]).values[:-1]
-        starts = _to_dt(g["StartDate"]).values[1:]
-        overlap_count += int((starts <= ends).sum())
+    esa_sorted = esa.sort_values(["EmployeeKey", "StoreKey", "StartDate"]).reset_index(drop=True)
+    same_group = (
+        (esa_sorted["EmployeeKey"].values[1:] == esa_sorted["EmployeeKey"].values[:-1])
+        & (esa_sorted["StoreKey"].values[1:] == esa_sorted["StoreKey"].values[:-1])
+    )
+    if same_group.any():
+        ends = _to_dt(esa_sorted["EndDate"]).values[:-1]
+        starts = _to_dt(esa_sorted["StartDate"]).values[1:]
+        overlap_count = int((same_group & (starts <= ends)).sum())
+    else:
+        overlap_count = 0
 
     _add(cat, "No overlapping same-store assignments",
          overlap_count == 0,
@@ -350,6 +386,33 @@ def check_esa(
     _add(cat, "All ESA StoreKeys exist in Stores",
          len(orphan_sk) == 0,
          f"{len(orphan_sk)} orphan key(s)")
+
+    # --- Every store-level employee has at least 1 assignment ---
+    ek_all = employees["EmployeeKey"].astype(np.int64)
+    store_level_set = set(ek_all[ek_all >= STORE_MGR_KEY_BASE].astype(int))
+    in_esa = set(esa["EmployeeKey"].astype(int))
+    missing_from_esa = store_level_set - in_esa
+    _add(cat, "Every store-level employee has an assignment",
+         len(missing_from_esa) == 0,
+         f"{len(missing_from_esa)} employee(s) with no ESA row")
+
+    # --- AssignmentSequence contiguity (1,2,3... per employee) ---
+    seq_agg = esa.groupby("EmployeeKey")["AssignmentSequence"].agg(["min", "max", "count"])
+    seq_gaps = int(((seq_agg["max"] != seq_agg["count"]) | (seq_agg["min"] != 1)).sum())
+    _add(cat, "AssignmentSequence contiguous per employee",
+         seq_gaps == 0,
+         f"{seq_gaps} employee(s) with non-contiguous sequence")
+
+    # --- Terminated employees should not have Active assignments ---
+    terminated_eks = set(
+        employees.loc[employees["IsActive"].astype(int) == 0, "EmployeeKey"].astype(int)
+    )
+    if terminated_eks:
+        term_esa = esa[esa["EmployeeKey"].astype(int).isin(terminated_eks)]
+        zombie = (term_esa["Status"].astype(str) == "Active").sum()
+        _add(cat, "No Active assignments for terminated employees",
+             zombie == 0,
+             f"{zombie} assignment(s) with Status=Active for terminated employees")
 
     # --- Assignment dates within employment window ---
     merged = esa.merge(
@@ -394,24 +457,18 @@ def _check_salesperson_coverage(
     sp_end = _to_dt(sp["EndDate"]).values.astype("datetime64[ns]")
     sp_sk = sp["StoreKey"].astype(int).values
 
-    open_dates = {}
-    close_dates = {}
-    reno_start_dates = {}
-    reno_end_dates = {}
+    # Vectorize date coercion once, then build dicts
+    phys_c = phys[["StoreKey", "OpeningDate", "ClosingDate",
+                    "RenovationStartDate", "RenovationEndDate"]].copy()
+    phys_c["StoreKey"] = phys_c["StoreKey"].astype(int)
+    for col in ["OpeningDate", "ClosingDate", "RenovationStartDate", "RenovationEndDate"]:
+        phys_c[col] = _to_dt(phys_c[col])
 
-    for _, row in phys.iterrows():
-        sk = int(row["StoreKey"])
-        od = _to_dt(pd.Series([row["OpeningDate"]])).iloc[0]
-        if pd.notna(od):
-            open_dates[sk] = od
-        cd = _to_dt(pd.Series([row["ClosingDate"]])).iloc[0]
-        if pd.notna(cd):
-            close_dates[sk] = cd
-        rs = _to_dt(pd.Series([row["RenovationStartDate"]])).iloc[0] if pd.notna(row.get("RenovationStartDate")) else pd.NaT
-        re = _to_dt(pd.Series([row["RenovationEndDate"]])).iloc[0] if pd.notna(row.get("RenovationEndDate")) else pd.NaT
-        if pd.notna(rs) and pd.notna(re):
-            reno_start_dates[sk] = rs
-            reno_end_dates[sk] = re
+    open_dates = dict(phys_c.dropna(subset=["OpeningDate"])[["StoreKey", "OpeningDate"]].values)
+    close_dates = dict(phys_c.dropna(subset=["ClosingDate"])[["StoreKey", "ClosingDate"]].values)
+    reno_both = phys_c.dropna(subset=["RenovationStartDate", "RenovationEndDate"])
+    reno_start_dates = dict(reno_both[["StoreKey", "RenovationStartDate"]].values)
+    reno_end_dates = dict(reno_both[["StoreKey", "RenovationEndDate"]].values)
 
     # Determine date range from ESA
     all_starts = _to_dt(esa["StartDate"])
@@ -469,12 +526,52 @@ def check_sales(
          f"{sales['StoreKey'].nunique()} stores, "
          f"{sales['EmployeeKey'].nunique()} employees")
 
-    # --- No manager keys in sales (30M-40M range) ---
+    # --- No null/zero EmployeeKey ---
     ek = sales["EmployeeKey"].astype(np.int64)
+    null_or_zero = (ek <= 0).sum()
+    _add(cat, "No null/zero EmployeeKey in sales",
+         null_or_zero == 0,
+         f"{null_or_zero} sale(s) with EmployeeKey <= 0")
+
+    # --- Sales StoreKey FK → Stores ---
+    all_store_keys = set(stores["StoreKey"].astype(int))
+    sales_sk = sales["StoreKey"].astype(int)
+    orphan_store = (~sales_sk.isin(all_store_keys)).sum()
+    _add(cat, "Sales StoreKey exists in Stores",
+         orphan_store == 0,
+         f"{orphan_store} sale(s) referencing unknown StoreKey")
+
+    # --- Sales EmployeeKey FK → Employees ---
+    all_emp_keys = set(esa["EmployeeKey"].astype(int))  # use ESA keys (bridge scope)
+    orphan_emp = (~ek.isin(all_emp_keys)).sum()
+    _add(cat, "Sales EmployeeKey exists in ESA bridge",
+         orphan_emp == 0,
+         f"{orphan_emp} sale(s) referencing unknown EmployeeKey")
+
+    # --- No manager keys in sales (30M-40M range) ---
     mgr_in_sales = ((ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE)).sum()
     _add(cat, "No manager keys in sales",
          mgr_in_sales == 0,
          f"{mgr_in_sales} sale(s) with manager EmployeeKey")
+
+    # --- Online/physical channel alignment ---
+    sk_int = sales["StoreKey"].astype(np.int64)
+    online_store_sales = sk_int >= ONLINE_STORE_KEY_BASE
+    online_emp_sales = ek >= ONLINE_EMP_KEY_BASE
+    phys_emp_at_online = (online_store_sales & ~online_emp_sales & (ek > 0)).sum()
+    online_emp_at_phys = (~online_store_sales & online_emp_sales).sum()
+    _add(cat, "Online/physical channel alignment",
+         phys_emp_at_online == 0 and online_emp_at_phys == 0,
+         f"{phys_emp_at_online} physical emp at online store, "
+         f"{online_emp_at_phys} online emp at physical store")
+
+    # --- Quantity > 0 and UnitPrice > 0 ---
+    if "Quantity" in sales.columns and "UnitPrice" in sales.columns:
+        bad_qty = (sales["Quantity"].astype(float) <= 0).sum()
+        bad_price = (sales["UnitPrice"].astype(float) <= 0).sum()
+        _add(cat, "Quantity > 0 and UnitPrice > 0",
+             bad_qty == 0 and bad_price == 0,
+             f"{bad_qty} zero/negative qty, {bad_price} zero/negative price")
 
     # --- 100% sales-to-ESA bridge match ---
     _check_sales_esa_match(sales, esa, cat)
@@ -494,58 +591,79 @@ def _check_sales_esa_match(
     esa: pd.DataFrame,
     cat: str,
 ) -> None:
-    """Every sale must match an ESA row on EmployeeKey + StoreKey + OrderDate."""
-    # Build arrays for vectorized matching
+    """Every sale must match an ESA row on EmployeeKey + StoreKey + OrderDate.
+
+    Groups sales by (EmployeeKey, StoreKey), then checks each group's dates
+    against the ESA windows vectorially. Avoids the cross-product merge that
+    blows up memory on large datasets.
+    """
+    from collections import defaultdict
+
     s_ek = sales["EmployeeKey"].astype(np.int64).values
     s_sk = sales["StoreKey"].astype(np.int32).values
     s_od = _to_dt(sales["OrderDate"]).values.astype("datetime64[ns]")
 
+    # Build ESA index: (EmployeeKey, StoreKey) -> list of (start_ns, end_ns)
     e_ek = esa["EmployeeKey"].astype(np.int64).values
     e_sk = esa["StoreKey"].astype(np.int32).values
     e_sd = _to_dt(esa["StartDate"]).values.astype("datetime64[ns]")
     e_ed = _to_dt(esa["EndDate"]).values.astype("datetime64[ns]")
 
-    # Build an index: (EmployeeKey, StoreKey) -> list of (start, end)
-    from collections import defaultdict
     esa_idx: dict[tuple[int, int], list[tuple]] = defaultdict(list)
     for i in range(len(e_ek)):
         esa_idx[(int(e_ek[i]), int(e_sk[i]))].append((e_sd[i], e_ed[i]))
 
-    # Check in batches for memory efficiency
-    batch = 200_000
-    unmatched = 0
+    # Group sales indices by (EmployeeKey, StoreKey) using a vectorized sort
+    # instead of pandas groupby (much faster for large N).
+    combo = s_ek * np.int64(1_000_000) + s_sk.astype(np.int64)
+    order = np.argsort(combo, kind="mergesort")
+    combo_sorted = combo[order]
+
+    # Find group boundaries
+    breaks = np.flatnonzero(np.diff(combo_sorted)) + 1
+    group_starts = np.concatenate([[0], breaks])
+    group_ends = np.concatenate([breaks, [len(combo_sorted)]])
+
+    matched = np.ones(len(s_ek), dtype=bool)
     unmatched_samples: list[dict] = []
 
-    for start in range(0, len(s_ek), batch):
-        end = min(start + batch, len(s_ek))
-        for j in range(start, end):
-            key = (int(s_ek[j]), int(s_sk[j]))
-            windows = esa_idx.get(key)
-            if windows is None:
-                unmatched += 1
+    for gi in range(len(group_starts)):
+        gs, ge = group_starts[gi], group_ends[gi]
+        idx = order[gs:ge]
+        ek_val = int(s_ek[idx[0]])
+        sk_val = int(s_sk[idx[0]])
+
+        windows = esa_idx.get((ek_val, sk_val))
+        if windows is None:
+            matched[idx] = False
+            for j in idx[:3]:
                 if len(unmatched_samples) < 10:
                     unmatched_samples.append({
-                        "EmployeeKey": int(s_ek[j]),
-                        "StoreKey": int(s_sk[j]),
+                        "EmployeeKey": ek_val,
+                        "StoreKey": sk_val,
                         "OrderDate": str(s_od[j])[:10],
                     })
-                continue
-            od = s_od[j]
-            matched = False
-            for ws, we in windows:
-                if ws <= od <= we:
-                    matched = True
-                    break
-            if not matched:
-                unmatched += 1
+            continue
+
+        # Vectorized check: is each date within ANY ESA window?
+        dates = s_od[idx]
+        group_matched = np.zeros(len(dates), dtype=bool)
+        for ws, we in windows:
+            group_matched |= (dates >= ws) & (dates <= we)
+
+        if not group_matched.all():
+            bad = idx[~group_matched]
+            matched[bad] = False
+            for j in bad[:3]:
                 if len(unmatched_samples) < 10:
                     unmatched_samples.append({
-                        "EmployeeKey": int(s_ek[j]),
-                        "StoreKey": int(s_sk[j]),
+                        "EmployeeKey": ek_val,
+                        "StoreKey": sk_val,
                         "OrderDate": str(s_od[j])[:10],
                     })
 
     total = len(s_ek)
+    unmatched = int((~matched).sum())
     pct = 100.0 * (total - unmatched) / total if total > 0 else 100.0
     detail = ""
     if unmatched_samples:
@@ -572,26 +690,25 @@ def _check_no_sales_during_renovation(
         _add(cat, "No sales during renovation", True, "No renovating stores")
         return
 
-    total_violations = 0
-    detail_lines: list[str] = []
+    # Vectorized: merge sales with renovation windows, then filter
+    reno_df = reno[["StoreKey", "RenovationStartDate", "RenovationEndDate"]].copy()
+    reno_df["RenovationStartDate"] = _to_dt(reno_df["RenovationStartDate"])
+    reno_df["RenovationEndDate"] = _to_dt(reno_df["RenovationEndDate"])
 
-    for _, row in reno.iterrows():
-        sk = int(row["StoreKey"])
-        rs = _to_dt(pd.Series([row["RenovationStartDate"]])).iloc[0]
-        re = _to_dt(pd.Series([row["RenovationEndDate"]])).iloc[0]
+    merged = sales[["StoreKey", "OrderDate"]].merge(reno_df, on="StoreKey", how="inner")
+    if merged.empty:
+        _add(cat, "No sales during renovation", True,
+             f"0 violation(s) across {len(reno)} renovating store(s)")
+        return
 
-        store_sales = sales[sales["StoreKey"].astype(int) == sk]
-        od = _to_dt(store_sales["OrderDate"])
-        during = ((od >= rs) & (od < re)).sum()
-
-        if during > 0:
-            total_violations += during
-            detail_lines.append(f"  Store {sk}: {during} sale(s) in [{rs.date()}, {re.date()})")
+    od = _to_dt(merged["OrderDate"])
+    during = (od >= merged["RenovationStartDate"]) & (od < merged["RenovationEndDate"])
+    total_violations = int(during.sum())
 
     _add(cat, "No sales during renovation",
          total_violations == 0,
          f"{total_violations} violation(s) across {len(reno)} renovating store(s)",
-         "\n".join(detail_lines[:10]))
+         _store_violation_detail(merged, during))
 
 
 def _check_no_sales_after_closure(
@@ -604,25 +721,23 @@ def _check_no_sales_after_closure(
         _add(cat, "No sales after store closure", True, "No closed stores")
         return
 
-    total_violations = 0
-    detail_lines: list[str] = []
+    # Vectorized: merge sales with closing dates, then filter
+    close_df = closed[["StoreKey", "ClosingDate"]].copy()
+    close_df["ClosingDate"] = _to_dt(close_df["ClosingDate"])
 
-    for _, row in closed.iterrows():
-        sk = int(row["StoreKey"])
-        cd = _to_dt(pd.Series([row["ClosingDate"]])).iloc[0]
+    merged = sales[["StoreKey", "OrderDate"]].merge(close_df, on="StoreKey", how="inner")
+    if merged.empty:
+        _add(cat, "No sales after store closure", True, "0 violation(s)")
+        return
 
-        store_sales = sales[sales["StoreKey"].astype(int) == sk]
-        od = _to_dt(store_sales["OrderDate"])
-        after = (od >= cd).sum()
-
-        if after > 0:
-            total_violations += after
-            detail_lines.append(f"  Store {sk}: {after} sale(s) on/after {cd.date()}")
+    od = _to_dt(merged["OrderDate"])
+    after = od >= merged["ClosingDate"]
+    total_violations = int(after.sum())
 
     _add(cat, "No sales after store closure",
          total_violations == 0,
          f"{total_violations} violation(s)",
-         "\n".join(detail_lines[:10]))
+         _store_violation_detail(merged, after))
 
 
 def _check_post_transfer_leakage(
@@ -673,6 +788,16 @@ def _sample(df: pd.DataFrame, cols: list[str], n: int = 5) -> str:
     return show[available].to_string(index=False)
 
 
+def _store_violation_detail(merged: pd.DataFrame, mask: pd.Series, n: int = 10) -> str:
+    """Format per-store violation counts from a merged sales+stores DataFrame."""
+    if not mask.any():
+        return ""
+    by_store = merged.loc[mask].groupby("StoreKey").size()
+    return "\n".join(
+        f"  Store {sk}: {cnt} sale(s)" for sk, cnt in by_store.head(n).items()
+    )
+
+
 # ============================================================================
 # Main
 # ============================================================================
@@ -699,7 +824,14 @@ def main() -> int:
     stores = _load(folder, "dimensions", "stores")
     employees = _load(folder, "dimensions", "employees")
     esa = _load(folder, "dimensions", "employee_store_assignments")
+
+    # Sales: try sales.parquet first, then sales_order_header.parquet
+    # (sales_output can be "sales", "sales_order", or "both")
     sales = _load(folder, "facts", "sales")
+    sales_table = "sales"
+    if sales is None:
+        sales = _load(folder, "facts", "sales_order_header")
+        sales_table = "sales_order_header"
 
     if stores is None or employees is None or esa is None or sales is None:
         print("\nCannot proceed: required files missing.")
@@ -707,7 +839,7 @@ def main() -> int:
 
     print(f"  Loaded in {time.perf_counter() - t0:.1f}s "
           f"(stores={len(stores)}, employees={len(employees)}, "
-          f"ESA={len(esa)}, sales={len(sales):,})\n")
+          f"ESA={len(esa)}, {sales_table}={len(sales):,})\n")
 
     # --- Run checks ---
     print("=" * 60)
