@@ -249,6 +249,34 @@ class TestCategoryAwareSampling:
         assert len(reasons) > 1
 
 
+class TestEdgeCases:
+    def _make_single_unit_detail(self, n=50):
+        """All orders have Quantity=1 — cannot be split."""
+        import pyarrow as pa
+        return pa.table({
+            "SalesOrderNumber": np.arange(1, n + 1, dtype=np.int32),
+            "SalesOrderLineNumber": np.ones(n, dtype=np.int32),
+            "DeliveryDate": np.array(["2024-03-15"] * n, dtype="datetime64[D]"),
+            "Quantity": np.ones(n, dtype=np.int32),
+            "NetPrice": np.full(n, 25.0),
+            "IsOrderDelayed": np.zeros(n, dtype=np.int8),
+        })
+
+    def test_single_unit_return_quantity_is_one(self):
+        """When Quantity=1, ReturnQuantity cannot exceed 1."""
+        cfg = ReturnsConfig(
+            enabled=True, return_rate=1.0,
+            split_return_rate=0.5,
+            max_splits=3,
+        )
+        detail = self._make_single_unit_detail(200)
+        result = build_sales_returns_from_detail(detail, chunk_seed=42, cfg=cfg)
+        if result.num_rows > 0:
+            ret_qty = result.column("ReturnQuantity").to_numpy()
+            assert (ret_qty >= 1).all()
+            assert (ret_qty <= 1).all()
+
+
 class TestDefaultsConsistency:
     def test_dimension_matches_defaults(self):
         from src.defaults import RETURN_REASONS as canonical
