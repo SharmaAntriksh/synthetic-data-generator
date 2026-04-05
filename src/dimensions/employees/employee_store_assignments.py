@@ -34,6 +34,137 @@ from src.utils.config_precedence import resolve_seed
 
 
 # ---------------------------------------------------------------------------
+# Renovation reassignment
+# ---------------------------------------------------------------------------
+
+def _apply_renovation_reassignments(
+    assignments: pd.DataFrame,
+    stores: pd.DataFrame,
+    seed: int,
+) -> pd.DataFrame:
+    """Split assignments that span a store's renovation window.
+
+    Each affected assignment becomes up to three rows: pre-renovation at
+    the home store, temporary at a nearby open store, and post-renovation
+    return.  Assignments fully outside the window are left unchanged.
+    """
+    from src.dimensions.employees.transfers import _build_region_store_map
+
+    reno = stores[
+        stores["RenovationStartDate"].notna()
+        & stores["RenovationEndDate"].notna()
+    ]
+    if reno.empty:
+        return assignments
+
+    rng = np.random.default_rng(seed)
+
+    reno_start_map = dict(zip(
+        reno["StoreKey"].astype(int),
+        pd.to_datetime(reno["RenovationStartDate"]),
+    ))
+    reno_end_map = dict(zip(
+        reno["StoreKey"].astype(int),
+        pd.to_datetime(reno["RenovationEndDate"]),
+    ))
+    reno_keys = set(reno_start_map.keys())
+
+    # Stores that closed permanently for renovation have no return phase.
+    closed_reno_keys: set[int] = set()
+    if "ClosingDate" in stores.columns:
+        closed_stores = stores[stores["ClosingDate"].notna()]
+        closed_reno_keys = set(
+            closed_stores.loc[
+                closed_stores["StoreKey"].astype(int).isin(reno_keys),
+                "StoreKey",
+            ].astype(int)
+        )
+
+    physical = stores[stores["StoreKey"] <= ONLINE_STORE_KEY_BASE]
+    open_mask = physical["Status"].astype(str) == "Open"
+    candidates = physical.loc[open_mask & ~physical["StoreKey"].isin(reno_keys), "StoreKey"].astype(int).to_numpy()
+    if candidates.size == 0:
+        return assignments
+
+    # Build region→[store_keys] map for same-region preference
+    region_store_map = _build_region_store_map(stores)
+    region_map: dict[int, str] = {}
+    if "StoreRegion" in stores.columns:
+        for sk, reg in zip(stores["StoreKey"].astype(int), stores["StoreRegion"].astype(str)):
+            region_map[int(sk)] = reg
+    candidates_set = set(candidates.tolist())
+    region_candidates = {
+        r: np.array([sk for sk in sks if sk in candidates_set], dtype=np.int32)
+        for r, sks in region_store_map.items()
+    }
+
+    affected = assignments["StoreKey"].astype(int).isin(reno_keys)
+    if not affected.any():
+        return assignments
+
+    keep_rows = assignments[~affected]
+    new_rows: list[dict] = []
+    one_day = pd.Timedelta(days=1)
+
+    for _, row in assignments[affected].iterrows():
+        sk = int(row["StoreKey"])
+        rs = reno_start_map[sk]
+        re = reno_end_map[sk]
+        a_start = pd.Timestamp(row["StartDate"])
+        a_end = pd.Timestamp(row["EndDate"])
+
+        if a_end < rs or a_start >= re:
+            new_rows.append(row.to_dict())
+            continue
+
+        src_region = region_map.get(sk, "")
+        regional = region_candidates.get(src_region)
+        temp_pool = regional if (regional is not None and regional.size > 0) else candidates
+        temp_sk = int(rng.choice(temp_pool))
+
+        if a_start < rs:
+            new_rows.append({**row.to_dict(), "EndDate": rs - one_day, "Status": "Completed"})
+
+        store_closed_permanently = sk in closed_reno_keys
+        temp_start = max(a_start, rs)
+        # If the store closed permanently, the employee stays at the temp
+        # store for the rest of their assignment (no return phase).
+        temp_end = a_end if store_closed_permanently else min(a_end, re - one_day)
+        if temp_start <= temp_end:
+            new_rows.append({
+                **row.to_dict(),
+                "StoreKey": np.int32(temp_sk),
+                "StartDate": temp_start,
+                "EndDate": temp_end,
+                "IsPrimary": store_closed_permanently,
+                "TransferReason": "Renovation Reassignment",
+                "Status": row["Status"] if store_closed_permanently else (
+                    "Completed" if re <= a_end else row["Status"]
+                ),
+            })
+
+        if not store_closed_permanently and re <= a_end:
+            new_rows.append({
+                **row.to_dict(),
+                "StartDate": re,
+                "EndDate": a_end,
+                "TransferReason": "Renovation Return",
+                "Status": row["Status"],
+            })
+
+    result = pd.concat([keep_rows, pd.DataFrame(new_rows)], ignore_index=True)
+    result = result.sort_values(["EmployeeKey", "StartDate"]).reset_index(drop=True)
+    result["AssignmentKey"] = np.arange(1, len(result) + 1, dtype=np.int32)
+    result["AssignmentSequence"] = (result.groupby("EmployeeKey").cumcount() + 1).astype(np.int32)
+
+    info(
+        f"Renovation reassignments: {affected.sum()} assignment(s) at "
+        f"{len(reno_keys)} renovating store(s) split into {len(new_rows)} rows"
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -216,21 +347,33 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
             global_end=global_end,
         )
 
-        if transfers_enabled:
-            from src.dimensions.employees.transfers import apply_transfers
-
-            stores_path = parquet_folder / "stores.parquet"
-            if not stores_path.exists():
-                raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
-
+        # Load stores for renovation handling and transfers
+        stores_path = parquet_folder / "stores.parquet"
+        stores_df = None
+        if stores_path.exists():
             _stores_cols = [
                 "StoreKey", "StoreType", "Status", "StoreRegion",
                 "OpeningDate", "ClosingDate",
+                "RenovationStartDate", "RenovationEndDate",
             ]
             try:
                 stores_df = pd.read_parquet(stores_path, columns=_stores_cols)
             except (KeyError, ValueError):
                 stores_df = pd.read_parquet(stores_path)
+
+        # Handle renovation reassignments (split assignments at
+        # renovating stores into pre/during/post segments)
+        if stores_df is not None:
+            df = _apply_renovation_reassignments(
+                df, stores_df,
+                seed=resolve_seed(cfg, as_dict(emp_cfg), fallback=42) ^ 0x5E2B,
+            )
+
+        if transfers_enabled:
+            if stores_df is None:
+                raise FileNotFoundError(f"Missing stores parquet: {stores_path}")
+
+            from src.dimensions.employees.transfers import apply_transfers
 
             _MIN_STORES_FOR_TRANSFERS = 10
             n_physical = int((stores_df["StoreKey"] < ONLINE_STORE_KEY_BASE).sum())

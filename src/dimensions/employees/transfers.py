@@ -37,14 +37,26 @@ def _store_is_open(
     on_date: pd.Timestamp,
     open_dates: Dict[int, pd.Timestamp],
     close_dates: Dict[int, pd.Timestamp],
+    reno_start_dates: Optional[Dict[int, pd.Timestamp]] = None,
+    reno_end_dates: Optional[Dict[int, pd.Timestamp]] = None,
 ) -> bool:
-    """True if *store_key* is open on *on_date*."""
+    """True if *store_key* is open on *on_date*.
+
+    A store is closed if it hasn't opened yet, has permanently closed,
+    or is within its renovation window [reno_start, reno_end).
+    """
     opened = open_dates.get(store_key)
     if opened is not None and on_date < opened:
         return False
     closed = close_dates.get(store_key)
     if closed is not None and on_date >= closed:
         return False
+    # Renovation window: store is closed during [start, end)
+    if reno_start_dates and reno_end_dates:
+        rs = reno_start_dates.get(store_key)
+        re = reno_end_dates.get(store_key)
+        if rs is not None and re is not None and rs <= on_date < re:
+            return False
     return True
 
 
@@ -80,17 +92,20 @@ def _build_open_store_candidates(
     year_end: pd.Timestamp,
     open_dates: Dict[int, pd.Timestamp],
     close_dates: Dict[int, pd.Timestamp],
+    reno_start_dates: Optional[Dict[int, pd.Timestamp]] = None,
+    reno_end_dates: Optional[Dict[int, pd.Timestamp]] = None,
 ) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
     """Pre-compute open store arrays for the year.
 
     Returns (region_open, all_open).  A store is included only if open on
-    both year_start and year_end — stores that close mid-year are excluded
-    entirely (they will never appear as transfer destinations).
+    both year_start and year_end — stores that close or are renovating
+    mid-year are excluded entirely (they will never appear as transfer
+    destinations).
     """
     all_open = np.array([
         sk for sk in all_physical_keys
-        if _store_is_open(sk, year_start, open_dates, close_dates)
-        and _store_is_open(sk, year_end, open_dates, close_dates)
+        if _store_is_open(sk, year_start, open_dates, close_dates, reno_start_dates, reno_end_dates)
+        and _store_is_open(sk, year_end, open_dates, close_dates, reno_start_dates, reno_end_dates)
     ], dtype=np.int32)
     all_open_set = set(all_open)
 
@@ -172,6 +187,16 @@ def apply_transfers(
             if pd.notna(dt):
                 close_dates[int(sk)] = dt
 
+    reno_start_dates: Dict[int, pd.Timestamp] = {}
+    reno_end_dates: Dict[int, pd.Timestamp] = {}
+    if "RenovationStartDate" in stores.columns:
+        rs = pd.to_datetime(stores["RenovationStartDate"], errors="coerce")
+        re = pd.to_datetime(stores["RenovationEndDate"], errors="coerce")
+        reno_mask = rs.notna() & re.notna()
+        for sk, rsd, red in zip(sk_arr[reno_mask], rs[reno_mask], re[reno_mask]):
+            reno_start_dates[int(sk)] = rsd
+            reno_end_dates[int(sk)] = red
+
     if "StoreRegion" in stores.columns:
         sr = stores["StoreRegion"].astype(str).to_numpy()
         for sk, region in zip(sk_arr, sr):
@@ -247,12 +272,16 @@ def apply_transfers(
         start_ns = df["StartDate"].values.astype("datetime64[ns]")
         end_ns = df["EndDate"].values.astype("datetime64[ns]").copy()
 
-        sp_mask = np.isin(col_role, list(sp_roles_set))
+        # Guard counts only permanent (IsPrimary=True) salesperson assignments.
+        # Renovation temps (IsPrimary=False) must not inflate the guard count —
+        # they leave when renovation ends, which would strand the destination store.
+        sp_mask = np.isin(col_role, list(sp_roles_set)) & (col_is_primary == 1)
         store_sp_idx = _build_store_sp_index(sp_mask, col_store_key)
 
         region_open, all_open = _build_open_store_candidates(
             region_stores, all_physical_keys, year_start, year_end,
             open_dates, close_dates,
+            reno_start_dates, reno_end_dates,
         )
 
         year_new_rows: list[dict] = []
@@ -296,8 +325,9 @@ def apply_transfers(
                 p=EMPLOYEE_TRANSFER_REASON_PROBS,
             )
 
-            # Clamp EndDate to day before destination store closes (last open day),
-            # matching the convention used by generate_employee_store_assignments
+            # Clamp EndDate to day before destination store closes or
+            # starts renovation (last open day), matching the convention
+            # used by generate_employee_store_assignments.
             new_end = pd.Timestamp(original_end_ns)
             new_status = "Active"
             dest_close = close_dates.get(dest_sk)
@@ -306,6 +336,20 @@ def apply_transfers(
                 if last_open_day < new_end:
                     new_end = last_open_day
                     new_status = "Completed"
+            dest_reno_start = reno_start_dates.get(dest_sk)
+            dest_reno_end = reno_end_dates.get(dest_sk)
+            if dest_reno_start is not None and dest_reno_end is not None:
+                # Only clamp if the renovation hasn't ended before this transfer.
+                # If it has already ended, the store is fully open — no clamp needed.
+                if transfer_date < dest_reno_end:
+                    last_pre_reno = dest_reno_start - pd.Timedelta(days=1)
+                    if last_pre_reno < transfer_date:
+                        # Transfer date falls inside the renovation window; skip.
+                        skipped_no_dest += 1
+                        continue
+                    if last_pre_reno < new_end:
+                        new_end = last_pre_reno
+                        new_status = "Completed"
 
             year_new_rows.append({
                 "EmployeeKey": np.int32(emp_key),
@@ -355,6 +399,7 @@ def apply_transfers(
     violations = _check_coverage_invariant(
         df, stores, salesperson_roles, global_start, global_end,
         open_dates, close_dates,
+        reno_start_dates, reno_end_dates,
     )
     if violations:
         warn(
@@ -404,6 +449,8 @@ def _check_coverage_invariant(
     global_end: pd.Timestamp,
     open_dates: Dict[int, pd.Timestamp],
     close_dates: Dict[int, pd.Timestamp],
+    reno_start_dates: Optional[Dict[int, pd.Timestamp]] = None,
+    reno_end_dates: Optional[Dict[int, pd.Timestamp]] = None,
 ) -> List[Tuple[int, str]]:
     """Check that every open physical store has >= 1 salesperson each month.
 
@@ -429,7 +476,7 @@ def _check_coverage_invariant(
         covered_stores = set(sp_sk[active_mask])
 
         for sk in physical_sks:
-            if not _store_is_open(sk, check_date, open_dates, close_dates):
+            if not _store_is_open(sk, check_date, open_dates, close_dates, reno_start_dates, reno_end_dates):
                 continue
             if sk not in covered_stores:
                 violations.append((sk, check_date.strftime("%Y-%m")))

@@ -18,6 +18,7 @@ from ..sales_logic.chunk_builder import reset_worker_cdf_cache
 from .schemas import build_worker_schemas
 from src.exceptions import SalesError
 from src.utils.config_helpers import int_or, float_or, str_or
+from src.utils.logging_utils import warn as _warn
 from src.utils.shared_arrays import resolve_array
 from ..worker_cfg_schema import SalesWorkerCfg
 
@@ -803,8 +804,7 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
                 store_eligible_by_month[idx] = store_keys  # fallback: all stores
                 _n_fallback += 1
         if _n_fallback > 0:
-            from src.utils.logging_utils import warn as _warn_eligibility
-            _warn_eligibility(
+            _warn(
                 f"{_n_fallback} month(s) had zero eligible stores based on "
                 "opening/closing dates; falling back to all stores for those months."
             )
@@ -949,6 +949,37 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             primary_boost=employee_primary_boost,
             seed=employee_seed,
         )
+
+    # Refine store eligibility from the bridge table: a store is excluded
+    # from a month if it has no salesperson coverage on the first or last
+    # day of that month (catches partial-month closures like renovation).
+    if store_eligible_by_month is not None and salesperson_effective_by_store:
+        for midx, month_M in enumerate(_unique_months):
+            first_day = month_M.astype("datetime64[D]")
+            last_day = (month_M + np.timedelta64(1, "M")).astype("datetime64[D]") - np.timedelta64(1, "D")
+            eligible_arr = store_eligible_by_month[midx]
+            staffed_mask = np.ones(eligible_arr.shape[0], dtype=bool)
+            for sidx, sk in enumerate(eligible_arr):
+                sp_data = salesperson_effective_by_store.get(int(sk))
+                if sp_data is None:
+                    staffed_mask[sidx] = False
+                    continue
+                _, starts, ends, _ = sp_data
+                if not (np.any((starts <= first_day) & (ends >= first_day))
+                        and np.any((starts <= last_day) & (ends >= last_day))):
+                    staffed_mask[sidx] = False
+            if not staffed_mask.all():
+                store_eligible_by_month[midx] = eligible_arr[staffed_mask]
+
+        _n_fallback_staffed = sum(1 for arr in store_eligible_by_month if arr.size == 0)
+        for midx, arr in enumerate(store_eligible_by_month):
+            if arr.size == 0:
+                store_eligible_by_month[midx] = store_keys
+        if _n_fallback_staffed > 0:
+            _warn(
+                f"{_n_fallback_staffed} month(s) had zero staffed stores; "
+                "falling back to all stores for those months."
+            )
 
     promo_keys_all = as_int32(promo_keys_all)
     promo_start_all = np.asarray(promo_start_all, dtype="datetime64[D]")
