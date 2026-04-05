@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
-    "deltalake>=0.14.0,<1",
+    "deltalake>=0.14.0,<2",
     "fastapi>=0.135.1,<1",
     "numpy>=2.3.5,<3",
-    "pandas>=2.3.3,<3",
-    "pyarrow>=22.0.0,<23",
+    "pandas>=2.3.3,<4",
+    "pyarrow>=22.0.0,<24",
     "pydantic>=2.12.5,<3",
     "PyYAML>=6.0.3,<7",
     "uvicorn>=0.41.0,<1",
