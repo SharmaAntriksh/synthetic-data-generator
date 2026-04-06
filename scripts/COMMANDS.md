@@ -155,6 +155,8 @@ python scripts/optimize_parquet.py "generated_datasets\...\PARQUET" -c none
 
 ## Optimize Delta Lake
 
+Compacts small Delta files into fewer, larger ones. Safe to run multiple times.
+
 ```bash
 # Default (256 MB target, compact + vacuum)
 python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET"
@@ -162,11 +164,17 @@ python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET"
 # Larger target file size
 python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET" --target-size 512
 
+# Recompress with ZSTD during compaction
+python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET" --compression zstd
+
 # Limit concurrency
 python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET" --max-tasks 4
 
-# Skip small tables
+# Skip small tables (default: skip tables with 5 or fewer files)
 python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET" --min-files 10
+
+# Compact tables that have as few as 2 files
+python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET" --min-files 1
 ```
 
 ### All optimize_delta.py flags
@@ -177,6 +185,49 @@ python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET" --min-fil
 | `--target-size` | int | 256 | Target file size in MB |
 | `--max-tasks` | int | CPU count | Max concurrent compaction tasks |
 | `--min-files` | int | 5 | Skip tables with fewer files than this |
+| `--compression` | str | keep existing | Recompress during compaction (case-insensitive: snappy, zstd, gzip, brotli, lz4, lz4_raw, uncompressed) |
+
+---
+
+## Repartition Delta Lake
+
+Changes the partition layout of existing Delta tables. Streams per-partition to keep memory low. Only processes partitioned fact tables (dimensions are skipped automatically).
+
+```bash
+# Demote Year+Month -> Year (fewer, larger files)
+python scripts/repartition_delta.py "generated_datasets\...\DELTAPARQUET" --partition-by year
+
+# Promote Year -> Year+Month (finer partition pruning)
+python scripts/repartition_delta.py "generated_datasets\...\DELTAPARQUET" --partition-by year-month
+
+# Remove partitions entirely (single consolidated Delta table per fact)
+python scripts/repartition_delta.py "generated_datasets\...\DELTAPARQUET" --partition-by none
+
+# Recompress while repartitioning
+python scripts/repartition_delta.py "generated_datasets\...\DELTAPARQUET" --partition-by year --compression zstd
+```
+
+### Typical workflows
+
+```bash
+# Generated with Year+Month but want fewer files for small datasets
+python scripts/repartition_delta.py "generated_datasets\...\DELTAPARQUET" --partition-by year
+
+# Generated with Year only but want finer pruning for large datasets
+python scripts/repartition_delta.py "generated_datasets\...\DELTAPARQUET" --partition-by year-month
+
+# Remove partitions and compact into minimal files
+python scripts/repartition_delta.py "generated_datasets\...\DELTAPARQUET" --partition-by none
+python scripts/optimize_delta.py "generated_datasets\...\DELTAPARQUET" --min-files 1
+```
+
+### All repartition_delta.py flags
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `folder` | path | (required) | Dataset folder to scan for Delta tables |
+| `--partition-by` | str | (required) | Target layout: `none`, `year`, or `year-month` |
+| `--compression` | str | keep existing | Recompress during repartition (case-insensitive: snappy, zstd, gzip, brotli, lz4, lz4_raw, uncompressed) |
 
 ---
 
