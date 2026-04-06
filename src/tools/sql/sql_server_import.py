@@ -683,7 +683,8 @@ def _run_verify(cursor) -> None:
             info += 1
         else:
             failed += 1
-            _log("FAIL", f"    [{suite}] {check}  ({actual})")
+            detail = f"  → {_desc}" if _desc and _desc != check else ""
+            _log("FAIL", f"    [{suite}] {check}  ({actual}){detail}")
 
     # Second result set: summary (TotalChecks, Passed, Failed, Info, Verdict)
     if cursor.nextset():

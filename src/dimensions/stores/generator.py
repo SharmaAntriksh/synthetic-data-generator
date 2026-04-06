@@ -734,7 +734,7 @@ def generate_store_table(
     st_arr = df["StoreType"].astype(str).to_numpy()
     phys_idx = np.where(st_arr != "Online")[0]
     if closing_enabled and dataset_start and dataset_end:
-        # Physical store closures
+        # Physical store closures only — online stores are always Open
         n_phys_eligible = len(phys_idx)
         n_phys_close = (
             max(1, int(round(n_phys_eligible * float(close_share))))
@@ -743,24 +743,12 @@ def generate_store_table(
         )
         phys_close_idx = rng.choice(phys_idx, size=min(n_phys_close, n_phys_eligible), replace=False) if n_phys_close > 0 else np.array([], dtype=np.intp)
 
-        # Online store closures
-        online_idx = np.where(st_arr == "Online")[0]
-        n_online_eligible = len(online_idx)
-        n_online_close = (
-            max(1, int(round(n_online_eligible * float(online_close_share))))
-            if n_online_eligible > 0 and online_close_share > 0.0
-            else 0
-        )
-        online_close_idx = rng.choice(online_idx, size=min(n_online_close, n_online_eligible), replace=False) if n_online_close > 0 else np.array([], dtype=np.intp)
-
-        close_idx = np.concatenate([phys_close_idx, online_close_idx]).astype(np.intp)
-
         # Of the remaining physical stores, ~5% are Renovating
         remaining_idx = np.setdiff1d(phys_idx, phys_close_idx)
         n_reno = max(0, int(round(len(remaining_idx) * 0.05)))
         reno_idx = rng.choice(remaining_idx, size=min(n_reno, len(remaining_idx)), replace=False) if n_reno > 0 else np.array([], dtype=np.intp)
         status_arr = np.full(num_stores, "Open", dtype=object)
-        status_arr[close_idx] = "Closed"
+        status_arr[phys_close_idx] = "Closed"
         if reno_idx.size > 0:
             status_arr[reno_idx] = "Renovating"
         df["Status"] = status_arr
@@ -773,8 +761,11 @@ def generate_store_table(
             status_arr[reno_idx] = "Renovating"
         df["Status"] = status_arr
     else:
-        # closing_enabled but no dataset window — probabilistic fallback
-        df["Status"] = rng.choice(_STORE_STATUS, size=num_stores, p=_STORE_STATUS_P)
+        # closing_enabled but no dataset window — probabilistic fallback (physical only)
+        status_arr = np.full(num_stores, "Open", dtype=object)
+        if phys_idx.size > 0:
+            status_arr[phys_idx] = rng.choice(_STORE_STATUS, size=phys_idx.size, p=_STORE_STATUS_P)
+        df["Status"] = status_arr
 
     df["GeographyKey"] = _sample_geography_keys(
         rng=rng,
@@ -977,6 +968,46 @@ def generate_store_table(
                 close_d.astype("datetime64[ns]")
             ).normalize()
 
+    # --- Renovation dates for Renovating stores ---
+    df["RenovationStartDate"] = pd.NaT
+    df["RenovationEndDate"] = pd.NaT
+    reno_mask_dt = df["Status"].astype(str).to_numpy() == "Renovating"
+    if reno_mask_dt.any() and dataset_start and dataset_end:
+        ds_start_ts = pd.Timestamp(dataset_start)
+        ds_end_ts = pd.Timestamp(dataset_end)
+        n_reno = int(reno_mask_dt.sum())
+        # Renovation starts at least 60 days into the window and at least
+        # 120 days before the end (room for 3-month min renovation)
+        reno_earliest = ds_start_ts + pd.Timedelta(days=60)
+        reno_latest_start = ds_end_ts - pd.Timedelta(days=120)
+        if reno_latest_start > reno_earliest:
+            reno_start_d = _rand_dates_d(
+                rng,
+                _as_date64d(reno_earliest.date()),
+                _as_date64d(reno_latest_start.date()),
+                n_reno,
+            )
+            reno_start_ts = pd.to_datetime(
+                reno_start_d.astype("datetime64[ns]")
+            ).normalize()
+            # Duration: 3-9 months (90-270 days)
+            reno_dur_days = rng.integers(90, 271, size=n_reno)
+            reno_end_ts = reno_start_ts + pd.to_timedelta(reno_dur_days, unit="D")
+            # Clamp end to dataset_end
+            reno_end_ts = reno_end_ts.where(
+                reno_end_ts <= ds_end_ts, ds_end_ts,
+            )
+            df.loc[reno_mask_dt, "RenovationStartDate"] = reno_start_ts.values
+            df.loc[reno_mask_dt, "RenovationEndDate"] = reno_end_ts.values
+
+            # Stores whose renovation ended before dataset_end reopen
+            reopened = reno_end_ts < ds_end_ts
+            reopened_idx = np.where(reno_mask_dt)[0][np.asarray(reopened)]
+            if len(reopened_idx) > 0:
+                status_arr2 = df["Status"].to_numpy().copy()
+                status_arr2[reopened_idx] = "Open"
+                df["Status"] = status_arr2
+
     df["OpenFlag"] = (df["Status"] == "Open").astype(bool)
 
     df["SquareFootage"] = _square_footage_from_cfg(
@@ -1021,6 +1052,17 @@ def generate_store_table(
         df.loc[closed_mask, "CloseReason"] = rng.choice(
             _CLOSE_REASONS, size=int(closed_mask.sum()),
         )
+
+        # Stores closed for renovation: backfill RenovationStartDate/EndDate.
+        # Renovation began 30-90 days before ClosingDate; the store never
+        # reopened so RenovationEndDate = ClosingDate.
+        reno_closed = closed_mask & (df["CloseReason"] == "Renovation")
+        n_reno_closed = int(reno_closed.sum())
+        if n_reno_closed > 0:
+            close_ts = pd.to_datetime(df.loc[reno_closed, "ClosingDate"])
+            lead_days = pd.to_timedelta(rng.integers(30, 91, size=n_reno_closed), unit="D")
+            df.loc[reno_closed, "RenovationStartDate"] = (close_ts - lead_days).dt.normalize().values
+            df.loc[reno_closed, "RenovationEndDate"] = close_ts.dt.normalize().values
 
     # StoreDescription
     opened = df["OpeningDate"].dt.strftime("%Y-%m-%d")
@@ -1068,9 +1110,31 @@ def generate_store_table(
             + ")."
         )
 
-    reno_mask = status == "Renovating"
+    reno_mask = df["Status"].astype(str) == "Renovating"
     if reno_mask.any():
-        base.loc[reno_mask] = base.loc[reno_mask] + " Currently renovating; limited operations."
+        reno_start_str = pd.to_datetime(df.loc[reno_mask, "RenovationStartDate"]).dt.strftime("%Y-%m-%d").fillna("")
+        reno_end_str = pd.to_datetime(df.loc[reno_mask, "RenovationEndDate"]).dt.strftime("%Y-%m-%d").fillna("")
+        base.loc[reno_mask] = (
+            base.loc[reno_mask]
+            + " Currently renovating ("
+            + reno_start_str + " to " + reno_end_str
+            + "); limited operations."
+        )
+
+    # Stores that completed renovation get an updated description
+    completed_reno = (
+        df["RenovationStartDate"].notna()
+        & df["RenovationEndDate"].notna()
+        & (df["Status"] == "Open")
+    )
+    if completed_reno.any():
+        reno_start_str = pd.to_datetime(df.loc[completed_reno, "RenovationStartDate"]).dt.strftime("%Y-%m-%d")
+        reno_end_str = pd.to_datetime(df.loc[completed_reno, "RenovationEndDate"]).dt.strftime("%Y-%m-%d")
+        base.loc[completed_reno] = (
+            base.loc[completed_reno]
+            + " Renovated " + reno_start_str + " to " + reno_end_str
+            + "; reopened."
+        )
 
     df["StoreDescription"] = base
 
@@ -1094,7 +1158,9 @@ def generate_store_table(
         "StoreKey", "StoreNumber", "StoreName", "StoreType", "StoreFormat",
         "OwnershipType", "RevenueClass", "Status", "GeographyKey",
         "StoreZone", "StoreDistrict", "StoreRegion",
-        "OpeningDate", "ClosingDate", "OpenFlag", "SquareFootage",
+        "OpeningDate", "ClosingDate",
+        "RenovationStartDate", "RenovationEndDate",
+        "OpenFlag", "SquareFootage",
         "EmployeeCount", "StoreManager", "Phone", "StoreEmail",
         "StoreDescription", "CloseReason",
         "AvgTransactionValue", "CustomerSatisfactionScore",
@@ -1241,7 +1307,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
         write_parquet_with_date32(
             df,
             out_path,
-            date_cols=["OpeningDate", "ClosingDate"],
+            date_cols=["OpeningDate", "ClosingDate", "RenovationStartDate", "RenovationEndDate"],
             cast_all_datetime=False,
             compression=str(compression),
             compression_level=(int(compression_level) if compression_level is not None else None),

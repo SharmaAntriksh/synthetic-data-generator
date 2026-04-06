@@ -52,7 +52,7 @@ BEGIN
         [Check]     VARCHAR(200) NOT NULL,
         Description VARCHAR(500) NOT NULL,
         Result      VARCHAR(10)  NOT NULL,
-        ActualValue VARCHAR(100) NOT NULL
+        ActualValue VARCHAR(500) NOT NULL
     );
 
     CREATE TABLE #Final (
@@ -61,7 +61,7 @@ BEGIN
         [Check]     VARCHAR(200) NOT NULL,
         Description VARCHAR(500) NOT NULL,
         Result      VARCHAR(10)  NOT NULL,
-        ActualValue VARCHAR(100) NOT NULL
+        ActualValue VARCHAR(500) NOT NULL
     );
 
     DECLARE @proc_name SYSNAME;
