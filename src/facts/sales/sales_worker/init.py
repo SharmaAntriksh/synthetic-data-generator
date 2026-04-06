@@ -1071,6 +1071,7 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
         parquet_dict_exclude=set(parquet_dict_exclude) if parquet_dict_exclude else None,
         models_cfg=models_cfg if isinstance(models_cfg, Mapping) else None,
         total_rows=int(worker_cfg.get("total_rows", 0)),
+        partition_cols=partition_cols if partition_cols else None,
     )
 
     # ---- Budget lookups (already built in main process, passed as flat keys) ----

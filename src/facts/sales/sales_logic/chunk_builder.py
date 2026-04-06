@@ -58,6 +58,18 @@ def _as_datetime64_D(x):
     # Fallback
     return np.asarray(x, dtype="datetime64[D]")
 
+# Cached partition cols (immutable after State.seal(); avoids per-chunk getattr).
+_cached_delta_pcols: set[str] | None = None
+
+
+def _delta_partition_cols() -> set[str]:
+    global _cached_delta_pcols
+    if _cached_delta_pcols is None:
+        raw = getattr(State, "partition_cols", None)
+        _cached_delta_pcols = set(raw) if isinstance(raw, (list, tuple)) and raw else {"Year", "Month"}
+    return _cached_delta_pcols
+
+
 # Module-level cache for brand flat index + offsets (rebuilt once per worker).
 _brand_flat_cache_ref: list | None = None
 _brand_flat_cache_data: tuple | None = None  # (flat_idx, offsets)
@@ -1736,9 +1748,13 @@ def build_chunk_table(
         cols["IsOrderDelayed"] = dates["is_order_delayed"]
 
         if file_format == "deltaparquet":
-            m_int = order_dates.astype("datetime64[M]").astype("int64")
-            cols["Year"] = (m_int // 12 + 1970).astype("int16")
-            cols["Month"] = (m_int % 12 + 1).astype("int16")   # was int8
+            _pcols = _delta_partition_cols()
+            if _pcols & {"Year", "Month"}:
+                m_int = order_dates.astype("datetime64[M]").astype("int64")
+                if "Year" in _pcols:
+                    cols["Year"] = (m_int // 12 + 1970).astype("int16")
+                if "Month" in _pcols:
+                    cols["Month"] = (m_int % 12 + 1).astype("int16")
 
         # Extra columns (single extension point)
         extra = build_extra_columns(

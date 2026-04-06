@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import List, Optional, Set
+from typing import List, Optional, Sequence, Set
 
 import pyarrow as pa
 
@@ -53,6 +53,7 @@ class WorkerSchemaBundle:
 
 
 _INT32_MAX = 2_147_483_647
+_ALL_DELTA_FIELDS = {"Year": pa.field("Year", pa.int16()), "Month": pa.field("Month", pa.int16())}
 
 
 def build_worker_schemas(
@@ -64,6 +65,7 @@ def build_worker_schemas(
     parquet_dict_exclude: Optional[Set[str]] = None,
     models_cfg: Optional[dict] = None,
     total_rows: int = 0,
+    partition_cols: Optional[Sequence[str]] = None,
 ) -> WorkerSchemaBundle:
     """
     Single source of truth for Sales / Order / Returns schemas & date-col policy.
@@ -130,7 +132,10 @@ def build_worker_schemas(
         pa.field("SalesOrderNumber", order_num_type),
         pa.field("SalesOrderLineNumber", pa.int32()),
     ]
-    delta_fields = [pa.field("Year", pa.int16()), pa.field("Month", pa.int16())]
+    if partition_cols:
+        delta_fields = [_ALL_DELTA_FIELDS[c] for c in partition_cols if c in _ALL_DELTA_FIELDS]
+    else:
+        delta_fields = list(_ALL_DELTA_FIELDS.values())
 
     # GEN variants
     schema_no_order_gen = pa.schema(base_fields_gen)

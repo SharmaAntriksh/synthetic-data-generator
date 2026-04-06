@@ -211,9 +211,10 @@ def _dict_cols(table_name: Optional[str]) -> list[str]:
     return list(getattr(State, "parquet_dict_cols", []))
 
 
-def _schema_needs_year_month(expected: pa.Schema) -> bool:
+def _schema_partition_cols(expected: pa.Schema) -> tuple[str, ...]:
+    """Return which partition columns (Year and/or Month) the schema expects."""
     names = set(expected.names)
-    return ("Year" in names) and ("Month" in names)
+    return tuple(c for c in ("Year", "Month") if c in names)
 
 
 def _derive_year_month_from_int_order_date(order_date: pa.ChunkedArray) -> Tuple[np.ndarray, np.ndarray]:
@@ -250,17 +251,19 @@ def _derive_year_month_from_int_order_date(order_date: pa.ChunkedArray) -> Tuple
     raise RuntimeError(f"OrderDate integer format not recognized; min={mn} max={mx}")
 
 
-def _ensure_year_month_if_needed_for_table(
+def _ensure_partition_cols_for_table(
     table: pa.Table,
     *,
     table_name: str,
     expected_schema: pa.Schema,
 ) -> pa.Table:
-    if ("Year" not in expected_schema.names) or ("Month" not in expected_schema.names):
+    needed = _schema_partition_cols(expected_schema)
+    if not needed:
         return table
 
-    col_names = table.column_names
-    if ("Year" in col_names) and ("Month" in col_names):
+    col_names = set(table.column_names)
+    missing = [c for c in needed if c not in col_names]
+    if not missing:
         return table
 
     policy = getattr(State, "date_cols_by_table", {}) or {}
@@ -275,15 +278,23 @@ def _ensure_year_month_if_needed_for_table(
             usable.append(c)
 
     if usable:
-        return add_year_month_from_date(table, date_cols=tuple(usable))
+        date_col_name = usable[0]
+        date_arr = table[date_col_name]
+        if "Year" in missing:
+            table = table.append_column("Year", pc.cast(pc.year(date_arr), pa.int16()))
+        if "Month" in missing:
+            table = table.append_column("Month", pc.cast(pc.month(date_arr), pa.int16()))
+        return table
 
     if "OrderDate" in col_names and pa.types.is_integer(table.schema.field("OrderDate").type):
         year, month = _derive_year_month_from_int_order_date(table["OrderDate"])
-        table = table.append_column("Year", pa.array(year, type=pa.int16()))
-        table = table.append_column("Month", pa.array(month, type=pa.int16()))
+        if "Year" in missing:
+            table = table.append_column("Year", pa.array(year, type=pa.int16()))
+        if "Month" in missing:
+            table = table.append_column("Month", pa.array(month, type=pa.int16()))
         return table
 
-    raise RuntimeError(f"Cannot derive Year/Month for table={table_name}: {candidates}")
+    raise RuntimeError(f"Cannot derive partition cols {missing} for table={table_name}: {candidates}")
 
 
 def _csv_postprocess_sales(table: pa.Table) -> pa.Table:
@@ -301,13 +312,14 @@ def _build_ensure_fn(
     table_name: str,
     expected_schema: pa.Schema,
 ) -> Tuple[Optional[Sequence[str]], Optional[EnsureColsFn]]:
-    """Shared helper to build Year/Month ensure args for parquet and CSV writers."""
-    if not _schema_needs_year_month(expected_schema):
+    """Shared helper to build partition-col ensure args for parquet and CSV writers."""
+    pcols = _schema_partition_cols(expected_schema)
+    if not pcols:
         return (), None
 
     return (
-        ("Year", "Month"),
-        lambda t: _ensure_year_month_if_needed_for_table(
+        pcols,
+        lambda t: _ensure_partition_cols_for_table(
             t, table_name=table_name, expected_schema=expected_schema
         ),
     )
