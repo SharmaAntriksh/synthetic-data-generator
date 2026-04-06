@@ -734,7 +734,7 @@ def generate_store_table(
     st_arr = df["StoreType"].astype(str).to_numpy()
     phys_idx = np.where(st_arr != "Online")[0]
     if closing_enabled and dataset_start and dataset_end:
-        # Physical store closures
+        # Physical store closures only — online stores are always Open
         n_phys_eligible = len(phys_idx)
         n_phys_close = (
             max(1, int(round(n_phys_eligible * float(close_share))))
@@ -743,24 +743,12 @@ def generate_store_table(
         )
         phys_close_idx = rng.choice(phys_idx, size=min(n_phys_close, n_phys_eligible), replace=False) if n_phys_close > 0 else np.array([], dtype=np.intp)
 
-        # Online store closures
-        online_idx = np.where(st_arr == "Online")[0]
-        n_online_eligible = len(online_idx)
-        n_online_close = (
-            max(1, int(round(n_online_eligible * float(online_close_share))))
-            if n_online_eligible > 0 and online_close_share > 0.0
-            else 0
-        )
-        online_close_idx = rng.choice(online_idx, size=min(n_online_close, n_online_eligible), replace=False) if n_online_close > 0 else np.array([], dtype=np.intp)
-
-        close_idx = np.concatenate([phys_close_idx, online_close_idx]).astype(np.intp)
-
         # Of the remaining physical stores, ~5% are Renovating
         remaining_idx = np.setdiff1d(phys_idx, phys_close_idx)
         n_reno = max(0, int(round(len(remaining_idx) * 0.05)))
         reno_idx = rng.choice(remaining_idx, size=min(n_reno, len(remaining_idx)), replace=False) if n_reno > 0 else np.array([], dtype=np.intp)
         status_arr = np.full(num_stores, "Open", dtype=object)
-        status_arr[close_idx] = "Closed"
+        status_arr[phys_close_idx] = "Closed"
         if reno_idx.size > 0:
             status_arr[reno_idx] = "Renovating"
         df["Status"] = status_arr
@@ -773,8 +761,11 @@ def generate_store_table(
             status_arr[reno_idx] = "Renovating"
         df["Status"] = status_arr
     else:
-        # closing_enabled but no dataset window — probabilistic fallback
-        df["Status"] = rng.choice(_STORE_STATUS, size=num_stores, p=_STORE_STATUS_P)
+        # closing_enabled but no dataset window — probabilistic fallback (physical only)
+        status_arr = np.full(num_stores, "Open", dtype=object)
+        if phys_idx.size > 0:
+            status_arr[phys_idx] = rng.choice(_STORE_STATUS, size=phys_idx.size, p=_STORE_STATUS_P)
+        df["Status"] = status_arr
 
     df["GeographyKey"] = _sample_geography_keys(
         rng=rng,

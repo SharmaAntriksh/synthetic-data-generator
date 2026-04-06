@@ -98,7 +98,9 @@ def _apply_renovation_reassignments(
         for r, sks in region_store_map.items()
     }
 
-    affected = assignments["StoreKey"].astype(int).isin(reno_keys)
+    # Safety net: online employees must never be reassigned to physical stores.
+    is_online_emp = assignments["EmployeeKey"] >= ONLINE_EMP_KEY_BASE
+    affected = assignments["StoreKey"].astype(int).isin(reno_keys) & ~is_online_emp
     if not affected.any():
         return assignments
 

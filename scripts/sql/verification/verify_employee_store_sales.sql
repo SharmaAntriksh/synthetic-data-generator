@@ -24,7 +24,7 @@ CREATE TABLE #R (
     Category    VARCHAR(30)  NOT NULL,
     [Check]     VARCHAR(120) NOT NULL,
     Result      VARCHAR(10)  NOT NULL,
-    ActualValue VARCHAR(200) NOT NULL
+    ActualValue VARCHAR(500) NOT NULL
 );
 
 
@@ -200,41 +200,17 @@ DECLARE @bad_temp_ip INT = 0, @bad_perm_ip INT = 0;
 DECLARE @n_temp INT = 0, @n_perm INT = 0;
 IF @n_reno > 0
 BEGIN
-    -- Temp: source store has no ClosingDate
-    SELECT @bad_temp_ip = COUNT(*) FROM dbo.EmployeeStoreAssignments rr
+    SELECT
+        @n_temp      = ISNULL(SUM(CASE WHEN s.ClosingDate IS NULL THEN 1 ELSE 0 END), 0),
+        @bad_temp_ip = ISNULL(SUM(CASE WHEN s.ClosingDate IS NULL  AND rr.IsPrimary = 1 THEN 1 ELSE 0 END), 0),
+        @n_perm      = ISNULL(SUM(CASE WHEN s.ClosingDate IS NOT NULL THEN 1 ELSE 0 END), 0),
+        @bad_perm_ip = ISNULL(SUM(CASE WHEN s.ClosingDate IS NOT NULL AND rr.IsPrimary = 0 THEN 1 ELSE 0 END), 0)
+    FROM dbo.EmployeeStoreAssignments rr
     JOIN dbo.EmployeeStoreAssignments init
       ON init.EmployeeKey = rr.EmployeeKey AND init.TransferReason = 'Initial'
     JOIN dbo.Stores s ON s.StoreKey = init.StoreKey
     WHERE rr.TransferReason = 'Renovation Reassignment'
-      AND s.RenovationStartDate IS NOT NULL
-      AND s.ClosingDate IS NULL
-      AND rr.IsPrimary = 1;
-
-    SELECT @n_temp = COUNT(*) FROM dbo.EmployeeStoreAssignments rr
-    JOIN dbo.EmployeeStoreAssignments init
-      ON init.EmployeeKey = rr.EmployeeKey AND init.TransferReason = 'Initial'
-    JOIN dbo.Stores s ON s.StoreKey = init.StoreKey
-    WHERE rr.TransferReason = 'Renovation Reassignment'
-      AND s.RenovationStartDate IS NOT NULL
-      AND s.ClosingDate IS NULL;
-
-    -- Permanent: source store has ClosingDate
-    SELECT @bad_perm_ip = COUNT(*) FROM dbo.EmployeeStoreAssignments rr
-    JOIN dbo.EmployeeStoreAssignments init
-      ON init.EmployeeKey = rr.EmployeeKey AND init.TransferReason = 'Initial'
-    JOIN dbo.Stores s ON s.StoreKey = init.StoreKey
-    WHERE rr.TransferReason = 'Renovation Reassignment'
-      AND s.RenovationStartDate IS NOT NULL
-      AND s.ClosingDate IS NOT NULL
-      AND rr.IsPrimary = 0;
-
-    SELECT @n_perm = COUNT(*) FROM dbo.EmployeeStoreAssignments rr
-    JOIN dbo.EmployeeStoreAssignments init
-      ON init.EmployeeKey = rr.EmployeeKey AND init.TransferReason = 'Initial'
-    JOIN dbo.Stores s ON s.StoreKey = init.StoreKey
-    WHERE rr.TransferReason = 'Renovation Reassignment'
-      AND s.RenovationStartDate IS NOT NULL
-      AND s.ClosingDate IS NOT NULL;
+      AND s.RenovationStartDate IS NOT NULL;
 
     INSERT INTO #R VALUES ('ESA-Bridge', 'Renovation Reassignment IsPrimary rules',
         CASE WHEN @bad_temp_ip = 0 AND @bad_perm_ip = 0 THEN 'PASS' ELSE 'FAIL' END,
@@ -248,38 +224,18 @@ IF @n_reno > 0
 BEGIN
     DECLARE @miss_reassign INT, @miss_return INT, @unexpected_return INT;
 
-    -- Employees at reopened renovating stores missing Renovation Reassignment
-    SELECT @miss_reassign = COUNT(DISTINCT init.EmployeeKey)
+    SELECT
+        @miss_reassign     = COUNT(DISTINCT CASE WHEN s.ClosingDate IS NULL     AND ea.EmployeeKey IS NULL     THEN init.EmployeeKey END),
+        @miss_return       = COUNT(DISTINCT CASE WHEN s.ClosingDate IS NULL     AND er.EmployeeKey IS NULL     THEN init.EmployeeKey END),
+        @unexpected_return = COUNT(DISTINCT CASE WHEN s.ClosingDate IS NOT NULL AND er.EmployeeKey IS NOT NULL THEN init.EmployeeKey END)
     FROM dbo.EmployeeStoreAssignments init
     JOIN dbo.Stores s ON s.StoreKey = init.StoreKey
+    LEFT JOIN (SELECT DISTINCT EmployeeKey FROM dbo.EmployeeStoreAssignments WHERE TransferReason = 'Renovation Reassignment') ea
+      ON ea.EmployeeKey = init.EmployeeKey
+    LEFT JOIN (SELECT DISTINCT EmployeeKey FROM dbo.EmployeeStoreAssignments WHERE TransferReason = 'Renovation Return') er
+      ON er.EmployeeKey = init.EmployeeKey
     WHERE init.TransferReason = 'Initial'
-      AND s.RenovationStartDate IS NOT NULL AND s.ClosingDate IS NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM dbo.EmployeeStoreAssignments rr
-        WHERE rr.EmployeeKey = init.EmployeeKey AND rr.TransferReason = 'Renovation Reassignment'
-      );
-
-    -- Employees at reopened renovating stores missing Renovation Return
-    SELECT @miss_return = COUNT(DISTINCT init.EmployeeKey)
-    FROM dbo.EmployeeStoreAssignments init
-    JOIN dbo.Stores s ON s.StoreKey = init.StoreKey
-    WHERE init.TransferReason = 'Initial'
-      AND s.RenovationStartDate IS NOT NULL AND s.ClosingDate IS NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM dbo.EmployeeStoreAssignments rr
-        WHERE rr.EmployeeKey = init.EmployeeKey AND rr.TransferReason = 'Renovation Return'
-      );
-
-    -- Employees at closed renovating stores with unexpected Renovation Return
-    SELECT @unexpected_return = COUNT(DISTINCT init.EmployeeKey)
-    FROM dbo.EmployeeStoreAssignments init
-    JOIN dbo.Stores s ON s.StoreKey = init.StoreKey
-    WHERE init.TransferReason = 'Initial'
-      AND s.RenovationStartDate IS NOT NULL AND s.ClosingDate IS NOT NULL
-      AND EXISTS (
-        SELECT 1 FROM dbo.EmployeeStoreAssignments rr
-        WHERE rr.EmployeeKey = init.EmployeeKey AND rr.TransferReason = 'Renovation Return'
-      );
+      AND s.RenovationStartDate IS NOT NULL;
 
     INSERT INTO #R VALUES ('ESA-Bridge', 'Renovation segments complete',
         CASE WHEN @miss_reassign = 0 AND @miss_return = 0 AND @unexpected_return = 0 THEN 'PASS' ELSE 'FAIL' END,
@@ -378,12 +334,15 @@ INSERT INTO #R VALUES ('ESA-Bridge', 'No ESA rows start after store ClosingDate'
 --     Uses a months table crossed with physical stores, then checks for
 --     at least 1 Sales Associate assignment covering the 1st of each month.
 DECLARE @coverage_gaps INT;
+DECLARE @cov_start DATE, @cov_end DATE;
+SELECT @cov_start = CAST(DATEADD(MONTH, DATEDIFF(MONTH, 0, MIN(StartDate)), 0) AS DATE),
+       @cov_end   = CAST(MAX(EndDate) AS DATE)
+FROM dbo.EmployeeStoreAssignments;
 ;WITH Months AS (
-    SELECT CAST(MIN(StartDate) AS DATE) AS dt
-    FROM dbo.EmployeeStoreAssignments
+    SELECT @cov_start AS dt
     UNION ALL
     SELECT DATEADD(MONTH, 1, dt) FROM Months
-    WHERE dt < (SELECT MAX(EndDate) FROM dbo.EmployeeStoreAssignments)
+    WHERE DATEADD(MONTH, 1, dt) <= @cov_end
 ),
 PhysStores AS (
     SELECT StoreKey, OpeningDate, ClosingDate, RenovationStartDate, RenovationEndDate

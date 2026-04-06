@@ -27,6 +27,15 @@ BEGIN
         CASE WHEN @bad_type = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@bad_type AS VARCHAR) + ' invalid');
 
+    -- Online StoreKeys have StoreType=Online
+    DECLARE @bad_online INT;
+    SELECT @bad_online = COUNT(*) FROM dbo.Stores
+    WHERE StoreKey >= 10000 AND StoreType <> 'Online';
+    INSERT INTO #R VALUES ('Domain', 'Online StoreKeys have StoreType=Online',
+        'Stores with StoreKey >= 10000 must have StoreType = Online',
+        CASE WHEN @bad_online = 0 THEN 'PASS' ELSE 'FAIL' END,
+        CAST(@bad_online AS VARCHAR) + ' invalid');
+
     -- RevenueClass domain
     DECLARE @bad_rc INT;
     SELECT @bad_rc = COUNT(*) FROM dbo.Stores WHERE RevenueClass NOT IN ('A', 'B', 'C');
@@ -43,6 +52,15 @@ BEGIN
         CASE WHEN @no_staff = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@no_staff AS VARCHAR) + ' open stores with 0 staff');
 
+    -- ClosingDate implies Status=Closed
+    DECLARE @close_status INT;
+    SELECT @close_status = COUNT(*) FROM dbo.Stores
+    WHERE ClosingDate IS NOT NULL AND Status <> 'Closed';
+    INSERT INTO #R VALUES ('Domain', 'ClosingDate implies Status=Closed',
+        'Any store with a ClosingDate must have Status = Closed',
+        CASE WHEN @close_status = 0 THEN 'PASS' ELSE 'FAIL' END,
+        CAST(@close_status AS VARCHAR) + ' store(s) with ClosingDate but Status <> Closed');
+
     -- OpeningDate <= ClosingDate
     DECLARE @date_inv INT;
     SELECT @date_inv = COUNT(*) FROM dbo.Stores
@@ -51,6 +69,34 @@ BEGIN
         'Store cannot close before it opens',
         CASE WHEN @date_inv = 0 THEN 'PASS' ELSE 'FAIL' END,
         CAST(@date_inv AS VARCHAR) + ' inversions');
+
+    -- Renovation date sanity (only if column exists)
+    IF COL_LENGTH('dbo.Stores', 'RenovationStartDate') IS NOT NULL
+    BEGIN
+        DECLARE @n_reno INT;
+        SELECT @n_reno = COUNT(*) FROM dbo.Stores
+        WHERE RenovationStartDate IS NOT NULL AND RenovationEndDate IS NOT NULL;
+        INSERT INTO #R VALUES ('Info', 'Renovation count',
+            'Stores with both RenovationStartDate and RenovationEndDate populated',
+            'INFO', CAST(@n_reno AS VARCHAR) + ' store(s) with renovation dates');
+
+        DECLARE @reno_inv INT;
+        SELECT @reno_inv = COUNT(*) FROM dbo.Stores
+        WHERE RenovationStartDate IS NOT NULL AND RenovationEndDate IS NOT NULL
+          AND RenovationEndDate < RenovationStartDate;
+        INSERT INTO #R VALUES ('DateSanity', 'RenovationEnd >= RenovationStart',
+            'Renovation cannot end before it starts',
+            CASE WHEN @reno_inv = 0 THEN 'PASS' ELSE 'FAIL' END,
+            CAST(@reno_inv AS VARCHAR) + ' violation(s)');
+
+        DECLARE @reno_before_open INT;
+        SELECT @reno_before_open = COUNT(*) FROM dbo.Stores
+        WHERE RenovationStartDate IS NOT NULL AND RenovationStartDate < OpeningDate;
+        INSERT INTO #R VALUES ('DateSanity', 'RenovationStart >= OpeningDate',
+            'Renovation cannot start before the store opened',
+            CASE WHEN @reno_before_open = 0 THEN 'PASS' ELSE 'FAIL' END,
+            CAST(@reno_before_open AS VARCHAR) + ' violation(s)');
+    END
 
     -- EmployeeCount matches actual
     IF OBJECT_ID(N'dbo.Employees', N'U') IS NOT NULL

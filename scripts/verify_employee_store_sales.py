@@ -140,6 +140,24 @@ def check_stores(stores: pd.DataFrame) -> None:
              f"{before_open} violation(s)",
              _sample(reno[rs < od], ["StoreKey", "OpeningDate", "RenovationStartDate"]))
 
+    # --- Online stores must always be Open ---
+    if online_mask.any():
+        online_stores = stores[online_mask]
+        bad_status = (online_stores["Status"].astype(str) != "Open").sum()
+        _add(cat, "Online stores always Open",
+             bad_status == 0,
+             f"{bad_status} online store(s) with Status != Open")
+
+        bad_close = online_stores["ClosingDate"].notna().sum()
+        _add(cat, "Online stores have no ClosingDate",
+             bad_close == 0,
+             f"{bad_close} online store(s) with a ClosingDate")
+
+        bad_reno = online_stores["RenovationStartDate"].notna().sum()
+        _add(cat, "Online stores have no RenovationDate",
+             bad_reno == 0,
+             f"{bad_reno} online store(s) with a RenovationStartDate")
+
     # --- ClosingDate sanity ---
     has_close = stores["ClosingDate"].notna()
     if has_close.any():
@@ -386,6 +404,25 @@ def check_esa(
     _add(cat, "All ESA StoreKeys exist in Stores",
          len(orphan_sk) == 0,
          f"{len(orphan_sk)} orphan key(s)")
+
+    # --- Online/physical ESA cross-channel isolation ---
+    esa_ek = esa["EmployeeKey"].astype(np.int64)
+    esa_sk = esa["StoreKey"].astype(np.int64)
+    online_emp_at_phys = ((esa_ek >= ONLINE_EMP_KEY_BASE) & (esa_sk < ONLINE_STORE_KEY_BASE)).sum()
+    phys_emp_at_online = ((esa_ek < ONLINE_EMP_KEY_BASE) & (esa_sk >= ONLINE_STORE_KEY_BASE)).sum()
+    _add(cat, "ESA: online employees only at online stores",
+         online_emp_at_phys == 0,
+         f"{online_emp_at_phys} online employee row(s) assigned to a physical store")
+    _add(cat, "ESA: physical employees only at physical stores",
+         phys_emp_at_online == 0,
+         f"{phys_emp_at_online} physical employee row(s) assigned to an online store")
+
+    # --- Online employee count matches online store count ---
+    n_online_stores = int((stores["StoreKey"].astype(int) >= ONLINE_STORE_KEY_BASE).sum())
+    n_online_emps   = int((employees["EmployeeKey"].astype(np.int64) >= ONLINE_EMP_KEY_BASE).sum())
+    _add(cat, "Online employee count matches online store count",
+         n_online_emps == n_online_stores,
+         f"{n_online_emps} online employee(s), {n_online_stores} online store(s)")
 
     # --- Every store-level employee has at least 1 assignment ---
     ek_all = employees["EmployeeKey"].astype(np.int64)
