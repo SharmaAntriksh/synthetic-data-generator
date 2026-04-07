@@ -819,13 +819,11 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             rng=rng,
             N=N,
             is_org=IsOrg,
-            last_name=safe_last,
             geography_key=GeographyKey,
             gender=Gender,
             ages_years=ages_years,
             marital_status=MaritalStatus,
             children_raw=children_raw,
-            home_ownership=HomeOwnership,
             household_pct=household_pct,
         )
 
@@ -833,13 +831,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
                       + (HouseholdRole == "Relative").sum())
         n_households = int(np.max(HouseholdKey))
         info(f"Households: {n_households} total, {n_multi} customers in multi-person households")
-
-    # Rebuild CustomerName — household assignment may have updated last names
-    CustomerName = np.where(
-        IsOrg,
-        OrgName.astype(str),
-        safe_first.astype(str) + " " + safe_last.astype(str),
-    )
 
     # =====================================================
     # Build Customers dataframe (identity + engine + SCD2 tracked cols)
@@ -1077,45 +1068,30 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
             np.random.SeedSequence(seed).spawn(n_chunks + 2)[n_chunks]
         )
 
-        safe_last = np.where(
-            pd.isna(customers_df["CustomerName"]), "",
-            customers_df["CustomerName"].str.split(" ").str[-1],
-        ).astype(object).copy()
-        # Extract writable arrays from merged DataFrame (households mutate in-place)
-        IsOrg = (customers_df["CustomerType"] == "Organization").to_numpy().copy()
-        Gender = customers_df["Gender"].to_numpy().copy()
+        # Extract arrays from merged DataFrame (only GeographyKey is mutated in-place)
+        IsOrg = (customers_df["CustomerType"] == "Organization").to_numpy()
+        Gender = customers_df["Gender"].to_numpy()
         GeographyKey = customers_df["GeographyKey"].to_numpy().copy()
         ages_days_raw = (pd.Timestamp(end_date) - pd.to_datetime(customers_df["DOB"])).dt.days
-        ages_years = (ages_days_raw / 365.25).to_numpy(dtype="float64", na_value=0.0).copy()
-        MaritalStatus = customers_df["MaritalStatus"].to_numpy().copy()
-        children_raw = customers_df["NumberOfChildren"].to_numpy(dtype="int64", na_value=0).copy()
-        HomeOwnership = customers_df["HomeOwnership"].to_numpy().copy()
+        ages_years = (ages_days_raw / 365.25).to_numpy(dtype="float64", na_value=0.0)
+        MaritalStatus = customers_df["MaritalStatus"].to_numpy()
+        children_raw = customers_df["NumberOfChildren"].to_numpy(dtype="int64", na_value=0)
 
         HouseholdKey, HouseholdRole = assign_households(
             rng=hh_rng,
             N=len(customers_df),
             is_org=IsOrg,
-            last_name=safe_last,
             geography_key=GeographyKey,
             gender=Gender,
             ages_years=ages_years,
             marital_status=MaritalStatus,
             children_raw=children_raw,
-            home_ownership=HomeOwnership,
             household_pct=household_pct,
         )
 
         customers_df["HouseholdKey"] = HouseholdKey
         customers_df["HouseholdRole"] = HouseholdRole
         customers_df["GeographyKey"] = GeographyKey  # may have been mutated
-
-        # Rebuild CustomerName (households may have changed last names)
-        safe_first = customers_df["CustomerName"].str.split(" ").str[0].fillna("").to_numpy(dtype=object)
-        customers_df["CustomerName"] = np.where(
-            IsOrg,
-            customers_df["CompanyName"].to_numpy(dtype=object),
-            safe_first.astype(str) + " " + safe_last.astype(str),
-        )
 
         n_multi = int((HouseholdRole == "Spouse").sum() + (HouseholdRole == "Dependent").sum()
                       + (HouseholdRole == "Relative").sum())

@@ -53,19 +53,17 @@ def assign_households(
     rng: np.random.Generator,
     N: int,
     is_org: np.ndarray,
-    last_name: np.ndarray,
     geography_key: np.ndarray,
     gender: np.ndarray,
     ages_years: np.ndarray,
     marital_status: np.ndarray,
     children_raw: np.ndarray,
-    home_ownership: np.ndarray,
     household_pct: float,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Assign HouseholdKey and HouseholdRole for all customers.
 
-    Mutates *last_name* and *geography_key* in place so downstream
-    columns reflect shared surnames within households.
+    Mutates *geography_key* in place so household members share
+    the same geography.
 
     Returns (HouseholdKey, HouseholdRole) arrays of length N.
     """
@@ -153,7 +151,6 @@ def assign_households(
         sp_head = np.concatenate(all_matched_head_idx)
         household_key[sp] = sp_hh
         household_role[sp] = "Spouse"
-        last_name[sp] = last_name[sp_head]
         geography_key[sp] = geography_key[sp_head]
 
     # =================================================================
@@ -213,7 +210,6 @@ def assign_households(
                 household_key[dep_arr] = hh_arr
                 household_role[dep_arr] = "Dependent"
                 avail[dep_arr] = False
-                last_name[dep_arr] = last_name[head_arr]
                 geography_key[dep_arr] = geography_key[head_arr]
 
     # --- Assign solo households ---
