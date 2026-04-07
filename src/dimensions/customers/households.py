@@ -222,3 +222,22 @@ def assign_households(
     # (consistent with MaritalStatus, Education, Occupation for orgs)
 
     return household_key, household_role
+
+
+def head_indices_for_members(
+    household_key: np.ndarray,
+    household_role: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return (moved_mask, head_of_moved) for spouse/dependent members.
+
+    ``moved_mask`` is a bool array of length N (True for members that need
+    the head's address).  ``head_of_moved`` is an int index array mapping
+    each True position to its household head's position.
+    """
+    moved = (household_role == "Spouse") | (household_role == "Dependent")
+    if not moved.any():
+        return moved, np.empty(0, dtype=np.intp)
+    head_mask = household_role == "Head"
+    hk_to_head = np.empty(int(household_key.max()) + 1, dtype=np.intp)
+    hk_to_head[household_key[head_mask]] = np.where(head_mask)[0]
+    return moved, hk_to_head[household_key[moved]]

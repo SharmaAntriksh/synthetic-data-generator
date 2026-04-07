@@ -87,7 +87,7 @@ from src.dimensions.customers.helpers import (
     generate_postal_codes,
 )
 from src.dimensions.customers.org_profile import generate_org_profile
-from src.dimensions.customers.households import assign_households
+from src.dimensions.customers.households import assign_households, head_indices_for_members
 from src.dimensions.customers.scd2 import generate_scd2_versions
 
 _PAYMENT_METHOD_LABELS = np.array([
@@ -832,6 +832,13 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
         n_households = int(np.max(HouseholdKey))
         info(f"Households: {n_households} total, {n_multi} customers in multi-person households")
 
+        # Copy head's home address columns to household members
+        moved, head_of = head_indices_for_members(HouseholdKey, HouseholdRole)
+        if moved.any():
+            for arr in (Region, HomeAddress, PostalCode, Latitude, Longitude,
+                        geo_city, geo_state, CurrentCity):
+                arr[moved] = arr[head_of]
+
     # =====================================================
     # Build Customers dataframe (identity + engine + SCD2 tracked cols)
     # =====================================================
@@ -1093,6 +1100,27 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
         customers_df["HouseholdRole"] = HouseholdRole
         customers_df["GeographyKey"] = GeographyKey  # may have been mutated
 
+        # Re-derive Region (not stored in parquet) for address rebuild + org_profile
+        pct_asia = float(getattr(cust_cfg, "pct_asia", 0.0))
+        enable_asia = pct_asia > 0.0
+        p_in, p_us, p_eu, p_as = validate_percentages(
+            float(cust_cfg.pct_india), float(cust_cfg.pct_us),
+            float(cust_cfg.pct_eu), pct_asia,
+        )
+        region_labels = ["IN", "US", "EU"] + (["AS"] if enable_asia else [])
+        region_probs = [p_in, p_us, p_eu] + ([p_as] if enable_asia else [])
+        org_region_rng = np.random.default_rng(seed + 77777)
+        Region = org_region_rng.choice(region_labels, size=len(customers_df), p=region_probs)
+
+        # Copy head's home address columns to household members
+        moved, head_of = head_indices_for_members(HouseholdKey, HouseholdRole)
+        if moved.any():
+            Region[moved] = Region[head_of]
+            for col in ("HomeAddress", "PostalCode", "Latitude", "Longitude", "CurrentCity"):
+                vals = customers_df[col].to_numpy()
+                vals[moved] = vals[head_of]
+                customers_df[col] = vals
+
         n_multi = int((HouseholdRole == "Spouse").sum() + (HouseholdRole == "Dependent").sum()
                       + (HouseholdRole == "Relative").sum())
         n_households = int(np.max(HouseholdKey))
@@ -1103,26 +1131,9 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
             np.random.SeedSequence(seed).spawn(n_chunks + 2)[n_chunks + 1]
         )
         OrgName = customers_df["CompanyName"].to_numpy(dtype=object)
-        Region = customers_df.get("CustomerType").to_numpy()  # placeholder
         # Load name pools for org_profile
-        pct_asia = float(getattr(cust_cfg, "pct_asia", 0.0))
-        enable_asia = pct_asia > 0.0
         names_folder = resolve_people_folder()
         people_pools = load_people_pools(names_folder, enable_asia=enable_asia, legacy_support=True)
-
-        # Re-derive Region from customer config percentages for org_profile
-        p_in, p_us, p_eu, p_as = validate_percentages(
-            float(cust_cfg.pct_india), float(cust_cfg.pct_us),
-            float(cust_cfg.pct_eu), float(getattr(cust_cfg, "pct_asia", 0.0)),
-        )
-        region_labels = ["IN", "US", "EU"] + (["AS"] if enable_asia else [])
-        region_probs = [p_in, p_us, p_eu] + ([p_as] if enable_asia else [])
-
-        # For org_profile we need Region array — re-derive from chunk data
-        # Workers already generated Region, it's not in the parquet output directly.
-        # We'll regenerate it deterministically.
-        org_region_rng = np.random.default_rng(seed + 77777)
-        Region = org_region_rng.choice(region_labels, size=len(customers_df), p=region_probs)
 
         CustomerStartDate = customers_df["CustomerStartDate"].to_numpy()
         CustomerKey = customers_df["CustomerKey"].to_numpy()
