@@ -66,6 +66,16 @@ _SPACED_NAMES: Dict[str, str] = {
     "IsBusinessDay": "Is Business Day",
     "NextBusinessDay": "Next Business Day",
     "PreviousBusinessDay": "Previous Business Day",
+    "YearStartDate": "Year Start Date",
+    "YearEndDate": "Year End Date",
+    "MonthDays": "Month Days",
+    "QuarterDays": "Quarter Days",
+    "YearDays": "Year Days",
+    "DayOfQuarter": "Day Of Quarter",
+    "DatePreviousWeek": "Date Previous Week",
+    "DatePreviousMonth": "Date Previous Month",
+    "DatePreviousQuarter": "Date Previous Quarter",
+    "DatePreviousYear": "Date Previous Year",
     # Calendar flags & offsets
     "IsYearStart": "Is Year Start",
     "IsYearEnd": "Is Year End",
@@ -112,6 +122,11 @@ _SPACED_NAMES: Dict[str, str] = {
     "IsFiscalQuarterEnd": "Is Fiscal Quarter End",
     "FiscalYear": "Fiscal Year",
     "FiscalYearLabel": "Fiscal Year Label",
+    "FiscalQuarterDays": "Fiscal Quarter Days",
+    "FiscalYearDays": "Fiscal Year Days",
+    "FiscalDayOfQuarter": "Fiscal Day Of Quarter",
+    "FiscalDayOfYear": "Fiscal Day Of Year",
+    "FiscalYearOffset": "Fiscal Year Offset",
     # Weekly fiscal (4-4-5) columns
     "FWYearNumber": "FW Year Number",
     "FWYearLabel": "FW Year Label",
@@ -143,6 +158,11 @@ _SPACED_NAMES: Dict[str, str] = {
     "FWDayOfYear": "FW Day Of Year",
     "FWDayOfQuarter": "FW Day Of Quarter",
     "FWDayOfMonth": "FW Day Of Month",
+    "FWMonthDays": "FW Month Days",
+    "FWQuarterDays": "FW Quarter Days",
+    "FWYearDays": "FW Year Days",
+    "FWDatePreviousMonth": "FW Date Previous Month",
+    "FWDatePreviousQuarter": "FW Date Previous Quarter",
     "FWIsWorkingDay": "FW Is Working Day",
     "FWDayType": "FW Day Type",
     "FWWeekInQuarterNumber": "FW Week In Quarter Number",
@@ -211,9 +231,12 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
         "CalendarWeekStartDate", "CalendarWeekEndDate",
         "CalendarWeekDateRange",
         "CalendarWeekIndex",
-        "Day", "DayName", "DayShort", "DayOfYear", "DayOfWeek",
+        "Day", "DayName", "DayShort", "DayOfYear", "DayOfQuarter", "DayOfWeek",
         "IsWeekend", "IsBusinessDay",
         "NextBusinessDay", "PreviousBusinessDay",
+        "YearStartDate", "YearEndDate",
+        "MonthDays", "QuarterDays", "YearDays",
+        "DatePreviousWeek", "DatePreviousMonth", "DatePreviousQuarter", "DatePreviousYear",
     ]
 
     # Calendar flags and relative offsets (gated by include.calendar).
@@ -245,6 +268,9 @@ def resolve_date_columns(dates_cfg: Dict[str, Any]) -> List[str]:
         "IsFiscalYearStart", "IsFiscalYearEnd",
         "IsFiscalQuarterStart", "IsFiscalQuarterEnd",
         "FiscalYear", "FiscalYearLabel",
+        "FiscalQuarterDays", "FiscalYearDays",
+        "FiscalDayOfQuarter", "FiscalDayOfYear",
+        "FiscalYearOffset",
     ]
 
     cols: List[str] = list(base_cols)

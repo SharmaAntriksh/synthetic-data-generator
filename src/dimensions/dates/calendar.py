@@ -69,6 +69,23 @@ def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFra
     df["IsYearStart"] = ((df["Month"] == 1) & (df["Day"] == 1)).astype(bool)
     df["IsYearEnd"] = ((df["Month"] == 12) & (df["Day"] == 31)).astype(bool)
 
+    # Year boundary dates (arithmetic, avoids slow string concat)
+    _years = df["Year"].astype(int).to_numpy()
+    df["YearStartDate"] = pd.to_datetime(
+        pd.DataFrame({"year": _years, "month": np.ones(len(df), dtype=np.int32), "day": np.ones(len(df), dtype=np.int32)})
+    ).dt.normalize()
+    df["YearEndDate"] = pd.to_datetime(
+        pd.DataFrame({"year": _years, "month": np.full(len(df), 12, dtype=np.int32), "day": np.full(len(df), 31, dtype=np.int32)})
+    ).dt.normalize()
+
+    # Period duration columns
+    df["MonthDays"] = (df["MonthEndDate"] - df["MonthStartDate"]).dt.days.add(1).astype(np.int32)
+    df["QuarterDays"] = (df["QuarterEndDate"] - df["QuarterStartDate"]).dt.days.add(1).astype(np.int32)
+    df["YearDays"] = (df["YearEndDate"] - df["YearStartDate"]).dt.days.add(1).astype(np.int32)
+
+    # Day-of-quarter
+    df["DayOfQuarter"] = (df["Date"] - df["QuarterStartDate"]).dt.days.add(1).astype(np.int32)
+
     df["WeekOfMonth"] = ((df["Day"] - 1) // 7 + 1).astype(np.int32)
 
     # ------------------------------------------------------------------
@@ -131,6 +148,25 @@ def add_calendar_columns(df: pd.DataFrame, *, as_of: pd.Timestamp) -> pd.DataFra
         # Degenerate range with no business days; fall back to self.
         df["NextBusinessDay"] = df["Date"]
         df["PreviousBusinessDay"] = df["Date"]
+
+    # ------------------------------------------------------------------
+    # DatePrevious columns (same day in prior period, clamped to EOM)
+    # ------------------------------------------------------------------
+    df["DatePreviousWeek"] = (df["Date"] - pd.Timedelta(days=7)).dt.normalize()
+    df["DatePreviousMonth"] = (df["Date"] - pd.DateOffset(months=1)).dt.normalize()
+    df["DatePreviousQuarter"] = (df["Date"] - pd.DateOffset(months=3)).dt.normalize()
+    df["DatePreviousYear"] = (df["Date"] - pd.DateOffset(years=1)).dt.normalize()
+
+    # For month-end dates, snap each shifted date to end of its landing month
+    is_month_end = df["Date"] == df["MonthEndDate"]
+    if is_month_end.any():
+        eom_idx = is_month_end[is_month_end].index
+        df.loc[eom_idx, "DatePreviousMonth"] = (
+            df["MonthStartDate"][eom_idx] - pd.Timedelta(days=1)
+        ).dt.normalize()
+        for col in ("DatePreviousQuarter", "DatePreviousYear"):
+            shifted = pd.to_datetime(df.loc[eom_idx, col])
+            df.loc[eom_idx, col] = (shifted + pd.offsets.MonthEnd(0)).dt.normalize()
 
     # ------------------------------------------------------------------
     # As-of relative columns

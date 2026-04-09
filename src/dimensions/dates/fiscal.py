@@ -66,6 +66,20 @@ def add_fiscal_columns(
     df["FiscalYear"] = fiscal_year_end.astype(np.int32)
     df["FiscalYearLabel"] = "FY " + df["FiscalYear"].astype(str)
 
+    # Fiscal period duration and day-of-period columns
+    df["FiscalQuarterDays"] = (
+        df["FiscalQuarterEndDate"] - df["FiscalQuarterStartDate"]
+    ).dt.days.add(1).astype(np.int32)
+    df["FiscalYearDays"] = (
+        df["FiscalYearEndDate"] - df["FiscalYearStartDate"]
+    ).dt.days.add(1).astype(np.int32)
+    df["FiscalDayOfQuarter"] = (
+        df["Date"] - df["FiscalQuarterStartDate"]
+    ).dt.days.add(1).astype(np.int32)
+    df["FiscalDayOfYear"] = (
+        df["Date"] - df["FiscalYearStartDate"]
+    ).dt.days.add(1).astype(np.int32)
+
     # Fiscal offsets relative to as_of
     asof_mask = df["Date"] == as_of
     asof_idx = df.index[asof_mask]
@@ -74,10 +88,13 @@ def add_fiscal_columns(
         _asof = df.loc[asof_idx[0]]
         as_of_fiscal_month_index = int(_asof["FiscalMonthIndex"])
         as_of_fiscal_quarter_index = int(_asof["FiscalQuarterIndex"])
+        as_of_fiscal_year = int(_asof["FiscalYear"])
         df["FiscalMonthOffset"] = (df["FiscalMonthIndex"].astype(int) - as_of_fiscal_month_index).astype(np.int32)
         df["FiscalQuarterOffset"] = (df["FiscalQuarterIndex"].astype(int) - as_of_fiscal_quarter_index).astype(np.int32)
+        df["FiscalYearOffset"] = (df["FiscalYear"].astype(int) - as_of_fiscal_year).astype(np.int32)
     else:
         df["FiscalMonthOffset"] = np.int32(0)
         df["FiscalQuarterOffset"] = np.int32(0)
+        df["FiscalYearOffset"] = np.int32(0)
 
     return df
