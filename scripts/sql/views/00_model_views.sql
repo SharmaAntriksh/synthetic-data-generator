@@ -83,6 +83,11 @@ IF OBJECT_ID(N'dbo.ExchangeRates', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_ExchangeRates] AS SELECT * FROM [dbo].[ExchangeRates];');
 GO
 
+-- ExchangeRatesMonthly
+IF OBJECT_ID(N'dbo.ExchangeRatesMonthly', N'U') IS NOT NULL
+    EXEC('CREATE OR ALTER VIEW [dbo].[vw_ExchangeRatesMonthly] AS SELECT * FROM [dbo].[ExchangeRatesMonthly];');
+GO
+
 -- Geography
 IF OBJECT_ID(N'dbo.Geography', N'U') IS NOT NULL
     EXEC('CREATE OR ALTER VIEW [dbo].[vw_Geography] AS SELECT * FROM [dbo].[Geography];');
@@ -231,10 +236,10 @@ SELECT
     DueDate,
     DeliveryDate,
     Quantity,
-    CAST(NetPrice       AS decimal(19,4)) AS NetPrice,
-    CAST(UnitCost       AS decimal(19,4)) AS UnitCost,
-    CAST(UnitPrice      AS decimal(19,4)) AS UnitPrice,
-    CAST(DiscountAmount AS decimal(19,4)) AS DiscountAmount,
+    CAST(NetPrice       AS MONEY) AS NetPrice,
+    CAST(UnitCost       AS MONEY) AS UnitCost,
+    CAST(UnitPrice      AS MONEY) AS UnitPrice,
+    CAST(DiscountAmount AS MONEY) AS DiscountAmount,
     DeliveryStatus
 FROM ' + @DtlFrom + N';';
 
@@ -260,7 +265,7 @@ SELECT
     ReturnDate,
     ReturnReasonKey,
     ReturnQuantity,
-    CAST(ReturnNetPrice AS decimal(19,4)) AS ReturnNetPrice
+    CAST(ReturnNetPrice AS MONEY) AS ReturnNetPrice
 FROM ' + @ReturnFrom + N';';
 
     EXEC sys.sp_executesql @sql_ret;
@@ -314,16 +319,16 @@ SELECT'
         EmployeeKey,
         PromotionKey,
         CurrencyKey,
-        SalesChannelKey,
-        TimeKey,
+        SalesChannelKey = CAST(SalesChannelKey AS INT),
+        TimeKey = CAST(TimeKey AS INT),
         OrderDate,
         DueDate,
         DeliveryDate,
         Quantity,
-        CAST(NetPrice         AS decimal(19,4)) AS NetPrice,
-        CAST(UnitCost         AS decimal(19,4)) AS UnitCost,
-        CAST(UnitPrice        AS decimal(19,4)) AS UnitPrice,
-        CAST(DiscountAmount   AS decimal(19,4)) AS DiscountAmount,
+        CAST(NetPrice         AS MONEY) AS NetPrice,
+        CAST(UnitCost         AS MONEY) AS UnitCost,
+        CAST(UnitPrice        AS MONEY) AS UnitPrice,
+        CAST(DiscountAmount   AS MONEY) AS DiscountAmount,
         DeliveryStatus,
         IsOrderDelayed
 FROM ' + @SalesQualified + N';';
@@ -350,16 +355,16 @@ SELECT
     h.EmployeeKey,
     h.PromotionKey,
     h.CurrencyKey,
-    h.SalesChannelKey,
-    h.TimeKey,
+    SalesChannelKey = CAST(h.SalesChannelKey AS INT),
+    TimeKey = CAST(h.TimeKey AS INT),
     h.OrderDate,
     d.DueDate,
     d.DeliveryDate,
     d.Quantity,
-    CAST(d.NetPrice         AS decimal(19,4)) AS NetPrice,
-    CAST(d.UnitCost         AS decimal(19,4)) AS UnitCost,
-    CAST(d.UnitPrice        AS decimal(19,4)) AS UnitPrice,
-    CAST(d.DiscountAmount   AS decimal(19,4)) AS DiscountAmount,
+    CAST(d.NetPrice         AS MONEY) AS NetPrice,
+    CAST(d.UnitCost         AS MONEY) AS UnitCost,
+    CAST(d.UnitPrice        AS MONEY) AS UnitPrice,
+    CAST(d.DiscountAmount   AS MONEY) AS DiscountAmount,
     d.DeliveryStatus,
     h.IsOrderDelayed
 FROM ' + @DtlFrom2 + N' AS d
