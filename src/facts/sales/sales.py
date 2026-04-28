@@ -1236,6 +1236,7 @@ def _build_worker_cfg(
     returns_full_line_prob, returns_split_rate,
     returns_max_splits, returns_split_min_gap, returns_split_max_gap,
     returns_logistics_keys, returns_event_key_capacity,
+    month_stride=0, per_chunk_alloc=0,
 ):
     """Build the worker_cfg dict from typed containers."""
     worker_cfg: SalesWorkerCfg = SalesWorkerCfg(
@@ -1280,6 +1281,8 @@ def _build_worker_cfg(
         order_id_stride_orders=int(chunk_size),
         total_rows=int(total_rows),
         order_id_run_id=int(order_id_run_id),
+        month_stride=int(month_stride),
+        per_chunk_alloc=int(per_chunk_alloc),
         max_lines_per_order=int(getattr(sales_cfg, "max_lines_per_order", 5) or 5),
 
         sales_output=sales_output,
@@ -2049,6 +2052,17 @@ def generate_sales_fact(
     # Chunk scheduling
     # ------------------------------------------------------------
     total_chunks = int(ceil(total_rows / chunk_size))
+
+    # Day-based order ID ranges: each calendar day gets a disjoint ID band,
+    # and within each day each chunk gets its own non-overlapping slot.
+    # This guarantees SalesOrderNumber increases with OrderDate.
+    _dp = np.asarray(date_pool)
+    _n_days = int(_dp.size) if _dp.size else 1
+    _safety = 8.0
+    _per_chunk_alloc = int(ceil(total_rows / max(1, _n_days) * _safety / max(1, total_chunks)))
+    _per_chunk_alloc = max(_per_chunk_alloc, 1)
+    _day_stride = _per_chunk_alloc * total_chunks
+
     rng_master = np.random.default_rng(seed + 1)
     seeds = rng_master.integers(1, 1 << 30, size=total_chunks, dtype=np.int64)
 
@@ -2192,6 +2206,7 @@ def generate_sales_fact(
         returns_full_line_prob, returns_split_rate,
         returns_max_splits, returns_split_min_gap, returns_split_max_gap,
         returns_logistics_keys, returns_event_key_capacity,
+        month_stride=_day_stride, per_chunk_alloc=_per_chunk_alloc,
     )
 
     # Streaming accumulators (budget, inventory, wishlists, complaints)

@@ -1049,11 +1049,13 @@ def build_chunk_table(
 
     INT32_MAX = np.int64(np.iinfo(np.int32).max)
 
-    # Each chunk owns a disjoint suffix range: [base, base + cap)
-    base = np.int64(chunk_idx) * np.int64(cap)
-
-    # Advances as we allocate orders month-by-month inside this chunk
-    order_cursor = np.int64(0)
+    # Day-based order ID ranges: each calendar day gets a disjoint ID band,
+    # and within each day each chunk gets its own non-overlapping slot.
+    # This guarantees SalesOrderNumber increases monotonically with OrderDate
+    # even across parallel chunks.
+    _day_stride = np.int64(State.month_stride or 0)
+    _per_chunk_alloc = np.int64(State.per_chunk_alloc or 0)
+    _use_day_ids = _day_stride > 0 and _per_chunk_alloc > 0
 
     # ------------------------------------------------------------
     # STATIC STATE
@@ -1102,6 +1104,11 @@ def build_chunk_table(
 
     date_pool = State.date_pool
     date_prob = State.date_prob
+
+    if _use_day_ids:
+        _date_pool_min_day = np.int64(
+            date_pool[0].astype("datetime64[D]").astype(np.int64)
+        )
     store_keys = State.store_keys
     store_eligible_by_month = State.store_eligible_by_month
     store_open_day = State.store_open_day      # dense array: store_key -> datetime64[D]
@@ -1377,21 +1384,6 @@ def build_chunk_table(
         # ORDERS (use month-specific date pool so month loop is real)
         # --------------------------------------------------------
         if not skip_cols:
-            # Capacity check uses actual order count
-            if order_cursor + np.int64(n_orders) > np.int64(cap):
-                raise SalesError(
-                    f"chunk_capacity_orders too small: need {int(order_cursor) + n_orders} orders in chunk "
-                    f"(cap={cap}). Increase chunk_capacity_orders (or reduce chunk sizing)."
-                )
-
-            order_id_start = base + order_cursor
-            if order_id_start + np.int64(n_orders) + 1 >= INT32_MAX:
-                raise SalesError(
-                    f"SalesOrderNumber would exceed int32 range "
-                    f"(order_id_start={int(order_id_start)}, n_orders={n_orders}, "
-                    f"int32_max={int(INT32_MAX)}). Reduce total rows or increase chunk count."
-                )
-
             orders = build_orders(
                 rng=rng,
                 n=m_rows,
@@ -1401,16 +1393,50 @@ def build_chunk_table(
                 customers=customer_keys_for_orders,
                 _len_date_pool=len(month_date_pool),
                 _len_customers=n_orders,
-                order_id_start=int(order_id_start),
+                order_id_start=0,
             )
-
-            # Advance by allocated orders (robust to future build_orders heuristic changes)
-            order_cursor += np.int64(orders.get("_order_count", n_orders))
 
             customer_keys_out = orders["customer_keys"]
             order_dates = orders["order_dates"]
-            order_ids_int = orders["order_ids_int"]
             line_num = orders["line_num"]
+
+            if _use_day_ids:
+                _oc = orders["_order_count"]
+                _reps = orders["_repeats"]
+
+                _od_D = order_dates[line_num == 1].astype("datetime64[D]")
+                _d_off = _od_D.astype(np.int64) - _date_pool_min_day
+
+                _u_days, _fi, _dc = np.unique(
+                    _d_off, return_index=True, return_counts=True,
+                )
+                _gi = np.searchsorted(_u_days, _d_off)
+                _cursor = np.arange(_oc, dtype=np.int64) - _fi[_gi]
+
+                if int(_dc.max()) > int(_per_chunk_alloc):
+                    raise SalesError(
+                        f"per_chunk_alloc too small: {int(_dc.max())} orders on one "
+                        f"day but alloc={int(_per_chunk_alloc)} per chunk per day."
+                    )
+
+                _new_ids = (
+                    _d_off * _day_stride
+                    + np.int64(chunk_idx) * _per_chunk_alloc
+                    + _cursor
+                    + np.int64(1)
+                )
+
+                if _new_ids.size > 0 and int(_new_ids.max()) >= int(INT32_MAX):
+                    raise SalesError(
+                        f"Day-based SalesOrderNumber would overflow int32: "
+                        f"max_id={int(_new_ids.max())} >= {int(INT32_MAX)}."
+                    )
+
+                order_ids_int = np.repeat(
+                    _new_ids.astype(np.int32), _reps,
+                )
+            else:
+                order_ids_int = orders["order_ids_int"]
 
         else:
             customer_keys_out = customer_keys_for_orders

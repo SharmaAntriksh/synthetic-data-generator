@@ -242,6 +242,14 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
 
     cache = _load_sales_channels(State)
 
+    # Pre-compute order-level unique mapping once (reused by SalesChannelKey + TimeKey)
+    _oid_first_idx = _oid_inv = None
+    if order_ids_int is not None:
+        oid = np.asarray(order_ids_int, dtype=np.int32)
+        _, _oid_first_idx, _oid_inv = np.unique(
+            oid, return_index=True, return_inverse=True,
+        )
+
     # ----------------------------
     # SalesChannelKey
     # ----------------------------
@@ -262,14 +270,10 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
         else:
             keys, p, channel_hour_lut = cache
 
-        if order_ids_int is not None:
-            oid = np.asarray(order_ids_int, dtype=np.int32)
-            # Order IDs are sequential ints — skip O(n log n) np.unique
-            _min_oid = int(oid[0])
-            _n_orders = int(oid[-1]) - _min_oid + 1
-            inv = oid - np.int32(_min_oid)
+        if _oid_first_idx is not None:
+            _n_orders = len(_oid_first_idx)
             per_order_channel = rng.choice(keys, size=_n_orders, p=p).astype(np.int32, copy=False)
-            sales_channel = per_order_channel[inv]
+            sales_channel = per_order_channel[_oid_inv]
         else:
             sales_channel = rng.choice(keys, size=n, p=p).astype(np.int32, copy=False)
 
@@ -289,20 +293,10 @@ def build_extra_columns(ctx: Dict[str, Any]) -> Dict[str, Any]:
             # digital-like fallback so night bins aren't empty
             timekey = _sample_hour_weighted_minute(rng, n, DIGITAL_HOUR_W)
         else:
-            if order_ids_int is not None:
-                oid = np.asarray(order_ids_int, dtype=np.int32)
-                # Order IDs are sequential — derive first-row indices in O(n)
-                _min_oid = int(oid[0])
-                _n_orders = int(oid[-1]) - _min_oid + 1
-                inv = oid - np.int32(_min_oid)
-                # First occurrence: where oid changes value (sorted+grouped)
-                _changes = np.empty(len(oid), dtype=np.bool_)
-                _changes[0] = True
-                _changes[1:] = oid[1:] != oid[:-1]
-                first_idx = np.flatnonzero(_changes)
-                per_order_sc = sales_channel[first_idx]
+            if _oid_first_idx is not None:
+                per_order_sc = sales_channel[_oid_first_idx]
                 per_order_time = _sample_timekey_by_channel(rng, per_order_sc, channel_hour_lut)
-                timekey = per_order_time[inv]
+                timekey = per_order_time[_oid_inv]
             else:
                 timekey = _sample_timekey_by_channel(rng, sales_channel, channel_hour_lut)
 

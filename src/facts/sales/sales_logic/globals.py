@@ -325,6 +325,10 @@ class State(metaclass=_SealableMeta):
     # Forward-compat aliases for SalesOrderNumber generation
     order_id_stride_orders = None      # usually == chunk_size
 
+    # Day-based order ID ranges (ensures SalesOrderNumber ~ OrderDate)
+    month_stride = None                # total ID space per day (num_chunks * per_chunk_alloc)
+    per_chunk_alloc = None             # ID slots each chunk owns within a day
+
     # used by task.py when deciding to drop order cols in Sales output
     skip_order_cols_requested = None
     

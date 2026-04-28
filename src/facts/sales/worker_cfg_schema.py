@@ -86,6 +86,8 @@ class SalesWorkerCfg(TypedDict, total=False):
     total_rows: int
     order_id_run_id: int
     max_lines_per_order: int
+    month_stride: int
+    per_chunk_alloc: int
 
     # -- Column control ------------------------------------------------------
     no_discount_key: Required[int]

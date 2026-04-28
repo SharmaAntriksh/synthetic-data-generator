@@ -142,6 +142,11 @@ def build_orders(
 
     order_dates = date_pool[od_idx].astype("datetime64[D]", copy=False)
 
+    # Sort by date so that sequential IDs correlate with dates
+    date_sort = np.argsort(order_dates, kind="mergesort")
+    order_dates = order_dates[date_sort]
+    customers = customers[date_sort]
+
     # ------------------------------------------------------------
     # Order IDs: simple sequential int32
     #
