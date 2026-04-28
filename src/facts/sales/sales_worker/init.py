@@ -957,9 +957,15 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
     # from a month if it has no salesperson coverage on the first or last
     # day of that month (catches partial-month closures like renovation).
     if store_eligible_by_month is not None and salesperson_effective_by_store:
+        _pool_first_day = dp[0] if dp.size > 0 else None
+        _pool_last_day = dp[-1] if dp.size > 0 else None
         for midx, month_M in enumerate(_unique_months):
             first_day = month_M.astype("datetime64[D]")
             last_day = (month_M + np.timedelta64(1, "M")).astype("datetime64[D]") - np.timedelta64(1, "D")
+            if _pool_first_day is not None and first_day < _pool_first_day:
+                first_day = _pool_first_day
+            if _pool_last_day is not None and last_day > _pool_last_day:
+                last_day = _pool_last_day
             eligible_arr = store_eligible_by_month[midx]
             staffed_mask = np.ones(eligible_arr.shape[0], dtype=bool)
             for sidx, sk in enumerate(eligible_arr):
