@@ -759,8 +759,8 @@ def _apply_geo_bias_store_sampling(
         _cust_for_store = customer_keys_out
 
     if geo_bias:
-        _ck_idx = np.clip(np.asarray(_cust_for_store, dtype=np.int32) - 1, 0, len(cust_geo) - 1)
-        _cust_countries = geo2c[np.clip(cust_geo[_ck_idx], 0, len(geo2c) - 1)]
+        _ck_arr = np.clip(np.asarray(_cust_for_store, dtype=np.int32), 0, len(cust_geo) - 1)
+        _cust_countries = geo2c[np.clip(cust_geo[_ck_arr], 0, len(geo2c) - 1)]
         _use_local = rng.random(_n_to_sample) < 0.70
 
         _month_set = set(month_stores.tolist())
@@ -1467,9 +1467,13 @@ def build_chunk_table(
                 _month_stores = _eligible
 
         # CORRELATION #2: Customer → Store geographic bias
+        # build_orders sorts by date, so customer_keys_for_orders (pre-sort)
+        # is misaligned with order_idx (post-sort). Use sorted order-level
+        # keys derived from the line-level output instead.
+        _sorted_order_cust = customer_keys_out[order_starts] if order_starts is not None else customer_keys_for_orders
         store_key_arr = _apply_geo_bias_store_sampling(
             rng, skip_cols, n_unique_orders, n_lines,
-            customer_keys_for_orders, customer_keys_out,
+            _sorted_order_cust, customer_keys_out,
             _month_stores, order_idx,
             getattr(State, "customer_geo_key", None),
             getattr(State, "geo_to_country_id", None),

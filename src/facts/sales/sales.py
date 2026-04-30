@@ -783,16 +783,23 @@ def _load_customers(
             break
 
     # --- Resolve customer_geo_key (for correlation lookups) ---
+    # Dense array indexed by CustomerKey (not pool position) so that
+    # geo-bias store sampling works even when keys are sparse (SCD2).
     customer_geo_key = None
+    _pool_geo = None
     if _cust_geo_full is not None:
         if _cust_scd2_detected and _cust_is_current_full is not None:
-            # Filter to IsCurrent=1 rows (same filter applied to cust_df)
-            customer_geo_key = _cust_geo_full[_cust_is_current_full == 1]
+            _pool_geo = _cust_geo_full[_cust_is_current_full == 1]
         else:
-            customer_geo_key = _cust_geo_full
+            _pool_geo = _cust_geo_full
     elif "GeographyKey" in cust_df.columns:
-        customer_geo_key = _as_np(cust_df["GeographyKey"], np.int32)
-    del _cust_geo_full, _cust_is_current_full
+        _pool_geo = _as_np(cust_df["GeographyKey"], np.int32)
+
+    if _pool_geo is not None:
+        _max_ck = int(customer_keys.max()) + 1
+        customer_geo_key = np.zeros(_max_ck, dtype=np.int32)
+        customer_geo_key[customer_keys] = _pool_geo
+    del _cust_geo_full, _cust_is_current_full, _pool_geo
 
     # --- Build customer SCD2 version tables ---
     _customer_scd2_active = False
