@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-import csv
+import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Sequence, Union
 
+import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.csv as pa_csv
 
 from src.exceptions import PackagingError
 from src.utils.logging_utils import stage, done, info
@@ -325,6 +329,93 @@ def _excluded_dim_files(cfg: dict) -> set[str]:
 
 
 # ============================================================
+# Dimension iteration + CSV writer (pyarrow + parallel)
+# ============================================================
+
+# Cap dim-CSV thread pool to bound peak memory (each worker holds a full dim
+# DataFrame + Arrow table in flight). 8 saturates pyarrow's internal threads
+# without serializing too many big dims at once.
+_DIM_CSV_MAX_WORKERS = 8
+
+
+def _iter_dim_files(parquet_dims: Path, excluded_dims: set[str]) -> list[Path]:
+    return [f for f in parquet_dims.glob("*.parquet") if f.name not in excluded_dims]
+
+
+def _date_col_overrides(df: pd.DataFrame) -> dict[str, pd.Series]:
+    """Build assign() overrides that cast date-like columns to python ``date``.
+
+    Used by both CSV and Delta branches so pyarrow writes pure date32 / "YYYY-MM-DD"
+    instead of leaving NullType (object cols) or appending " 00:00:00" (datetime64).
+    """
+    return {
+        c: pd.to_datetime(df[c], errors="coerce").dt.date
+        for c in _guess_date_cols(df)
+    }
+
+
+def _write_one_dim_csv(src: Path, dest: Path, *, force_date32: bool) -> None:
+    """Read one dimension parquet and write CSV via pyarrow.
+
+    Normalises bool → 0/1 and integer-like floats → Int64 so SQL Server
+    BULK INSERT sees clean values (no "true"/"false", no "10001.0").
+    """
+    df = pd.read_parquet(src, dtype_backend="numpy_nullable")
+
+    overrides: dict[str, pd.Series] = {}
+
+    for c in df.select_dtypes(include=["bool", "boolean"]).columns:
+        overrides[c] = df[c].astype("Int8")
+
+    for c in df.select_dtypes(include=["float", "Float32", "Float64"]).columns:
+        arr = df[c].to_numpy(dtype="float64", na_value=np.nan, copy=False)
+        mask = ~np.isnan(arr)
+        if mask.any() and not np.any(arr[mask] % 1):
+            overrides[c] = df[c].astype("Int64")
+
+    if force_date32:
+        overrides.update(_date_col_overrides(df))
+
+    if overrides:
+        df = df.assign(**overrides)
+
+    table = pa.Table.from_pandas(df, preserve_index=False)
+    pa_csv.write_csv(
+        table,
+        str(dest),
+        write_options=pa_csv.WriteOptions(include_header=True, quoting_style="needed"),
+    )
+
+
+def _write_dim_csvs_parallel(
+    parquet_dims: Path,
+    dims_out: Path,
+    excluded_dims: set[str],
+    force_date32: bool,
+) -> None:
+    """Convert all dim parquets to CSV in parallel.
+
+    pyarrow's CSV writer releases the GIL, and dim files are independent —
+    so a thread pool gives a real speedup. Files are processed largest-first
+    so the bottleneck (typically the customer dim) doesn't tail-block the pool.
+    """
+    files = sorted(
+        _iter_dim_files(parquet_dims, excluded_dims),
+        key=lambda f: f.stat().st_size,
+        reverse=True,
+    )
+    if not files:
+        return
+
+    def _task(src: Path) -> None:
+        _write_one_dim_csv(src, dims_out / f"{src.stem}.csv", force_date32=force_date32)
+
+    max_workers = min(len(files), _DIM_CSV_MAX_WORKERS, max(2, os.cpu_count() or 4))
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        list(ex.map(_task, files))
+
+
+# ============================================================
 # Final output folder creation (dimensions only)
 # ============================================================
 
@@ -392,9 +483,7 @@ def create_final_output_folder(
         excluded_dims = _excluded_dim_files(cfg)
 
         if ff == "parquet":
-            for f in parquet_dims.glob("*.parquet"):
-                if f.name in excluded_dims:
-                    continue
+            for f in _iter_dim_files(parquet_dims, excluded_dims):
                 df = pd.read_parquet(f)
                 write_parquet_with_date32(
                     df,
@@ -406,38 +495,7 @@ def create_final_output_folder(
                 )
 
         elif ff == "csv":
-            for f in parquet_dims.glob("*.parquet"):
-                if f.name in excluded_dims:
-                    continue
-                # Nullable backend keeps Int columns as Int (avoids "10001.0")
-                try:
-                    df = pd.read_parquet(f, dtype_backend="numpy_nullable")
-                except TypeError:
-                    df = pd.read_parquet(f)
-
-                # bool/boolean → 0/1 (Int8) for clean CSV output
-                bool_cols = list(df.select_dtypes(include=["bool", "boolean"]).columns)
-                if bool_cols:
-                    df = df.assign(**{c: df[c].astype("Int8") for c in bool_cols})
-
-                # integer-like floats → Int64 to avoid "10001.0" in CSV
-                float_cols = list(df.select_dtypes(include=["float"]).columns)
-                int_upgrades: dict = {}
-                for c in float_cols:
-                    s = pd.to_numeric(df[c], errors="coerce")
-                    non_null = s.dropna()
-                    if not non_null.empty and ((non_null % 1) == 0).all():
-                        int_upgrades[c] = s.astype("Int64")
-                if int_upgrades:
-                    df = df.assign(**int_upgrades)
-
-                df.to_csv(
-                    dims_out / f"{f.stem}.csv",
-                    index=False,
-                    encoding="utf-8",
-                    quoting=csv.QUOTE_MINIMAL,
-                    na_rep="",
-                )
+            _write_dim_csvs_parallel(parquet_dims, dims_out, excluded_dims, dim_force_date32)
 
         elif ff == "deltaparquet":
             try:
@@ -448,28 +506,14 @@ def create_final_output_folder(
                     "Run `pip install deltalake` or switch to parquet/csv."
                 ) from e
 
-            import pyarrow as pa
-
-            for f in parquet_dims.glob("*.parquet"):
-                if f.name in excluded_dims:
-                    continue
-                dim_name = f.stem
-                delta_out = dims_out / dim_name
+            for f in _iter_dim_files(parquet_dims, excluded_dims):
+                delta_out = dims_out / f.stem
                 delta_out.mkdir(parents=True, exist_ok=True)
 
                 df = pd.read_parquet(f)
-
-                # Fix: _guess_date_cols covers BOTH datetime64 AND object-dtype
-                # date columns; the previous guard `c in dt_cols` incorrectly
-                # skipped object-dtype cols, leaving NullType columns in the table.
                 if dim_force_date32:
-                    date_cols = _guess_date_cols(df)
-                    if date_cols:
-                        overrides = {
-                            c: pd.to_datetime(df[c], errors="coerce").dt.normalize().dt.date
-                            for c in date_cols
-                            if c in df.columns
-                        }
+                    overrides = _date_col_overrides(df)
+                    if overrides:
                         df = df.assign(**overrides)
 
                 table = pa.Table.from_pandas(df, preserve_index=False)
