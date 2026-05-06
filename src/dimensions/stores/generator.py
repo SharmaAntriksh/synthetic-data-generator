@@ -976,33 +976,41 @@ def generate_store_table(
         ds_start_ts = pd.Timestamp(dataset_start)
         ds_end_ts = pd.Timestamp(dataset_end)
         n_reno = int(reno_mask_dt.sum())
-        # Renovation starts at least 60 days into the window and at least
-        # 120 days before the end (room for 3-month min renovation)
-        reno_earliest = ds_start_ts + pd.Timedelta(days=60)
-        reno_latest_start = ds_end_ts - pd.Timedelta(days=120)
-        if reno_latest_start > reno_earliest:
-            reno_start_d = _rand_dates_d(
-                rng,
-                _as_date64d(reno_earliest.date()),
-                _as_date64d(reno_latest_start.date()),
-                n_reno,
-            )
-            reno_start_ts = pd.to_datetime(
-                reno_start_d.astype("datetime64[ns]")
-            ).normalize()
-            # Duration: 3-9 months (90-270 days)
-            reno_dur_days = rng.integers(90, 271, size=n_reno)
-            reno_end_ts = reno_start_ts + pd.to_timedelta(reno_dur_days, unit="D")
-            # Clamp end to dataset_end
-            reno_end_ts = reno_end_ts.where(
-                reno_end_ts <= ds_end_ts, ds_end_ts,
-            )
-            df.loc[reno_mask_dt, "RenovationStartDate"] = reno_start_ts.values
-            df.loc[reno_mask_dt, "RenovationEndDate"] = reno_end_ts.values
+        # Renovation starts at least 60 days into the dataset window AND at
+        # least 30 days after the store opens (cannot renovate before opening),
+        # and at least 120 days before dataset_end (room for 3-month min reno).
+        ds_earliest_i = (ds_start_ts + pd.Timedelta(days=60)).to_datetime64().astype("datetime64[D]").astype("int64")
+        ds_latest_i = (ds_end_ts - pd.Timedelta(days=120)).to_datetime64().astype("datetime64[D]").astype("int64")
+        reno_open_ts = pd.to_datetime(df.loc[reno_mask_dt, "OpeningDate"])
+        per_store_earliest_i = (
+            (reno_open_ts + pd.Timedelta(days=30))
+            .values.astype("datetime64[D]").astype("int64")
+        )
+        low_i = np.maximum(per_store_earliest_i, ds_earliest_i)
+        high_i = np.full(n_reno, ds_latest_i, dtype=np.int64)
+        # Drop stores whose available window collapses; they stay flagged
+        # "Renovating" but with NaT dates (consistent with the original
+        # behavior when reno_latest_start <= reno_earliest globally).
+        valid = high_i >= low_i
+        if valid.any():
+            n_valid = int(valid.sum())
+            day_offsets = rng.integers(0, (high_i[valid] - low_i[valid] + 1), dtype=np.int64)
+            reno_start_days_valid = (low_i[valid] + day_offsets).astype("datetime64[D]")
+            reno_dur_days = rng.integers(90, 271, size=n_valid)
+            reno_end_days_raw = reno_start_days_valid + reno_dur_days.astype("timedelta64[D]")
+            ds_end_d = np.datetime64(ds_end_ts.normalize().to_datetime64(), "D")
+            reno_end_days_valid = np.minimum(reno_end_days_raw, ds_end_d)
+
+            reno_start_ns = reno_start_days_valid.astype("datetime64[ns]")
+            reno_end_ns = reno_end_days_valid.astype("datetime64[ns]")
+
+            reno_idx_all = np.where(reno_mask_dt)[0]
+            reno_idx_valid = reno_idx_all[valid]
+            df.loc[reno_idx_valid, "RenovationStartDate"] = reno_start_ns
+            df.loc[reno_idx_valid, "RenovationEndDate"] = reno_end_ns
 
             # Stores whose renovation ended before dataset_end reopen
-            reopened = reno_end_ts < ds_end_ts
-            reopened_idx = np.where(reno_mask_dt)[0][np.asarray(reopened)]
+            reopened_idx = reno_idx_valid[reno_end_days_valid < ds_end_d]
             if len(reopened_idx) > 0:
                 status_arr2 = df["Status"].to_numpy().copy()
                 status_arr2[reopened_idx] = "Open"
@@ -1060,8 +1068,15 @@ def generate_store_table(
         n_reno_closed = int(reno_closed.sum())
         if n_reno_closed > 0:
             close_ts = pd.to_datetime(df.loc[reno_closed, "ClosingDate"])
+            open_ts = pd.to_datetime(df.loc[reno_closed, "OpeningDate"])
             lead_days = pd.to_timedelta(rng.integers(30, 91, size=n_reno_closed), unit="D")
-            df.loc[reno_closed, "RenovationStartDate"] = (close_ts - lead_days).dt.normalize().values
+            reno_start_candidate = (close_ts - lead_days).dt.normalize()
+            # Floor at OpeningDate so renovation never starts before the store opens
+            # (matters for stores that closed within ~90 days of opening).
+            reno_start_floored = reno_start_candidate.where(
+                reno_start_candidate >= open_ts, open_ts,
+            )
+            df.loc[reno_closed, "RenovationStartDate"] = reno_start_floored.values
             df.loc[reno_closed, "RenovationEndDate"] = close_ts.dt.normalize().values
 
     # StoreDescription

@@ -474,8 +474,100 @@ def check_esa(
                  past_close == 0,
                  f"{past_close} violation(s)")
 
+    # --- Pairwise checks on consecutive (employee, StartDate) rows ---
+    if not esa.empty:
+        _esa_emp_sorted = esa.sort_values(["EmployeeKey", "StartDate"]).reset_index(drop=True)
+        _same_emp = (
+            _esa_emp_sorted["EmployeeKey"].values[1:]
+            == _esa_emp_sorted["EmployeeKey"].values[:-1]
+        )
+        _check_no_assignment_gaps(_esa_emp_sorted, _same_emp, cat)
+        _check_transfer_reason_consistency(_esa_emp_sorted, _same_emp, cat)
+
     # --- Salesperson coverage per open physical store-month ---
     _check_salesperson_coverage(esa, stores, cat)
+
+
+def _check_no_assignment_gaps(
+    sorted_esa: pd.DataFrame,
+    same_emp: np.ndarray,
+    cat: str,
+) -> None:
+    """For each employee, consecutive assignments must have
+    ``next.StartDate == prev.EndDate + 1 day`` — no date gap, no overlap.
+    The transfer engine sets ``new_end = transfer_date - 1 day`` and the new
+    row starts on ``transfer_date``, so the only valid gap is exactly 1 day.
+    Catches off-by-one errors and any future change that breaks contiguity.
+    """
+    prev_end = _to_dt(sorted_esa["EndDate"]).values[:-1]
+    next_start = _to_dt(sorted_esa["StartDate"]).values[1:]
+    one_day = np.timedelta64(1, "D").astype("timedelta64[ns]")
+    bad_mask = same_emp & (next_start != prev_end + one_day)
+    bad_count = int(bad_mask.sum())
+
+    detail = ""
+    if bad_count > 0:
+        sample_idx = np.where(bad_mask)[0][:5]
+        rows: list[str] = []
+        for i in sample_idx:
+            ek = int(sorted_esa["EmployeeKey"].iloc[i + 1])
+            pe = pd.Timestamp(prev_end[i]).date()
+            ns = pd.Timestamp(next_start[i]).date()
+            ps = int(sorted_esa["StoreKey"].iloc[i])
+            ds = int(sorted_esa["StoreKey"].iloc[i + 1])
+            rows.append(f"  emp={ek} store {ps}->{ds}, prev_end={pe}, next_start={ns}")
+        detail = "\n".join(rows)
+
+    _add(cat, "No date gaps/overlaps between consecutive assignments",
+         bad_count == 0,
+         f"{bad_count} contiguity violation(s)",
+         detail)
+
+
+# Reasons that may legitimately appear on a row whose StoreKey differs from
+# the employee's prior row. "Initial" is reserved for the very first row.
+# Built from the producer's label set so a rename in defaults.py shows up here
+# as a check failure instead of silently passing.
+try:
+    from src.defaults import EMPLOYEE_TRANSFER_REASON_LABELS as _TRANSFER_REASON_LABELS
+    _CAREER_REASONS = frozenset(_TRANSFER_REASON_LABELS.tolist())
+except (ImportError, AttributeError):
+    _CAREER_REASONS = frozenset()
+_VALID_TRANSITION_REASONS = _CAREER_REASONS | {"Renovation Reassignment", "Renovation Return"}
+
+
+def _check_transfer_reason_consistency(
+    sorted_esa: pd.DataFrame,
+    same_emp: np.ndarray,
+    cat: str,
+) -> None:
+    """When an employee's StoreKey changes between consecutive rows, the
+    NEW row's TransferReason must be a valid transition reason — never
+    "Initial" (which belongs only to the first row of an employee's history).
+    """
+    store_changed = (
+        sorted_esa["StoreKey"].values[1:] != sorted_esa["StoreKey"].values[:-1]
+    )
+    transition_mask = same_emp & store_changed
+    if not transition_mask.any():
+        _add(cat, "TransferReason valid on cross-store transitions",
+             True, "no cross-store transitions in dataset")
+        return
+
+    transition_rows = sorted_esa.iloc[1:][transition_mask]
+    reasons = transition_rows["TransferReason"].astype(str)
+    bad_mask = ~reasons.isin(_VALID_TRANSITION_REASONS)
+    bad_count = int(bad_mask.sum())
+
+    detail = ""
+    if bad_count > 0:
+        bad_reasons = reasons[bad_mask].value_counts().to_dict()
+        detail = f"  unexpected reasons: {bad_reasons}"
+
+    _add(cat, "TransferReason valid on cross-store transitions",
+         bad_count == 0,
+         f"{bad_count} transition row(s) with invalid TransferReason",
+         detail)
 
 
 def _check_salesperson_coverage(
@@ -483,7 +575,12 @@ def _check_salesperson_coverage(
     stores: pd.DataFrame,
     cat: str,
 ) -> None:
-    """Every open, non-renovating physical store must have >= 1 salesperson per month."""
+    """Every open, non-renovating physical store must have >= 1 salesperson
+    active *throughout* every month (StartDate <= month_start AND EndDate >=
+    month_end). The last month_end is clamped to the latest ESA EndDate to
+    handle mid-month dataset ends. Mirrors the contract of the transfer
+    engine's coverage budget.
+    """
     sp = esa[esa["RoleAtStore"].astype(str) == "Sales Associate"]
     if sp.empty:
         _add(cat, "Salesperson coverage", True, "No Sales Associate assignments (skipped)")
@@ -494,7 +591,6 @@ def _check_salesperson_coverage(
     sp_end = _to_dt(sp["EndDate"]).values.astype("datetime64[ns]")
     sp_sk = sp["StoreKey"].astype(int).values
 
-    # Vectorize date coercion once, then build dicts
     phys_c = phys[["StoreKey", "OpeningDate", "ClosingDate",
                     "RenovationStartDate", "RenovationEndDate"]].copy()
     phys_c["StoreKey"] = phys_c["StoreKey"].astype(int)
@@ -507,39 +603,46 @@ def _check_salesperson_coverage(
     reno_start_dates = dict(reno_both[["StoreKey", "RenovationStartDate"]].values)
     reno_end_dates = dict(reno_both[["StoreKey", "RenovationEndDate"]].values)
 
-    # Determine date range from ESA
     all_starts = _to_dt(esa["StartDate"])
     all_ends = _to_dt(esa["EndDate"])
     global_start = all_starts.min()
     global_end = all_ends.max()
 
     months = pd.date_range(global_start.replace(day=1), global_end, freq="MS")
+    if len(months) == 0:
+        _add(cat, "Salesperson coverage (every open store-month)", True, "No months to check (skipped)")
+        return
+    month_ends_raw = months + pd.offsets.MonthEnd(0)
+    month_ends_clamped = pd.DatetimeIndex(
+        list(month_ends_raw[:-1]) + [min(month_ends_raw[-1], global_end)]
+    )
+
+    phys_sks = phys["StoreKey"].astype(int).to_numpy()
     violations: list[tuple[int, str]] = []
 
-    for check_date in months:
-        cd_ns = np.datetime64(check_date, "ns")
-        active_mask = (sp_start <= cd_ns) & (sp_end >= cd_ns)
+    for month_start, month_end in zip(months, month_ends_clamped):
+        ms_ns = np.datetime64(month_start, "ns")
+        me_ns = np.datetime64(month_end, "ns")
+        active_mask = (sp_start <= ms_ns) & (sp_end >= me_ns)
         covered = set(sp_sk[active_mask])
 
-        for sk in phys["StoreKey"].astype(int):
-            # Skip if not yet open
+        for sk in phys_sks:
+            sk = int(sk)
             od = open_dates.get(sk)
-            if od is not None and check_date < od:
+            if od is not None and month_start < od:
                 continue
-            # Skip if closed
             cd = close_dates.get(sk)
-            if cd is not None and check_date >= cd:
+            if cd is not None and month_end >= cd:
                 continue
-            # Skip if renovating
             rs = reno_start_dates.get(sk)
             re = reno_end_dates.get(sk)
-            if rs is not None and re is not None and rs <= check_date < re:
+            if rs is not None and re is not None and month_start < re and month_end >= rs:
                 continue
 
             if sk not in covered:
-                violations.append((sk, check_date.strftime("%Y-%m")))
+                violations.append((sk, month_start.strftime("%Y-%m")))
 
-    _add(cat, "Salesperson coverage (every open store-month)",
+    _add(cat, "Salesperson coverage (every open store-month, full-month)",
          len(violations) == 0,
          f"{len(violations)} store-month gap(s)",
          "\n".join(f"  Store {sk}, {ym}" for sk, ym in violations[:15]))

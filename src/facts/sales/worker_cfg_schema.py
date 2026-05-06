@@ -39,6 +39,8 @@ class SalesWorkerCfg(TypedDict, total=False):
     store_close_month: Optional[np.ndarray]
     store_open_day: Optional[np.ndarray]
     store_close_day: Optional[np.ndarray]
+    store_reno_start_day: Optional[np.ndarray]
+    store_reno_end_day: Optional[np.ndarray]
     store_to_geo: Optional[Dict[int, int]]
     store_type_map: Optional[Dict[int, str]]
 

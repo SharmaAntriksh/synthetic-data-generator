@@ -814,25 +814,31 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
 
     # ------------------------------------------------------------
     # Day-level store open/close for exact eligibility filtering
-    # Build dense lookup: store_key -> opening/closing day
+    # Build dense lookup: store_key -> opening/closing/renovation day arrays.
     # ------------------------------------------------------------
-    _store_open_day_dense = None
-    _store_close_day_dense = None
-    _raw_open_day = worker_cfg.get("store_open_day")
-    _raw_close_day = worker_cfg.get("store_close_day")
-    if _raw_open_day is not None:
-        _open_d = np.asarray(_raw_open_day, dtype="datetime64[D]")
-        _max_sk = int(store_keys.max()) + 1
-        _FAR_PAST = np.datetime64("1900-01-01", "D")
-        _FAR_FUTURE = np.datetime64("2262-04-11", "D")
-        _store_open_day_dense = np.full(_max_sk, _FAR_PAST, dtype="datetime64[D]")
-        _store_open_day_dense[store_keys.astype(np.intp)] = _open_d
-    if _raw_close_day is not None:
-        _close_d = np.asarray(_raw_close_day, dtype="datetime64[D]")
-        _max_sk = int(store_keys.max()) + 1
-        _FAR_FUTURE = np.datetime64("2262-04-11", "D")
-        _store_close_day_dense = np.full(_max_sk, _FAR_FUTURE, dtype="datetime64[D]")
-        _store_close_day_dense[store_keys.astype(np.intp)] = _close_d
+    _FAR_PAST = np.datetime64("1900-01-01", "D")
+    _FAR_FUTURE = np.datetime64("2262-04-11", "D")
+
+    def _dense_by_store_key(values, sentinel):
+        """Build a dense array indexed by StoreKey from per-position values."""
+        if values is None:
+            return None
+        vals = np.asarray(values, dtype="datetime64[D]")
+        out = np.full(int(store_keys.max()) + 1, sentinel, dtype="datetime64[D]")
+        out[store_keys.astype(np.intp)] = vals
+        return out
+
+    _store_open_day_dense = _dense_by_store_key(worker_cfg.get("store_open_day"), _FAR_PAST)
+    _store_close_day_dense = _dense_by_store_key(worker_cfg.get("store_close_day"), _FAR_FUTURE)
+
+    # Renovation windows. Sentinels chosen so a non-renovating store's
+    # window [far_future, far_past] never overlaps any month/date.
+    _store_reno_start_day_dense = _dense_by_store_key(
+        worker_cfg.get("store_reno_start_day"), _FAR_FUTURE,
+    )
+    _store_reno_end_day_dense = _dense_by_store_key(
+        worker_cfg.get("store_reno_end_day"), _FAR_PAST,
+    )
 
     # ------------------------------------------------------------
     # Store-product assortment (optional)
@@ -955,10 +961,17 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
 
     # Refine store eligibility from the bridge table: a store is excluded
     # from a month if it has no salesperson coverage on the first or last
-    # day of that month (catches partial-month closures like renovation).
+    # day of that month, OR if its renovation window overlaps that month
+    # (renovations entirely inside one month escape the staff-coverage
+    # check because pre-reno covers first day and post-reno covers last
+    # day, even though the middle of the month has no coverage).
     if store_eligible_by_month is not None and salesperson_effective_by_store:
         _pool_first_day = dp[0] if dp.size > 0 else None
         _pool_last_day = dp[-1] if dp.size > 0 else None
+        # Renovation overlap is checked against the dense per-StoreKey arrays
+        # (sentinels never overlap, so non-renovating stores pass through).
+        _reno_active = _store_reno_start_day_dense is not None and _store_reno_end_day_dense is not None
+
         for midx, month_M in enumerate(_unique_months):
             first_day = month_M.astype("datetime64[D]")
             last_day = (month_M + np.timedelta64(1, "M")).astype("datetime64[D]") - np.timedelta64(1, "D")
@@ -969,7 +982,15 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             eligible_arr = store_eligible_by_month[midx]
             staffed_mask = np.ones(eligible_arr.shape[0], dtype=bool)
             for sidx, sk in enumerate(eligible_arr):
-                sp_data = salesperson_effective_by_store.get(int(sk))
+                sk_int = int(sk)
+                if _reno_active:
+                    rs = _store_reno_start_day_dense[sk_int]
+                    re = _store_reno_end_day_dense[sk_int]
+                    # Renovation overlaps the month iff [rs, re] intersects [first_day, last_day]
+                    if rs <= last_day and re >= first_day:
+                        staffed_mask[sidx] = False
+                        continue
+                sp_data = salesperson_effective_by_store.get(sk_int)
                 if sp_data is None:
                     staffed_mask[sidx] = False
                     continue
@@ -1098,6 +1119,8 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             "store_eligible_by_month": store_eligible_by_month,
             "store_open_day": _store_open_day_dense,
             "store_close_day": _store_close_day_dense,
+            "store_reno_start_day": _store_reno_start_day_dense,
+            "store_reno_end_day": _store_reno_end_day_dense,
             "promo_keys_all": promo_keys_all,
             "promo_start_all": promo_start_all,
             "promo_end_all": promo_end_all,

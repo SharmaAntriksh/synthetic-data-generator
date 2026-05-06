@@ -1075,6 +1075,10 @@ def _load_stores(parquet_folder_p, end_date):
             _store_cols.append("OpeningDate")
         if "ClosingDate" in _store_schema_names:
             _store_cols.append("ClosingDate")
+        if "RenovationStartDate" in _store_schema_names:
+            _store_cols.append("RenovationStartDate")
+        if "RenovationEndDate" in _store_schema_names:
+            _store_cols.append("RenovationEndDate")
     store_df = load_parquet_df(_store_path, _store_cols)
     store_keys = _as_np(store_df["StoreKey"], np.int32)
     store_to_geo = dict(zip(_as_np(store_df["StoreKey"], np.int32), _as_np(store_df["GeographyKey"], np.int32)))
@@ -1101,6 +1105,19 @@ def _load_stores(parquet_folder_p, end_date):
         _close_dt_d = _close_dt.astype("datetime64[D]")
         _close_dt_d[_close_nat_mask] = _FAR_FUTURE_DAY
         store_close_day = _close_dt_d
+
+    store_reno_start_day = None
+    store_reno_end_day = None
+    if "RenovationStartDate" in store_df.columns and "RenovationEndDate" in store_df.columns:
+        _rs_dt = pd.to_datetime(store_df["RenovationStartDate"]).values.astype("datetime64[D]")
+        _re_dt = pd.to_datetime(store_df["RenovationEndDate"]).values.astype("datetime64[D]")
+        _rs_nat = np.isnat(_rs_dt)
+        _re_nat = np.isnat(_re_dt)
+        # Use sentinels that never overlap any month: start = far future, end = far past.
+        _rs_dt[_rs_nat | _re_nat] = _FAR_FUTURE_DAY
+        _re_dt[_rs_nat | _re_nat] = _FAR_PAST_DAY
+        store_reno_start_day = _rs_dt
+        store_reno_end_day = _re_dt
 
     store_type_map = None
     if "StoreType" in store_df.columns:
@@ -1131,6 +1148,8 @@ def _load_stores(parquet_folder_p, end_date):
         "store_close_month": store_close_month,
         "store_open_day": store_open_day,
         "store_close_day": store_close_day,
+        "store_reno_start_day": store_reno_start_day,
+        "store_reno_end_day": store_reno_end_day,
         "store_type_map": store_type_map,
         "geo_to_currency": geo_to_currency,
     }
@@ -1255,6 +1274,8 @@ def _build_worker_cfg(
         store_close_month=stores["store_close_month"],
         store_open_day=stores["store_open_day"],
         store_close_day=stores["store_close_day"],
+        store_reno_start_day=stores["store_reno_start_day"],
+        store_reno_end_day=stores["store_reno_end_day"],
         promo_keys_all=promos["promo_keys_all"],
         promo_start_all=promos["promo_start_all"],
         promo_end_all=promos["promo_end_all"],

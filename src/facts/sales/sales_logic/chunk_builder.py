@@ -809,8 +809,12 @@ def _resample_stores_for_open_close(
     rng, store_key_arr, order_dates,
     store_open_day, store_close_day,
     store_keys, order_idx,
+    *,
+    store_reno_start_day=None, store_reno_end_day=None,
 ):
-    """Resample stores whose order dates fall outside their open/close window."""
+    """Resample stores whose order date falls outside their open/close window
+    OR inside their renovation window. Replacement candidates are stores that
+    are open AND not currently renovating on the order date."""
     if store_open_day is None:
         return store_key_arr
 
@@ -822,11 +826,16 @@ def _resample_stores_for_open_close(
     _bad = _line_dates_d < _open_for_row
     if store_close_day is not None:
         _max_sk_c = len(store_close_day)
-        _sk_clipped_c = np.clip(_sk_i, 0, _max_sk_c - 1)
-        _close_for_row = store_close_day[_sk_clipped_c]
+        _close_for_row = store_close_day[np.clip(_sk_i, 0, _max_sk_c - 1)]
         _bad |= _line_dates_d >= _close_for_row
-    else:
-        _max_sk_c = _max_sk_d
+
+    if store_reno_start_day is not None and store_reno_end_day is not None:
+        _max_sk_r = len(store_reno_start_day)
+        _sk_clipped_r = np.clip(_sk_i, 0, _max_sk_r - 1)
+        _bad |= (
+            (_line_dates_d >= store_reno_start_day[_sk_clipped_r])
+            & (_line_dates_d <= store_reno_end_day[_sk_clipped_r])
+        )
 
     _n_bad = int(_bad.sum())
     if _n_bad == 0:
@@ -837,15 +846,24 @@ def _resample_stores_for_open_close(
     _unique_bad_dates = np.unique(_bad_dates)
     _sk_i32 = store_keys.astype(np.int32)
     _all_open = store_open_day[np.clip(_sk_i32, 0, _max_sk_d - 1)]
-    _all_close_arr = None
-    if store_close_day is not None:
-        _all_close_arr = store_close_day[np.clip(_sk_i32, 0, _max_sk_c - 1)]
+    _all_close_arr = (
+        store_close_day[np.clip(_sk_i32, 0, len(store_close_day) - 1)]
+        if store_close_day is not None else None
+    )
+    _all_rs = None
+    _all_re = None
+    if store_reno_start_day is not None and store_reno_end_day is not None:
+        _sk_clipped_all_r = np.clip(_sk_i32, 0, len(store_reno_start_day) - 1)
+        _all_rs = store_reno_start_day[_sk_clipped_all_r]
+        _all_re = store_reno_end_day[_sk_clipped_all_r]
     for _bd in _unique_bad_dates:
         _date_mask = _bad_dates == _bd
         _date_rows = _bad_idx[_date_mask]
         _day_ok = _all_open <= _bd
         if _all_close_arr is not None:
             _day_ok = _day_ok & (_all_close_arr > _bd)
+        if _all_rs is not None and _all_re is not None:
+            _day_ok = _day_ok & ~((_all_rs <= _bd) & (_all_re >= _bd))
         _day_stores = store_keys[_day_ok]
         if _day_stores.size == 0:
             _day_stores = store_keys
@@ -1113,6 +1131,8 @@ def build_chunk_table(
     store_eligible_by_month = State.store_eligible_by_month
     store_open_day = State.store_open_day      # dense array: store_key -> datetime64[D]
     store_close_day = State.store_close_day    # dense array: store_key -> datetime64[D]
+    store_reno_start_day = getattr(State, "store_reno_start_day", None)
+    store_reno_end_day = getattr(State, "store_reno_end_day", None)
 
     promo_keys_all = State.promo_keys_all
     promo_start_all = State.promo_start_all
@@ -1481,11 +1501,13 @@ def build_chunk_table(
             getattr(State, "country_to_store_keys", None),
         )
 
-        # DAY-LEVEL STORE ELIGIBILITY: resample for open/close dates
+        # DAY-LEVEL STORE ELIGIBILITY: resample for open/close + renovation
         store_key_arr = _resample_stores_for_open_close(
             rng, store_key_arr, order_dates,
             store_open_day, store_close_day,
             store_keys, order_idx,
+            store_reno_start_day=store_reno_start_day,
+            store_reno_end_day=store_reno_end_day,
         )
 
         # CORRELATION #1: Store → SalesChannelKey
