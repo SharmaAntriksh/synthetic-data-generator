@@ -832,9 +832,10 @@ def _resample_stores_for_open_close(
     if store_reno_start_day is not None and store_reno_end_day is not None:
         _max_sk_r = len(store_reno_start_day)
         _sk_clipped_r = np.clip(_sk_i, 0, _max_sk_r - 1)
+        # Renovation window is [start, end) — store reopens on end day.
         _bad |= (
             (_line_dates_d >= store_reno_start_day[_sk_clipped_r])
-            & (_line_dates_d <= store_reno_end_day[_sk_clipped_r])
+            & (_line_dates_d < store_reno_end_day[_sk_clipped_r])
         )
 
     _n_bad = int(_bad.sum())
@@ -863,7 +864,7 @@ def _resample_stores_for_open_close(
         if _all_close_arr is not None:
             _day_ok = _day_ok & (_all_close_arr > _bd)
         if _all_rs is not None and _all_re is not None:
-            _day_ok = _day_ok & ~((_all_rs <= _bd) & (_all_re >= _bd))
+            _day_ok = _day_ok & ~((_all_rs <= _bd) & (_all_re > _bd))
         _day_stores = store_keys[_day_ok]
         if _day_stores.size == 0:
             _day_stores = store_keys

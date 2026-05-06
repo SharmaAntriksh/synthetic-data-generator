@@ -642,7 +642,6 @@ def generate_store_table(
     close_share: float = 0.10,
     closing_enabled: bool = True,
     online_stores: Optional[int] = None,
-    online_close_share: float = 0.10,
 ) -> pd.DataFrame:
     """
     Generate synthetic store dimension table.
@@ -1285,7 +1284,6 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     closing_enabled = closing_cfg.get("enabled", True)
     close_share = float_or(closing_cfg.get("close_share"), 0.10)
     online_stores_count = int_or(store_cfg.online_stores, 0)
-    online_close_share_val = float_or(store_cfg.online_close_share, 0.10)
 
     geo_ctx = GeoContext(
         geo_keys=geo_keys,
@@ -1316,7 +1314,6 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             close_share=close_share,
             closing_enabled=closing_enabled,
             online_stores=online_stores_count,
-            online_close_share=online_close_share_val,
         )
 
         write_parquet_with_date32(

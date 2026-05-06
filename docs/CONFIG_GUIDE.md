@@ -223,7 +223,6 @@ Store dimension: physical and online store configuration.
 | Key | Description | Example |
 |-----|-------------|---------|
 | `stores.online_stores` | Number of online-only stores carved from the total store count (`scale.stores`). These get StoreType "Online" instead of physical store types. | `5` |
-| `stores.online_close_share` | Fraction of online stores that close during the simulation period. | `0.20` |
 | `stores.ensure_iso_coverage` | When `true`, ensures at least one store exists per ISO currency code used in exchange rates. Prevents missing-store gaps in cross-currency analytics. | `true` |
 | `stores.staffing_ranges` | `[min, max]` employee count per physical store type. Online stores always have 1 employee. | `{ Supermarket: [8, 20], Hypermarket: [15, 40], Convenience: [2, 6] }` |
 | `stores.closing.enabled` | Master toggle for store closures. When `false`, all stores remain open for the entire date range. | `true` |

@@ -187,7 +187,6 @@ def get_config():
         "storeClosingEnd": str(getattr(stores, "closing_end", "2028-12-31")),
         "storeAssortmentEnabled": bool(_g(stores, "assortment", "enabled", default=True)),
         "storeOnlineStores": int(getattr(stores, "online_stores", 5) or 5),
-        "storeOnlineCloseShare": float(getattr(stores, "online_close_share", 0.10)),
         "storeClosingEnabled": bool(_g(stores, "closing", "enabled", default=True)),
         "storeCloseShare": float(_g(stores, "closing", "close_share", default=0.10)),
         "storeStaffingRanges": dict(getattr(stores, "staffing_ranges", None) or {}),
@@ -396,7 +395,6 @@ def update_config(body: ConfigUpdate):
         if "storeClosingEnd" in v: cfg.stores.closing_end = v["storeClosingEnd"]
         if "storeAssortmentEnabled" in v: cfg.stores.assortment.enabled = bool(v["storeAssortmentEnabled"])
         if "storeOnlineStores" in v: cfg.stores.online_stores = int(v["storeOnlineStores"])
-        if "storeOnlineCloseShare" in v: cfg.stores.online_close_share = float(v["storeOnlineCloseShare"])
         if "storeClosingEnabled" in v: cfg.stores.closing.enabled = bool(v["storeClosingEnabled"])
         if "storeCloseShare" in v: cfg.stores.closing.close_share = float(v["storeCloseShare"])
         if "storeStaffingRanges" in v and isinstance(v["storeStaffingRanges"], dict): cfg.stores.staffing_ranges = v["storeStaffingRanges"]

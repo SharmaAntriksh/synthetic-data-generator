@@ -593,7 +593,6 @@ class StoresConfig(_Base):
     use_name_pools: bool = True
     # Online store settings
     online_stores: Optional[int] = None      # explicit count carved from num_stores
-    online_close_share: float = 0.10         # fraction of online stores that close
     # Parquet output knobs
     parquet_compression: str = "snappy"
     parquet_compression_level: Optional[int] = None

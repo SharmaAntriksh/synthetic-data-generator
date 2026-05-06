@@ -986,8 +986,8 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
                 if _reno_active:
                     rs = _store_reno_start_day_dense[sk_int]
                     re = _store_reno_end_day_dense[sk_int]
-                    # Renovation overlaps the month iff [rs, re] intersects [first_day, last_day]
-                    if rs <= last_day and re >= first_day:
+                    # Renovation window is [rs, re) — store reopens on re.
+                    if rs <= last_day and re > first_day:
                         staffed_mask[sidx] = False
                         continue
                 sp_data = salesperson_effective_by_store.get(sk_int)
@@ -1004,11 +1004,16 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
         _n_fallback_staffed = sum(1 for arr in store_eligible_by_month if arr.size == 0)
         for midx, arr in enumerate(store_eligible_by_month):
             if arr.size == 0:
-                store_eligible_by_month[midx] = store_keys
+                # Restore the open/close-only subset (recomputed from store_open_month /
+                # store_close_month). Per-day renovation filtering still happens at chunk
+                # time, so any renovating store sampled here gets resampled away.
+                _mi = _month_ints[midx]
+                _restored = store_keys[(store_open_month <= _mi) & (store_close_month >= _mi)]
+                store_eligible_by_month[midx] = _restored if _restored.size > 0 else store_keys
         if _n_fallback_staffed > 0:
             _warn(
                 f"{_n_fallback_staffed} month(s) had zero staffed stores; "
-                "falling back to all stores for those months."
+                "falling back to open-this-month stores (staffing requirement relaxed)."
             )
 
     promo_keys_all = as_int32(promo_keys_all)
