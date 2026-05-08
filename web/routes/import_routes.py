@@ -24,6 +24,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from src.tools.sql.sql_server_import import validate_tabular_login_name
 from src.utils.config_helpers import int_or
 from web.shared_state import REPO_ROOT, _ANSI_RE
 
@@ -69,6 +70,9 @@ class ImportRequest(BaseModel):
     drop_pk: bool = False
     verify: bool = False
     odbc_driver: Optional[str] = None
+    provision_tabular_user: bool = False
+    tabular_login: Optional[str] = None
+    tabular_password: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +207,11 @@ def _run_import_thread(job: dict, req: ImportRequest, dataset_path: Path):
         if req.verify:
             cmd.append("--verify")
 
+        if req.provision_tabular_user:
+            cmd.append("--provision-tabular-user")
+            if req.tabular_login:
+                cmd.extend(["--tabular-login", req.tabular_login])
+
         if req.odbc_driver:
             cmd.extend(["--odbc-driver", req.odbc_driver])
 
@@ -210,6 +219,8 @@ def _run_import_thread(job: dict, req: ImportRequest, dataset_path: Path):
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
         if req.password:
             env["SYNDATA_DB_PASSWORD"] = req.password
+        if req.provision_tabular_user and req.tabular_password:
+            env["SYNDATA_TABULAR_PASSWORD"] = req.tabular_password
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1, env=env, cwd=str(REPO_ROOT),
@@ -265,6 +276,14 @@ def start_import(req: ImportRequest):
         raise HTTPException(400, "Dataset must be selected.")
     if not req.trusted and not req.user:
         raise HTTPException(400, "Username is required when not using Windows Authentication.")
+    if req.provision_tabular_user:
+        if not req.tabular_password:
+            raise HTTPException(400, "Tabular user password is required when provisioning is enabled.")
+        if req.tabular_login:
+            try:
+                validate_tabular_login_name(req.tabular_login)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
 
     # Validate dataset exists and has SQL scripts (CSV format only)
     try:

@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -9,6 +10,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from src.tools.sql.sql_server_import import (
     import_sql_server,
     SqlServerImportError,
+    TABULAR_LOGIN_DEFAULT,
 )
 
 
@@ -33,7 +35,6 @@ def build_connection_string(args) -> str:
         raise ValueError("Username must be a non-empty string when not using --trusted")
     password = args.password
     if getattr(args, "password_env", False):
-        import os
         password = os.environ.get("SYNDATA_DB_PASSWORD", password)
     if not password:
         raise ValueError("Password must be provided when not using --trusted")
@@ -132,11 +133,39 @@ def main() -> int:
         help="Override ODBC driver name (default: ODBC Driver 17 for SQL Server).",
     )
 
+    parser.add_argument(
+        "--provision-tabular-user",
+        action="store_true",
+        help=(
+            "After import, ensure the SQL login exists, create a matching user "
+            "in the imported database, and grant DB_OWNER. Password must be "
+            "provided via SYNDATA_TABULAR_PASSWORD env var."
+        ),
+    )
+
+    parser.add_argument(
+        "--tabular-login",
+        default=TABULAR_LOGIN_DEFAULT,
+        help=(
+            f"Login name for the tabular user "
+            f"(default: {TABULAR_LOGIN_DEFAULT}). "
+            "Used as both the SQL login and the per-DB user."
+        ),
+    )
+
     args = parser.parse_args()
 
     try:
         run_dir = _resolve_run_dir(args.run_path)
         connection_string = build_connection_string(args)
+
+        tabular_password = None
+        if args.provision_tabular_user:
+            tabular_password = os.environ.get("SYNDATA_TABULAR_PASSWORD")
+            if not tabular_password:
+                raise ValueError(
+                    "--provision-tabular-user requires SYNDATA_TABULAR_PASSWORD env var to be set."
+                )
 
         import_sql_server(
             server=args.server,
@@ -146,6 +175,9 @@ def main() -> int:
             apply_cci=bool(args.apply_cci),
             drop_pk=bool(args.drop_pk),
             verify=bool(args.verify),
+            provision_tabular_user=bool(args.provision_tabular_user),
+            tabular_login=args.tabular_login,
+            tabular_password=tabular_password,
         )
 
     except ValueError as exc:

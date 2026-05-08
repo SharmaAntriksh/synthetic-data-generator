@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, List, Tuple
 
 from src.exceptions import SqlServerImportError
+from src.tools.sql.sql_helpers import sql_escape_literal
 
 try:
     import pyodbc
@@ -640,6 +641,106 @@ def _collect_phase_scripts(sql_dir: Path) -> Tuple[List[Path], List[Path], List[
 
 
 # -------------------------
+# Tabular user provisioning
+# -------------------------
+TABULAR_LOGIN_DEFAULT = "tabular_user"
+_TABULAR_LOGIN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
+
+def validate_tabular_login_name(login: str) -> str:
+    """Reject login names that are unsafe to embed in dynamic SQL.
+
+    The name is interpolated into both an identifier (``[name]``) and a
+    string literal (``WHERE name = 'name'``); restricting to letters/digits/
+    underscores avoids needing to escape either context.
+    """
+    if not login or not _TABULAR_LOGIN_RE.match(login):
+        raise ValueError(
+            f"Invalid tabular login name: {login!r}. "
+            "Must start with a letter or underscore and contain only "
+            "letters, digits, and underscores (max 128 chars)."
+        )
+    return login
+
+
+def _provision_tabular_user(
+    connection_string: str,
+    database: str,
+    login: str,
+    password: str | None,
+) -> None:
+    """Create a SQL login + per-DB user + db_owner membership (idempotent).
+
+    Designed to make the imported database immediately usable by SSAS Tabular /
+    Power BI without manual user setup. The same login can be reused across
+    every imported database — re-running on a new DB just adds a user mapping.
+    Logs per-step outcome (created vs. already existed) so the operator can see
+    exactly what changed.
+    """
+    if not password:
+        raise SqlServerImportError(
+            "Tabular user provisioning requires a password "
+            "(set SYNDATA_TABULAR_PASSWORD)."
+        )
+
+    login = validate_tabular_login_name(login)
+    db_q = _quote_db_name(database)
+
+    with pyodbc.connect(connection_string, autocommit=True) as conn:
+        _try_disable_query_timeout(conn)
+        cursor = conn.cursor()
+
+        # 1. Server login (master scope)
+        cursor.execute(
+            "SELECT 1 FROM sys.server_principals "
+            "WHERE name = ? AND type_desc = 'SQL_LOGIN'",
+            login,
+        )
+        if cursor.fetchone():
+            _log("SKIP", f"    Server login [{login}] already exists")
+        else:
+            # CREATE LOGIN does not accept its password as a parameter,
+            # so embed it as a literal. The login name is regex-validated.
+            pw_lit = sql_escape_literal(password)
+            cursor.execute(
+                f"CREATE LOGIN [{login}] WITH PASSWORD = '{pw_lit}', "
+                "CHECK_POLICY = ON, CHECK_EXPIRATION = OFF;"
+            )
+            _drain_results(cursor)
+            _log("DONE", f"    Created server login [{login}]")
+
+        # Switch to target DB for steps 2-3
+        cursor.execute(f"USE {db_q};")
+        _drain_results(cursor)
+
+        # 2. Database user
+        cursor.execute(
+            "SELECT 1 FROM sys.database_principals WHERE name = ?", login,
+        )
+        if cursor.fetchone():
+            _log("SKIP", f"    Database user [{login}] already exists in [{database}]")
+        else:
+            cursor.execute(f"CREATE USER [{login}] FOR LOGIN [{login}];")
+            _drain_results(cursor)
+            _log("DONE", f"    Created database user [{login}] in [{database}]")
+
+        # 3. db_owner membership
+        cursor.execute(
+            "SELECT 1 FROM sys.database_role_members drm "
+            "JOIN sys.database_principals r ON r.principal_id = drm.role_principal_id "
+            "JOIN sys.database_principals m ON m.principal_id = drm.member_principal_id "
+            "WHERE r.name = 'db_owner' AND m.name = ?",
+            login,
+        )
+        if cursor.fetchone():
+            _log("SKIP", f"    [{login}] already member of db_owner")
+        else:
+            cursor.execute(f"ALTER ROLE [db_owner] ADD MEMBER [{login}];")
+            _drain_results(cursor)
+            _log("DONE", f"    Added [{login}] to db_owner")
+
+
+# -------------------------
 # Main import
 # -------------------------
 def _run_verify(cursor) -> None:
@@ -706,6 +807,9 @@ def import_sql_server(
     apply_cci: bool = False,
     drop_pk: bool = False,
     verify: bool = False,
+    provision_tabular_user: bool = False,
+    tabular_login: str = TABULAR_LOGIN_DEFAULT,
+    tabular_password: str | None = None,
 ) -> None:
     if pyodbc is None:
         raise SqlServerImportError(
@@ -959,7 +1063,21 @@ def import_sql_server(
             f"Failed running post-import steps in database '{database}'. Details: {exc.args}"
         ) from exc
 
-    # Step 4: optional verification (run verify.RunAll scorecard)
+    # Step 4: optional tabular user provisioning
+    if provision_tabular_user:
+        _log("INFO", "=" * 60)
+        _t_prov = _time.time()
+        _log("INFO", f"  Provisioning [{tabular_login}] as DB_OWNER")
+        try:
+            _provision_tabular_user(
+                connection_string, database, tabular_login, tabular_password,
+            )
+            _log("DONE", f"  Provisioning completed in {_time.time() - _t_prov:.1f}s")
+        except (pyodbc.Error, SqlServerImportError, ValueError) as exc:
+            # Non-fatal: data is already loaded and usable under the import login.
+            _log("WARN", f"  Tabular user provisioning failed: {exc}")
+
+    # Step 5: optional verification (run verify.RunAll scorecard)
     if not verify:
         return
 

@@ -234,8 +234,13 @@ def generate_bulk_insert_script(
         effective_mode = "csv" if tgt.lower() in _csv_lower else mode
 
         if effective_mode == "csv":
-            # SQL Server 2017+
+            # SQL Server 2017+. ROWTERMINATOR must be specified explicitly:
+            # SQL 2025 defaults FORMAT='CSV' to '\r\n' and fails on LF-only
+            # files with "Cannot obtain the required interface ('IID_IColumnsInfo')
+            # from OLE DB provider 'BULK'". 2017-2022 tolerated LF without it.
             with_opts.insert(0, "FORMAT = 'CSV'")
+            with_opts.append(f"FIELDTERMINATOR = '{_sql_escape_literal(field_terminator)}'")
+            with_opts.append(f"ROWTERMINATOR = '{_sql_escape_literal(row_terminator)}'")
             with_opts.append(f"CODEPAGE = '{codepage}'")
             with_opts.append("TABLOCK")
         else:

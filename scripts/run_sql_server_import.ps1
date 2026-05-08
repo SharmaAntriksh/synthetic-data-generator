@@ -32,6 +32,19 @@ param (
     # Run data verification after import (EXEC verify.RunAll)
     [switch]$Verify,
 
+    # Provision a SQL login + DB user with DB_OWNER for SSAS/Power BI access.
+    # Password resolution order: -TabularPassword > $env:SYNDATA_TABULAR_PASSWORD > interactive prompt.
+    [switch]$ProvisionTabularUser,
+
+    # Login name for the tabular user (default: tabular_user).
+    # Used as both the SQL login and the per-DB user. Letters/digits/underscores only.
+    [string]$TabularLogin = "tabular_user",
+
+    # SecureString password for the tabular user. Pass via:
+    #   $sec = Read-Host -AsSecureString "Enter tabular password"
+    #   .\run_sql_server_import.ps1 ... -ProvisionTabularUser -TabularPassword $sec
+    [SecureString]$TabularPassword,
+
     # e.g. "ODBC Driver 18 for SQL Server"
     [string]$OdbcDriver,
 
@@ -97,6 +110,30 @@ try {
     if ($ApplyCCI) { $argsList += "--apply-cci" }
     if ($DropPK)   { $argsList += "--drop-pk" }
     if ($Verify)   { $argsList += "--verify" }
+    if ($ProvisionTabularUser) {
+        # Validate login name (must match the Python-side regex)
+        if ($TabularLogin -notmatch '^[A-Za-z_][A-Za-z0-9_]{0,127}$') {
+            throw "-TabularLogin '$TabularLogin' is invalid. Use letters, digits, underscores only (max 128 chars)."
+        }
+
+        # Resolve password: -TabularPassword > env var > prompt (interactive only)
+        $resolvedPassword = $null
+        if ($TabularPassword) {
+            $resolvedPassword = [System.Net.NetworkCredential]::new('', $TabularPassword).Password
+        } elseif ($env:SYNDATA_TABULAR_PASSWORD) {
+            $resolvedPassword = $env:SYNDATA_TABULAR_PASSWORD
+        } elseif ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+            $promptedSec = Read-Host -AsSecureString "Enter password for tabular login [$TabularLogin]"
+            $resolvedPassword = [System.Net.NetworkCredential]::new('', $promptedSec).Password
+        } else {
+            throw "-ProvisionTabularUser needs a password. Pass -TabularPassword, set `$env:SYNDATA_TABULAR_PASSWORD, or run interactively."
+        }
+
+        # Forward to the python child via env var (avoids process-listing exposure)
+        $env:SYNDATA_TABULAR_PASSWORD = $resolvedPassword
+
+        $argsList += @("--provision-tabular-user", "--tabular-login", $TabularLogin)
+    }
     if ($OdbcDriver) { $argsList += @("--odbc-driver", $OdbcDriver) }
 
     # Log the command
@@ -128,6 +165,7 @@ try {
         if ($ApplyCCI) { $flags += "apply-cci" }
         if ($DropPK)   { $flags += "drop-pk" }
         if ($Verify)   { $flags += "verify" }
+        if ($ProvisionTabularUser) { $flags += ("provision-tabular-user=" + $TabularLogin) }
         if ($OdbcDriver) { $flags += ("odbc=" + $OdbcDriver) }
 
         $flagText = if ($flags.Count -gt 0) { " [" + ($flags -join ", ") + "]" } else { "" }

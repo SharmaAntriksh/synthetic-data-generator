@@ -393,8 +393,68 @@ When generating in CSV mode, the output includes auto-generated SQL scripts for 
 | `-ApplyCCI $true` | Create clustered columnstore indexes after load |
 | `-DropPK $true` | Drop PKs and FKs before CCI (saved to `[admin].[_PK_Backup]` for restore) |
 | `-Verify` | Run post-import data integrity checks |
+| `-ProvisionTabularUser` | After import, ensure a SQL login + DB user exists with `DB_OWNER` (for SSAS Tabular / Power BI) |
+| `-TabularLogin` | Login name for the tabular user (default: `tabular_user`) |
+| `-TabularPassword` | `SecureString` password for the tabular user (alternative: `$env:SYNDATA_TABULAR_PASSWORD`) |
 
 The import creates all dimension and fact tables, applies PK/FK constraints, and creates analytical views. Dropped constraints can be restored with `EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'`.
+
+### Provisioning a Tabular User
+
+When importing into SSAS Tabular or Power BI, a dedicated SQL login is usually expected. `-ProvisionTabularUser` ensures one exists and is mapped into the imported database with `DB_OWNER`, so you don't have to create it by hand for every database.
+
+**Interactive (most common) — full flag set:**
+
+```powershell
+.\scripts\run_sql_server_import.ps1 `
+  -RunPath ".\generated_datasets\<your-run-folder>" `
+  -Server "SUMMER\SQL2025" `
+  -Database Sales2M `
+  -TrustedConnection `
+  -ApplyCCI $true `
+  -DropPK $false `
+  -Verify `
+  -ProvisionTabularUser `
+  -TabularLogin tabular_user
+# → Prompts: Enter password for tabular login [tabular_user]
+```
+
+**Pre-supplied password (scripted but still secure):**
+
+```powershell
+$sec = Read-Host -AsSecureString "Tabular password"
+
+.\scripts\run_sql_server_import.ps1 `
+  -RunPath ".\generated_datasets\<your-run-folder>" `
+  -Server "SUMMER\SQL2025" `
+  -Database Sales2M `
+  -TrustedConnection `
+  -ApplyCCI $true `
+  -DropPK $false `
+  -Verify `
+  -ProvisionTabularUser `
+  -TabularLogin tabular_user `
+  -TabularPassword $sec
+```
+
+**Automation / CI:**
+
+```powershell
+$env:SYNDATA_TABULAR_PASSWORD = "..."
+
+.\scripts\run_sql_server_import.ps1 `
+  -RunPath ".\generated_datasets\<your-run-folder>" `
+  -Server "SUMMER\SQL2025" `
+  -Database Sales2M `
+  -TrustedConnection `
+  -ApplyCCI $true `
+  -DropPK $false `
+  -Verify `
+  -ProvisionTabularUser `
+  -TabularLogin analytics_user
+```
+
+Password resolution order: `-TabularPassword` → `$env:SYNDATA_TABULAR_PASSWORD` → interactive prompt → error (non-interactive with no password set). The login name is validated against `^[A-Za-z_][A-Za-z0-9_]{0,127}$`. The same login can be reused across every imported database — re-running on a new database just adds a user mapping. The importing connection needs server-level rights (e.g. `securityadmin`) to create the login the first time; provisioning failures are non-fatal and logged as a warning.
 
 ### Post-Import Stored Procedures
 
