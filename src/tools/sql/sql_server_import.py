@@ -29,6 +29,11 @@ def _find_project_root() -> Path:
 PROJECT_ROOT = _find_project_root()
 _GO_SPLIT_RE = re.compile(r"^\s*GO\s*$", flags=re.MULTILINE | re.IGNORECASE)
 
+# sys.key_constraints.type / _PK_Backup.constraint_type literals.
+_CT_PK = "PK"
+_CT_UQ = "UQ"
+_CT_FK = "FK"
+
 
 
 # -------------------------
@@ -156,26 +161,29 @@ def _cci_count(cursor: "pyodbc.Cursor", schema: str, table: str) -> int:
     return int(cursor.fetchone()[0])
 
 
-def _count_user_pks_fks(cursor: "pyodbc.Cursor") -> tuple[int, int]:
-    """Count PKs and FKs on user tables (excludes sys/INFORMATION_SCHEMA/admin).
+def _find_create_sql(tables_files: Iterable[Path], suffix: str) -> Path | None:
+    return next((p for p in tables_files if p.name.lower().endswith(suffix)), None)
 
-    Returns (pk_count, fk_count) in a single round-trip.
-    """
+
+def _count_user_constraints(cursor: "pyodbc.Cursor") -> tuple[int, int, int]:
+    """Return (pk_count, uq_count, fk_count) on user tables in a single round-trip."""
     cursor.execute(
         "SELECT "
-        "  (SELECT COUNT(*) FROM sys.key_constraints kc "
-        "   JOIN sys.tables t ON t.object_id = kc.parent_object_id "
-        "   JOIN sys.schemas s ON s.schema_id = t.schema_id "
-        "   WHERE kc.type = 'PK' AND t.is_ms_shipped = 0 "
-        "     AND s.name NOT IN ('sys','INFORMATION_SCHEMA','admin')), "
+        "  SUM(CASE WHEN kc.type = 'PK' THEN 1 ELSE 0 END), "
+        "  SUM(CASE WHEN kc.type = 'UQ' THEN 1 ELSE 0 END), "
         "  (SELECT COUNT(*) FROM sys.foreign_keys fk "
         "   JOIN sys.tables t ON t.object_id = fk.parent_object_id "
         "   JOIN sys.schemas s ON s.schema_id = t.schema_id "
         "   WHERE t.is_ms_shipped = 0 "
-        "     AND s.name NOT IN ('sys','INFORMATION_SCHEMA','admin'));"
+        "     AND s.name NOT IN ('sys','INFORMATION_SCHEMA','admin')) "
+        "FROM sys.key_constraints kc "
+        "JOIN sys.tables t ON t.object_id = kc.parent_object_id "
+        "JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        "WHERE t.is_ms_shipped = 0 "
+        "  AND s.name NOT IN ('sys','INFORMATION_SCHEMA','admin');"
     )
     row = cursor.fetchone()
-    return int(row[0]), int(row[1])
+    return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
 
 
 def _print_cci_summary(cursor: "pyodbc.Cursor", *, tables: list[str]) -> None:
@@ -276,26 +284,29 @@ def execute_sql_files(cursor, files: Iterable[Path]) -> None:
         execute_sql_batches(cursor, f)
 
 
+# Anchored at line start so matches inside ``-- ...`` comments are ignored.
+_BULK_INSERT_LINE_PREFIX = r"^[ \t]*BULK\s+INSERT\s+"
+_TABLE_REF_TAIL = r"(?:\[?\w+\]?\.)?\[?(\w+)\]?"
+
+
 def _extract_table_from_batch(batch_text: str) -> str:
-    """Try to extract the target table name from a BULK INSERT or INSERT batch."""
-    # BULK INSERT [dbo].[TableName] or BULK INSERT dbo.TableName
+    """Extract the target table name from a BULK INSERT/INSERT batch."""
     m = re.search(
-        r"BULK\s+INSERT\s+(?:\[?\w+\]?\.)?\[?(\w+)\]?",
-        batch_text, flags=re.IGNORECASE,
+        _BULK_INSERT_LINE_PREFIX + _TABLE_REF_TAIL,
+        batch_text, flags=re.IGNORECASE | re.MULTILINE,
     )
     if m:
         return m.group(1)
-    # INSERT INTO [dbo].[TableName]
     m = re.search(
-        r"INSERT\s+(?:INTO\s+)?(?:\[?\w+\]?\.)?\[?(\w+)\]?",
-        batch_text, flags=re.IGNORECASE,
+        r"^[ \t]*INSERT\s+(?:INTO\s+)?" + _TABLE_REF_TAIL,
+        batch_text, flags=re.IGNORECASE | re.MULTILINE,
     )
     if m:
         return m.group(1)
     return ""
 
 
-def _execute_cci_with_progress(cursor, sql_file: Path, fact_tables: list[str]) -> None:
+def _execute_cci_with_progress(cursor, sql_file: Path, target_tables: list[str]) -> None:
     """Execute a CCI script with a spinner showing elapsed time.
 
     Splits on GO and executes each batch with a spinner. After all
@@ -315,7 +326,7 @@ def _execute_cci_with_progress(cursor, sql_file: Path, fact_tables: list[str]) -
         execute_sql_batches(cursor, sql_file)
         return
 
-    n_tables = len(fact_tables)
+    n_tables = len(target_tables)
 
     for batch in non_empty:
         stop_event = threading.Event()
@@ -354,19 +365,33 @@ def _execute_cci_with_progress(cursor, sql_file: Path, fact_tables: list[str]) -
                 f"Error in CCI script '{sql_file.name}'. Details: {error.args}"
             ) from error
 
-    # After all batches: verify which tables got CCI
-    for t in fact_tables:
-        try:
-            schema = _find_table_schema(cursor, t)
-            c = _cci_count(cursor, schema, t)
-            if c > 0:
-                _log("WORK", f"    {t}")
-        except (ValueError, KeyError, OSError):
-            pass
+    if not target_tables:
+        return
+
+    placeholders = ",".join("?" * len(target_tables))
+    cursor.execute(
+        f"SELECT t.name, "
+        f"  SUM(CASE WHEN i.type_desc = 'CLUSTERED COLUMNSTORE' THEN 1 ELSE 0 END) "
+        f"FROM sys.tables t "
+        f"JOIN sys.schemas s ON s.schema_id = t.schema_id "
+        f"LEFT JOIN sys.indexes i ON i.object_id = t.object_id "
+        f"WHERE t.name IN ({placeholders}) "
+        f"  AND s.name NOT IN ('sys','INFORMATION_SCHEMA','admin') "
+        f"GROUP BY t.name;",
+        *target_tables,
+    )
+    cci_count_by_table = {row[0]: int(row[1] or 0) for row in cursor.fetchall()}
+
+    missing = [t for t in target_tables if cci_count_by_table.get(t, 0) == 0]
+    n_with_cci = len(target_tables) - len(missing)
+
+    _log("WORK", f"    {n_with_cci}/{len(target_tables)} tables now have CCI")
+    for t in missing:
+        _log("WARN", f"    {t}: no CCI")
 
 
 _BULK_INSERT_SPLIT_RE = re.compile(
-    r"(?=^[ \t]*BULK\s+INSERT\s)",
+    r"(?=" + _BULK_INSERT_LINE_PREFIX + r")",
     flags=re.MULTILINE | re.IGNORECASE,
 )
 
@@ -1032,7 +1057,7 @@ def import_sql_server(
             # --- 2.1b Pre-load PK/FK drop (parallel-safe loads) ---
             if drop_pk_before_load:
                 _t_predrop = _time.time()
-                _log("INFO", "  Dropping PKs/FKs before load (enables parallel BULK INSERT scaling)")
+                _log("INFO", "  Dropping PKs/UQs/FKs before load (enables parallel BULK INSERT scaling)")
                 try:
                     with pyodbc.connect(db_conn_str, autocommit=True) as predrop_conn:
                         _try_disable_query_timeout(predrop_conn)
@@ -1048,17 +1073,17 @@ def import_sql_server(
                                 "Cannot honor --drop-pk-before-load."
                             )
 
-                        pk_count_before, fk_count_before = _count_user_pks_fks(pre_cur)
+                        pk_count_before, uq_count_before, fk_count_before = _count_user_constraints(pre_cur)
 
-                        if pk_count_before == 0 and fk_count_before == 0:
-                            _log("INFO", "    No PKs or FKs found to drop")
+                        if pk_count_before == 0 and uq_count_before == 0 and fk_count_before == 0:
+                            _log("INFO", "    No PKs, UQs, or FKs found to drop")
                         else:
                             pre_cur.execute("EXEC [admin].[ManagePrimaryKeys] @Action = 'DROP'")
                             _drain_results(pre_cur)
                             _log(
                                 "DONE",
-                                f"  Dropped {pk_count_before} PKs, {fk_count_before} FKs in "
-                                f"{_time.time() - _t_predrop:.1f}s",
+                                f"  Dropped {pk_count_before} PKs, {uq_count_before} UQs, "
+                                f"{fk_count_before} FKs in {_time.time() - _t_predrop:.1f}s",
                             )
                             _log("INFO", "    Definitions saved to [admin].[_PK_Backup]")
                 except pyodbc.Error as exc:
@@ -1117,8 +1142,8 @@ def import_sql_server(
 
             # --- 2.3 Row count verification ---
             try:
-                dim_create = next((p for p in tables_files if p.name.lower().endswith("create_dimensions.sql")), None)
-                fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
+                dim_create = _find_create_sql(tables_files, "create_dimensions.sql")
+                fact_create = _find_create_sql(tables_files, "create_facts.sql")
 
                 dim_tables = _extract_tables_from_create_sql(dim_create) if dim_create else []
                 fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
@@ -1172,25 +1197,25 @@ def import_sql_server(
             #     Must run BEFORE CCI apply — CCI requires no clustered rowstore index.
             if drop_pk:
                 _t_drop = _time.time()
-                _log("INFO", "  Dropping Primary Keys & Foreign Keys")
+                _log("INFO", "  Dropping Primary Keys, Unique Constraints & Foreign Keys")
 
-                # Snapshot PK sizes before drop
+                # Snapshot PK/UQ sizes before drop
                 cursor.execute(
-                    "SELECT t.name, "
+                    "SELECT t.name, kc.type, "
                     "CAST(SUM(ps.used_page_count) * 8.0 / 1024 AS DECIMAL(10,1)) "
                     "FROM sys.key_constraints kc "
                     "JOIN sys.tables t ON t.object_id = kc.parent_object_id "
                     "JOIN sys.schemas sc ON sc.schema_id = t.schema_id "
                     "JOIN sys.indexes i ON i.object_id = kc.parent_object_id AND i.name = kc.name "
                     "JOIN sys.dm_db_partition_stats ps ON ps.object_id = i.object_id AND ps.index_id = i.index_id "
-                    "WHERE kc.type = 'PK' AND t.is_ms_shipped = 0 "
+                    "WHERE kc.type IN ('PK','UQ') AND t.is_ms_shipped = 0 "
                     "  AND sc.name NOT IN ('sys','INFORMATION_SCHEMA','admin') "
-                    "GROUP BY t.name ORDER BY SUM(ps.used_page_count) DESC"
+                    "GROUP BY t.name, kc.type ORDER BY SUM(ps.used_page_count) DESC"
                 )
                 pk_before = cursor.fetchall()
 
                 if not pk_before:
-                    _log("INFO", "    No primary keys found to drop")
+                    _log("INFO", "    No primary keys or unique constraints found to drop")
                 else:
                     cursor.execute(
                         "SELECT COUNT(*) FROM sys.foreign_keys fk "
@@ -1199,19 +1224,27 @@ def import_sql_server(
                         "WHERE t.is_ms_shipped = 0 AND s.name NOT IN ('sys','INFORMATION_SCHEMA','admin')"
                     )
                     fk_count_before = int(cursor.fetchone()[0])
-                    total_saved = sum(float(r[1]) for r in pk_before)
+                    pk_count_before = 0
+                    uq_count_before = 0
+                    total_saved = 0.0
+                    for _, ctype, size_mb in pk_before:
+                        if ctype == _CT_PK:
+                            pk_count_before += 1
+                        elif ctype == _CT_UQ:
+                            uq_count_before += 1
+                        total_saved += float(size_mb)
 
-                    # Call the stored proc — saves definitions to backup table, then drops
                     cursor.execute("EXEC [admin].[ManagePrimaryKeys] @Action = 'DROP'")
                     _drain_results(cursor)
 
                     if fk_count_before:
                         _log("WORK", f"    Dropped {fk_count_before} foreign key constraints")
-                    for tbl_name, size_mb in pk_before:
+                    for tbl_name, ctype, size_mb in pk_before:
                         if float(size_mb) >= 1.0:
-                            _log("WORK", f"    {tbl_name} - freed {size_mb} MB")
+                            _log("WORK", f"    {tbl_name} [{ctype}] - freed {size_mb} MB")
 
-                    _log("DONE", f"  Dropped {len(pk_before)} primary keys, {fk_count_before} foreign keys - "
+                    _log("DONE", f"  Dropped {pk_count_before} PKs, {uq_count_before} UQs, "
+                         f"{fk_count_before} FKs - "
                          f"freed {total_saved:.1f} MB in {_time.time() - _t_drop:.1f}s")
                     _log("INFO", "    Definitions saved to [admin].[_PK_Backup] for RESTORE")
 
@@ -1222,14 +1255,18 @@ def import_sql_server(
                 if not cci_apply_files:
                     _log("INFO", "  No CCI apply scripts found; skipping.")
                 else:
-                    fact_create = next((p for p in tables_files if p.name.lower().endswith("create_facts.sql")), None)
+                    # CCI is applied to all user tables (dims + facts) by create_drop_cci.sql.
+                    dim_create = _find_create_sql(tables_files, "create_dimensions.sql")
+                    fact_create = _find_create_sql(tables_files, "create_facts.sql")
+                    dim_tables = _extract_tables_from_create_sql(dim_create) if dim_create else []
                     fact_tables = _extract_tables_from_create_sql(fact_create) if fact_create else []
+                    cci_target_tables = dim_tables + fact_tables
 
                     _t_cci = _time.time()
-                    _log("INFO", f"  Applying Columnstore Indexes ({len(fact_tables)} tables)")
+                    _log("INFO", f"  Applying Columnstore Indexes ({len(cci_target_tables)} tables)")
                     for f in cci_apply_files:
                         _log("WORK", f"    {f.name}")
-                        _execute_cci_with_progress(cursor, f, fact_tables)
+                        _execute_cci_with_progress(cursor, f, cci_target_tables)
                     _log("DONE", f"  Applying Columnstore Indexes completed in {_time.time() - _t_cci:.1f}s")
 
                     # Verification
@@ -1251,22 +1288,24 @@ def import_sql_server(
                 cursor.execute(
                     "SELECT "
                     "  SUM(CASE WHEN constraint_type = 'PK' THEN 1 ELSE 0 END), "
+                    "  SUM(CASE WHEN constraint_type = 'UQ' THEN 1 ELSE 0 END), "
                     "  SUM(CASE WHEN constraint_type = 'FK' THEN 1 ELSE 0 END) "
                     "FROM [admin].[_PK_Backup]"
                 )
                 row = cursor.fetchone()
                 pk_backup_count = int(row[0] or 0) if row else 0
-                fk_backup_count = int(row[1] or 0) if row else 0
+                uq_backup_count = int(row[1] or 0) if row else 0
+                fk_backup_count = int(row[2] or 0) if row else 0
 
-                if pk_backup_count == 0 and fk_backup_count == 0:
+                if pk_backup_count == 0 and uq_backup_count == 0 and fk_backup_count == 0:
                     _log("INFO", "    No backup definitions found in [admin].[_PK_Backup] — nothing to restore")
                 else:
                     cursor.execute("EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'")
                     _drain_results(cursor)
                     _log(
                         "DONE",
-                        f"  Restored {pk_backup_count} primary keys, {fk_backup_count} foreign keys "
-                        f"in {_time.time() - _t_restore:.1f}s",
+                        f"  Restored {pk_backup_count} PKs, {uq_backup_count} UQs, "
+                        f"{fk_backup_count} FKs in {_time.time() - _t_restore:.1f}s",
                     )
 
     except pyodbc.Error as exc:

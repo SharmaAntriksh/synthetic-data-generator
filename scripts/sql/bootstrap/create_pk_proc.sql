@@ -1,12 +1,16 @@
 /*
-DBA utility procedure: DROP or RESTORE primary key and foreign key
-constraints on user tables in the current database.
+DBA utility procedure: DROP or RESTORE primary key, unique, and
+foreign key constraints on user tables in the current database.
 
-DROP removes all FK constraints first, then all PK constraints,
-and reports the space freed per table.
+DROP removes all FK constraints first, then all PK and UQ
+constraints, and reports the space freed per table.
 
-RESTORE re-creates PKs and FKs from the constraint definitions
+RESTORE re-creates PKs, UQs, and FKs from the constraint definitions
 stored in [admin].[_PK_Backup] during the last DROP.
+
+UQ (UNIQUE) constraints are handled alongside PKs because they
+also create nonclustered indexes that force BULK INSERT TABLOCK
+to escalate from a BU lock to an X lock, serializing parallel loads.
 
 Targets all user tables by default, or specific tables via a
 comma-delimited list.
@@ -29,7 +33,7 @@ IF OBJECT_ID('admin._PK_Backup') IS NULL
 BEGIN
     CREATE TABLE [admin].[_PK_Backup] (
         id              int IDENTITY(1,1) PRIMARY KEY,
-        constraint_type varchar(2)    NOT NULL,  -- 'FK' or 'PK'
+        constraint_type varchar(2)    NOT NULL,  -- 'FK', 'PK', or 'UQ'
         schema_name     sysname       NOT NULL,
         table_name      sysname       NOT NULL,
         constraint_name sysname       NOT NULL,
@@ -55,7 +59,7 @@ BEGIN
     BEGIN
         PRINT N'=================================================================';
         PRINT N'  [admin].[ManagePrimaryKeys]';
-        PRINT N'  Drop or restore PRIMARY KEY and FOREIGN KEY constraints.';
+        PRINT N'  Drop or restore PRIMARY KEY, UNIQUE, and FOREIGN KEY constraints.';
         PRINT N'  Schema-agnostic (works even if tables are not in dbo).';
         PRINT N'=================================================================';
         PRINT N'';
@@ -67,17 +71,17 @@ BEGIN
         PRINT N'';
         PRINT N'EXAMPLES:';
         PRINT N'';
-        PRINT N'  -- 1. Drop all PKs and FKs (saves definitions for restore)';
+        PRINT N'  -- 1. Drop all PKs, UQs, and FKs (saves definitions for restore)';
         PRINT N'  EXEC [admin].[ManagePrimaryKeys];';
         PRINT N'';
-        PRINT N'  -- 2. Drop PKs on specific tables only';
+        PRINT N'  -- 2. Drop constraints on specific tables only';
         PRINT N'  EXEC [admin].[ManagePrimaryKeys]';
         PRINT N'      @Tables = N''Sales, InventorySnapshot'';';
         PRINT N'';
-        PRINT N'  -- 3. Restore previously dropped PKs and FKs';
+        PRINT N'  -- 3. Restore previously dropped constraints';
         PRINT N'  EXEC [admin].[ManagePrimaryKeys] @Action = ''RESTORE'';';
         PRINT N'';
-        PRINT N'  -- 4. Check current PK/FK status and index sizes';
+        PRINT N'  -- 4. Check current PK/UQ/FK status and index sizes';
         PRINT N'  EXEC [admin].[ManagePrimaryKeys] @Action = ''STATUS'';';
         PRINT N'=================================================================';
         RETURN;
@@ -121,44 +125,43 @@ BEGIN
         PRINT CONCAT(N'[STATUS] ', @target_count, N' target table(s)');
         PRINT N'';
 
-        -- PK status
-        DECLARE @pk_count int = 0;
-        SELECT @pk_count = COUNT(*)
+        DECLARE @pk_count int = 0, @uq_count int = 0;
+        SELECT
+            @pk_count = SUM(CASE WHEN kc.type = 'PK' THEN 1 ELSE 0 END),
+            @uq_count = SUM(CASE WHEN kc.type = 'UQ' THEN 1 ELSE 0 END)
         FROM @Targets tt
-        JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id
-        WHERE kc.type = 'PK';
+        JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id;
 
-        PRINT CONCAT(N'  Primary keys: ', @pk_count);
+        PRINT CONCAT(N'  Primary keys: ', ISNULL(@pk_count, 0));
+        PRINT CONCAT(N'  Unique constraints: ', ISNULL(@uq_count, 0));
 
-        -- Show PK sizes
-        IF @pk_count > 0
+        IF ISNULL(@pk_count, 0) + ISNULL(@uq_count, 0) > 0
         BEGIN
-            DECLARE @s_schema sysname, @s_table sysname, @s_pk sysname;
+            DECLARE @s_schema sysname, @s_table sysname, @s_pk sysname, @s_ctype varchar(2);
             DECLARE @s_mb decimal(10,1);
 
             DECLARE cur_status CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
-                SELECT tt.schema_name, tt.table_name, kc.name,
+                SELECT tt.schema_name, tt.table_name, kc.name, kc.type,
                        CAST(SUM(ps.used_page_count) * 8.0 / 1024 AS decimal(10,1))
                 FROM @Targets tt
-                JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id AND kc.type = 'PK'
+                JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id AND kc.type IN ('PK', 'UQ')
                 JOIN sys.indexes i ON i.object_id = kc.parent_object_id AND i.name = kc.name
                 JOIN sys.dm_db_partition_stats ps ON ps.object_id = i.object_id AND ps.index_id = i.index_id
-                GROUP BY tt.schema_name, tt.table_name, kc.name
+                GROUP BY tt.schema_name, tt.table_name, kc.name, kc.type
                 ORDER BY SUM(ps.used_page_count) DESC;
 
             OPEN cur_status;
-            FETCH NEXT FROM cur_status INTO @s_schema, @s_table, @s_pk, @s_mb;
+            FETCH NEXT FROM cur_status INTO @s_schema, @s_table, @s_pk, @s_ctype, @s_mb;
             WHILE @@FETCH_STATUS = 0
             BEGIN
-                PRINT CONCAT(N'    ', QUOTENAME(@s_schema), N'.', QUOTENAME(@s_table),
+                PRINT CONCAT(N'    ', @s_ctype, N' ', QUOTENAME(@s_schema), N'.', QUOTENAME(@s_table),
                              N'  ', @s_pk, N'  ', @s_mb, N' MB');
-                FETCH NEXT FROM cur_status INTO @s_schema, @s_table, @s_pk, @s_mb;
+                FETCH NEXT FROM cur_status INTO @s_schema, @s_table, @s_pk, @s_ctype, @s_mb;
             END;
             CLOSE cur_status;
             DEALLOCATE cur_status;
         END;
 
-        -- FK status
         DECLARE @fk_count int = 0;
         SELECT @fk_count = COUNT(*)
         FROM sys.foreign_keys fk
@@ -183,10 +186,10 @@ BEGIN
         IF NOT EXISTS (
             SELECT 1 FROM @Targets tt
             JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id
-            WHERE kc.type = 'PK'
+            WHERE kc.type IN ('PK', 'UQ')
         )
         BEGIN
-            PRINT N'[OK] No primary keys found on target tables. Nothing to drop.';
+            PRINT N'[OK] No primary keys or unique constraints found on target tables. Nothing to drop.';
             RETURN;
         END;
 
@@ -263,19 +266,20 @@ BEGIN
         CLOSE cur_fk_save;
         DEALLOCATE cur_fk_save;
 
-        -- Save PK definitions (preserving CLUSTERED vs NONCLUSTERED type)
+        -- Save PK and UQ definitions (preserving CLUSTERED vs NONCLUSTERED type)
         DECLARE @pk_schema sysname, @pk_table sysname, @pk_name sysname;
         DECLARE @pk_cols_str nvarchar(max), @pk_sql nvarchar(max);
-        DECLARE @pk_type tinyint;  -- 1 = CLUSTERED, 2 = NONCLUSTERED
+        DECLARE @pk_index_type tinyint;        -- 1 = CLUSTERED, 2 = NONCLUSTERED
+        DECLARE @pk_constraint_type varchar(2);  -- 'PK' or 'UQ'
 
         DECLARE cur_pk_save CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
-            SELECT tt.schema_name, tt.table_name, kc.name, i.type
+            SELECT tt.schema_name, tt.table_name, kc.name, i.type, kc.type
             FROM @Targets tt
-            JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id AND kc.type = 'PK'
+            JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id AND kc.type IN ('PK', 'UQ')
             JOIN sys.indexes i ON i.object_id = kc.parent_object_id AND i.name = kc.name;
 
         OPEN cur_pk_save;
-        FETCH NEXT FROM cur_pk_save INTO @pk_schema, @pk_table, @pk_name, @pk_type;
+        FETCH NEXT FROM cur_pk_save INTO @pk_schema, @pk_table, @pk_name, @pk_index_type, @pk_constraint_type;
 
         WHILE @@FETCH_STATUS = 0
         BEGIN
@@ -289,14 +293,14 @@ BEGIN
 
             SET @pk_sql = N'ALTER TABLE ' + QUOTENAME(@pk_schema) + N'.' + QUOTENAME(@pk_table) +
                            N' ADD CONSTRAINT ' + QUOTENAME(@pk_name) +
-                           N' PRIMARY KEY ' +
-                           CASE WHEN @pk_type = 1 THEN N'CLUSTERED' ELSE N'NONCLUSTERED' END +
+                           CASE @pk_constraint_type WHEN 'PK' THEN N' PRIMARY KEY ' ELSE N' UNIQUE ' END +
+                           CASE WHEN @pk_index_type = 1 THEN N'CLUSTERED' ELSE N'NONCLUSTERED' END +
                            N' (' + @pk_cols_str + N');';
 
             INSERT INTO [admin].[_PK_Backup] (constraint_type, schema_name, table_name, constraint_name, definition_sql)
-            VALUES ('PK', @pk_schema, @pk_table, @pk_name, @pk_sql);
+            VALUES (@pk_constraint_type, @pk_schema, @pk_table, @pk_name, @pk_sql);
 
-            FETCH NEXT FROM cur_pk_save INTO @pk_schema, @pk_table, @pk_name, @pk_type;
+            FETCH NEXT FROM cur_pk_save INTO @pk_schema, @pk_table, @pk_name, @pk_index_type, @pk_constraint_type;
         END;
         CLOSE cur_pk_save;
         DEALLOCATE cur_pk_save;
@@ -328,42 +332,44 @@ BEGIN
         IF @fk_dropped > 0
             PRINT CONCAT(N'  [DROP] ', @fk_dropped, N' foreign key constraint(s)');
 
-        -- Measure PK sizes, then drop
+        -- Measure PK/UQ sizes, then drop
         DECLARE @pk_dropped int = 0;
+        DECLARE @uq_dropped int = 0;
         DECLARE @total_freed decimal(10,1) = 0;
-        DECLARE @d_schema sysname, @d_table sysname, @d_pk sysname;
+        DECLARE @d_schema sysname, @d_table sysname, @d_pk sysname, @d_ctype varchar(2);
         DECLARE @d_mb decimal(10,1);
 
         DECLARE cur_pk_drop CURSOR LOCAL FAST_FORWARD READ_ONLY FOR
-            SELECT tt.schema_name, tt.table_name, kc.name,
+            SELECT tt.schema_name, tt.table_name, kc.name, kc.type,
                    CAST(SUM(ps.used_page_count) * 8.0 / 1024 AS decimal(10,1))
             FROM @Targets tt
-            JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id AND kc.type = 'PK'
+            JOIN sys.key_constraints kc ON kc.parent_object_id = tt.object_id AND kc.type IN ('PK', 'UQ')
             JOIN sys.indexes i ON i.object_id = kc.parent_object_id AND i.name = kc.name
             JOIN sys.dm_db_partition_stats ps ON ps.object_id = i.object_id AND ps.index_id = i.index_id
-            GROUP BY tt.schema_name, tt.table_name, kc.name
+            GROUP BY tt.schema_name, tt.table_name, kc.name, kc.type
             ORDER BY SUM(ps.used_page_count) DESC;
 
         OPEN cur_pk_drop;
-        FETCH NEXT FROM cur_pk_drop INTO @d_schema, @d_table, @d_pk, @d_mb;
+        FETCH NEXT FROM cur_pk_drop INTO @d_schema, @d_table, @d_pk, @d_ctype, @d_mb;
         WHILE @@FETCH_STATUS = 0
         BEGIN
             SET @sql = N'ALTER TABLE ' + QUOTENAME(@d_schema) + N'.' + QUOTENAME(@d_table) +
                        N' DROP CONSTRAINT ' + QUOTENAME(@d_pk) + N';';
             EXEC sys.sp_executesql @sql;
-            SET @pk_dropped += 1;
+            SET @pk_dropped += CASE WHEN @d_ctype = 'PK' THEN 1 ELSE 0 END;
+            SET @uq_dropped += CASE WHEN @d_ctype = 'UQ' THEN 1 ELSE 0 END;
             SET @total_freed += @d_mb;
             IF @d_mb >= 1.0
-                PRINT CONCAT(N'  [DROP] ', QUOTENAME(@d_schema), N'.', QUOTENAME(@d_table),
+                PRINT CONCAT(N'  [DROP] ', @d_ctype, N' ', QUOTENAME(@d_schema), N'.', QUOTENAME(@d_table),
                              N'  ', @d_pk, N'  freed ', @d_mb, N' MB');
-            FETCH NEXT FROM cur_pk_drop INTO @d_schema, @d_table, @d_pk, @d_mb;
+            FETCH NEXT FROM cur_pk_drop INTO @d_schema, @d_table, @d_pk, @d_ctype, @d_mb;
         END;
         CLOSE cur_pk_drop;
         DEALLOCATE cur_pk_drop;
 
         PRINT N'';
-        PRINT CONCAT(N'[OK] Dropped ', @pk_dropped, N' PK(s), ', @fk_dropped, N' FK(s) — freed ',
-                     @total_freed, N' MB');
+        PRINT CONCAT(N'[OK] Dropped ', @pk_dropped, N' PK(s), ', @uq_dropped, N' UQ(s), ',
+                     @fk_dropped, N' FK(s) — freed ', @total_freed, N' MB');
         PRINT N'     Definitions saved to [admin].[_PK_Backup] for RESTORE.';
         RETURN;
     END;
@@ -391,7 +397,7 @@ BEGIN
                 OR table_name IN (SELECT LTRIM(RTRIM(value)) FROM STRING_SPLIT(@Tables, ','))
             )
             ORDER BY
-                CASE constraint_type WHEN 'PK' THEN 1 WHEN 'FK' THEN 2 END,
+                CASE constraint_type WHEN 'PK' THEN 1 WHEN 'UQ' THEN 2 WHEN 'FK' THEN 3 END,
                 id;
 
         OPEN cur_restore;
