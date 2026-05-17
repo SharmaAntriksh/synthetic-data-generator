@@ -17,8 +17,8 @@ Prompts for the password at run time:
   -Database Sales2M `
   -TrustedConnection `
   -ApplyCCI $true `
-  -DropPKBeforeLoad `
-  -RestorePKAfterLoad `
+  -DropPKBeforeLoad $true `
+  -RestorePKAfterLoad $true `
   -LoadWorkers 8 `
   -Verify `
   -ProvisionTabularUser `
@@ -36,8 +36,8 @@ $sec = Read-Host -AsSecureString "Tabular password"
   -Database Sales2M `
   -TrustedConnection `
   -ApplyCCI $true `
-  -DropPKBeforeLoad `
-  -RestorePKAfterLoad `
+  -DropPKBeforeLoad $true `
+  -RestorePKAfterLoad $true `
   -LoadWorkers 8 `
   -Verify `
   -ProvisionTabularUser `
@@ -55,8 +55,8 @@ $env:SYNDATA_TABULAR_PASSWORD = "..."
   -Database Sales2M `
   -TrustedConnection `
   -ApplyCCI $true `
-  -DropPKBeforeLoad `
-  -RestorePKAfterLoad `
+  -DropPKBeforeLoad $true `
+  -RestorePKAfterLoad $true `
   -LoadWorkers 8 `
   -Verify `
   -ProvisionTabularUser `

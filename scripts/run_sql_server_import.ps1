@@ -33,12 +33,12 @@ param (
     # Removes per-row PK maintenance and FK validation that bottlenecks
     # parallel loads. Definitions are saved to [admin].[_PK_Backup]; pair
     # with -RestorePKAfterLoad to re-add them automatically post-load.
-    [switch]$DropPKBeforeLoad,
+    [bool]$DropPKBeforeLoad = $false,
 
     # Restore PKs/FKs from [admin].[_PK_Backup] after the load (and after
-    # CCI apply if -ApplyCCI). Requires -DropPKBeforeLoad. Cannot be
-    # combined with -DropPK (conflicting end-state).
-    [switch]$RestorePKAfterLoad,
+    # CCI apply if -ApplyCCI). Requires -DropPKBeforeLoad $true. Cannot be
+    # combined with -DropPK $true (conflicting end-state).
+    [bool]$RestorePKAfterLoad = $false,
 
     # Run data verification after import (EXEC verify.RunAll)
     [switch]$Verify,

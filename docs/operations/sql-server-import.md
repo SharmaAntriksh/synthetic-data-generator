@@ -18,8 +18,8 @@ Load a CSV-format generated dataset into SQL Server in one step. The import scri
   -Database Sales1M `
   -TrustedConnection `
   -ApplyCCI $true `
-  -DropPKBeforeLoad `
-  -RestorePKAfterLoad `
+  -DropPKBeforeLoad $true `
+  -RestorePKAfterLoad $true `
   -LoadWorkers 8 `
   -Verify
 ```
@@ -54,11 +54,11 @@ No PK flags = constraints stay active during load. Fails fast on bad data.
   -Database SalesAnalytics `
   -TrustedConnection `
   -ApplyCCI $true `
-  -DropPKBeforeLoad `
+  -DropPKBeforeLoad $true `
   -LoadWorkers 8 `
   -Verify
 ```
-Notice the missing `-RestorePKAfterLoad` — constraints stay dropped. CCI alone is enough for analytical workloads.
+Notice the missing `-RestorePKAfterLoad $true` — constraints stay dropped. CCI alone is enough for analytical workloads.
 
 ### Fast load + provision a tabular login for Power BI
 ```powershell
@@ -68,8 +68,8 @@ Notice the missing `-RestorePKAfterLoad` — constraints stay dropped. CCI alone
   -Database SalesPBI `
   -TrustedConnection `
   -ApplyCCI $true `
-  -DropPKBeforeLoad `
-  -RestorePKAfterLoad `
+  -DropPKBeforeLoad $true `
+  -RestorePKAfterLoad $true `
   -LoadWorkers 8 `
   -Verify `
   -ProvisionTabularUser `
@@ -92,7 +92,7 @@ No CCI (skip the expensive index build), constraints active (catch generator bug
 ```powershell
 # Same RunPath, different database names — useful for A/B testing query patterns
 .\scripts\run_sql_server_import.ps1 -RunPath ".\generated_datasets\<run>" -Server "SRV\SQL" -Database Sales_NoCCI -TrustedConnection
-.\scripts\run_sql_server_import.ps1 -RunPath ".\generated_datasets\<run>" -Server "SRV\SQL" -Database Sales_CCI    -TrustedConnection -ApplyCCI $true -DropPKBeforeLoad -RestorePKAfterLoad
+.\scripts\run_sql_server_import.ps1 -RunPath ".\generated_datasets\<run>" -Server "SRV\SQL" -Database Sales_CCI    -TrustedConnection -ApplyCCI $true -DropPKBeforeLoad $true -RestorePKAfterLoad $true
 ```
 
 ### Conservative load on an HDD-backed instance
@@ -114,8 +114,8 @@ On spinning disks, parallel workers cause seek thrashing. Use 2 workers max.
   -Database SalesBig `
   -TrustedConnection `
   -ApplyCCI $true `
-  -DropPKBeforeLoad `
-  -RestorePKAfterLoad `
+  -DropPKBeforeLoad $true `
+  -RestorePKAfterLoad $true `
   -LoadWorkers 12 `
   -Verify
 ```
@@ -132,8 +132,8 @@ On spinning disks, parallel workers cause seek thrashing. Use 2 workers max.
 | `-TrustedConnection` | Use Windows Authentication |
 | `-User` / `-Password` | SQL Authentication credentials (alternative to `-TrustedConnection`) |
 | `-ApplyCCI $true` | Create clustered columnstore indexes on fact tables after load |
-| `-DropPKBeforeLoad` | Drop PKs and FKs **before** the data load. Removes per-row validation overhead. Definitions saved to `[admin].[_PK_Backup]`. |
-| `-RestorePKAfterLoad` | Restore PKs and FKs from `[admin].[_PK_Backup]` after load (and after CCI apply). Requires `-DropPKBeforeLoad`. Cannot be combined with `-DropPK`. |
+| `-DropPKBeforeLoad $true` | Drop PKs and FKs **before** the data load. Removes per-row validation overhead. Definitions saved to `[admin].[_PK_Backup]`. |
+| `-RestorePKAfterLoad $true` | Restore PKs and FKs from `[admin].[_PK_Backup]` after load (and after CCI apply). Requires `-DropPKBeforeLoad $true`. Cannot be combined with `-DropPK $true`. |
 | `-DropPK $true` | Drop PKs and FKs **after** load (analytics-only end state, smallest DB). Keeps constraints active during the load. |
 | `-LoadWorkers <N>` | Parallel `BULK INSERT` worker count for multi-chunk fact tables (default `4`). Each worker holds its own pyodbc connection. |
 | `-Verify` | Run post-import data integrity checks (executes `verify.RunAll`) |
@@ -147,8 +147,8 @@ On spinning disks, parallel workers cause seek thrashing. Use 2 workers max.
 
 | Goal | Flags | Notes |
 |---|---|---|
-| **Fast load + PKs/FKs intact + CCI** (recommended for SSAS / Power BI) | `-ApplyCCI $true -DropPKBeforeLoad -RestorePKAfterLoad -LoadWorkers 8` | Fastest end-to-end. Pre-drops constraints, parallel-loads heaps, applies CCI, re-adds PKs/FKs. |
-| **Fast load, analytics-only, smallest DB** | `-ApplyCCI $true -DropPKBeforeLoad -LoadWorkers 8` | Same fast load, but PKs/FKs stay dropped. Smallest final size. Can be restored later with `EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'`. |
+| **Fast load + PKs/FKs intact + CCI** (recommended for SSAS / Power BI) | `-ApplyCCI $true -DropPKBeforeLoad $true -RestorePKAfterLoad $true -LoadWorkers 8` | Fastest end-to-end. Pre-drops constraints, parallel-loads heaps, applies CCI, re-adds PKs/FKs. |
+| **Fast load, analytics-only, smallest DB** | `-ApplyCCI $true -DropPKBeforeLoad $true -LoadWorkers 8` | Same fast load, but PKs/FKs stay dropped. Smallest final size. Can be restored later with `EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'`. |
 | **Safe load with row-by-row constraint validation** | (no PK flags) | Default behavior. PKs/FKs validated as data arrives. Slowest at scale, but defensive. |
 | **Defensive load + analytics-only end state** | `-ApplyCCI $true -DropPK $true` | Validates every row against PKs/FKs as it loads, then drops constraints for a small final DB. Use when CSVs are untrusted (manually edited, debugging generator changes, third-party data) — fails immediately on duplicates or orphan FKs instead of late at the restore step. Trades load speed for early-failure feedback. |
 | **Iterating on generator changes** | `-ApplyCCI $false` (default), no PK flags | Skip CCI build to shorten iteration loop. Constraint validation catches generator bugs early. |
@@ -157,11 +157,11 @@ For a 200M-row Sales fact table on a typical NVMe box with 8 cores, the fast-loa
 
 ---
 
-## Why `-DropPKBeforeLoad` is faster than `-DropPK`
+## Why `-DropPKBeforeLoad $true` is faster than `-DropPK $true`
 
-`-DropPK` drops constraints **after** the load. During the load, SQL Server still validates every row against PKs (uniqueness checks on the clustered index) and every FK (lookup into the parent dimension). At scale, this dominates load time — the BULK INSERT is no longer bandwidth-bound, it's CPU-bound on validation.
+`-DropPK $true` drops constraints **after** the load. During the load, SQL Server still validates every row against PKs (uniqueness checks on the clustered index) and every FK (lookup into the parent dimension). At scale, this dominates load time — the BULK INSERT is no longer bandwidth-bound, it's CPU-bound on validation.
 
-`-DropPKBeforeLoad` drops constraints **before** the load, turning each target table into a heap with no FK relationships. `BULK INSERT` then runs at raw write speed. The restore step (`-RestorePKAfterLoad`) re-adds PKs and FKs from `[admin].[_PK_Backup]` after the data is in place — at this point SQL Server can validate against fully-populated tables in bulk, which is much faster than row-by-row validation during load.
+`-DropPKBeforeLoad $true` drops constraints **before** the load, turning each target table into a heap with no FK relationships. `BULK INSERT` then runs at raw write speed. The restore step (`-RestorePKAfterLoad $true`) re-adds PKs and FKs from `[admin].[_PK_Backup]` after the data is in place — at this point SQL Server can validate against fully-populated tables in bulk, which is much faster than row-by-row validation during load.
 
 The trade-off: if the data has bad rows (duplicates, orphan FKs), you find out at restore time rather than load time. For trusted generator output this is fine. For untrusted/edited CSVs, prefer the defensive variant.
 
@@ -184,7 +184,7 @@ Each worker holds its own pyodbc connection. Past ~8 workers on a single NVMe de
 
 ## Manual constraint recovery
 
-Constraints saved to `[admin].[_PK_Backup]` by `-DropPKBeforeLoad` can be restored at any time without re-importing:
+Constraints saved to `[admin].[_PK_Backup]` by `-DropPKBeforeLoad $true` can be restored at any time without re-importing:
 
 ```sql
 EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'
@@ -221,14 +221,14 @@ Drop the database first, or use a different `-Database` name.
 **`BULK INSERT` fails with code-page errors**
 Generated CSVs are UTF-8. Make sure your SQL Server collation supports Unicode (modern installs do by default). The generated `BULK INSERT` statements use `CODEPAGE = '65001'`.
 
-**`-RestorePKAfterLoad` fails with duplicate-key errors**
+**`-RestorePKAfterLoad $true` fails with duplicate-key errors**
 The data has duplicate PKs. This is the trade-off of pre-dropping constraints — bad rows aren't caught until restore. Investigate the source CSVs, fix, and retry. For repeated debugging cycles, switch to defensive load (no PK flags).
 
 **`-ProvisionTabularUser` logs a warning but the import succeeded**
 Provisioning failures are non-fatal. The importing connection probably lacks server-level rights (e.g. `securityadmin`). Create the login manually once and re-run; subsequent runs only need DB-level rights to map the user.
 
 **Import is much slower than expected**
-Check that `-DropPKBeforeLoad` is actually passed. The default (no PK flags) keeps constraints active and is the slow path. Also confirm `-LoadWorkers` is set appropriately for your storage.
+Check that `-DropPKBeforeLoad $true` is actually passed. The default (no PK flags) keeps constraints active and is the slow path. Also confirm `-LoadWorkers` is set appropriately for your storage.
 
 **Out-of-memory or transaction-log full**
 Lower `-LoadWorkers`. Fewer concurrent inserts means smaller peak transaction log usage.
