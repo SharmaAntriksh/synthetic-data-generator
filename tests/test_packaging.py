@@ -19,6 +19,8 @@ from src.utils.static_schemas import (
     get_sales_order_detail_schema,
     DATE_COLUMN_GROUPS,
 )
+from src.tools.sql.dialect import ColumnSpec
+from src.utils.static_schemas import INT, VARCHAR
 from src.engine.packaging.paths import (
     get_first_existing_path,
     to_snake,
@@ -128,7 +130,9 @@ class TestStaticSchemas:
             assert isinstance(schema, tuple), f"{table} schema is not a tuple"
             for col, dtype in schema:
                 assert isinstance(col, str) and col.strip(), f"{table}: empty column name"
-                assert isinstance(dtype, str) and dtype.strip(), f"{table}: empty dtype for {col}"
+                assert isinstance(dtype, ColumnSpec), (
+                    f"{table}: dtype for {col} is {type(dtype).__name__}, expected ColumnSpec"
+                )
 
     def test_no_duplicate_columns_in_any_schema(self):
         for table, schema in STATIC_SCHEMAS.items():
@@ -206,7 +210,7 @@ class TestSQLDDLGeneration:
     """Test CREATE TABLE script generation."""
 
     def test_create_table_basic(self):
-        cols = (("Id", "INT NOT NULL"), ("Name", "VARCHAR(100) NULL"))
+        cols = (("Id", INT()), ("Name", VARCHAR(100)))
         sql = create_table_from_schema("TestTable", cols, schema="dbo")
         assert "CREATE TABLE [dbo].[TestTable]" in sql
         assert "[Id] INT NOT NULL" in sql
@@ -214,18 +218,18 @@ class TestSQLDDLGeneration:
         assert sql.count("GO") == 2  # after DROP and after CREATE
 
     def test_create_table_no_drop(self):
-        cols = (("Id", "INT NOT NULL"),)
+        cols = (("Id", INT()),)
         sql = create_table_from_schema("T", cols, drop_existing=False)
         assert "DROP TABLE" not in sql
         assert "CREATE TABLE" in sql
 
     def test_create_table_no_go(self):
-        cols = (("Id", "INT NOT NULL"),)
+        cols = (("Id", INT()),)
         sql = create_table_from_schema("T", cols, include_go=False)
         assert "GO" not in sql
 
     def test_create_table_drop_uses_object_id(self):
-        cols = (("Id", "INT NOT NULL"),)
+        cols = (("Id", INT()),)
         sql = create_table_from_schema("Products", cols, schema="dbo")
         assert "OBJECT_ID(N'[dbo].[Products]'" in sql
 
@@ -391,7 +395,7 @@ class TestSQLIdentifierValidation:
 
     def test_create_table_escapes_object_id_name(self):
         """Table name with apostrophe in OBJECT_ID should be escaped."""
-        cols = (("Id", "INT NOT NULL"),)
+        cols = (("Id", INT()),)
         # _validate_sql_identifier rejects names with apostrophes,
         # so this tests that the validator catches injection
         with pytest.raises(ValueError, match="Unsafe SQL"):

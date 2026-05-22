@@ -32,6 +32,7 @@ from src.tools.sql.generate_create_table_scripts import (
     _sales_output_mode,
     _skip_order_cols,
 )
+from src.utils.static_schemas import DECIMAL, INT, VARCHAR
 from src.tools.sql.generate_bulk_insert_sql import (
     _quote_table,
     _infer_table_from_filename,
@@ -312,11 +313,11 @@ class TestValidateSqlIdentifier:
 
 class TestCreateTableFromSchema:
     def test_basic_ddl_structure(self):
-        cols = [("ID", "INT NOT NULL"), ("Name", "NVARCHAR(100)")]
+        cols = [("ID", INT()), ("Name", VARCHAR(100))]
         ddl = create_table_from_schema("TestTable", cols)
         assert "CREATE TABLE [dbo].[TestTable]" in ddl
         assert "[ID] INT NOT NULL," in ddl
-        assert "[Name] NVARCHAR(100)" in ddl
+        assert "[Name] VARCHAR(100) NULL" in ddl
         # Last column should not have trailing comma
         lines = ddl.splitlines()
         col_lines = [l for l in lines if l.strip().startswith("[Name]")]
@@ -324,29 +325,29 @@ class TestCreateTableFromSchema:
         assert not col_lines[0].rstrip().endswith(",")
 
     def test_drop_existing_present_by_default(self):
-        cols = [("ID", "INT")]
+        cols = [("ID", INT())]
         ddl = create_table_from_schema("Foo", cols)
         assert "DROP TABLE" in ddl
         assert "IF OBJECT_ID" in ddl
 
     def test_drop_existing_false(self):
-        cols = [("ID", "INT")]
+        cols = [("ID", INT())]
         ddl = create_table_from_schema("Foo", cols, drop_existing=False)
         assert "DROP TABLE" not in ddl
         assert "IF OBJECT_ID" not in ddl
 
     def test_include_go_true(self):
-        cols = [("ID", "INT")]
+        cols = [("ID", INT())]
         ddl = create_table_from_schema("Foo", cols, include_go=True)
         assert ddl.count("GO") >= 1
 
     def test_include_go_false(self):
-        cols = [("ID", "INT")]
+        cols = [("ID", INT())]
         ddl = create_table_from_schema("Foo", cols, include_go=False)
         assert "GO" not in ddl
 
     def test_custom_schema(self):
-        cols = [("ID", "INT")]
+        cols = [("ID", INT())]
         ddl = create_table_from_schema("Foo", cols, schema="staging")
         assert "[staging].[Foo]" in ddl
 
@@ -356,24 +357,24 @@ class TestCreateTableFromSchema:
 
     def test_multiple_columns(self):
         cols = [
-            ("Col1", "INT"),
-            ("Col2", "NVARCHAR(50)"),
-            ("Col3", "DECIMAL(10,2)"),
+            ("Col1", INT()),
+            ("Col2", VARCHAR(50)),
+            ("Col3", DECIMAL(10, 2)),
         ]
         ddl = create_table_from_schema("Multi", cols)
-        assert "[Col1] INT," in ddl
-        assert "[Col2] NVARCHAR(50)," in ddl
+        assert "[Col1] INT NOT NULL," in ddl
+        assert "[Col2] VARCHAR(50) NULL," in ddl
         # Last column should NOT have trailing comma
-        assert "[Col3] DECIMAL(10,2)" in ddl
-        assert "[Col3] DECIMAL(10,2)," not in ddl
+        assert "[Col3] DECIMAL(10, 2) NOT NULL" in ddl
+        assert "[Col3] DECIMAL(10, 2) NOT NULL," not in ddl
 
     def test_invalid_table_name_raises(self):
         with pytest.raises(ValueError, match="Unsafe SQL"):
-            create_table_from_schema("1Invalid", [("ID", "INT")])
+            create_table_from_schema("1Invalid", [("ID", INT())])
 
     def test_invalid_schema_name_raises(self):
         with pytest.raises(ValueError, match="Unsafe SQL"):
-            create_table_from_schema("Foo", [("ID", "INT")], schema="bad;schema")
+            create_table_from_schema("Foo", [("ID", INT())], schema="bad;schema")
 
 
 # ===================================================================

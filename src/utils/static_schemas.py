@@ -6,68 +6,67 @@ from types import MappingProxyType
 from typing import Dict, List, Mapping, Sequence, Tuple
 import re
 
+from src.tools.sql.dialect import ColumnSpec, SqlType
+
 # Type aliases (lightweight, no runtime overhead)
-SchemaCol = Tuple[str, str]
+SchemaCol = Tuple[str, ColumnSpec]
 Schema = Tuple[SchemaCol, ...]
 
 
 # ============================================================================
-# SQL-ish type helpers (keep strings consistent + reduce repetition)
+# Dialect-neutral type helpers. Concrete SQL is rendered at emit time by a
+# Dialect (default: SqlServerDialect).
 # ============================================================================
-def _sql(base: str, *, not_null: bool) -> str:
-    return f"{base} NOT NULL" if not_null else f"{base} NULL"
+def INT(*, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.INT, nullable=not not_null)
 
 
-def INT(*, not_null: bool = True) -> str:
-    return _sql("INT", not_null=not_null)
+def BIGINT(*, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.BIGINT, nullable=not not_null)
 
 
-def BIGINT(*, not_null: bool = True) -> str:
-    return _sql("BIGINT", not_null=not_null)
+def SMALLINT(*, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.SMALLINT, nullable=not not_null)
 
 
-def SMALLINT(*, not_null: bool = True) -> str:
-    return _sql("SMALLINT", not_null=not_null)
+def TINYINT(*, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.TINYINT, nullable=not not_null)
 
 
-def TINYINT(*, not_null: bool = True) -> str:
-    return _sql("TINYINT", not_null=not_null)
+def BIT(*, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.BIT, nullable=not not_null)
 
 
-def BIT(*, not_null: bool = True) -> str:
-    return _sql("BIT", not_null=not_null)
+def FLOAT(*, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.FLOAT, nullable=not not_null)
 
 
-def FLOAT(*, not_null: bool = True) -> str:
-    return _sql("FLOAT", not_null=not_null)
+def DATE(*, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.DATE, nullable=not not_null)
 
 
-def DATE(*, not_null: bool = True) -> str:
-    return _sql("DATE", not_null=not_null)
+def DATETIME(*, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.DATETIME, nullable=not not_null)
 
 
-def DATETIME(*, not_null: bool = True) -> str:
-    return _sql("DATETIME", not_null=not_null)
+def DATETIME2(p: int = 7, *, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.DATETIME2, nullable=not not_null, args=(p,))
 
 
-def DATETIME2(p: int = 7, *, not_null: bool = True) -> str:
-    return _sql(f"DATETIME2({p})", not_null=not_null)
+def TIME(p: int = 0, *, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.TIME, nullable=not not_null, args=(p,))
 
 
-def TIME(p: int = 0, *, not_null: bool = True) -> str:
-    return _sql(f"TIME({p})", not_null=not_null)
+def VARCHAR(n: int | str, *, not_null: bool = False) -> ColumnSpec:
+    return ColumnSpec(SqlType.VARCHAR, nullable=not not_null, args=(n,))
 
 
-def VARCHAR(n: int | str, *, not_null: bool = False) -> str:
-    return _sql(f"VARCHAR({n})", not_null=not_null)
+def CHAR(n: int, *, not_null: bool = False) -> ColumnSpec:
+    return ColumnSpec(SqlType.CHAR, nullable=not not_null, args=(n,))
 
 
-def CHAR(n: int, *, not_null: bool = False) -> str:
-    return _sql(f"CHAR({n})", not_null=not_null)
-
-
-def DECIMAL(p: int, s: int, *, not_null: bool = True) -> str:
-    return _sql(f"DECIMAL({p}, {s})", not_null=not_null)
+def DECIMAL(p: int, s: int, *, not_null: bool = True) -> ColumnSpec:
+    return ColumnSpec(SqlType.DECIMAL, nullable=not not_null, args=(p, s))
 
 
 # Common aliases (readability)
@@ -111,19 +110,18 @@ def _validate_schema(name: str, schema: Schema) -> None:
             not isinstance(item, tuple)
             or len(item) != 2
             or not isinstance(item[0], str)
-            or not isinstance(item[1], str)
+            or not isinstance(item[1], ColumnSpec)
         ):
-            raise TypeError(f"{name}: invalid schema entry {item!r} (expected (str, str))")
+            raise TypeError(
+                f"{name}: invalid schema entry {item!r} (expected (str, ColumnSpec))"
+            )
 
-        col, typ = item
+        col = item[0]
         if not col.strip():
             raise ValueError(f"{name}: empty column name")
         if col in seen:
             raise ValueError(f"{name}: duplicate column {col!r}")
         seen.add(col)
-
-        if not typ.strip():
-            raise ValueError(f"{name}: empty type for column {col!r}")
 
 
 def _validate_schema_map(schema_map: Mapping[str, Schema]) -> None:

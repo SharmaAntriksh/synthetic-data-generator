@@ -28,6 +28,7 @@ try:
 except ImportError:  # pragma: no cover
     pa = None
 
+from src.tools.sql.dialect import ColumnSpec, SqlType
 from src.utils.static_schemas import get_sales_schema
 
 PA_AVAILABLE = pa is not None
@@ -37,50 +38,40 @@ PA_AVAILABLE = pa is not None
 # Schema helpers
 # ===============================================================
 
-def _sql_to_pa_type(sql_type: str):
-    """
-    Map SQL-ish type strings (from static_schemas) to PyArrow types.
+# DATETIME/DATETIME2 collapse to date32 to match legacy chunk_builder dtype.
+# TIME has no temporal counterpart in chunk_builder output, so it falls
+# through to pa.string() like the original substring-based implementation.
+def _build_sql_to_pa_map():
+    return {
+        SqlType.BIGINT: pa.int64(),
+        SqlType.INT: pa.int32(),
+        SqlType.SMALLINT: pa.int16(),
+        SqlType.TINYINT: pa.int8(),
+        SqlType.FLOAT: pa.float64(),
+        SqlType.DECIMAL: pa.float64(),
+        SqlType.DATE: pa.date32(),
+        SqlType.DATETIME: pa.date32(),
+        SqlType.DATETIME2: pa.date32(),
+    }
 
-    Must remain aligned with chunk_builder output dtypes.
-    """
-    t = str(sql_type).upper()
 
-    # Order matters: BIGINT must be checked before INT, etc.
-    if "BIGINT" in t:
-        return pa.int64()
-
-    # Prefer tighter mapping than the old "SMALLINT or TINYINT => int16"
-    # because some flags/month columns are intentionally int8 downstream.
-    if "TINYINT" in t:
-        return pa.int8()
-    if "SMALLINT" in t:
-        return pa.int16()
-
-    if "INT" in t:
-        return pa.int32()
-
-    # Keep numeric types as float64 for stability (DECIMAL varies in real systems)
-    if "DECIMAL" in t or "NUMERIC" in t or "FLOAT" in t or "REAL" in t or "DOUBLE" in t:
-        return pa.float64()
-
-    if "DATE" in t:
-        return pa.date32()
-
-    # Default: string
-    return pa.string()
+def _spec_to_pa_type(spec: ColumnSpec):
+    if not isinstance(spec, ColumnSpec):
+        raise TypeError(f"Expected ColumnSpec, got {type(spec).__name__}: {spec!r}")
+    return _SQL_TO_PA.get(spec.sql_type, pa.string())
 
 
 def _logical_to_arrow_schema(logical_schema):
-    """
-    Convert logical (name, sql_type) schema from static_schemas into a PyArrow schema.
-    """
+    """Convert logical (name, ColumnSpec) schema into a PyArrow schema."""
     if not PA_AVAILABLE:
         raise RuntimeError("pyarrow is required to build Arrow schema")
 
-    fields = []
-    for name, sql_type in logical_schema:
-        fields.append(pa.field(str(name), _sql_to_pa_type(sql_type)))
-    return pa.schema(fields)
+    return pa.schema(
+        [pa.field(str(name), _spec_to_pa_type(spec)) for name, spec in logical_schema]
+    )
+
+
+_SQL_TO_PA = _build_sql_to_pa_map() if PA_AVAILABLE else {}
 
 
 # ===============================================================

@@ -7,6 +7,7 @@ from typing import Mapping, Sequence, Tuple
 
 from src.utils.static_schemas import STATIC_SCHEMAS, BIGINT_NN, get_dates_schema, get_sales_schema, _INT32_HALF
 from src.utils.logging_utils import work
+from src.tools.sql.dialect import ColumnSpec, DEFAULT_DIALECT
 from src.tools.sql.sql_helpers import (
     sql_escape_literal as _sql_escape_literal,
     quote_ident as _quote_ident,
@@ -17,7 +18,7 @@ from src.tools.sql.sql_helpers import (
     wishlists_enabled as _wishlists_enabled,
 )
 
-ColumnSpec = Sequence[Tuple[str, str]]
+Schema = Sequence[Tuple[str, ColumnSpec]]
 
 # Fact table names (SQL tables should remain PascalCase)
 TABLE_SALES = "Sales"
@@ -71,7 +72,7 @@ def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
     return bool(getattr(sales_cfg, "skip_order_cols", default) if sales_cfg else default)
 
 
-def _require_static_schema(table_name: str) -> ColumnSpec:
+def _require_static_schema(table_name: str) -> Schema:
     try:
         return STATIC_SCHEMAS[table_name]
     except KeyError as e:
@@ -83,7 +84,7 @@ def _require_static_schema(table_name: str) -> ColumnSpec:
 
 def create_table_from_schema(
     table_name: str,
-    cols: ColumnSpec,
+    cols: Schema,
     *,
     schema: str = "dbo",
     drop_existing: bool = True,
@@ -104,7 +105,7 @@ def create_table_from_schema(
 
     lines.append(f"CREATE TABLE {fq_table} (")
     for col, dtype in cols:
-        lines.append(f"    {_quote_ident(col)} {dtype},")
+        lines.append(f"    {_quote_ident(col)} {DEFAULT_DIALECT.render_type(dtype)},")
     if lines[-1].endswith(","):
         lines[-1] = lines[-1].rstrip(",")
     lines.append(");")
