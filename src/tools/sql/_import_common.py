@@ -120,6 +120,37 @@ def find_create_sql(files, suffix: str) -> Path | None:
     return next((p for p in files if p.name.lower().endswith(suffix)), None)
 
 
+def run_script_phase(
+    conn,
+    label: str,
+    files: list[Path],
+    *,
+    run_dir: Path,
+    execute,
+) -> None:
+    """Apply a list of SQL scripts as a single timed, committed phase.
+
+    Shared by sequential importer phases (schema, admin tools, constraints).
+    The Load phase doesn't use this — its per-file section labels and
+    streaming COPY semantics differ enough to keep separate.
+
+    ``execute`` is passed in so SQL Server (pyodbc) and Postgres (psycopg)
+    importers can share the orchestration while keeping their driver-
+    specific statement runners.
+    """
+    if not files:
+        return
+    import time as _time  # local import: SQL Server importer doesn't depend on _time at top level
+
+    t0 = _time.time()
+    _log("INFO", f"  {label}")
+    for f in files:
+        _log("WORK", f"    {_short_path(f, base=run_dir)}")
+        execute(conn, f)
+    conn.commit()
+    _log("DONE", f"  {label} completed in {_time.time() - t0:.1f}s")
+
+
 def ordered_load_files(load_dir: Path) -> list[Path]:
     """Return load scripts in dims-then-facts order; warn about extras.
 

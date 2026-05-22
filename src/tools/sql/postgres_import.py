@@ -31,6 +31,7 @@ from src.tools.sql._import_common import (
     find_create_sql,
     list_sql_files,
     ordered_load_files,
+    run_script_phase,
 )
 from src.tools.sql.dialect import PostgresDialect
 
@@ -210,6 +211,7 @@ def import_postgres(
     postgres_dir = run_dir / "postgres"
     schema_dir = postgres_dir / "schema"
     load_dir = postgres_dir / "load"
+    admin_dir = postgres_dir / "admin"
 
     if not schema_dir.is_dir():
         raise PostgresImportError(
@@ -220,6 +222,8 @@ def import_postgres(
     schema_files = list_sql_files(schema_dir)
     if not schema_files:
         raise PostgresImportError(f"No schema scripts found under {schema_dir}.")
+
+    admin_files = list_sql_files(admin_dir)
 
     # Constraints are applied AFTER the load — adding FKs before the COPY
     # would force per-row validation and crush throughput.
@@ -263,13 +267,10 @@ def import_postgres(
         with pg.connect(**target_dsn) as conn:
             conn.autocommit = False
 
-            _t_schema = _time.time()
-            _log("INFO", "  Creating Schema")
-            for f in schema_files:
-                _log("WORK", f"    {_short_path(f, base=run_dir)}")
-                _execute_script(conn, f)
-            conn.commit()
-            _log("DONE", f"  Creating Schema completed in {_time.time() - _t_schema:.1f}s")
+            run_script_phase(conn, "Creating Schema", schema_files,
+                             run_dir=run_dir, execute=_execute_script)
+            run_script_phase(conn, "Installing Admin Tools", admin_files,
+                             run_dir=run_dir, execute=_execute_script)
 
             for load_file in load_files:
                 is_dims = "dim" in load_file.name.lower()
@@ -281,14 +282,8 @@ def import_postgres(
                 conn.commit()
                 _log("DONE", f"  Loading {section} completed in {_time.time() - _t_load:.1f}s")
 
-            if constraint_files:
-                _t_constraints = _time.time()
-                _log("INFO", "  Applying Constraints")
-                for f in constraint_files:
-                    _log("WORK", f"    {_short_path(f, base=run_dir)}")
-                    _execute_script(conn, f)
-                conn.commit()
-                _log("DONE", f"  Applying Constraints completed in {_time.time() - _t_constraints:.1f}s")
+            run_script_phase(conn, "Applying Constraints", constraint_files,
+                             run_dir=run_dir, execute=_execute_script)
 
             if verify:
                 dim_create = find_create_sql(schema_files, "create_dimensions.sql")
