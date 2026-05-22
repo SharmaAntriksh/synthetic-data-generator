@@ -470,30 +470,30 @@ class TestBulkInsert:
         )
         assert result is None
 
-    def test_bulk_insert_csv_mode(self, tmp_path):
-        """CSV mode should include FORMAT='CSV'."""
+    def test_bulk_insert_csv_format_per_table(self, tmp_path):
+        """csv_format_tables flips FORMAT='CSV' on matching tables only."""
         csv_dir = tmp_path / "data"
         csv_dir.mkdir()
         (csv_dir / "Sales.csv").write_text("col1\n1\n")
 
         out_sql = tmp_path / "bulk.sql"
         generate_bulk_insert_script(
-            str(csv_dir), output_sql_file=str(out_sql), mode="csv",
+            str(csv_dir), output_sql_file=str(out_sql),
+            csv_format_tables={"Sales"},
         )
         sql = out_sql.read_text(encoding="utf-8")
         assert "FORMAT = 'CSV'" in sql
 
-    def test_bulk_insert_legacy_mode(self, tmp_path):
-        """Legacy mode should include FIELDTERMINATOR."""
+    def test_bulk_insert_default_omits_csv_format(self, tmp_path):
+        """Without csv_format_tables, FORMAT='CSV' is omitted (legacy fast path)."""
         csv_dir = tmp_path / "data"
         csv_dir.mkdir()
         (csv_dir / "Sales.csv").write_text("col1\n1\n")
 
         out_sql = tmp_path / "bulk.sql"
-        generate_bulk_insert_script(
-            str(csv_dir), output_sql_file=str(out_sql), mode="legacy",
-        )
+        generate_bulk_insert_script(str(csv_dir), output_sql_file=str(out_sql))
         sql = out_sql.read_text(encoding="utf-8")
+        assert "FORMAT = 'CSV'" not in sql
         assert "FIELDTERMINATOR" in sql
 
     def test_bulk_insert_allowed_tables_filter(self, tmp_path):

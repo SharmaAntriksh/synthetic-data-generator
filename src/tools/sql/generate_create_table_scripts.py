@@ -53,8 +53,6 @@ def _validate_sql_identifier(name: str, label: str = "identifier") -> None:
         raise ValueError(f"Unsafe SQL {label}: {name!r}")
 
 
-def _qualify(schema: str, table: str, dialect: Dialect) -> str:
-    return f"{dialect.quote_ident(schema)}.{dialect.quote_ident(table)}"
 
 
 def _sales_output_mode(cfg: Mapping) -> str:
@@ -91,7 +89,7 @@ def create_table_from_schema(
 ) -> str:
     _validate_sql_identifier(table_name, "table name")
     _validate_sql_identifier(schema, "schema name")
-    fq_table = _qualify(schema, table_name, dialect)
+    fq_table = dialect.qualify(schema, table_name)
 
     emit_separator = include_batch_separator and bool(dialect.batch_separator)
 

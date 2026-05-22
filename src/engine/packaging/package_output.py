@@ -200,7 +200,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         view_schema = str(getattr(getattr(cfg, "defaults", None), "view_schema", "dbo") or "dbo").strip()
         copy_views_sql(sql_root=sql_root, view_schema=view_schema)
         compose_verification_sql(sql_root=sql_root)
-        write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
+        write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
         copy_static_sql_assets(sql_root=sql_root)
     else:
         info("Skipping SQL script generation for non-CSV format.")

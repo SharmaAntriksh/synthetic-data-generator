@@ -22,7 +22,14 @@ run, do this once after touching dialect/postgres.py::
         -f generated_datasets/<run>/postgres/schema/01_create_dimensions.sql \\
         -f generated_datasets/<run>/postgres/schema/02_create_facts.sql
 
-    # 4. Spot-check table + column counts
+    # 4. Load the CSVs via COPY (paths inside the generated SQL must be
+    #    readable by the Postgres server process; mount the run folder into
+    #    the container if running Postgres in Docker).
+    psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 \\
+        -f generated_datasets/<run>/postgres/load/01_copy_dims.sql \\
+        -f generated_datasets/<run>/postgres/load/02_copy_facts.sql
+
+    # 5. Spot-check table + row counts
     psql -h localhost -U postgres -d postgres -c \\
         "SELECT table_name, count(*) FROM information_schema.columns
            WHERE table_schema='dbo' GROUP BY table_name ORDER BY table_name;"
@@ -32,6 +39,7 @@ run, do this once after touching dialect/postgres.py::
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -269,6 +277,72 @@ class TestGenerateAllCreateTablesPostgres:
         assert pg_dim.read_text(encoding="utf-8") != ss_dim.read_text(encoding="utf-8")
 
 
+class TestPostgresBulkLoad:
+    """Postgres COPY statements emitted by the dialect."""
+
+    def setup_method(self) -> None:
+        self.dialect = PostgresDialect()
+
+    def test_basic_copy(self, tmp_path) -> None:
+        csv = tmp_path / "Customers.csv"
+        csv.write_text("col\n")
+        sql = self.dialect.bulk_load_statement(schema="dbo", table="Customers", csv_path=csv)
+        assert sql.startswith('COPY "dbo"."Customers"')
+        assert f"FROM '{csv.resolve()}'" in sql
+        assert "WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');" in sql
+
+    def test_unqualified_table(self, tmp_path) -> None:
+        csv = tmp_path / "Sales.csv"
+        csv.write_text("")
+        sql = self.dialect.bulk_load_statement(schema="", table="Sales", csv_path=csv)
+        assert sql.startswith('COPY "Sales"')
+
+    def test_use_csv_format_is_ignored(self, tmp_path) -> None:
+        """COPY ... FORMAT csv is always CSV-aware; the flag is a SQL-Server-only hint."""
+        csv = tmp_path / "Budget.csv"
+        csv.write_text("")
+        sql_a = self.dialect.bulk_load_statement(schema="dbo", table="Budget", csv_path=csv, use_csv_format=True)
+        sql_b = self.dialect.bulk_load_statement(schema="dbo", table="Budget", csv_path=csv, use_csv_format=False)
+        assert sql_a == sql_b
+
+
+class TestPostgresLoadScriptGeneration:
+    """End-to-end: feed CSVs through generate_dims_and_facts_bulk_insert_scripts with PostgresDialect."""
+
+    def test_filenames_and_content(self, tmp_path) -> None:
+        from src.tools.sql.generate_bulk_insert_sql import generate_dims_and_facts_bulk_insert_scripts
+
+        dims = tmp_path / "dims"
+        facts = tmp_path / "facts" / "sales"
+        dims.mkdir(parents=True)
+        facts.mkdir(parents=True)
+        (dims / "Customers.csv").write_text("")
+        (facts / "sales_chunk0001.csv").write_text("")
+
+        cfg = AppConfig.model_validate(
+            {"sales": {"sales_output": "sales"}, "dates": {}}
+        )
+        load_root = tmp_path / "load"
+        dims_path, facts_path = generate_dims_and_facts_bulk_insert_scripts(
+            dims_folder=str(dims),
+            facts_folder=str(tmp_path / "facts"),
+            cfg=cfg,
+            load_output_folder=str(load_root),
+            dialect=PostgresDialect(),
+        )
+        assert Path(dims_path).name == "01_copy_dims.sql"
+        assert Path(facts_path).name == "02_copy_facts.sql"
+
+        dims_sql = Path(dims_path).read_text(encoding="utf-8")
+        facts_sql = Path(facts_path).read_text(encoding="utf-8")
+        for label, sql in (("dims", dims_sql), ("facts", facts_sql)):
+            assert "COPY " in sql, f"{label}: missing COPY"
+            assert "FORMAT csv, HEADER true" in sql, f"{label}: missing CSV format"
+            assert "BULK INSERT" not in sql, f"{label}: T-SQL BULK INSERT leaked"
+            assert "SET NOCOUNT ON" not in sql, f"{label}: T-SQL SET NOCOUNT leaked"
+            assert "[" not in sql, f"{label}: SQL Server brackets leaked"
+
+
 class TestPackagingRouting:
     """Phase 3 packaging: SQL Server lands at sql/, every other dialect at <run>/<name>/.
 
@@ -321,3 +395,40 @@ class TestPackagingRouting:
         assert (run / "postgres" / "schema" / "02_create_facts.sql").exists()
         # Postgres output must not contaminate the SQL Server folder.
         assert not (sql_root / "postgres").exists()
+
+    def _setup_run(self, tmp_path):
+        run = tmp_path / "run"
+        sql_root = run / "sql"
+        dims_out = run / "dims"
+        facts_sales = run / "facts" / "sales"
+        sql_root.mkdir(parents=True)
+        dims_out.mkdir()
+        facts_sales.mkdir(parents=True)
+        (dims_out / "Customers.csv").write_text("")
+        (facts_sales / "sales_chunk0001.csv").write_text("")
+        cfg = AppConfig.model_validate(
+            {"sales": {"sales_output": "sales"}, "dates": {}}
+        )
+        return run, sql_root, dims_out, run / "facts", cfg
+
+    def test_sql_server_load_lands_at_sql_load(self, tmp_path) -> None:
+        from src.engine.packaging.sql_scripts import write_bulk_insert_scripts
+
+        run, sql_root, dims_out, facts_out, cfg = self._setup_run(tmp_path)
+        write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
+
+        assert (sql_root / "load" / "01_bulk_insert_dims.sql").exists()
+        assert (sql_root / "load" / "02_bulk_insert_facts.sql").exists()
+        assert not (run / "sqlserver").exists(), "SQL Server load must land at sql/load/, not <run>/sqlserver/load/"
+
+    def test_postgres_load_lands_at_run_sibling(self, tmp_path) -> None:
+        from src.engine.packaging.sql_scripts import write_bulk_insert_scripts
+
+        run, sql_root, dims_out, facts_out, cfg = self._setup_run(tmp_path)
+        write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
+
+        assert (run / "postgres" / "load" / "01_copy_dims.sql").exists()
+        assert (run / "postgres" / "load" / "02_copy_facts.sql").exists()
+        assert not (sql_root / "postgres").exists()
+        # SQL Server load filenames must NOT appear under Postgres.
+        assert not (run / "postgres" / "load" / "01_bulk_insert_dims.sql").exists()

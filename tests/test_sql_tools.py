@@ -34,7 +34,7 @@ from src.tools.sql.generate_create_table_scripts import (
 )
 from src.utils.static_schemas import DECIMAL, INT, VARCHAR
 from src.tools.sql.generate_bulk_insert_sql import (
-    _quote_table,
+    _split_qualified,
     _infer_table_from_filename,
     _allowed_lookup,
     generate_bulk_insert_script,
@@ -435,34 +435,33 @@ class TestSkipOrderCols:
 
 
 # ===================================================================
-# 12. generate_bulk_insert_sql — _quote_table
+# 12. generate_bulk_insert_sql — _split_qualified
 # ===================================================================
 
-class TestQuoteTable:
-    def test_simple_table(self):
-        assert _quote_table("Sales") == "[Sales]"
+class TestSplitQualified:
+    def test_unqualified(self):
+        assert _split_qualified("Sales") == ("", "Sales")
 
     def test_schema_dot_table(self):
-        assert _quote_table("dbo.Sales") == "[dbo].[Sales]"
+        assert _split_qualified("dbo.Sales") == ("dbo", "Sales")
 
-    def test_already_bracketed(self):
-        assert _quote_table("[dbo].[Sales]") == "[dbo].[Sales]"
+    def test_strips_existing_brackets(self):
+        assert _split_qualified("[dbo].[Sales]") == ("dbo", "Sales")
 
-    def test_three_parts(self):
-        result = _quote_table("server.dbo.Sales")
-        assert result == "[server].[dbo].[Sales]"
+    def test_strips_existing_double_quotes(self):
+        assert _split_qualified('"dbo"."Sales"') == ("dbo", "Sales")
 
     def test_empty_raises(self):
         with pytest.raises(ValueError, match="Empty table name"):
-            _quote_table("")
+            _split_qualified("")
 
     def test_whitespace_only_raises(self):
         with pytest.raises(ValueError, match="Empty table name"):
-            _quote_table("   ")
+            _split_qualified("   ")
 
     def test_too_many_parts_raises(self):
         with pytest.raises(ValueError, match="Too many name parts"):
-            _quote_table("a.b.c.d")
+            _split_qualified("a.b.c")
 
 
 # ===================================================================
@@ -523,32 +522,10 @@ class TestAllowedLookup:
         assert result["sales"] == "Sales"
 
 
-# ===================================================================
-# 15. generate_bulk_insert_sql — codepage validation
-# ===================================================================
-
-class TestCodepageValidation:
-    def test_non_numeric_codepage_raises(self, tmp_path):
-        csv_dir = tmp_path / "csv"
-        csv_dir.mkdir()
-        (csv_dir / "sales.csv").write_text("a,b\n1,2\n")
-        with pytest.raises(ValueError, match="codepage must be numeric"):
-            generate_bulk_insert_script(
-                csv_dir,
-                output_sql_file=str(tmp_path / "out.sql"),
-                codepage="abc; DROP TABLE",
-            )
-
-    def test_valid_codepage_succeeds(self, tmp_path):
-        csv_dir = tmp_path / "csv"
-        csv_dir.mkdir()
-        (csv_dir / "sales.csv").write_text("a,b\n1,2\n")
-        result = generate_bulk_insert_script(
-            csv_dir,
-            output_sql_file=str(tmp_path / "out.sql"),
-            codepage="65001",
-        )
-        assert result is not None
+# The codepage value (formerly user-supplied) is now hardcoded inside
+# SqlServerDialect.bulk_load_statement, so the injection-via-codepage
+# concern that motivated the legacy TestCodepageValidation class no longer
+# applies — there is no caller-supplied codepage to validate.
 
     def test_missing_folder_returns_none(self, tmp_path):
         result = generate_bulk_insert_script(

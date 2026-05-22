@@ -14,11 +14,19 @@ makes the drop statement idempotent.
 """
 from __future__ import annotations
 
-from .base import ColumnSpec, Dialect, SqlType
+from pathlib import Path
+
+from .base import ColumnSpec, Dialect, SqlType, sql_escape_literal
 
 
 class PostgresDialect(Dialect):
     name = "postgres"
+    load_script_kind = "copy"
+    # COPY ... FROM is server-side: the path must be readable by the
+    # Postgres server process. For local/Docker workflows where psql is
+    # used, callers can manually swap COPY for \copy (which reads from the
+    # client side).
+    load_script_note = "-- NOTE: 'FROM <path>' is evaluated on the Postgres server host."
 
     _SIMPLE = {
         SqlType.INT: "INTEGER",
@@ -50,5 +58,19 @@ class PostgresDialect(Dialect):
         return '"' + raw.replace('"', '""') + '"'
 
     def drop_table_if_exists(self, schema: str, table: str) -> str:
-        fq = f"{self.quote_ident(schema)}.{self.quote_ident(table)}"
-        return f"DROP TABLE IF EXISTS {fq};"
+        return f"DROP TABLE IF EXISTS {self.qualify(schema, table)};"
+
+    def bulk_load_statement(
+        self,
+        *,
+        schema: str,
+        table: str,
+        csv_path: Path,
+        use_csv_format: bool = False,  # COPY ... FORMAT csv is always CSV-aware.
+    ) -> str:
+        path_literal = sql_escape_literal(str(csv_path.resolve()))
+        return (
+            f"COPY {self.qualify(schema, table)}\n"
+            f"FROM '{path_literal}'\n"
+            f"WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');"
+        )

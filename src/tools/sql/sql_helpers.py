@@ -4,15 +4,7 @@ from __future__ import annotations
 from typing import Mapping, Optional
 
 from src.tools.sql.dialect import DEFAULT_DIALECT
-
-
-def sql_escape_literal(value: str) -> str:
-    """Escape a string for use inside a single-quoted SQL literal.
-
-    Dialect-neutral: SQL Server, Postgres, and MySQL all use doubled
-    single quotes for embedded apostrophes.
-    """
-    return value.replace("'", "''")
+from src.tools.sql.dialect.base import sql_escape_literal  # noqa: F401 — re-exported
 
 
 def quote_ident(name: str) -> str:

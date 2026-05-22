@@ -4,7 +4,10 @@ import shutil
 from pathlib import Path
 
 from src.tools.sql.dialect import DEFAULT_DIALECT, REGISTRY
-from src.tools.sql.generate_bulk_insert_sql import generate_dims_and_facts_bulk_insert_scripts
+from src.tools.sql.generate_bulk_insert_sql import (
+    _allowed_fact_tables_from_cfg,
+    generate_dims_and_facts_bulk_insert_scripts,
+)
 from src.tools.sql.generate_create_table_scripts import generate_all_create_tables
 from src.tools.sql.sql_helpers import sql_escape_literal
 from src.utils.logging_utils import stage, skip, done
@@ -328,29 +331,32 @@ def write_create_table_scripts(*, dims_out: Path, facts_out: Path, sql_root: Pat
             )
 
 
-def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, cfg: dict, **_) -> None:
-    """
-    Always generate:
-      sql/load/01_bulk_insert_dims.sql
-      sql/load/02_bulk_insert_facts.sql
+def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, cfg) -> None:
+    """Emit load scripts for every registered SQL dialect.
 
-    The facts allowlist is computed from the FULL cfg (sales_output + returns enablement).
+    SQL Server lands at the existing ``sql/load/`` folder for backward
+    compatibility; every other dialect lands at ``<run>/<dialect>/load/``
+    as a sibling of ``sql/load/``. The facts allowlist is computed once
+    from the FULL cfg (sales_output + returns enablement) and reused
+    across dialects.
     """
-    with stage("Generating BULK INSERT Scripts"):
+    with stage("Generating Load Scripts"):
         dims_csv = list(dims_out.glob("*.csv"))
         facts_csv = list(facts_out.rglob("*.csv"))
 
         if not dims_csv and not facts_csv:
-            skip("No CSV files found - skipping BULK INSERT scripts.")
+            skip("No CSV files found - skipping load scripts.")
             return
 
-        load_root = sql_root / "load"
-        generate_dims_and_facts_bulk_insert_scripts(
-            dims_folder=str(dims_out),
-            facts_folder=str(facts_out),
-            cfg=cfg,
-            load_output_folder=str(load_root),
-            dims_mode="csv",
-            facts_mode="legacy",
-            row_terminator="0x0a",
-        )
+        allowed_fact_tables = _allowed_fact_tables_from_cfg(cfg)
+        run_root = sql_root.parent
+        for dialect in REGISTRY.values():
+            load_root = (sql_root if dialect is DEFAULT_DIALECT else run_root / dialect.name) / "load"
+            generate_dims_and_facts_bulk_insert_scripts(
+                dims_folder=str(dims_out),
+                facts_folder=str(facts_out),
+                cfg=cfg,
+                load_output_folder=str(load_root),
+                dialect=dialect,
+                allowed_fact_tables=allowed_fact_tables,
+            )
