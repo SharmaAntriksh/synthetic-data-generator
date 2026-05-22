@@ -24,10 +24,27 @@ _SIMPLE: dict[SqlType, str] = {
 
 class SqlServerDialect(Dialect):
     name = "sqlserver"
+    batch_separator = "GO"
 
     def render_type(self, spec: ColumnSpec) -> str:
         suffix = "NULL" if spec.nullable else "NOT NULL"
         return f"{self._render_base(spec)} {suffix}"
+
+    def quote_ident(self, name: str) -> str:
+        raw = str(name).strip()
+        if raw.startswith("[") and raw.endswith("]"):
+            raw = raw[1:-1]
+        if raw.startswith('"') and raw.endswith('"'):
+            raw = raw[1:-1]
+        return f"[{raw.replace(']', ']]')}]"
+
+    def drop_table_if_exists(self, schema: str, table: str) -> str:
+        fq = f"{self.quote_ident(schema)}.{self.quote_ident(table)}"
+        literal = fq.replace("'", "''")
+        return (
+            f"IF OBJECT_ID(N'{literal}', N'U') IS NOT NULL\n"
+            f"    DROP TABLE {fq};"
+        )
 
     def _render_base(self, spec: ColumnSpec) -> str:
         t = spec.sql_type

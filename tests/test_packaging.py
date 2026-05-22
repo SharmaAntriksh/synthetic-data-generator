@@ -44,8 +44,10 @@ from src.tools.sql.generate_create_table_scripts import (
     create_table_from_schema,
     generate_all_create_tables,
     _validate_sql_identifier,
-    _sql_escape_literal,
-    _quote_ident,
+)
+from src.tools.sql.sql_helpers import (
+    sql_escape_literal as _sql_escape_literal,
+    quote_ident as _quote_ident,
 )
 from src.tools.sql.generate_bulk_insert_sql import (
     generate_bulk_insert_script,
@@ -225,7 +227,7 @@ class TestSQLDDLGeneration:
 
     def test_create_table_no_go(self):
         cols = (("Id", INT()),)
-        sql = create_table_from_schema("T", cols, include_go=False)
+        sql = create_table_from_schema("T", cols, include_batch_separator=False)
         assert "GO" not in sql
 
     def test_create_table_drop_uses_object_id(self):

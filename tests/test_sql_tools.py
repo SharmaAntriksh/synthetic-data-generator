@@ -336,14 +336,14 @@ class TestCreateTableFromSchema:
         assert "DROP TABLE" not in ddl
         assert "IF OBJECT_ID" not in ddl
 
-    def test_include_go_true(self):
+    def test_include_batch_separator_true(self):
         cols = [("ID", INT())]
-        ddl = create_table_from_schema("Foo", cols, include_go=True)
+        ddl = create_table_from_schema("Foo", cols, include_batch_separator=True)
         assert ddl.count("GO") >= 1
 
-    def test_include_go_false(self):
+    def test_include_batch_separator_false(self):
         cols = [("ID", INT())]
-        ddl = create_table_from_schema("Foo", cols, include_go=False)
+        ddl = create_table_from_schema("Foo", cols, include_batch_separator=False)
         assert "GO" not in ddl
 
     def test_custom_schema(self):

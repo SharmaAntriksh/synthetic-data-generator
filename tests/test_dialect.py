@@ -110,3 +110,101 @@ class TestStaticSchemaHelpers:
                 assert rendered.endswith("NULL"), (
                     f"{table}.{col} rendered as {rendered!r} — missing nullability"
                 )
+
+
+class TestSqlServerQuoteIdent:
+    """SqlServerDialect.quote_ident replaces the old sql_helpers function."""
+
+    def setup_method(self) -> None:
+        self.dialect = SqlServerDialect()
+
+    def test_simple(self) -> None:
+        assert self.dialect.quote_ident("Sales") == "[Sales]"
+
+    def test_strips_existing_brackets(self) -> None:
+        assert self.dialect.quote_ident("[Sales]") == "[Sales]"
+
+    def test_strips_existing_double_quotes(self) -> None:
+        assert self.dialect.quote_ident('"Sales"') == "[Sales]"
+
+    def test_escapes_closing_bracket(self) -> None:
+        assert self.dialect.quote_ident("My]Table") == "[My]]Table]"
+
+    def test_drop_table_if_exists(self) -> None:
+        sql = self.dialect.drop_table_if_exists("dbo", "Sales")
+        assert "IF OBJECT_ID(N'[dbo].[Sales]', N'U') IS NOT NULL" in sql
+        assert "DROP TABLE [dbo].[Sales];" in sql
+
+    def test_drop_table_if_exists_escapes_apostrophe(self) -> None:
+        # Apostrophes in identifiers are quoted in the bracket form, then the
+        # bracketed result is escaped for the N'...' literal.
+        sql = self.dialect.drop_table_if_exists("dbo", "O'Brien")
+        assert "N'[dbo].[O''Brien]'" in sql
+        assert "DROP TABLE [dbo].[O'Brien];" in sql
+
+    def test_batch_separator(self) -> None:
+        assert self.dialect.batch_separator == "GO"
+
+
+class _RecordingDialect(SqlServerDialect):
+    """SqlServerDialect with every call wrapped in a sentinel marker.
+
+    Used to prove that ``create_table_from_schema`` actually routes calls
+    through the injected dialect parameter rather than the module-level
+    DEFAULT_DIALECT.
+    """
+
+    name = "recording"
+    batch_separator = "/*BATCH*/"
+
+    def quote_ident(self, name: str) -> str:
+        return f"<<{name}>>"
+
+    def render_type(self, spec: ColumnSpec) -> str:
+        return "TYPE!"
+
+    def drop_table_if_exists(self, schema: str, table: str) -> str:
+        return f"-- drop {self.quote_ident(schema)}.{self.quote_ident(table)} --"
+
+
+class TestDialectInjection:
+    """Phase 2: create_table_from_schema must honour the dialect parameter."""
+
+    def test_create_table_uses_injected_dialect(self) -> None:
+        from src.tools.sql.generate_create_table_scripts import create_table_from_schema
+
+        sql = create_table_from_schema(
+            "Sales",
+            [("Id", INT()), ("Amount", DECIMAL(10, 2))],
+            dialect=_RecordingDialect(),
+        )
+
+        # Identifier quoting came from the dialect, not DEFAULT_DIALECT brackets.
+        assert "<<Sales>>" in sql
+        assert "<<Id>>" in sql
+        assert "<<Amount>>" in sql
+        # Type rendering came from the dialect.
+        assert "TYPE!" in sql
+        # Drop statement came from the dialect (and was called with unquoted names).
+        assert "-- drop <<dbo>>.<<Sales>> --" in sql
+        # Batch separator came from the dialect.
+        assert "/*BATCH*/" in sql
+        # SQL Server idioms are absent.
+        assert "[Sales]" not in sql
+        assert "IF OBJECT_ID" not in sql
+        assert "\nGO\n" not in sql
+
+    def test_empty_batch_separator_suppresses_go_lines(self) -> None:
+        from src.tools.sql.generate_create_table_scripts import create_table_from_schema
+
+        class _NoSeparator(SqlServerDialect):
+            name = "nosep"
+            batch_separator = ""
+
+        sql = create_table_from_schema(
+            "T",
+            [("Id", INT())],
+            dialect=_NoSeparator(),
+            include_batch_separator=True,
+        )
+        assert "GO" not in sql.split("\n")
