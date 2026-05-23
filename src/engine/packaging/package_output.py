@@ -14,6 +14,7 @@ from .sql_scripts import (
     write_create_table_scripts,
     compose_constraints_sql,
     compose_postgres_constraints_sql,
+    compose_postgres_indexes_sql,
     compose_postgres_views_sql,
     compose_verification_sql,
     copy_postgres_admin_sql,
@@ -203,6 +204,7 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
         # Postgres constraint SQL is hand-translated, not auto-derived from the SQL Server parts.
         compose_postgres_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
         compose_postgres_views_sql(sql_root=sql_root, cfg=cfg)
+        compose_postgres_indexes_sql(sql_root=sql_root)
         copy_postgres_admin_sql(sql_root=sql_root)
         view_schema = str(getattr(getattr(cfg, "defaults", None), "view_schema", "dbo") or "dbo").strip()
         copy_views_sql(sql_root=sql_root, view_schema=view_schema)

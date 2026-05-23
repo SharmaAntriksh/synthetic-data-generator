@@ -212,6 +212,7 @@ def import_postgres(
     schema_dir = postgres_dir / "schema"
     load_dir = postgres_dir / "load"
     admin_dir = postgres_dir / "admin"
+    indexes_dir = postgres_dir / "indexes"
 
     if not schema_dir.is_dir():
         raise PostgresImportError(
@@ -224,6 +225,7 @@ def import_postgres(
         raise PostgresImportError(f"No schema scripts found under {schema_dir}.")
 
     admin_files = list_sql_files(admin_dir)
+    index_files = list_sql_files(indexes_dir)
 
     # Constraints are applied AFTER the load — adding FKs before the COPY
     # would force per-row validation and crush throughput.
@@ -283,6 +285,8 @@ def import_postgres(
                 _log("DONE", f"  Loading {section} completed in {_time.time() - _t_load:.1f}s")
 
             run_script_phase(conn, "Applying Constraints", constraint_files,
+                             run_dir=run_dir, execute=_execute_script)
+            run_script_phase(conn, "Creating Indexes", index_files,
                              run_dir=run_dir, execute=_execute_script)
 
             if verify:
