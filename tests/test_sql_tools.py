@@ -32,8 +32,9 @@ from src.tools.sql.generate_create_table_scripts import (
     _sales_output_mode,
     _skip_order_cols,
 )
+from src.utils.static_schemas import DECIMAL, INT, VARCHAR
 from src.tools.sql.generate_bulk_insert_sql import (
-    _quote_table,
+    _split_qualified,
     _infer_table_from_filename,
     _allowed_lookup,
     generate_bulk_insert_script,
@@ -312,11 +313,11 @@ class TestValidateSqlIdentifier:
 
 class TestCreateTableFromSchema:
     def test_basic_ddl_structure(self):
-        cols = [("ID", "INT NOT NULL"), ("Name", "NVARCHAR(100)")]
+        cols = [("ID", INT()), ("Name", VARCHAR(100))]
         ddl = create_table_from_schema("TestTable", cols)
         assert "CREATE TABLE [dbo].[TestTable]" in ddl
         assert "[ID] INT NOT NULL," in ddl
-        assert "[Name] NVARCHAR(100)" in ddl
+        assert "[Name] VARCHAR(100) NULL" in ddl
         # Last column should not have trailing comma
         lines = ddl.splitlines()
         col_lines = [l for l in lines if l.strip().startswith("[Name]")]
@@ -324,29 +325,29 @@ class TestCreateTableFromSchema:
         assert not col_lines[0].rstrip().endswith(",")
 
     def test_drop_existing_present_by_default(self):
-        cols = [("ID", "INT")]
+        cols = [("ID", INT())]
         ddl = create_table_from_schema("Foo", cols)
         assert "DROP TABLE" in ddl
         assert "IF OBJECT_ID" in ddl
 
     def test_drop_existing_false(self):
-        cols = [("ID", "INT")]
+        cols = [("ID", INT())]
         ddl = create_table_from_schema("Foo", cols, drop_existing=False)
         assert "DROP TABLE" not in ddl
         assert "IF OBJECT_ID" not in ddl
 
-    def test_include_go_true(self):
-        cols = [("ID", "INT")]
-        ddl = create_table_from_schema("Foo", cols, include_go=True)
+    def test_include_batch_separator_true(self):
+        cols = [("ID", INT())]
+        ddl = create_table_from_schema("Foo", cols, include_batch_separator=True)
         assert ddl.count("GO") >= 1
 
-    def test_include_go_false(self):
-        cols = [("ID", "INT")]
-        ddl = create_table_from_schema("Foo", cols, include_go=False)
+    def test_include_batch_separator_false(self):
+        cols = [("ID", INT())]
+        ddl = create_table_from_schema("Foo", cols, include_batch_separator=False)
         assert "GO" not in ddl
 
     def test_custom_schema(self):
-        cols = [("ID", "INT")]
+        cols = [("ID", INT())]
         ddl = create_table_from_schema("Foo", cols, schema="staging")
         assert "[staging].[Foo]" in ddl
 
@@ -356,24 +357,24 @@ class TestCreateTableFromSchema:
 
     def test_multiple_columns(self):
         cols = [
-            ("Col1", "INT"),
-            ("Col2", "NVARCHAR(50)"),
-            ("Col3", "DECIMAL(10,2)"),
+            ("Col1", INT()),
+            ("Col2", VARCHAR(50)),
+            ("Col3", DECIMAL(10, 2)),
         ]
         ddl = create_table_from_schema("Multi", cols)
-        assert "[Col1] INT," in ddl
-        assert "[Col2] NVARCHAR(50)," in ddl
+        assert "[Col1] INT NOT NULL," in ddl
+        assert "[Col2] VARCHAR(50) NULL," in ddl
         # Last column should NOT have trailing comma
-        assert "[Col3] DECIMAL(10,2)" in ddl
-        assert "[Col3] DECIMAL(10,2)," not in ddl
+        assert "[Col3] DECIMAL(10, 2) NOT NULL" in ddl
+        assert "[Col3] DECIMAL(10, 2) NOT NULL," not in ddl
 
     def test_invalid_table_name_raises(self):
         with pytest.raises(ValueError, match="Unsafe SQL"):
-            create_table_from_schema("1Invalid", [("ID", "INT")])
+            create_table_from_schema("1Invalid", [("ID", INT())])
 
     def test_invalid_schema_name_raises(self):
         with pytest.raises(ValueError, match="Unsafe SQL"):
-            create_table_from_schema("Foo", [("ID", "INT")], schema="bad;schema")
+            create_table_from_schema("Foo", [("ID", INT())], schema="bad;schema")
 
 
 # ===================================================================
@@ -434,34 +435,33 @@ class TestSkipOrderCols:
 
 
 # ===================================================================
-# 12. generate_bulk_insert_sql — _quote_table
+# 12. generate_bulk_insert_sql — _split_qualified
 # ===================================================================
 
-class TestQuoteTable:
-    def test_simple_table(self):
-        assert _quote_table("Sales") == "[Sales]"
+class TestSplitQualified:
+    def test_unqualified(self):
+        assert _split_qualified("Sales") == ("", "Sales")
 
     def test_schema_dot_table(self):
-        assert _quote_table("dbo.Sales") == "[dbo].[Sales]"
+        assert _split_qualified("dbo.Sales") == ("dbo", "Sales")
 
-    def test_already_bracketed(self):
-        assert _quote_table("[dbo].[Sales]") == "[dbo].[Sales]"
+    def test_strips_existing_brackets(self):
+        assert _split_qualified("[dbo].[Sales]") == ("dbo", "Sales")
 
-    def test_three_parts(self):
-        result = _quote_table("server.dbo.Sales")
-        assert result == "[server].[dbo].[Sales]"
+    def test_strips_existing_double_quotes(self):
+        assert _split_qualified('"dbo"."Sales"') == ("dbo", "Sales")
 
     def test_empty_raises(self):
         with pytest.raises(ValueError, match="Empty table name"):
-            _quote_table("")
+            _split_qualified("")
 
     def test_whitespace_only_raises(self):
         with pytest.raises(ValueError, match="Empty table name"):
-            _quote_table("   ")
+            _split_qualified("   ")
 
     def test_too_many_parts_raises(self):
         with pytest.raises(ValueError, match="Too many name parts"):
-            _quote_table("a.b.c.d")
+            _split_qualified("a.b.c")
 
 
 # ===================================================================
@@ -522,32 +522,10 @@ class TestAllowedLookup:
         assert result["sales"] == "Sales"
 
 
-# ===================================================================
-# 15. generate_bulk_insert_sql — codepage validation
-# ===================================================================
-
-class TestCodepageValidation:
-    def test_non_numeric_codepage_raises(self, tmp_path):
-        csv_dir = tmp_path / "csv"
-        csv_dir.mkdir()
-        (csv_dir / "sales.csv").write_text("a,b\n1,2\n")
-        with pytest.raises(ValueError, match="codepage must be numeric"):
-            generate_bulk_insert_script(
-                csv_dir,
-                output_sql_file=str(tmp_path / "out.sql"),
-                codepage="abc; DROP TABLE",
-            )
-
-    def test_valid_codepage_succeeds(self, tmp_path):
-        csv_dir = tmp_path / "csv"
-        csv_dir.mkdir()
-        (csv_dir / "sales.csv").write_text("a,b\n1,2\n")
-        result = generate_bulk_insert_script(
-            csv_dir,
-            output_sql_file=str(tmp_path / "out.sql"),
-            codepage="65001",
-        )
-        assert result is not None
+# The codepage value (formerly user-supplied) is now hardcoded inside
+# SqlServerDialect.bulk_load_statement, so the injection-via-codepage
+# concern that motivated the legacy TestCodepageValidation class no longer
+# applies — there is no caller-supplied codepage to validate.
 
     def test_missing_folder_returns_none(self, tmp_path):
         result = generate_bulk_insert_script(

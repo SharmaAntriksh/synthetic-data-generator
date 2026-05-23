@@ -19,6 +19,8 @@ from src.utils.static_schemas import (
     get_sales_order_detail_schema,
     DATE_COLUMN_GROUPS,
 )
+from src.tools.sql.dialect import ColumnSpec
+from src.utils.static_schemas import INT, VARCHAR
 from src.engine.packaging.paths import (
     get_first_existing_path,
     to_snake,
@@ -42,8 +44,10 @@ from src.tools.sql.generate_create_table_scripts import (
     create_table_from_schema,
     generate_all_create_tables,
     _validate_sql_identifier,
-    _sql_escape_literal,
-    _quote_ident,
+)
+from src.tools.sql.sql_helpers import (
+    sql_escape_literal as _sql_escape_literal,
+    quote_ident as _quote_ident,
 )
 from src.tools.sql.generate_bulk_insert_sql import (
     generate_bulk_insert_script,
@@ -128,7 +132,9 @@ class TestStaticSchemas:
             assert isinstance(schema, tuple), f"{table} schema is not a tuple"
             for col, dtype in schema:
                 assert isinstance(col, str) and col.strip(), f"{table}: empty column name"
-                assert isinstance(dtype, str) and dtype.strip(), f"{table}: empty dtype for {col}"
+                assert isinstance(dtype, ColumnSpec), (
+                    f"{table}: dtype for {col} is {type(dtype).__name__}, expected ColumnSpec"
+                )
 
     def test_no_duplicate_columns_in_any_schema(self):
         for table, schema in STATIC_SCHEMAS.items():
@@ -206,7 +212,7 @@ class TestSQLDDLGeneration:
     """Test CREATE TABLE script generation."""
 
     def test_create_table_basic(self):
-        cols = (("Id", "INT NOT NULL"), ("Name", "VARCHAR(100) NULL"))
+        cols = (("Id", INT()), ("Name", VARCHAR(100)))
         sql = create_table_from_schema("TestTable", cols, schema="dbo")
         assert "CREATE TABLE [dbo].[TestTable]" in sql
         assert "[Id] INT NOT NULL" in sql
@@ -214,18 +220,18 @@ class TestSQLDDLGeneration:
         assert sql.count("GO") == 2  # after DROP and after CREATE
 
     def test_create_table_no_drop(self):
-        cols = (("Id", "INT NOT NULL"),)
+        cols = (("Id", INT()),)
         sql = create_table_from_schema("T", cols, drop_existing=False)
         assert "DROP TABLE" not in sql
         assert "CREATE TABLE" in sql
 
     def test_create_table_no_go(self):
-        cols = (("Id", "INT NOT NULL"),)
-        sql = create_table_from_schema("T", cols, include_go=False)
+        cols = (("Id", INT()),)
+        sql = create_table_from_schema("T", cols, include_batch_separator=False)
         assert "GO" not in sql
 
     def test_create_table_drop_uses_object_id(self):
-        cols = (("Id", "INT NOT NULL"),)
+        cols = (("Id", INT()),)
         sql = create_table_from_schema("Products", cols, schema="dbo")
         assert "OBJECT_ID(N'[dbo].[Products]'" in sql
 
@@ -391,7 +397,7 @@ class TestSQLIdentifierValidation:
 
     def test_create_table_escapes_object_id_name(self):
         """Table name with apostrophe in OBJECT_ID should be escaped."""
-        cols = (("Id", "INT NOT NULL"),)
+        cols = (("Id", INT()),)
         # _validate_sql_identifier rejects names with apostrophes,
         # so this tests that the validator catches injection
         with pytest.raises(ValueError, match="Unsafe SQL"):
@@ -464,30 +470,30 @@ class TestBulkInsert:
         )
         assert result is None
 
-    def test_bulk_insert_csv_mode(self, tmp_path):
-        """CSV mode should include FORMAT='CSV'."""
+    def test_bulk_insert_csv_format_per_table(self, tmp_path):
+        """csv_format_tables flips FORMAT='CSV' on matching tables only."""
         csv_dir = tmp_path / "data"
         csv_dir.mkdir()
         (csv_dir / "Sales.csv").write_text("col1\n1\n")
 
         out_sql = tmp_path / "bulk.sql"
         generate_bulk_insert_script(
-            str(csv_dir), output_sql_file=str(out_sql), mode="csv",
+            str(csv_dir), output_sql_file=str(out_sql),
+            csv_format_tables={"Sales"},
         )
         sql = out_sql.read_text(encoding="utf-8")
         assert "FORMAT = 'CSV'" in sql
 
-    def test_bulk_insert_legacy_mode(self, tmp_path):
-        """Legacy mode should include FIELDTERMINATOR."""
+    def test_bulk_insert_default_omits_csv_format(self, tmp_path):
+        """Without csv_format_tables, FORMAT='CSV' is omitted (legacy fast path)."""
         csv_dir = tmp_path / "data"
         csv_dir.mkdir()
         (csv_dir / "Sales.csv").write_text("col1\n1\n")
 
         out_sql = tmp_path / "bulk.sql"
-        generate_bulk_insert_script(
-            str(csv_dir), output_sql_file=str(out_sql), mode="legacy",
-        )
+        generate_bulk_insert_script(str(csv_dir), output_sql_file=str(out_sql))
         sql = out_sql.read_text(encoding="utf-8")
+        assert "FORMAT = 'CSV'" not in sql
         assert "FIELDTERMINATOR" in sql
 
     def test_bulk_insert_allowed_tables_filter(self, tmp_path):

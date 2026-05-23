@@ -7,9 +7,8 @@ from typing import Mapping, Sequence, Tuple
 
 from src.utils.static_schemas import STATIC_SCHEMAS, BIGINT_NN, get_dates_schema, get_sales_schema, _INT32_HALF
 from src.utils.logging_utils import work
+from src.tools.sql.dialect import ColumnSpec, DEFAULT_DIALECT, Dialect
 from src.tools.sql.sql_helpers import (
-    sql_escape_literal as _sql_escape_literal,
-    quote_ident as _quote_ident,
     returns_enabled as _returns_enabled,
     budget_enabled as _budget_enabled,
     inventory_enabled as _inventory_enabled,
@@ -17,7 +16,7 @@ from src.tools.sql.sql_helpers import (
     wishlists_enabled as _wishlists_enabled,
 )
 
-ColumnSpec = Sequence[Tuple[str, str]]
+Schema = Sequence[Tuple[str, ColumnSpec]]
 
 # Fact table names (SQL tables should remain PascalCase)
 TABLE_SALES = "Sales"
@@ -54,8 +53,6 @@ def _validate_sql_identifier(name: str, label: str = "identifier") -> None:
         raise ValueError(f"Unsafe SQL {label}: {name!r}")
 
 
-def _qualify(schema: str, table: str) -> str:
-    return f"{_quote_ident(schema)}.{_quote_ident(table)}"
 
 
 def _sales_output_mode(cfg: Mapping) -> str:
@@ -71,7 +68,7 @@ def _skip_order_cols(cfg: Mapping, default: bool) -> bool:
     return bool(getattr(sales_cfg, "skip_order_cols", default) if sales_cfg else default)
 
 
-def _require_static_schema(table_name: str) -> ColumnSpec:
+def _require_static_schema(table_name: str) -> Schema:
     try:
         return STATIC_SCHEMAS[table_name]
     except KeyError as e:
@@ -83,34 +80,36 @@ def _require_static_schema(table_name: str) -> ColumnSpec:
 
 def create_table_from_schema(
     table_name: str,
-    cols: ColumnSpec,
+    cols: Schema,
     *,
-    schema: str = "dbo",
+    schema: str | None = None,
     drop_existing: bool = True,
-    include_go: bool = True,
+    include_batch_separator: bool = True,
+    dialect: Dialect = DEFAULT_DIALECT,
 ) -> str:
+    if schema is None:
+        schema = dialect.default_schema
     _validate_sql_identifier(table_name, "table name")
     _validate_sql_identifier(schema, "schema name")
-    fq_table = _qualify(schema, table_name)
+    fq_table = dialect.qualify(schema, table_name)
+
+    emit_separator = include_batch_separator and bool(dialect.batch_separator)
 
     lines: list[str] = []
     if drop_existing:
-        lines.append(
-            f"IF OBJECT_ID(N'{_sql_escape_literal(fq_table)}', N'U') IS NOT NULL\n"
-            f"    DROP TABLE {fq_table};"
-        )
-        if include_go:
-            lines.append("GO")
+        lines.append(dialect.drop_table_if_exists(schema, table_name))
+        if emit_separator:
+            lines.append(dialect.batch_separator)
 
     lines.append(f"CREATE TABLE {fq_table} (")
     for col, dtype in cols:
-        lines.append(f"    {_quote_ident(col)} {dtype},")
+        lines.append(f"    {dialect.quote_ident(col)} {dialect.render_type(dtype)},")
     if lines[-1].endswith(","):
         lines[-1] = lines[-1].rstrip(",")
     lines.append(");")
 
-    if include_go:
-        lines.append("GO")
+    if emit_separator:
+        lines.append(dialect.batch_separator)
 
     return "\n".join(lines)
 
@@ -120,8 +119,9 @@ def generate_all_create_tables(
     cfg,
     skip_order_cols: bool = False,
     *,
-    schema: str = "dbo",
+    schema: str | None = None,
     drop_existing: bool = True,
+    dialect: Dialect = DEFAULT_DIALECT,
 ):
     """
     Writes:
@@ -133,6 +133,18 @@ def generate_all_create_tables(
       - get_sales_schema(skip_order_cols) for Sales
       - get_dates_schema(cfg['dates']) for Dates
     """
+    if schema is None:
+        schema = dialect.default_schema
+
+    def _emit(table: str, cols: Schema) -> str:
+        return create_table_from_schema(
+            table,
+            cols,
+            schema=schema,
+            drop_existing=drop_existing,
+            include_batch_separator=True,
+            dialect=dialect,
+        )
 
     schema_dir = Path(output_folder) / "schema"
     schema_dir.mkdir(parents=True, exist_ok=True)
@@ -144,7 +156,7 @@ def generate_all_create_tables(
     header = [
         "-- Auto-generated CREATE TABLE scripts",
         f"-- Generated on: {ts}",
-        "SET NOCOUNT ON;",
+        *dialect.script_preamble,
         "",
     ]
 
@@ -176,15 +188,7 @@ def generate_all_create_tables(
         else:
             cols = STATIC_SCHEMAS[table_name]
 
-        dim_scripts.append(
-            create_table_from_schema(
-                table_name,
-                cols,
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
-        )
+        dim_scripts.append(_emit(table_name, cols))
 
     dim_out_path.write_text("\n".join(header) + "\n\n" + "\n\n".join(dim_scripts) + "\n", encoding="utf-8")
 
@@ -199,35 +203,14 @@ def generate_all_create_tables(
     fact_scripts: list[str] = []
 
     if include_sales:
+        sales_total_rows = int(getattr(getattr(cfg, "sales", None), "total_rows", 0) or 0)
         fact_scripts.append(
-            create_table_from_schema(
-                TABLE_SALES,
-                get_sales_schema(eff_skip_order_cols, total_rows=int(getattr(getattr(cfg, "sales", None), "total_rows", 0) or 0)),
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
+            _emit(TABLE_SALES, get_sales_schema(eff_skip_order_cols, total_rows=sales_total_rows))
         )
 
     if include_sales_order:
-        fact_scripts.append(
-            create_table_from_schema(
-                TABLE_SALES_ORDER_HEADER,
-                _require_static_schema(TABLE_SALES_ORDER_HEADER),
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
-        )
-        fact_scripts.append(
-            create_table_from_schema(
-                TABLE_SALES_ORDER_DETAIL,
-                _require_static_schema(TABLE_SALES_ORDER_DETAIL),
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
-        )
+        fact_scripts.append(_emit(TABLE_SALES_ORDER_HEADER, _require_static_schema(TABLE_SALES_ORDER_HEADER)))
+        fact_scripts.append(_emit(TABLE_SALES_ORDER_DETAIL, _require_static_schema(TABLE_SALES_ORDER_DETAIL)))
 
     # SalesReturn placement:
     # - If sales_order tables exist: emit after detail
@@ -240,67 +223,24 @@ def generate_all_create_tables(
                 ("SalesOrderNumber", BIGINT_NN) if n == "SalesOrderNumber" else (n, t)
                 for n, t in _ret_schema
             ]
-        fact_scripts.append(
-            create_table_from_schema(
-                TABLE_SALES_RETURN,
-                _ret_schema,
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
-        )
+        fact_scripts.append(_emit(TABLE_SALES_RETURN, _ret_schema))
 
     # Budget tables (conditional on budget.enabled)
     if _budget_enabled(cfg):
-        for budget_table in (
-            TABLE_BUDGET_YEARLY,
-            TABLE_BUDGET_MONTHLY,
-        ):
-            fact_scripts.append(
-                create_table_from_schema(
-                    budget_table,
-                    _require_static_schema(budget_table),
-                    schema=schema,
-                    drop_existing=drop_existing,
-                    include_go=True,
-                )
-            )
+        for budget_table in (TABLE_BUDGET_YEARLY, TABLE_BUDGET_MONTHLY):
+            fact_scripts.append(_emit(budget_table, _require_static_schema(budget_table)))
 
     # Inventory snapshot (conditional on inventory.enabled)
     if _inventory_enabled(cfg):
-        fact_scripts.append(
-            create_table_from_schema(
-                TABLE_INVENTORY_SNAPSHOT,
-                _require_static_schema(TABLE_INVENTORY_SNAPSHOT),
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
-        )
+        fact_scripts.append(_emit(TABLE_INVENTORY_SNAPSHOT, _require_static_schema(TABLE_INVENTORY_SNAPSHOT)))
 
     # Complaints (conditional on complaints.enabled)
     if _complaints_enabled(cfg):
-        fact_scripts.append(
-            create_table_from_schema(
-                TABLE_COMPLAINTS,
-                _require_static_schema(TABLE_COMPLAINTS),
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
-        )
+        fact_scripts.append(_emit(TABLE_COMPLAINTS, _require_static_schema(TABLE_COMPLAINTS)))
 
     # Customer Wishlists (conditional on wishlists.enabled)
     if _wishlists_enabled(cfg):
-        fact_scripts.append(
-            create_table_from_schema(
-                TABLE_WISHLISTS,
-                _require_static_schema(TABLE_WISHLISTS),
-                schema=schema,
-                drop_existing=drop_existing,
-                include_go=True,
-            )
-        )
+        fact_scripts.append(_emit(TABLE_WISHLISTS, _require_static_schema(TABLE_WISHLISTS)))
 
     fact_out_path.write_text("\n".join(header) + "\n\n" + "\n\n".join(fact_scripts) + "\n", encoding="utf-8")
 

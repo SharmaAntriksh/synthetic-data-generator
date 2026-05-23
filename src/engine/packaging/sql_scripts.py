@@ -1,10 +1,13 @@
-\
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
 
-from src.tools.sql.generate_bulk_insert_sql import generate_dims_and_facts_bulk_insert_scripts
+from src.tools.sql.dialect import DEFAULT_DIALECT, REGISTRY
+from src.tools.sql.generate_bulk_insert_sql import (
+    _allowed_fact_tables_from_cfg,
+    generate_dims_and_facts_bulk_insert_scripts,
+)
 from src.tools.sql.generate_create_table_scripts import generate_all_create_tables
 from src.tools.sql.sql_helpers import sql_escape_literal
 from src.utils.logging_utils import stage, skip, done
@@ -182,6 +185,74 @@ def copy_views_sql(*, sql_root: Path, view_schema: str = "dbo") -> None:
 
 
 # ------------------------------------------------------------
+# Shared composer helpers
+# ------------------------------------------------------------
+
+def _compose_sql_parts(
+    *,
+    parts,
+    out_path: Path,
+    header_lines,
+    preamble: str = "",
+    transform=None,
+) -> None:
+    """Concatenate ``parts`` into ``out_path`` with banner headers per file.
+
+    Output shape (matches the legacy hand-rolled composers byte-for-byte):
+    each header line, optional preamble, then for every part a banner
+    block (``-- ===…`` × 60 / ``-- <filename>`` / ``-- ===…`` × 60)
+    followed by the file's contents with trailing whitespace stripped.
+
+    ``preamble`` is appended verbatim if non-empty (caller controls
+    leading/trailing newlines). ``transform`` is applied to each file's
+    body after rstrip — used by the Postgres views composer for the
+    view-schema rewrite.
+    """
+    chunks: list[str] = list(header_lines)
+    if preamble:
+        chunks.append(preamble)
+    for p in parts:
+        chunks.append(
+            "\n-- ============================================================\n"
+            f"-- {p.name}\n"
+            "-- ============================================================\n"
+        )
+        text = _read_text(p).rstrip()
+        if transform is not None:
+            text = transform(text)
+        chunks.append(text)
+    _write_text(out_path, "\n".join(chunks).rstrip() + "\n")
+
+
+def _gated_constraint_parts(modular_dir: Path, mode: str, cfg) -> list[Path]:
+    """Resolve the ordered, cfg-gated list of constraint files in a dir.
+
+    Shared by the SQL Server and Postgres constraint composers — same
+    mode (sales/sales_order/both) + budget + inventory gating drives
+    both dialects so the same features are constrained either way.
+    Returns only files that exist on disk.
+    """
+    parts: list[Path] = [modular_dir / "00_dimensions.sql"]
+    if mode in {"sales", "both"}:
+        parts.append(modular_dir / "10_sales.sql")
+    if mode in {"sales_order", "both"}:
+        parts.extend(
+            [
+                modular_dir / "20_sales_order_header.sql",
+                modular_dir / "21_sales_order_detail.sql",
+                modular_dir / "22_sales_order_relations.sql",
+            ]
+        )
+    budget = modular_dir / "30_budget.sql"
+    if budget.exists() and _budget_enabled(cfg):
+        parts.append(budget)
+    inventory = modular_dir / "40_inventory.sql"
+    if inventory.exists() and _inventory_enabled(cfg):
+        parts.append(inventory)
+    return [p for p in parts if p.exists()]
+
+
+# ------------------------------------------------------------
 # Constraints (mode-dependent)
 # ------------------------------------------------------------
 
@@ -198,42 +269,19 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict, cfg: dict | None
     mode = _sales_mode(sales_cfg)
 
     if modular_dir.exists() and modular_dir.is_dir():
-        parts: list[Path] = [modular_dir / "00_dimensions.sql"]
-        if mode in {"sales", "both"}:
-            parts.append(modular_dir / "10_sales.sql")
-        if mode in {"sales_order", "both"}:
-            parts.extend(
-                [
-                    modular_dir / "20_sales_order_header.sql",
-                    modular_dir / "21_sales_order_detail.sql",
-                    modular_dir / "22_sales_order_relations.sql",
-                ]
-            )
-
-        # Budget constraints (conditional on budget.enabled)
-        budget_constraints = modular_dir / "30_budget.sql"
-        if budget_constraints.exists() and _budget_enabled(cfg):
-            parts.append(budget_constraints)
-
-        # Inventory constraints (conditional on inventory.enabled)
-        inventory_constraints = modular_dir / "40_inventory.sql"
-        if inventory_constraints.exists() and _inventory_enabled(cfg):
-            parts.append(inventory_constraints)
-
-        existing = [p for p in parts if p.exists()]
+        existing = _gated_constraint_parts(modular_dir, mode, cfg)
         if not existing:
             skip(f"No modular constraint parts found in: {modular_dir}; skipping constraints.")
             return
 
-        chunks: list[str] = []
-        chunks.append("-- Auto-generated by packaging: composed constraints\n")
-        chunks.append(f"-- mode: {mode}\n")
-
-        for p in existing:
-            chunks.append("\n-- ============================================================\n" f"-- {p.name}\n" "-- ============================================================\n")
-            chunks.append(_read_text(p).rstrip())
-
-        _write_text(out_path, "\n".join(chunks).rstrip() + "\n")
+        _compose_sql_parts(
+            parts=existing,
+            out_path=out_path,
+            header_lines=[
+                "-- Auto-generated by packaging: composed constraints\n",
+                f"-- mode: {mode}\n",
+            ],
+        )
         done("Composed constraints")
         return
 
@@ -243,6 +291,149 @@ def compose_constraints_sql(*, sql_root: Path, sales_cfg: dict, cfg: dict | None
         return
 
     skip("No constraints source found; skipping constraints")
+
+
+def _resolve_postgres_view_schema(cfg) -> str:
+    """Treat ``dbo`` (SQL Server default) and empty as ``public``; pass others through."""
+    raw = str(getattr(getattr(cfg, "defaults", None), "view_schema", "") or "").strip()
+    if not raw or raw.lower() in {"dbo", "public"}:
+        return "public"
+    return raw
+
+
+def _rewrite_postgres_view_schema(sql: str, view_schema: str) -> str:
+    """Rewrite ``"public"."vw_X"`` -> ``"<schema>"."X"``, mirroring :func:`_rewrite_view_schema`."""
+    if view_schema == "public":
+        return sql
+    return sql.replace('"public"."vw_', f'"{view_schema}"."')
+
+
+def compose_postgres_views_sql(*, sql_root: Path, cfg: dict | None = None) -> None:
+    """Compose ``<final>/postgres/schema/04_create_views.sql``.
+
+    Concatenates ``scripts/sql/postgres/views/*.sql`` (lex order), applies
+    the configured view-schema rewrite, and prepends ``CREATE SCHEMA IF
+    NOT EXISTS`` when a non-default schema is in use.
+    """
+    repo_root = _find_repo_root(Path(__file__).resolve())
+    src_dir = repo_root / "scripts" / "sql" / "postgres" / "views"
+    if not src_dir.is_dir():
+        skip(f"Postgres views folder not found; skipping: {src_dir}")
+        return
+
+    parts = sorted(p for p in src_dir.glob("*.sql") if p.is_file())
+    if not parts:
+        skip(f"No Postgres view scripts found in: {src_dir}")
+        return
+
+    view_schema = _resolve_postgres_view_schema(cfg)
+    use_custom = view_schema != "public"
+    out_path = sql_root.parent / "postgres" / "schema" / "04_create_views.sql"
+
+    _compose_sql_parts(
+        parts=parts,
+        out_path=out_path,
+        header_lines=[
+            "-- Auto-generated by packaging: composed Postgres views\n",
+            f"-- view_schema: {view_schema}\n",
+        ],
+        preamble=f'\nCREATE SCHEMA IF NOT EXISTS "{view_schema}";\n' if use_custom else "",
+        transform=(lambda s: _rewrite_postgres_view_schema(s, view_schema)) if use_custom else None,
+    )
+    schema_note = f" (schema: {view_schema})" if use_custom else ""
+    done(f"Composed Postgres views from {len(parts)} file(s){schema_note}")
+
+
+def compose_postgres_indexes_sql(*, sql_root: Path) -> None:
+    """Compose ``<final>/postgres/indexes/01_create_indexes.sql``.
+
+    Concatenates ``scripts/sql/postgres/indexes/*.sql`` in lex order
+    (btree on FK columns + BRIN on naturally-ordered date columns).
+    Applied by the importer post-load so the COPY phase isn't forced
+    to update indexes per row.
+    """
+    repo_root = _find_repo_root(Path(__file__).resolve())
+    src_dir = repo_root / "scripts" / "sql" / "postgres" / "indexes"
+    if not src_dir.is_dir():
+        skip(f"Postgres indexes folder not found; skipping: {src_dir}")
+        return
+
+    parts = sorted(p for p in src_dir.glob("*.sql") if p.is_file())
+    if not parts:
+        skip(f"No Postgres index scripts found in: {src_dir}")
+        return
+
+    out_path = sql_root.parent / "postgres" / "indexes" / "01_create_indexes.sql"
+    _compose_sql_parts(
+        parts=parts,
+        out_path=out_path,
+        header_lines=["-- Auto-generated by packaging: composed Postgres btree indexes\n"],
+    )
+    done(f"Composed Postgres indexes from {len(parts)} file(s)")
+
+
+def copy_postgres_admin_sql(*, sql_root: Path) -> None:
+    """Copy hand-written Postgres admin scripts to ``<final>/postgres/admin/``.
+
+    Currently a single file (``create_pk_proc.sql``) that registers the
+    ``admin.manage_primary_keys`` procedure used as a dev-tooling helper
+    for drop/restore PK cycles. Applied by the importer alongside the
+    main schema phase.
+    """
+    repo_root = _find_repo_root(Path(__file__).resolve())
+    src_dir = repo_root / "scripts" / "sql" / "postgres" / "admin"
+    if not src_dir.is_dir():
+        skip(f"Postgres admin folder not found; skipping: {src_dir}")
+        return
+
+    parts = sorted(p for p in src_dir.glob("*.sql") if p.is_file())
+    if not parts:
+        skip(f"No Postgres admin scripts found in: {src_dir}")
+        return
+
+    out_dir = sql_root.parent / "postgres" / "admin"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for p in parts:
+        shutil.copy2(p, out_dir / p.name)
+    done(f"Copied {len(parts)} Postgres admin script(s)")
+
+
+def compose_postgres_constraints_sql(
+    *, sql_root: Path, sales_cfg: dict, cfg: dict | None = None
+) -> None:
+    """Compose <final>/postgres/schema/03_create_constraints.sql.
+
+    Mirrors :func:`compose_constraints_sql` but reads hand-translated
+    Postgres parts from ``scripts/sql/postgres/constraints/`` and lands the
+    output as a sibling of the SQL Server schema folder.  The cfg gating
+    (sales mode, budget, inventory) is identical so the same features are
+    constrained on both dialects.
+    """
+    repo_root = _find_repo_root(Path(__file__).resolve())
+    pg_dir = repo_root / "scripts" / "sql" / "postgres" / "constraints"
+
+    run_root = sql_root.parent
+    out_path = run_root / "postgres" / "schema" / "03_create_constraints.sql"
+    mode = _sales_mode(sales_cfg)
+
+    if not pg_dir.is_dir():
+        skip(f"Postgres constraints folder not found; skipping: {pg_dir}")
+        return
+
+    existing = _gated_constraint_parts(pg_dir, mode, cfg)
+    if not existing:
+        skip(f"No Postgres constraint parts found in: {pg_dir}; skipping.")
+        return
+
+    _compose_sql_parts(
+        parts=existing,
+        out_path=out_path,
+        header_lines=[
+            "-- Auto-generated by packaging: composed Postgres constraints\n",
+            f"-- mode: {mode}\n",
+        ],
+    )
+    done("Composed Postgres constraints")
 
 
 # ------------------------------------------------------------
@@ -303,9 +494,12 @@ def compose_verification_sql(*, sql_root: Path) -> None:
 # ------------------------------------------------------------
 
 def write_create_table_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, cfg: dict) -> None:
-    """
-    CREATE TABLE scripts are generated from STATIC_SCHEMAS + cfg (not from CSV inspection),
-    so we do NOT need to flatten facts or inspect filenames.
+    """Emit CREATE TABLE scripts for every registered SQL dialect.
+
+    SQL Server output lands at the existing ``sql/`` root for backward
+    compatibility; every other dialect lands at ``<run>/<dialect_name>/``
+    as a sibling of ``sql/``. The cost is trivial (~27 KB per extra dialect)
+    and avoids forcing users to re-run the pipeline to switch DBMSes.
     """
     with stage("Generating CREATE TABLE Scripts"):
         dims_csv = list(dims_out.glob("*.csv"))
@@ -315,35 +509,42 @@ def write_create_table_scripts(*, dims_out: Path, facts_out: Path, sql_root: Pat
             skip("No CSV files found - skipping CREATE TABLE scripts.")
             return
 
-        generate_all_create_tables(
-            output_folder=sql_root,
-            cfg=cfg,
-        )
+        run_root = sql_root.parent
+        for dialect in REGISTRY.values():
+            out_dir = sql_root if dialect is DEFAULT_DIALECT else run_root / dialect.name
+            generate_all_create_tables(
+                output_folder=out_dir,
+                cfg=cfg,
+                dialect=dialect,
+            )
 
 
-def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, cfg: dict, **_) -> None:
+def write_bulk_insert_scripts(*, dims_out: Path, facts_out: Path, sql_root: Path, cfg) -> None:
+    """Emit load scripts for every registered SQL dialect.
+
+    SQL Server lands at the existing ``sql/load/`` folder for backward
+    compatibility; every other dialect lands at ``<run>/<dialect>/load/``
+    as a sibling of ``sql/load/``. The facts allowlist is computed once
+    from the FULL cfg (sales_output + returns enablement) and reused
+    across dialects.
     """
-    Always generate:
-      sql/load/01_bulk_insert_dims.sql
-      sql/load/02_bulk_insert_facts.sql
-
-    The facts allowlist is computed from the FULL cfg (sales_output + returns enablement).
-    """
-    with stage("Generating BULK INSERT Scripts"):
+    with stage("Generating Load Scripts"):
         dims_csv = list(dims_out.glob("*.csv"))
         facts_csv = list(facts_out.rglob("*.csv"))
 
         if not dims_csv and not facts_csv:
-            skip("No CSV files found - skipping BULK INSERT scripts.")
+            skip("No CSV files found - skipping load scripts.")
             return
 
-        load_root = sql_root / "load"
-        generate_dims_and_facts_bulk_insert_scripts(
-            dims_folder=str(dims_out),
-            facts_folder=str(facts_out),
-            cfg=cfg,
-            load_output_folder=str(load_root),
-            dims_mode="csv",
-            facts_mode="legacy",
-            row_terminator="0x0a",
-        )
+        allowed_fact_tables = _allowed_fact_tables_from_cfg(cfg)
+        run_root = sql_root.parent
+        for dialect in REGISTRY.values():
+            load_root = (sql_root if dialect is DEFAULT_DIALECT else run_root / dialect.name) / "load"
+            generate_dims_and_facts_bulk_insert_scripts(
+                dims_folder=str(dims_out),
+                facts_folder=str(facts_out),
+                cfg=cfg,
+                load_output_folder=str(load_root),
+                dialect=dialect,
+                allowed_fact_tables=allowed_fact_tables,
+            )

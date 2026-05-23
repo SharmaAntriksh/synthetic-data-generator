@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Mapping, Optional, Set
 
+from src.tools.sql.dialect import DEFAULT_DIALECT, Dialect
 from src.utils.logging_utils import work, skip
 from src.tools.sql.sql_helpers import (
     sql_escape_literal as _sql_escape_literal,
@@ -17,20 +18,19 @@ from src.tools.sql.sql_helpers import (
 )
 
 
-def _quote_table(name: str) -> str:
+def _split_qualified(name: str) -> tuple[str, str]:
+    """Split a "schema.table" reference into (schema, table). Returns ("", table) if unqualified.
+
+    Handles already-bracketed/quoted identifiers by stripping a single layer
+    of wrappers (the dialect re-quotes internally).
     """
-    Quote a table name. Supports:
-      - Sales
-      - dbo.Sales
-      - [dbo].[Sales]
-    Does NOT attempt to parse exotic cases (dots inside brackets), which we don't use in this repo.
-    """
-    parts = [p for p in str(name).strip().split(".") if p]
+    parts = [p.strip() for p in str(name).strip().split(".") if p.strip()]
     if not parts:
         raise ValueError("Empty table name.")
-    if len(parts) > 3:
+    if len(parts) > 2:
         raise ValueError(f"Too many name parts: {name!r}")
-    return ".".join(_quote_ident(p) for p in parts)
+    parts = [Dialect._strip_ident_wrappers(p) for p in parts]
+    return (parts[0], parts[1]) if len(parts) == 2 else ("", parts[0])
 
 
 # -----------------------------
@@ -163,22 +163,22 @@ def generate_bulk_insert_script(
     *,
     output_sql_file: str = "bulk_insert.sql",
     table_name: Optional[str] = None,
-    mode: str = "legacy",            # "legacy" | "csv"
-    csv_format_tables: Optional[Set[str]] = None,  # tables that need FORMAT='CSV'
-    first_row: int = 2,
-    field_terminator: str = ",",
-    row_terminator: str = "0x0a",
-    codepage: str = "65001",
+    csv_format_tables: Optional[Set[str]] = None,
+    force_csv_format: bool = False,
     recursive: bool = False,
     allowed_tables: Optional[Set[str]] = None,
+    dialect: Dialect = DEFAULT_DIALECT,
 ) -> Optional[str]:
     """
-    Generate a BULK INSERT script.
-    - If table_name is None, table is inferred per file.
-    - recursive=True is required for facts/<table>/*.csv layout.
-    - allowed_tables filters inferred tables (case-insensitive).
-    - csv_format_tables: set of table names that require FORMAT='CSV'
-      (e.g. budget tables with embedded commas). Other tables use `mode`.
+    Generate a bulk-load script for the active dialect.
+    - If ``table_name`` is None, the table is inferred per file from folder + filename.
+    - ``recursive=True`` is required for the ``facts/<table>/*.csv`` layout.
+    - ``allowed_tables`` filters inferred tables (case-insensitive).
+    - ``csv_format_tables`` flags tables whose string columns may contain
+      embedded commas/quotes (SQL Server switches to ``FORMAT='CSV'``,
+      Postgres ignores it).
+    - ``force_csv_format=True`` flags every emitted table (sentinel for
+      "all tables in this folder need CSV-aware parsing").
     """
     csv_folder = Path(csv_folder)
     if not csv_folder.exists() or not csv_folder.is_dir():
@@ -188,25 +188,26 @@ def generate_bulk_insert_script(
     target_sql = Path(output_sql_file)
     target_sql.parent.mkdir(parents=True, exist_ok=True)
 
-    # Validate codepage to prevent SQL injection via config
-    if not str(codepage).strip().isdigit():
-        raise ValueError(f"codepage must be numeric, got {codepage!r}")
-
     csv_paths = list(_iter_csv_files(csv_folder, recursive=recursive))
     if not csv_paths:
-        skip(f"No CSV files found in {csv_folder}. Skipping BULK INSERT script.")
+        skip(f"No CSV files found in {csv_folder}. Skipping load script.")
         return None
 
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    lines: list[str] = [
-        "-- Auto-generated BULK INSERT script",
+    banner = dialect.load_script_kind.replace("_", " ").upper()
+    header: list[str] = [
+        f"-- Auto-generated {banner} script",
         f"-- Generated on: {ts}",
-        "-- NOTE: 'FROM <path>' is evaluated on the SQL Server host.",
-        "SET NOCOUNT ON;",
-        "",
     ]
+    if dialect.load_script_note:
+        header.append(dialect.load_script_note)
+    header.extend(dialect.script_preamble)
+    header.append("")
 
     allowed_map = _allowed_lookup(allowed_tables)
+    csv_format_lower = {t.lower() for t in (csv_format_tables or set())}
+
+    lines: list[str] = list(header)
     emitted = 0
 
     for csv_path in csv_paths:
@@ -217,46 +218,24 @@ def generate_bulk_insert_script(
             if tgt is None:
                 continue
 
-        # (Extra safety) if caller passes allowed_tables and explicit table_name, filter too.
         if allowed_map is not None and table_name is not None:
             if table_name.strip().lower() not in allowed_map:
                 continue
 
-        quoted_table = _quote_table(tgt)
-
-        csv_full_path_sql = _sql_escape_literal(str(csv_path.resolve()))
+        schema, table = _split_qualified(tgt)
+        if not schema and dialect.qualify_load_target:
+            schema = dialect.default_schema
         rel_hint = str(csv_path.relative_to(csv_folder)) if recursive else csv_path.name
 
-        with_opts: list[str] = [f"FIRSTROW = {int(first_row)}"]
-
-        # Determine mode for this specific table
-        _csv_lower = {t.lower() for t in (csv_format_tables or set())}
-        effective_mode = "csv" if tgt.lower() in _csv_lower else mode
-
-        if effective_mode == "csv":
-            # SQL Server 2017+. ROWTERMINATOR must be specified explicitly:
-            # SQL 2025 defaults FORMAT='CSV' to '\r\n' and fails on LF-only
-            # files with "Cannot obtain the required interface ('IID_IColumnsInfo')
-            # from OLE DB provider 'BULK'". 2017-2022 tolerated LF without it.
-            with_opts.insert(0, "FORMAT = 'CSV'")
-            with_opts.append(f"FIELDTERMINATOR = '{_sql_escape_literal(field_terminator)}'")
-            with_opts.append(f"ROWTERMINATOR = '{_sql_escape_literal(row_terminator)}'")
-            with_opts.append(f"CODEPAGE = '{codepage}'")
-            with_opts.append("TABLOCK")
-        else:
-            with_opts.append(f"FIELDTERMINATOR = '{_sql_escape_literal(field_terminator)}'")
-            with_opts.append(f"ROWTERMINATOR = '{_sql_escape_literal(row_terminator)}'")
-            with_opts.append(f"CODEPAGE = '{codepage}'")
-            with_opts.append("TABLOCK")
-
-        opts_sql = ",\n    ".join(with_opts)
+        statement = dialect.bulk_load_statement(
+            schema=schema,
+            table=table,
+            csv_path=csv_path,
+            use_csv_format=force_csv_format or tgt.lower() in csv_format_lower,
+        )
 
         lines.append(f"-- Source file: {rel_hint}")
-        lines.append(f"BULK INSERT {quoted_table}")
-        lines.append(f"FROM N'{csv_full_path_sql}'")
-        lines.append("WITH (")
-        lines.append(f"    {opts_sql}")
-        lines.append(");")
+        lines.append(statement)
         lines.append("")
         emitted += 1
 
@@ -265,7 +244,7 @@ def generate_bulk_insert_script(
         return None
 
     target_sql.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    work(f"Wrote BULK INSERT script: {target_sql.name}")
+    work(f"Wrote load script: {target_sql.name}")
     return str(target_sql)
 
 
@@ -275,57 +254,59 @@ def generate_dims_and_facts_bulk_insert_scripts(
     facts_folder,
     cfg,
     load_output_folder,
-    dims_sql_name: str = "01_bulk_insert_dims.sql",
-    facts_sql_name: str = "02_bulk_insert_facts.sql",
-    dims_mode: str = "csv",
-    facts_mode: str = "legacy",
-    row_terminator: str = "0x0a",
+    dialect: Dialect = DEFAULT_DIALECT,
+    allowed_fact_tables: Optional[Set[str]] = None,
 ) -> tuple[str, str]:
-    """
-    Convenience wrapper that ALWAYS writes exactly two files:
-      01_bulk_insert_dims.sql
-      02_bulk_insert_facts.sql
+    """Write the dialect's load scripts to ``load_output_folder``.
 
-    - dims: flat folder
-    - facts: recursive scan (facts/<table>/*.csv)
+    Always emits exactly two files, named per the active dialect:
+      01_<load_script_kind>_dims.sql
+      02_<load_script_kind>_facts.sql
 
-    Budget tables use FORMAT='CSV' because their string columns
-    (Country, Category) may contain embedded commas.  Sales/SalesReturn
-    stay on legacy FIELDTERMINATOR mode.
+    dims is a flat folder; facts is scanned recursively for the
+    ``facts/<table>/*.csv`` layout. ``allowed_fact_tables`` may be
+    pre-computed by the caller (recommended when this function is invoked
+    once per dialect) — if omitted, it is derived from ``cfg``.
+
+    For SQL Server, all dims and the Budget*/Complaints fact tables need
+    ``FORMAT='CSV'`` because their string columns may contain embedded
+    commas. Sales/SalesReturn stay on the legacy fast path. Postgres
+    ignores the flag — ``COPY ... FORMAT csv`` is always CSV-aware.
     """
     load_output_folder = Path(load_output_folder)
     load_output_folder.mkdir(parents=True, exist_ok=True)
 
-    dims_sql = load_output_folder / dims_sql_name
-    facts_sql = load_output_folder / facts_sql_name
+    kind = dialect.load_script_kind
+    dims_sql = load_output_folder / f"01_{kind}_dims.sql"
+    facts_sql = load_output_folder / f"02_{kind}_facts.sql"
 
     generate_bulk_insert_script(
         dims_folder,
         output_sql_file=str(dims_sql),
-        mode=dims_mode,
         table_name=None,
+        force_csv_format=True,
         recursive=False,
+        dialect=dialect,
     )
 
-    allowed = _allowed_fact_tables_from_cfg(cfg)
+    if allowed_fact_tables is None:
+        allowed_fact_tables = _allowed_fact_tables_from_cfg(cfg)
 
-    # Tables with embedded commas in string columns need FORMAT='CSV'
-    csv_tables: set[str] = set()
+    fact_csv_tables: set[str] = set()
     if _budget_enabled_from_cfg(cfg):
-        csv_tables.add("BudgetYearly")
-        csv_tables.add("BudgetMonthly")
+        fact_csv_tables.add("BudgetYearly")
+        fact_csv_tables.add("BudgetMonthly")
     if _complaints_enabled_from_cfg(cfg):
-        csv_tables.add("Complaints")
+        fact_csv_tables.add("Complaints")
 
     generate_bulk_insert_script(
         facts_folder,
         output_sql_file=str(facts_sql),
-        mode=facts_mode,
-        csv_format_tables=csv_tables or None,
         table_name=None,
-        row_terminator=row_terminator,
+        csv_format_tables=fact_csv_tables or None,
         recursive=True,
-        allowed_tables=allowed,
+        allowed_tables=allowed_fact_tables,
+        dialect=dialect,
     )
 
     return str(dims_sql), str(facts_sql)

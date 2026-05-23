@@ -3,23 +3,19 @@ from __future__ import annotations
 
 from typing import Mapping, Optional
 
-
-def sql_escape_literal(value: str) -> str:
-    """Escape a string for use inside a single-quoted SQL literal."""
-    return value.replace("'", "''")
+from src.tools.sql.dialect import DEFAULT_DIALECT
+from src.tools.sql.dialect.base import sql_escape_literal  # noqa: F401 — re-exported
 
 
 def quote_ident(name: str) -> str:
-    """Bracket-quote an identifier; escape closing brackets.
+    """Quote an identifier using the default (SQL Server) dialect.
 
-    Strips existing bracket or double-quote wrapping before quoting.
+    Kept as a free function so callers that pre-date the dialect API
+    (notably the BULK INSERT generator) don't need to change. Once those
+    generators thread a dialect parameter themselves, prefer
+    ``dialect.quote_ident(name)`` directly.
     """
-    raw = str(name).strip()
-    if raw.startswith("[") and raw.endswith("]"):
-        raw = raw[1:-1]
-    if raw.startswith('"') and raw.endswith('"'):
-        raw = raw[1:-1]
-    return f"[{raw.replace(']', ']]')}]"
+    return DEFAULT_DIALECT.quote_ident(name)
 
 
 # -------------------------------------------------------------------

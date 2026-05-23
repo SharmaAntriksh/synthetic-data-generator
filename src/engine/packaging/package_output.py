@@ -13,7 +13,11 @@ from .sql_scripts import (
     write_bulk_insert_scripts,
     write_create_table_scripts,
     compose_constraints_sql,
+    compose_postgres_constraints_sql,
+    compose_postgres_indexes_sql,
+    compose_postgres_views_sql,
     compose_verification_sql,
+    copy_postgres_admin_sql,
     copy_views_sql,
     copy_static_sql_assets,
 )
@@ -190,17 +194,22 @@ def package_output(cfg, sales_cfg, parquet_dims: Path, fact_out: Path):
     if is_csv:
         sql_root = final_folder / "sql"
 
-        # Schema scripts (numbered)
+        # CREATE TABLE — emits one script set per registered dialect.
+        # SQL Server lands at sql/; other dialects land at <run>/<dialect>/.
         write_create_table_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
+
+        # The remaining scripts (constraints, views, verification, BULK INSERT,
+        # columnstore helpers) are T-SQL only and always emit at sql/.
         compose_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
+        # Postgres constraint SQL is hand-translated, not auto-derived from the SQL Server parts.
+        compose_postgres_constraints_sql(sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
+        compose_postgres_views_sql(sql_root=sql_root, cfg=cfg)
+        compose_postgres_indexes_sql(sql_root=sql_root)
+        copy_postgres_admin_sql(sql_root=sql_root)
         view_schema = str(getattr(getattr(cfg, "defaults", None), "view_schema", "dbo") or "dbo").strip()
         copy_views_sql(sql_root=sql_root, view_schema=view_schema)
         compose_verification_sql(sql_root=sql_root)
-
-        # Load scripts
-        write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, sales_cfg=sales_cfg, cfg=cfg)
-
-        # Index helpers
+        write_bulk_insert_scripts(dims_out=dims_out, facts_out=facts_out, sql_root=sql_root, cfg=cfg)
         copy_static_sql_assets(sql_root=sql_root)
     else:
         info("Skipping SQL script generation for non-CSV format.")
