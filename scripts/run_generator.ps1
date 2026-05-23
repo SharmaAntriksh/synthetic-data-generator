@@ -137,7 +137,7 @@ try {
     }
 
     $VenvFullPath = Join-Path $Root $VenvDir
-    $MinPyVer = [version]"3.10"
+    $MinPyVer = [version]"3.11"
     $Py = Get-PythonRunner -MinVersion $MinPyVer -VenvPath $VenvFullPath
     if (-not $Py) { throw "Python not found. Create the venv or install Python (py/python)." }
 

@@ -54,7 +54,7 @@ function Get-PythonRunner {
         Search order: venv python > py launcher (targeted, then generic) > bare python.
     #>
     param(
-        [version]$MinVersion = "3.10",
+        [version]$MinVersion = "3.11",
         [string]$VenvPath
     )
 

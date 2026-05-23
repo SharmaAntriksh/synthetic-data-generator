@@ -12,7 +12,7 @@
 
 [CmdletBinding()]
 param(
-    [version]$MinPythonVersion = '3.10',
+    [version]$MinPythonVersion = '3.11',
     [switch]$Quiet
 )
 
