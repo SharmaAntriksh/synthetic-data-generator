@@ -32,6 +32,7 @@ from src.tools.sql._import_common import (
     list_sql_files,
     ordered_load_files,
     run_script_phase,
+    run_timed_phase,
 )
 from src.tools.sql.dialect import PostgresDialect
 
@@ -288,6 +289,15 @@ def import_postgres(
                              run_dir=run_dir, execute=_execute_script)
             run_script_phase(conn, "Creating Indexes", index_files,
                              run_dir=run_dir, execute=_execute_script)
+
+            # Refresh planner statistics. After a bulk COPY, pg_statistic
+            # is stale until autovacuum catches up; running ANALYZE here
+            # avoids bad initial plans on the user's first few queries.
+            def _analyze(c):
+                with c.cursor() as cur:
+                    cur.execute("ANALYZE;")
+
+            run_timed_phase(conn, "Updating Statistics", _analyze)
 
             if verify:
                 dim_create = find_create_sql(schema_files, "create_dimensions.sql")

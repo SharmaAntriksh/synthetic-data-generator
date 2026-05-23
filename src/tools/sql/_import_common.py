@@ -120,6 +120,23 @@ def find_create_sql(files, suffix: str) -> Path | None:
     return next((p for p in files if p.name.lower().endswith(suffix)), None)
 
 
+def run_timed_phase(conn, label: str, work) -> None:
+    """Time + log around ``work(conn)``; commit at the end.
+
+    Wraps any unit of importer work in the same INFO header / DONE
+    elapsed-time format. Callers that drive a file list go through
+    :func:`run_script_phase`; one-shot statements (e.g. ``ANALYZE;``)
+    call this directly with their own closure.
+    """
+    import time as _time
+
+    t0 = _time.time()
+    _log("INFO", f"  {label}")
+    work(conn)
+    conn.commit()
+    _log("DONE", f"  {label} completed in {_time.time() - t0:.1f}s")
+
+
 def run_script_phase(
     conn,
     label: str,
@@ -130,9 +147,9 @@ def run_script_phase(
 ) -> None:
     """Apply a list of SQL scripts as a single timed, committed phase.
 
-    Shared by sequential importer phases (schema, admin tools, constraints).
-    The Load phase doesn't use this — its per-file section labels and
-    streaming COPY semantics differ enough to keep separate.
+    Shared by sequential importer phases (schema, admin tools, constraints,
+    indexes). The Load phase doesn't use this — its per-file section
+    labels and streaming COPY semantics differ enough to keep separate.
 
     ``execute`` is passed in so SQL Server (pyodbc) and Postgres (psycopg)
     importers can share the orchestration while keeping their driver-
@@ -140,15 +157,13 @@ def run_script_phase(
     """
     if not files:
         return
-    import time as _time  # local import: SQL Server importer doesn't depend on _time at top level
 
-    t0 = _time.time()
-    _log("INFO", f"  {label}")
-    for f in files:
-        _log("WORK", f"    {_short_path(f, base=run_dir)}")
-        execute(conn, f)
-    conn.commit()
-    _log("DONE", f"  {label} completed in {_time.time() - t0:.1f}s")
+    def _body(c):
+        for f in files:
+            _log("WORK", f"    {_short_path(f, base=run_dir)}")
+            execute(c, f)
+
+    run_timed_phase(conn, label, _body)
 
 
 def ordered_load_files(load_dir: Path) -> list[Path]:

@@ -345,11 +345,12 @@ def compose_postgres_views_sql(*, sql_root: Path, cfg: dict | None = None) -> No
 
 
 def compose_postgres_indexes_sql(*, sql_root: Path) -> None:
-    """Compose ``<final>/postgres/indexes/01_create_btree_indexes.sql``.
+    """Compose ``<final>/postgres/indexes/01_create_indexes.sql``.
 
-    Concatenates ``scripts/sql/postgres/indexes/*.sql`` in lex order.
+    Concatenates ``scripts/sql/postgres/indexes/*.sql`` in lex order
+    (btree on FK columns + BRIN on naturally-ordered date columns).
     Applied by the importer post-load so the COPY phase isn't forced
-    to update btrees per row.
+    to update indexes per row.
     """
     repo_root = _find_repo_root(Path(__file__).resolve())
     src_dir = repo_root / "scripts" / "sql" / "postgres" / "indexes"
@@ -362,7 +363,7 @@ def compose_postgres_indexes_sql(*, sql_root: Path) -> None:
         skip(f"No Postgres index scripts found in: {src_dir}")
         return
 
-    out_path = sql_root.parent / "postgres" / "indexes" / "01_create_btree_indexes.sql"
+    out_path = sql_root.parent / "postgres" / "indexes" / "01_create_indexes.sql"
     _compose_sql_parts(
         parts=parts,
         out_path=out_path,
