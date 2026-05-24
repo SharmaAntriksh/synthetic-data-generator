@@ -11,21 +11,25 @@ For managing indexes and constraints after the initial import.
 | Procedure | Description |
 |---|---|
 | `admin.ManageColumnstoreIndexes` | Create, drop, or rebuild clustered columnstore indexes on fact tables |
-| `admin.ManagePrimaryKeys` | Backup, drop, restore, or recreate PK/FK constraints (enables CCI swap and matches the importer's `-DropPKBeforeLoad` / `-RestorePKAfterLoad` behavior) |
+| `admin.ManagePrimaryKeys` | Drop, restore, or recreate PK / UQ / FK constraints and standalone unique indexes (enables CCI swap and matches the importer's `-DropPKBeforeLoad` / `-RestorePKAfterLoad` behavior) |
 
 ### `admin.ManagePrimaryKeys`
 
 ```sql
-EXEC [admin].[ManagePrimaryKeys] @Action = 'BACKUP'    -- snapshot current defs to [admin].[_PK_Backup]
-EXEC [admin].[ManagePrimaryKeys] @Action = 'DROP'      -- drop all PKs/FKs
-EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'   -- re-create PKs/FKs from backup
-EXEC [admin].[ManagePrimaryKeys] @Action = 'RECREATE'  -- DROP then RESTORE
+EXEC [admin].[ManagePrimaryKeys] @Action = 'DROP'      -- save DDL to [admin].[_PK_Backup], then drop
+EXEC [admin].[ManagePrimaryKeys] @Action = 'RESTORE'   -- recreate from backup (skips already-present)
+EXEC [admin].[ManagePrimaryKeys] @Action = 'RECREATE'  -- DROP then RESTORE in one call
+EXEC [admin].[ManagePrimaryKeys] @Action = 'STATUS'    -- list current PK/UQ/UX/FK with sizes
+EXEC [admin].[ManagePrimaryKeys] @Help   = 1           -- full usage / parameters
 ```
+
+Scope can be narrowed with `@Tables = N'Sales, dbo.Customers'`. Bare names match across schemas; `schema.name` is exact. When you target a table, FKs that reference it (e.g. `FK_Sales_Customers` when targeting `Customers`) are dropped too — otherwise the PK drop would fail.
 
 Use cases:
 - Bulk-loading additional data into an already-imported database (drop, load, restore)
 - Recovering constraints if `-DropPKBeforeLoad` ran without `-RestorePKAfterLoad`
 - Resetting constraints to a known-good baseline after manual modifications
+- Rebuilding constraints with refreshed DDL after upgrading the proc (`RECREATE`)
 
 ### `admin.ManageColumnstoreIndexes`
 
