@@ -4,8 +4,9 @@
 #
 # Mirrors run_sql_server_import.ps1. Drop / restore / CCI / tabular-user
 # flags from the SQL Server wrapper are intentionally absent — Postgres
-# doesn't need them (server-side COPY doesn't have the parallel-BULK-INSERT
-# contention that motivated PK drop/restore on SQL Server).
+# defers constraints to post-load via composer ordering, so a constraint-
+# drop dance isn't needed. -LoadWorkers parallelizes chunks of one big
+# table (e.g. Sales with 200 CSV parts) across N psycopg connections.
 
 [CmdletBinding()]
 param (
@@ -36,6 +37,11 @@ param (
     # -NoVerify to skip it.
     [switch]$Verify,
     [switch]$NoVerify,
+
+    # Parallelism for chunked tables (Sales with 200 CSV parts is the
+    # canonical case). Default 1 = single-connection sequential load.
+    # Dim tables always load on the main connection.
+    [int]$LoadWorkers = 1,
 
     [string]$PythonExe = "python",
 
@@ -101,7 +107,8 @@ try {
         "--port",     $Port.ToString(),
         "--database", $Database,
         "--user",     $Username,
-        "--run-path", $ResolvedRunPath
+        "--run-path", $ResolvedRunPath,
+        "--load-workers", $LoadWorkers.ToString()
     )
     if ($NoVerify) { $argsList += "--no-verify" }
 
@@ -121,6 +128,7 @@ try {
 
         $flags = @()
         if ($NoVerify) { $flags += "no-verify" }
+        if ($LoadWorkers -gt 1) { $flags += "load-workers=$LoadWorkers" }
         $flagText = if ($flags.Count -gt 0) { " [" + ($flags -join ", ") + "]" } else { "" }
 
         Write-Step ("Running: {0} {1} --host {2}:{3} --database {4} --run {5}{6}" -f $pyName, $entryName, $PgHost, $Port, $Database, $runDisplay, $flagText) -Level cmd

@@ -51,6 +51,17 @@ def main() -> int:
         action="store_true",
         help="Skip the per-table row-count summary at the end.",
     )
+    parser.add_argument(
+        "--load-workers",
+        type=int,
+        default=1,
+        help=(
+            "Parallelism for chunked tables (e.g. Sales with 200 CSV parts). "
+            "Default 1 = single-connection sequential load. Set to your "
+            "CPU count for large fact tables. Dim tables always load on "
+            "the main connection."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -71,6 +82,7 @@ def main() -> int:
             password=password,
             run_dir=run_dir,
             verify=not args.no_verify,
+            load_workers=args.load_workers,
         )
     except PostgresImportError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
