@@ -20,8 +20,13 @@ param (
     [Parameter(Mandatory = $true, ParameterSetName = "SqlAuth")]
     [string]$User,
 
+    # SecureString password for SQL authentication. Pass via:
+    #   $sec = Read-Host -AsSecureString "SQL password"
+    #   .\run_sql_server_import.ps1 ... -User sa -Password $sec
+    # Forwarded to the Python child via the SYNDATA_DB_PASSWORD env var, never
+    # on the command line (avoids exposure in process listings).
     [Parameter(Mandatory = $true, ParameterSetName = "SqlAuth")]
-    [string]$Password,
+    [SecureString]$Password,
 
     # --- Optional flags ---
     [bool]$ApplyCCI = $false,
@@ -123,10 +128,20 @@ try {
         "--run-path", $ResolvedRunPath
     )
 
+    # Tracks whether we set SYNDATA_DB_PASSWORD so the finally block can restore it.
+    $dbPasswordSet  = $false
+    $prevDbPassword = $null
+
     if ($PSCmdlet.ParameterSetName -eq "Trusted") {
         $argsList += "--trusted"
     } else {
-        $argsList += @("--user", $User, "--password", $Password)
+        # Forward the password to the python child via env var rather than argv
+        # (avoids exposing it in process listings). Snapshot the prior value so
+        # the finally block can restore the caller's environment.
+        $prevDbPassword = $env:SYNDATA_DB_PASSWORD
+        $env:SYNDATA_DB_PASSWORD = Resolve-SecureString $Password
+        $dbPasswordSet = $true
+        $argsList += @("--user", $User, "--password-env")
     }
 
     if ($ApplyCCI) { $argsList += "--apply-cci" }
@@ -143,12 +158,12 @@ try {
         # Resolve password: -TabularPassword > env var > prompt (interactive only)
         $resolvedPassword = $null
         if ($TabularPassword) {
-            $resolvedPassword = [System.Net.NetworkCredential]::new('', $TabularPassword).Password
+            $resolvedPassword = Resolve-SecureString $TabularPassword
         } elseif ($env:SYNDATA_TABULAR_PASSWORD) {
             $resolvedPassword = $env:SYNDATA_TABULAR_PASSWORD
         } elseif ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
             $promptedSec = Read-Host -AsSecureString "Enter password for tabular login [$TabularLogin]"
-            $resolvedPassword = [System.Net.NetworkCredential]::new('', $promptedSec).Password
+            $resolvedPassword = Resolve-SecureString $promptedSec
         } else {
             throw "-ProvisionTabularUser needs a password. Pass -TabularPassword, set `$env:SYNDATA_TABULAR_PASSWORD, or run interactively."
         }
@@ -165,17 +180,10 @@ try {
     }
     $argsList += @("--load-workers", $LoadWorkers.ToString())
 
-    # Log the command
-    # Mask password in logged output
-    $logArgsList = @($argsList)
-    for ($i = 0; $i -lt $logArgsList.Count; $i++) {
-        if ($logArgsList[$i] -eq "--password" -and ($i + 1) -lt $logArgsList.Count) {
-            $logArgsList[$i + 1] = "********"
-        }
-    }
-
+    # Log the command. The password is passed via env var (SYNDATA_DB_PASSWORD),
+    # not argv, so there is nothing to mask in the argument list.
     if ($ShowFullPaths) {
-        Write-Step ("Running: {0} {1}" -f $PythonExe, ($logArgsList -join " ")) -Level cmd
+        Write-Step ("Running: {0} {1}" -f $PythonExe, ($argsList -join " ")) -Level cmd
     } else {
         $pyName    = Split-Path -Leaf $PythonExe
         $entryName = Split-Path -Leaf $PyEntrypoint
@@ -206,8 +214,14 @@ try {
     }
 
     # Execute
-    & $PythonExe @argsList
-    $ec = $LASTEXITCODE
+    try {
+        & $PythonExe @argsList
+        $ec = $LASTEXITCODE
+    } finally {
+        # Restore the caller's SYNDATA_DB_PASSWORD so the resolved password
+        # doesn't leak into the parent shell.
+        if ($dbPasswordSet) { $env:SYNDATA_DB_PASSWORD = $prevDbPassword }
+    }
     if ($ec -ne 0) {
         Write-Step "SQL Server import exited with code $ec." -Level err
     }

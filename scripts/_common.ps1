@@ -15,6 +15,7 @@
 #   Assert-UvAvailable    - throw with install guidance when uv is missing
 #   Build-UvSyncArgs      - assemble the `uv sync` argument array
 #   Invoke-DriverSelfHeal - ensure a Python module is importable, install its extra
+#   Resolve-SecureString  - decrypt a SecureString to plaintext
 # ------------------------------------------------------------
 
 Set-StrictMode -Version Latest
@@ -190,6 +191,16 @@ function Format-RunnerLabel {
         return "$($Runner.Cmd) $($Runner.Args -join ' ')"
     }
     return $Runner.Cmd
+}
+
+function Resolve-SecureString {
+    <#
+    .SYNOPSIS
+        Decrypt a SecureString to its plaintext value. Centralized so the
+        secret-decrypt idiom lives in one place (single point to harden later).
+    #>
+    param([Parameter(Mandatory)][SecureString]$Secure)
+    return [System.Net.NetworkCredential]::new('', $Secure).Password
 }
 
 function Assert-UvAvailable {

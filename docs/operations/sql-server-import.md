@@ -25,13 +25,17 @@ Load a CSV-format generated dataset into SQL Server in one step. The import scri
 ```
 
 ### SQL Authentication
+`-Password` is a `SecureString`, so read it into a variable first (it is never
+placed on the command line — it is forwarded to the importer via the
+`SYNDATA_DB_PASSWORD` environment variable):
 ```powershell
+$pwd = Read-Host -AsSecureString "SQL password"
 .\scripts\run_sql_server_import.ps1 `
   -RunPath ".\generated_datasets\<your-run-folder>" `
   -Server "YOURSERVER\SQL2022" `
   -Database ContosoSales `
   -User sa `
-  -Password "YourPassword"
+  -Password $pwd
 ```
 
 > SQL Authentication requires Mixed Mode to be enabled on the SQL Server instance.
@@ -130,7 +134,7 @@ On spinning disks, parallel workers cause seek thrashing. Use 2 workers max.
 | `-Server` | SQL Server instance, e.g. `SERVERNAME\SQL2022` |
 | `-Database` | Target database name. Created if absent; skipped if present. |
 | `-TrustedConnection` | Use Windows Authentication |
-| `-User` / `-Password` | SQL Authentication credentials (alternative to `-TrustedConnection`) |
+| `-User` / `-Password` | SQL Authentication credentials (alternative to `-TrustedConnection`). `-Password` is a `SecureString` (use `Read-Host -AsSecureString`) |
 | `-ApplyCCI $true` | Create clustered columnstore indexes on fact tables after load |
 | `-DropPKBeforeLoad $true` | Drop PKs and FKs **before** the data load. Removes per-row validation overhead. Definitions saved to `[admin].[_PK_Backup]`. |
 | `-RestorePKAfterLoad $true` | Restore PKs and FKs from `[admin].[_PK_Backup]` after load (and after CCI apply). Requires `-DropPKBeforeLoad $true`. Cannot be combined with `-DropPK $true`. |

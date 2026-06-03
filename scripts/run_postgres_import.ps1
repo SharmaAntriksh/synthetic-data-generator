@@ -89,12 +89,12 @@ try {
     # Resolve password: -Password > $env:PGPASSWORD > prompt (interactive only)
     $resolvedPassword = $null
     if ($Password) {
-        $resolvedPassword = [System.Net.NetworkCredential]::new('', $Password).Password
+        $resolvedPassword = Resolve-SecureString $Password
     } elseif ($env:PGPASSWORD) {
         $resolvedPassword = $env:PGPASSWORD
     } elseif ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
         $promptedSec = Read-Host -AsSecureString "Postgres password for $Username@${PgHost}:$Port"
-        $resolvedPassword = [System.Net.NetworkCredential]::new('', $promptedSec).Password
+        $resolvedPassword = Resolve-SecureString $promptedSec
     } else {
         throw "Postgres password not provided. Pass -Password, set `$env:PGPASSWORD, or run interactively."
     }
