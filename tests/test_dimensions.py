@@ -26,6 +26,7 @@ from src.dimensions.stores.generator import GeoContext
 # Currency / Exchange Rates
 # ---------------------------------------------------------------------------
 from src.dimensions.exchange_rates import build_dim_currency
+from src.dimensions.exchange_rates.currency import _resolve_currency_list
 from src.dimensions.exchange_rates.helpers import normalize_currency_list
 from src.dimensions.exchange_rates.monthly_rates import build_monthly_rates
 
@@ -300,6 +301,24 @@ class TestNormalizeCurrencyList:
     def test_case_normalized(self):
         result = normalize_currency_list(["usd", "Eur", "GBP"])
         assert result == ["USD", "EUR", "GBP"]
+
+
+class TestResolveCurrencyList:
+    """FX-CUR-1: the currency dim must superset the FX from/to currencies."""
+
+    def test_explicit_omitting_fx_currency_is_unioned_in(self):
+        # Explicit list omits EUR, but FX needs it -> EUR must be added.
+        result = _resolve_currency_list(["USD", "GBP"], ["USD"], ["EUR"])
+        assert "EUR" in result
+        assert set(["USD", "GBP", "EUR"]).issubset(result)
+
+    def test_explicit_superset_is_unchanged(self):
+        result = _resolve_currency_list(["USD", "EUR", "GBP"], ["USD"], ["EUR"])
+        assert result == ["USD", "EUR", "GBP"]
+
+    def test_no_explicit_derives_from_fx_union(self):
+        result = _resolve_currency_list(None, ["USD"], ["EUR", "JPY"])
+        assert set(["USD", "EUR", "JPY"]).issubset(result)
 
 
 # ===================================================================

@@ -204,6 +204,28 @@ class TestSCD2LifeEvents:
 
         pd.testing.assert_frame_equal(r1, r2)
 
+    def test_max_versions_1_skips_expansion(self):
+        """CUST-SCD2-2: max_versions=1 means no extra versions — must skip
+        expansion and return base_df unchanged, not crash on rng.integers(1, 1)."""
+        from src.dimensions.customers.scd2 import generate_scd2_versions
+
+        base = pd.DataFrame({
+            "CustomerType": ["Individual", "Individual"],
+            "CustomerKey": [1, 2],
+            "CustomerID": [1, 2],
+            "IsCurrent": [1, 1],
+            "EffectiveStartDate": pd.to_datetime(["2021-01-01", "2021-01-01"]),
+            "EffectiveEndDate": pd.to_datetime(["2099-12-31", "2099-12-31"]),
+        })
+        cust_cfg = type("Cfg", (), {"change_rate": 0.15, "max_versions": 1})()
+        # The guard returns before geo_keys/tier_keys/geo_lookup are used.
+        out = generate_scd2_versions(
+            np.random.default_rng(42), base, cust_cfg,
+            geo_keys=np.array([], dtype=int), tier_keys=np.array([], dtype=int),
+            end_date=pd.Timestamp("2025-12-31"), geo_lookup=None,
+        )
+        pd.testing.assert_frame_equal(out, base)
+
 
 # ===================================================================
 # Subscription payment weights validation

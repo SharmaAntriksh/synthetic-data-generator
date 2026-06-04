@@ -439,9 +439,16 @@ def generate_scd2_versions(
     Selects a fraction of individual customers (change_rate), then delegates
     to expand_changed_customers() for the per-row life event simulation.
     """
-    change_rate = float(getattr(cust_cfg, "change_rate", 0.15))
     max_versions = int(getattr(cust_cfg, "max_versions", 4))
 
+    # max_versions <= 1 means "no extra versions": skip expansion entirely (mirrors
+    # products/scd2.py). base_df already carries EffectiveStartDate/EffectiveEndDate/
+    # IsCurrent as a single current version, so it is returned as-is. Also avoids
+    # rng.integers(1, max_versions) raising ValueError when max_versions == 1.
+    if max_versions <= 1:
+        return base_df
+
+    change_rate = float(getattr(cust_cfg, "change_rate", 0.15))
     person_mask = base_df["CustomerType"] == "Individual"
     person_ids = base_df.loc[person_mask, "CustomerID"].to_numpy()
 
