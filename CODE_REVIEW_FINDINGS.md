@@ -24,10 +24,12 @@ SCHEMA-1) are deferred to the end per plan.
 | **CHUNK-1** | **High** | Within-day order cursor derived from a stable sort (`_within_day_cursor`) instead of `arange − first_index`, so SalesOrderNumber stays unique across chunks despite the post-sort customer-start clamp. Overflow guard now keys on cursor magnitude. | `tests/test_chunk_id_integrity.py`; verified end-to-end (multi-chunk header SO# unique) |
 | **SCHEMA-1 / ORCH-1** | Medium | `SalesOrderNumber` int32→int64 decision now sized to the real ~8× day-ID space (single `_order_id_int64` threaded to schema + builder + returns); warning re-thresholded. Generation/parquet facet only — SQL DDL `BIGINT` widening deferred to the SQL pass. | `TestBuildWorkerSchemas::test_order_id_int64_*`, `TestBuildSalesReturns::test_int64_*`; verified end-to-end (forced int64 run, all SO# columns int64 + consistent) |
 | **DATES-1** | Medium | Weekly-fiscal (4-4-5) month/quarter boundaries derived arithmetically from the week pattern instead of `groupby` min/max, so partial edge periods report true boundaries (and `FWDayOfMonth`/`FWDayOfQuarter` no longer undercount). Resolves DATES-3's clipping component too. | `tests/test_dates.py::TestWeeklyFiscalColumns::{test_period_length_consistency,test_partial_edge_month_uses_true_boundary}` |
+| **EMP-1** | Medium | Staff `EmployeeKey` encoding (`STAFF_KEY_BASE + StoreKey*1000 + idx`) now guards against the per-store slot spill (>1000 staff) and online-band collision, raising `DimensionError` instead of silently producing duplicate keys / wrong-store decode. | `tests/test_dimensions.py::TestGenerateEmployeeDimension::{test_over_1000_staff_raises_not_silent_collision,test_just_under_1000_staff_stays_unique}` |
 
-**Remaining next up (suggested order):** EMP-1 (staff EmployeeKey collision >1000/store), then the
-low-severity cluster (CHUNK-3, RETURNS-1, CUST-SCD2-1/2, INV-1, WISH-1, etc.). SQL findings (TOOLS-1 +
-SCHEMA-1's `BIGINT` DDL facet) batched for the end. See the table below for the full list.
+**Remaining next up (suggested order):** the low-severity cluster — start with the quick, isolated
+loud-crash guards (CUST-SCD2-2, FX-CUR-1), then the latent-correctness ones (CHUNK-3, RETURNS-1,
+CUST-SCD2-1, INV-1, WISH-1). SQL findings (TOOLS-1 + SCHEMA-1's `BIGINT` DDL facet) batched for the
+end. See the table below for the full list.
 
 ---
 
@@ -124,7 +126,7 @@ Lower-risk plumbing noted inline as not-deep-read.
 | **CHUNK-2** | Low | `seal()` never called in prod → CLAUDE.md gotcha #3 inaccurate; discovery state is per-worker. |
 | **CUST-SCD2-1** | Low-Med | SCD2 life-event offset collapse can emit version rows with end < start (malformed interval). |
 | **CUST-SCD2-2** | Low | `customers.max_versions: 1` crashes (`rng.integers(1,1)`). |
-| **EMP-1** | Medium | Staff EmployeeKey collision + wrong-store decode when a store has >1000 staff (only int64 overflow guarded, not the ×1000 encoding mult). |
+| ✅ **EMP-1** | Medium | ~~Staff EmployeeKey collision + wrong-store decode when a store has >1000 staff (only int64 overflow guarded, not the ×1000 encoding mult).~~ **FIXED** (loud guard on per-store slot spill + band disjointness) |
 | **FX-CUR-1** | Low | Explicit `currency.currencies` omitting an FX currency → cryptic NaN→int32 crash in the FX key-join. |
 | **BUDGET-1** | Low | Monthly budget can exceed yearly total for categories missing months (seasonal shares normalized before the 12-month expand + 1/12 fillna). |
 | **BUDGET-2** | Low (perf) | Returns micro-agg computed every chunk (join + bincount) but `finalize_returns()` is never called → wasted compute; several BudgetConfig fields are dead. |
@@ -329,7 +331,13 @@ Strengths verified:
 
 ### EMP-1 — Staff EmployeeKey collision when a store has > 1000 staff
 - **Severity:** Medium (latent; silent corruption when triggered; needs unusual staffing config)
-- **Status:** confirmed
+- **Status:** **fixed** — replaced the dead int64-overflow guard with two meaningful guards in
+  `generator.py`: (a) raise `DimensionError` when `within_store_idx.max() >= STAFF_KEY_STORE_MULT`
+  (the per-store slot spill — the actual bug), and (b) raise when the max staff key reaches
+  `ONLINE_EMP_KEY_BASE` (band-disjointness, covers the "too many physical stores" case the int64
+  check nominally targeted). Preserves the existing key scheme; fails loudly instead of silently
+  colliding + mis-decoding. Tests: `tests/test_dimensions.py::TestGenerateEmployeeDimension::`
+  `{test_over_1000_staff_raises_not_silent_collision,test_just_under_1000_staff_stays_unique}`.
 - **Where:** [generator.py:571-574](src/dimensions/employees/generator.py#L571-L574); decode at
   [employee_store_assignments.py:189-193](src/dimensions/employees/employee_store_assignments.py#L189-L193)
 - **What:** staff keys are encoded `STAFF_KEY_BASE + StoreKey*STAFF_KEY_STORE_MULT + within_store_idx`

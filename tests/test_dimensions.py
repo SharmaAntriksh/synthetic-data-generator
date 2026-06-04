@@ -628,6 +628,37 @@ class TestGenerateEmployeeDimension:
         )
         assert df["EmployeeKey"].is_unique
 
+    def test_over_1000_staff_raises_not_silent_collision(self, people_pools):
+        """EMP-1: a store with >= STAFF_KEY_STORE_MULT staff would spill into the
+        next store's EmployeeKey band. Guard must raise loudly, not corrupt."""
+        stores = self._make_stores(n=3)
+        # EmployeeCount includes the manager, so 1002 -> 1001 staff -> idx hits 1001.
+        stores.loc[1, "EmployeeCount"] = 1002
+        stores["StoreType"] = "Supermarket"  # ensure all physical
+        with pytest.raises(DimensionError, match="slots per store"):
+            generate_employee_dimension(
+                stores=stores,
+                seed=42,
+                global_start=pd.Timestamp("2021-01-01"),
+                global_end=pd.Timestamp("2025-12-31"),
+                people_pools=people_pools,
+            )
+
+    def test_just_under_1000_staff_stays_unique(self, people_pools):
+        """EMP-1 boundary: 999 staff/store (idx max 999) stays within the per-store
+        slot band -> no collision, keys still unique."""
+        stores = self._make_stores(n=3)
+        stores["EmployeeCount"] = 1000  # 999 staff each
+        stores["StoreType"] = "Supermarket"
+        df = generate_employee_dimension(
+            stores=stores,
+            seed=42,
+            global_start=pd.Timestamp("2021-01-01"),
+            global_end=pd.Timestamp("2025-12-31"),
+            people_pools=people_pools,
+        )
+        assert df["EmployeeKey"].is_unique
+
     def test_hierarchy_has_ceo(self, people_pools):
         stores = self._make_stores()
         df = generate_employee_dimension(
