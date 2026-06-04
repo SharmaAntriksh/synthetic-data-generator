@@ -398,6 +398,38 @@ class TestWeeklyFiscalColumns:
             weeks_by_month = q1.groupby("FWMonthNumber")["FWWeekNumber"].nunique()
             assert list(weeks_by_month.values[:3]) == [5, 4, 4]
 
+    def test_period_length_consistency(self):
+        """DATES-1: month/quarter boundaries are arithmetic, not clipped to the
+        data range. start + length - 1 must equal end for EVERY row (including the
+        first/last partial periods), and the day-of-period must stay within range.
+        Under the old groupby min/max this failed at the table edges."""
+        # Fiscal year starts in May, so the table edges are mid-fiscal-period.
+        df = self._make_wf("2023-01-01", "2025-12-31", fiscal=5)
+
+        start_m = pd.to_datetime(df["FWStartOfMonth"])
+        end_m = pd.to_datetime(df["FWEndOfMonth"])
+        assert (start_m + pd.to_timedelta(df["FWMonthDays"] - 1, unit="D") == end_m).all()
+        assert df["FWDayOfMonth"].between(1, df["FWMonthDays"]).all()
+
+        start_q = pd.to_datetime(df["FWStartOfQuarter"])
+        end_q = pd.to_datetime(df["FWEndOfQuarter"])
+        assert (start_q + pd.to_timedelta(df["FWQuarterDays"] - 1, unit="D") == end_q).all()
+        assert df["FWDayOfQuarter"].between(1, df["FWQuarterDays"]).all()
+
+    def test_partial_edge_month_uses_true_boundary(self):
+        """DATES-1: the leading partial fiscal month reports its true start (before
+        the table's first date) and its first in-range day is not forced to 1; the
+        trailing partial month reports its true end (after the table's last date)."""
+        df = self._make_wf("2023-01-01", "2025-12-31", fiscal=5).sort_values("Date")
+        table_start, table_end = df["Date"].min(), df["Date"].max()
+
+        first = df[df["FWMonthIndex"] == df["FWMonthIndex"].min()]
+        assert pd.Timestamp(first["FWStartOfMonth"].iloc[0]) < table_start
+        assert int(first["FWDayOfMonth"].iloc[0]) > 1
+
+        last = df[df["FWMonthIndex"] == df["FWMonthIndex"].max()]
+        assert pd.Timestamp(last["FWEndOfMonth"].iloc[0]) > table_end
+
     def test_every_day_assigned_to_a_year(self):
         """No day should have FWYearNumber == -1 (unassigned)."""
         df = self._make_wf("2020-01-01", "2025-12-31")

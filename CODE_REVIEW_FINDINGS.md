@@ -15,7 +15,7 @@ Status: `open` · `confirmed` · `wontfix` · `fixed`
 
 ## ✅ Completed work
 
-Branch: `fix/sales-order-id-integrity`. SQL-related findings (TOOLS-1, the SQL-DDL facet of
+Branch: `fix/code-review-findings`. SQL-related findings (TOOLS-1, the SQL-DDL facet of
 SCHEMA-1) are deferred to the end per plan.
 
 | ID | Sev | What was fixed | Tests |
@@ -23,9 +23,10 @@ SCHEMA-1) are deferred to the end per plan.
 | **QR-1** | Medium | Quality report now checks `sales_order_header.SalesOrderNumber` uniqueness/nulls + fact-to-fact FK (returns/complaints → header). Shared `_emit_fk_check` helper. This is the **detector** for CHUNK-1. | `tests/test_quality_report.py::TestSalesOrderIntegrity` |
 | **CHUNK-1** | **High** | Within-day order cursor derived from a stable sort (`_within_day_cursor`) instead of `arange − first_index`, so SalesOrderNumber stays unique across chunks despite the post-sort customer-start clamp. Overflow guard now keys on cursor magnitude. | `tests/test_chunk_id_integrity.py`; verified end-to-end (multi-chunk header SO# unique) |
 | **SCHEMA-1 / ORCH-1** | Medium | `SalesOrderNumber` int32→int64 decision now sized to the real ~8× day-ID space (single `_order_id_int64` threaded to schema + builder + returns); warning re-thresholded. Generation/parquet facet only — SQL DDL `BIGINT` widening deferred to the SQL pass. | `TestBuildWorkerSchemas::test_order_id_int64_*`, `TestBuildSalesReturns::test_int64_*`; verified end-to-end (forced int64 run, all SO# columns int64 + consistent) |
+| **DATES-1** | Medium | Weekly-fiscal (4-4-5) month/quarter boundaries derived arithmetically from the week pattern instead of `groupby` min/max, so partial edge periods report true boundaries (and `FWDayOfMonth`/`FWDayOfQuarter` no longer undercount). Resolves DATES-3's clipping component too. | `tests/test_dates.py::TestWeeklyFiscalColumns::{test_period_length_consistency,test_partial_edge_month_uses_true_boundary}` |
 
-**Remaining next up (suggested order):** DATES-1 (4-4-5 boundary clipping), then the low-severity
-cluster (CHUNK-3, RETURNS-1, CUST-SCD2-1/2, EMP-1, INV-1, WISH-1, etc.). SQL findings (TOOLS-1 +
+**Remaining next up (suggested order):** EMP-1 (staff EmployeeKey collision >1000/store), then the
+low-severity cluster (CHUNK-3, RETURNS-1, CUST-SCD2-1/2, INV-1, WISH-1, etc.). SQL findings (TOOLS-1 +
 SCHEMA-1's `BIGINT` DDL facet) batched for the end. See the table below for the full list.
 
 ---
@@ -115,7 +116,7 @@ Lower-risk plumbing noted inline as not-deep-read.
 |----|-----|-----------|
 | ✅ **CHUNK-1** | **High** | ~~Duplicate `SalesOrderNumber` across chunks: start-date clamp breaks the day-ID cursor's sorted-input assumption (multi-chunk + order cols + acquisition).~~ **FIXED** |
 | ✅ **SCHEMA-1 / ORCH-1** | Medium | ~~int64 SO# promotion mis-thresholded; day-IDs hard-cast to int32 → runs >~268M rows crash on overflow.~~ **FIXED** (parquet/generation; SQL DDL `BIGINT` widening deferred to SQL pass) |
-| **DATES-1** | Medium | 4-4-5 month/quarter boundaries clipped to data range at partial edge periods (masked by default buffer; exposed at `buffer_years: 0`). |
+| ✅ **DATES-1** | Medium | ~~4-4-5 month/quarter boundaries clipped to data range at partial edge periods (masked by default buffer; exposed at `buffer_years: 0`).~~ **FIXED** (arithmetic boundaries from the week pattern) |
 | **CHUNK-3** | Low-Med | Final-assembly "mixed" path drops null months instead of padding (latent; would error/misalign if a column's presence varies per month). |
 | **RETURNS-1** | Low-Med | Split-return event dates not monotonic by sequence (only if `split_return_rate>0`). |
 | **DATES-2** | Low | Fiscal/FW as-of offsets via row-lookup with all-zeros fallback (dead today; fragile). |
@@ -152,7 +153,13 @@ indices across year boundaries, leap-safe month-end snapping, correct 4-4-5 engi
 
 ### DATES-1 — Weekly-fiscal month/quarter boundaries clipped to data range
 - **Severity:** Medium (currently masked by default buffer; exposed at `buffer_years: 0`)
-- **Status:** confirmed
+- **Status:** **fixed** — `FWStartOfMonth`/`FWEndOfMonth`/`FWStartOfQuarter`/`FWEndOfQuarter` and
+  `FWDayOfMonth`/`FWDayOfQuarter` are now derived arithmetically from the 4-4-5 week pattern
+  (`week_in_month`/`week_in_quarter` + `FWWeekDayNumber`, with ends = start + period_len − 1) instead
+  of `groupby(...).transform("min"/"max")`. Identical to the old groupby for fully-present interior
+  periods; gives the true boundary at partial edges. Empirically: leading partial month now starts
+  2022-12-25 (was clipped to 2023-01-01) with first in-range day = 8 (was 1). Tests:
+  `tests/test_dates.py::TestWeeklyFiscalColumns::{test_period_length_consistency,test_partial_edge_month_uses_true_boundary}`.
 - **Where:** [weekly_fiscal.py:215-221](src/dimensions/dates/weekly_fiscal.py#L215-L221);
   derived label at [:316](src/dimensions/dates/weekly_fiscal.py#L316)
 - **What:** `FWStartOfMonth`, `FWEndOfMonth`, `FWStartOfQuarter`, `FWEndOfQuarter`
@@ -194,6 +201,9 @@ indices across year boundaries, leap-safe month-end snapping, correct 4-4-5 engi
   at boundaries.
 - **Proposed fix:** pick the month containing the period midpoint computed from the
   pattern length, after DATES-1 is fixed.
+- **Update:** the DATES-1 fix makes `fw_start_month` correct at the edges, so the *clipping*
+  component is resolved; the `+14 days` representative-month heuristic for 5-/6-week months
+  remains (still open, cosmetic).
 
 ### Not yet reviewed in this area
 - `time.py` (1440-row minute grid) — low risk, skipped.
