@@ -359,6 +359,15 @@ def _compute_monthly_budget(
     )
     budget_months["MonthShare"] = budget_months["MonthShare"].fillna(1.0 / 12.0)
 
+    # BUDGET-1: re-normalize the 12 monthly shares per budget row to sum to 1.0.
+    # Seasonal shares were normalized over only the months present in actuals; after
+    # expanding to 12 months and filling absent months with 1/12, a sparse category's
+    # shares sum to >1.0, so its monthly budgets would overshoot the yearly total.
+    # Rows are contiguous 12-per-budget (index.repeat(12)) in Month 1..12 order.
+    _shares = budget_months["MonthShare"].to_numpy().reshape(n_budget, 12)
+    _shares = _shares / _shares.sum(axis=1, keepdims=True)
+    budget_months["MonthShare"] = _shares.reshape(-1)
+
     budget_months["BudgetAmount"] = (
         budget_months["BudgetSalesAmount"].values * budget_months["MonthShare"].values
     )

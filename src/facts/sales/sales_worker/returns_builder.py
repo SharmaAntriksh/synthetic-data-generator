@@ -75,6 +75,29 @@ def _empty_returns_table(so_type: pa.DataType = pa.int32()) -> pa.Table:
     return pa.Table.from_arrays(arrays, schema=schema)
 
 
+def _ontime_reason_probs(reason_probs: np.ndarray, logistics_mask: np.ndarray) -> np.ndarray:
+    """Reason distribution for on-time orders: logistics reasons are invalid, so
+    their weight is zeroed and redistributed.
+
+    The renormalization residual is placed on the largest NON-logistics slot so
+    logistics reasons stay at exactly 0 (RETURNS-2). Forcing the last slot (as the
+    old CDF boundary guard did) could revive a zeroed logistics reason there — or
+    push it negative and break ``rng.choice``. Falls back to the last slot only in
+    the degenerate case where every reason is a logistics reason.
+    """
+    p = np.asarray(reason_probs, dtype=np.float64).copy()
+    p[logistics_mask] = 0.0
+    s = float(p.sum())
+    if s > 0:
+        p /= s
+    else:
+        p = np.full_like(p, 1.0 / max(1, p.size))
+    non_log = np.where(logistics_mask, -np.inf, p)
+    fix = int(np.argmax(non_log)) if np.isfinite(non_log).any() else p.size - 1
+    p[fix] += 1.0 - float(p.sum())
+    return p
+
+
 def _as_np_i64(x) -> np.ndarray:
     arr = np.asarray(x)
     return arr if arr.dtype == np.int64 else arr.astype(np.int64, copy=False)
@@ -358,14 +381,7 @@ def build_sales_returns_from_detail(
     reason = np.empty(total_events, dtype=np.int32)
     if cfg.logistics_keys:
         logistics_mask = np.array([k in cfg.logistics_keys for k in reason_keys], dtype=bool)
-        probs_ontime = reason_probs.copy()
-        probs_ontime[logistics_mask] = 0.0
-        s = float(probs_ontime.sum())
-        if s > 0:
-            probs_ontime /= s
-        else:
-            probs_ontime = np.full_like(probs_ontime, 1.0 / max(1, probs_ontime.size))
-        probs_ontime[-1] = 1.0 - probs_ontime[:-1].sum()  # CDF boundary guard
+        probs_ontime = _ontime_reason_probs(reason_probs, logistics_mask)
 
         is_delayed_exp = np.repeat(is_delayed, num_events) > 0
         n_delayed = int(is_delayed_exp.sum())

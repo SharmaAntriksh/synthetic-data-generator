@@ -34,6 +34,7 @@ from src.facts.sales.sales_logic.core.delivery import (
     fmt,
 )
 from src.facts.sales.sales_logic.core.allocation import (
+    _remove_rows_stochastic,
     _safe_prob,
     _sched_mode_and_values,
     build_rows_per_month,
@@ -75,6 +76,7 @@ from src.facts.sales.sales_worker.returns_builder import (
     RETURNS_SCHEMA,
     ReturnsConfig,
     _empty_returns_table,
+    _ontime_reason_probs,
     build_sales_returns_from_detail,
 )
 from src.facts.sales.sales_worker.schemas import (
@@ -389,6 +391,22 @@ class TestApplyPromotions:
 
         with pytest.raises(SalesError, match="must align"):
             apply_promotions(_rng(), 5, dates, promo_keys, promo_start, promo_end)
+
+    def test_channel_group_length_mismatch_warns(self):
+        """CORE-4: requesting channel filtering with a mis-sized promo_channel_group
+        must warn, not silently drop the channel correlation."""
+        import src.facts.sales.sales_logic.core.promotions as promo_mod
+        promo_mod._warned_ch_len_mismatch = False
+        dates = np.array(["2023-01-15"] * 6, dtype="datetime64[D]")
+        promo_keys = np.array([1, 10], dtype=np.int32)  # P = 2
+        promo_start = np.array(["2023-01-01", "2023-01-10"], dtype="datetime64[D]")
+        promo_end = np.array(["2023-01-31", "2023-01-31"], dtype="datetime64[D]")
+        apply_promotions(
+            _rng(), 6, dates, promo_keys, promo_start, promo_end, no_discount_key=1,
+            channel_keys=np.ones(6, dtype=np.int32),
+            promo_channel_group=np.array([0], dtype=np.int8),  # len 1 != P=2
+        )
+        assert promo_mod._warned_ch_len_mismatch is True
 
 
 # ===================================================================
@@ -1467,6 +1485,29 @@ class TestComputeBudget:
         medium = yearly[yearly["Scenario"] == "Medium"]
         assert (medium["BudgetSalesAmount"] > 0).all()
 
+    def test_monthly_rolls_up_to_yearly_sparse_category(self):
+        """BUDGET-1: a category with actuals in only a few months must still have
+        its 12 monthly budgets sum to the yearly total (not overshoot)."""
+        rows = []
+        for year in [2021, 2022, 2023]:
+            for country in ["US", "UK"]:
+                for month in range(1, 13):  # Electronics: full year
+                    rows.append({"Country": country, "Category": "Electronics",
+                                 "Year": year, "Month": month, "SalesChannelKey": 1,
+                                 "SalesAmount": 1000.0 + month, "SalesQuantity": 100 + month})
+                for month in [1, 2, 3]:      # Clothing: sparse (3 months)
+                    rows.append({"Country": country, "Category": "Clothing",
+                                 "Year": year, "Month": month, "SalesChannelKey": 1,
+                                 "SalesAmount": 500.0, "SalesQuantity": 50})
+        yearly, monthly = compute_budget(pd.DataFrame(rows), BudgetConfig(enabled=True))
+
+        keys = ["Country", "Category", "BudgetYear", "Scenario"]
+        m_sum = monthly.groupby(keys)["BudgetAmount"].sum().reset_index()
+        merged = m_sum.merge(yearly[keys + ["BudgetSalesAmount"]], on=keys)
+        ratio = merged["BudgetAmount"] / merged["BudgetSalesAmount"]
+        # Under the bug, sparse Clothing overshoots ~1.75x; allow only cents rounding.
+        assert ratio.between(0.99, 1.01).all(), merged.loc[~ratio.between(0.99, 1.01)]
+
 
 # ===================================================================
 # Inventory engine
@@ -1666,3 +1707,53 @@ class TestRecomputeABC:
         out = _recompute_abc_from_demand(self._demand(), self._attrs(), pk_to_pid)["ABCClassification"]
         # Family total (120) is the largest -> all three version keys classified A.
         assert all(out[i] == "A" for i in range(3))
+
+
+# ===================================================================
+# RETURNS-2 (on-time reason probabilities) + CORE-3 (exact row removal)
+# ===================================================================
+
+class TestOntimeReasonProbs:
+    """RETURNS-2: logistics reasons must stay at exactly 0 for on-time orders,
+    and the distribution must be valid (non-negative, sums to 1)."""
+
+    def test_logistics_stays_zero_and_valid(self):
+        reason_probs = np.array([0.1, 0.2, 0.3, 0.4])
+        # Last reason is logistics — the old boundary guard forced mass onto it.
+        logistics_mask = np.array([False, False, False, True])
+        p = _ontime_reason_probs(reason_probs, logistics_mask)
+        assert p[3] == 0.0                      # logistics slot never revived
+        assert np.all(p >= 0.0)                 # never negative -> rng.choice safe
+        assert abs(float(p.sum()) - 1.0) < 1e-12
+
+    def test_multiple_logistics_including_last(self):
+        reason_probs = np.array([0.25, 0.25, 0.25, 0.25])
+        logistics_mask = np.array([False, True, False, True])
+        p = _ontime_reason_probs(reason_probs, logistics_mask)
+        assert p[1] == 0.0 and p[3] == 0.0
+        assert np.all(p >= 0.0)
+        assert abs(float(p.sum()) - 1.0) < 1e-12
+
+    def test_all_logistics_falls_back_to_uniform(self):
+        reason_probs = np.array([0.5, 0.5])
+        logistics_mask = np.array([True, True])
+        p = _ontime_reason_probs(reason_probs, logistics_mask)
+        assert np.all(p >= 0.0)
+        assert abs(float(p.sum()) - 1.0) < 1e-12
+
+
+class TestRemoveRowsStochastic:
+    """CORE-3: must remove exactly `need` rows (loop to completion), not stop
+    short at a fixed iteration cap."""
+
+    def test_removes_exact_amount_few_candidates_large_need(self):
+        rng = np.random.default_rng(1)
+        rows = np.array([100, 100], dtype=np.int64)   # 2 candidates, lots of rows
+        _remove_rows_stochastic(rng, rows, 150, np.array([0, 1]), np.ones(2))
+        assert int(rows.sum()) == 50                   # 200 - 150 removed exactly
+
+    def test_stops_when_candidates_exhausted(self):
+        rng = np.random.default_rng(2)
+        rows = np.array([3, 4], dtype=np.int64)        # only 7 rows available
+        _remove_rows_stochastic(rng, rows, 10, np.array([0, 1]), np.ones(2))
+        assert int(rows.sum()) == 0                    # removes all it can, no hang
