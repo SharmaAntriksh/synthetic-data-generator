@@ -49,6 +49,7 @@ from src.facts.sales.sales_logic.core.customer_sampling import (
     _participation_distinct_target,
     _sample_customers,
     _update_seen_lookup,
+    _urgency_pick,
 )
 from src.facts.sales.sales_logic.globals import State
 from src.facts.budget.accumulator import BudgetAccumulator
@@ -1757,3 +1758,33 @@ class TestRemoveRowsStochastic:
         rows = np.array([3, 4], dtype=np.int64)        # only 7 rows available
         _remove_rows_stochastic(rng, rows, 10, np.array([0, 1]), np.ones(2))
         assert int(rows.sum()) == 0                    # removes all it can, no hang
+
+
+# ===================================================================
+# CORE-1 (urgency ordering in the all-forced corner)
+# ===================================================================
+
+class TestUrgencyPick:
+    """CORE-1: when every undiscovered key is forced (size >= keys.size), the
+    result must still be ordered by urgency (nearest-expiry first), so a
+    downstream [:k] slice keeps the most urgent customers."""
+
+    def test_all_forced_returns_urgency_order(self):
+        keys = np.array([10, 20, 30, 40], dtype=np.int64)
+        indices = np.array([0, 1, 2, 3])
+        end_month_norm = np.array([5, 2, 8, 3], dtype=np.int64)  # remaining: 5,2,8,3
+        out = _urgency_pick(
+            np.random.default_rng(0), keys, indices, end_month_norm, m_offset=0, size=4,
+        )
+        # Nearest expiry is key 20 (remaining 2); original order would put 10 first.
+        assert out[0] == 20
+        assert list(out) == [20, 40, 10, 30]
+
+    def test_subset_still_urgency_order(self):
+        keys = np.array([10, 20, 30, 40], dtype=np.int64)
+        indices = np.array([0, 1, 2, 3])
+        end_month_norm = np.array([5, 2, 8, 3], dtype=np.int64)
+        out = _urgency_pick(
+            np.random.default_rng(0), keys, indices, end_month_norm, m_offset=0, size=2,
+        )
+        assert list(out) == [20, 40]  # two most urgent
