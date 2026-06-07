@@ -15,14 +15,14 @@ Status: `open` · `confirmed` · `wontfix` · `fixed`
 
 ## ✅ Completed work
 
-Branch: `fix/code-review-findings`. SQL-related findings (TOOLS-1, the SQL-DDL facet of
-SCHEMA-1) are deferred to the end per plan.
+Branch: `fix/code-review-findings`. All findings selected for action are fixed, including the
+SQL-related ones (TOOLS-1 and the SQL-DDL facet of SCHEMA-1, completed in the final SQL pass).
 
 | ID | Sev | What was fixed | Tests |
 |----|-----|----------------|-------|
 | **QR-1** | Medium | Quality report now checks `sales_order_header.SalesOrderNumber` uniqueness/nulls + fact-to-fact FK (returns/complaints → header). Shared `_emit_fk_check` helper. This is the **detector** for CHUNK-1. | `tests/test_quality_report.py::TestSalesOrderIntegrity` |
 | **CHUNK-1** | **High** | Within-day order cursor derived from a stable sort (`_within_day_cursor`) instead of `arange − first_index`, so SalesOrderNumber stays unique across chunks despite the post-sort customer-start clamp. Overflow guard now keys on cursor magnitude. | `tests/test_chunk_id_integrity.py`; verified end-to-end (multi-chunk header SO# unique) |
-| **SCHEMA-1 / ORCH-1** | Medium | `SalesOrderNumber` int32→int64 decision now sized to the real ~8× day-ID space (single `_order_id_int64` threaded to schema + builder + returns); warning re-thresholded. Generation/parquet facet only — SQL DDL `BIGINT` widening deferred to the SQL pass. | `TestBuildWorkerSchemas::test_order_id_int64_*`, `TestBuildSalesReturns::test_int64_*`; verified end-to-end (forced int64 run, all SO# columns int64 + consistent) |
+| **SCHEMA-1 / ORCH-1** | Medium | `SalesOrderNumber` int32→int64 decision now sized to the real ~8× day-ID space (single `_order_id_int64` threaded to schema + builder + returns); warning re-thresholded. Parquet/generation facet. **SQL DDL `BIGINT` widening now also done** (see SCHEMA-1 DDL row below). | `TestBuildWorkerSchemas::test_order_id_int64_*`, `TestBuildSalesReturns::test_int64_*`; verified end-to-end (forced int64 run, all SO# columns int64 + consistent) |
 | **DATES-1** | Medium | Weekly-fiscal (4-4-5) month/quarter boundaries derived arithmetically from the week pattern instead of `groupby` min/max, so partial edge periods report true boundaries (and `FWDayOfMonth`/`FWDayOfQuarter` no longer undercount). Resolves DATES-3's clipping component too. | `tests/test_dates.py::TestWeeklyFiscalColumns::{test_period_length_consistency,test_partial_edge_month_uses_true_boundary}` |
 | **EMP-1** | Medium | Staff `EmployeeKey` encoding (`STAFF_KEY_BASE + StoreKey*1000 + idx`) now guards against the per-store slot spill (>1000 staff) and online-band collision, raising `DimensionError` instead of silently producing duplicate keys / wrong-store decode. | `tests/test_dimensions.py::TestGenerateEmployeeDimension::{test_over_1000_staff_raises_not_silent_collision,test_just_under_1000_staff_stays_unique}` |
 | **BUDGET-2** | Low (perf) | Removed the dead returns micro-agg chain (computed every chunk, never finalized): dropped `micro_aggregate_returns` + `_join_returns_to_sales`, `_maybe_returns_agg`, `add_returns`/`finalize_returns`, and the never-applied `BudgetConfig` fields (`digital_shift`, `physical_shift`, `mix_current_weight`, `mix_prior_weight`, `return_rate_cap`, `report_currency`) across engine/schema/config.yaml/web/docs. | budget/accumulator/schema tests updated (24 pass) |
@@ -32,10 +32,13 @@ SCHEMA-1) are deferred to the end per plan.
 | **WISH-2** | Low | Wishlist SCD2 price lookup now keys version history by `ProductID` (the stable family id, gotcha #25), mirroring the sales resolver, so historical wishlist prices actually resolve. Runner loads `ProductID` under SCD2 and passes the current-product ProductID array. | `tests/test_wishlists.py::TestSCD2PriceLookup` (rewritten to realistic unique-ProductKey-per-version schema) |
 | **CHUNK-2** | Low (doc) | Corrected CLAUDE.md gotcha #3 + a stale `chunk_builder.py` comment: `seal()` is never called in prod (test-only); `State` is per-worker, immutable by convention + process isolation, and per-worker scratch is reassigned post-bind (so sealing in prod would break the pipeline). | doc-only |
 | **SM-2** | Low (doc) | Documented per-line UnitPrice variation within a (product, month) as by-design (UnitPrice is a fact measure; non-SCD2 stochastic snap is per-row) — CLAUDE.md gotcha #26 + `_snap_unit_price` comment. | doc-only |
+| **TOOLS-1** | Medium | Batch facts now written with `lineterminator="\n"` (shared `write_fact_table` + inventory worker + wishlists runner) so the LF rows match the generated `BULK INSERT ROWTERMINATOR='0x0a'`. Was CRLF on Windows → import failure (numeric last col) / silent trailing-`\r` (string). | `tests/test_fact_writers.py::TestBatchFactCsvLineTerminator` |
+| **SCHEMA-1 (DDL facet)** | Medium | Generated SQL DDL now widens `SalesOrderNumber` INT→BIGINT (preserving nullability) for **all** fact tables carrying it — Sales, SalesOrderHeader, SalesOrderDetail, SalesReturn, Complaints — once `sales.total_rows > int32//2`, via a shared `_promote_order_number` helper (header/detail/complaints were previously left as INT). | `tests/test_sql_tools.py::{TestPromoteOrderNumber,TestSalesOrderNumberDDLPromotion}` |
 
-**Remaining (deferred to the end per plan):** the SQL findings — **TOOLS-1** (CRLF vs `ROWTERMINATOR='0x0a'`)
-and the **SCHEMA-1 `BIGINT` DDL facet**. All non-SQL findings selected for action are now fixed; the
-no-action watch-items (SM-3, WORKER-1, DATES-2-weekly, TASK-1) remain as reviewed/not-bugs.
+**Remaining: none.** All selected findings are fixed (the SQL pair, TOOLS-1 + SCHEMA-1 DDL facet, completed
+this pass). The no-action watch-items (SM-3, WORKER-1, WRITER-1, DATES-2-weekly, TASK-1) remain as
+reviewed/not-bugs. One deferred *consolidation* (not a bug) is logged in the WISH-2 section: a shared
+SCD2 version-table builder to unify sales + wishlists (and cover INV-1's ProductKey-keyed ABC rollup).
 
 ---
 
@@ -68,7 +71,11 @@ literal. The dialect abstraction (base/sqlserver/postgres) is clean.
 
 ### TOOLS-1 — CSV row-terminator mismatch on Windows for batch facts
 - **Severity:** Medium (Windows-specific; loud import failure for most tables, silent `\r` for budget)
-- **Status:** confirmed (empirically: pandas `to_csv` → CRLF, pyarrow → LF on this Windows host)
+- **Status:** **fixed** — all batch-fact `to_csv` calls now pass `lineterminator="\n"`: the shared
+  `write_fact_table` (covers BudgetYearly/Monthly + Complaints), `inventory/worker.py`, and
+  `wishlists/runner.py` (single + chunked). Rows are now LF-terminated, matching the generated
+  `BULK INSERT ROWTERMINATOR='0x0a'`. Test: `tests/test_fact_writers.py::TestBatchFactCsvLineTerminator`.
+- **Status (orig):** confirmed (empirically: pandas `to_csv` → CRLF, pyarrow → LF on this Windows host)
 - **Where:** `bulk_load_statement` hardcodes `ROWTERMINATOR = '0x0a'`
   ([dialect/sqlserver.py:73-74](src/tools/sql/dialect/sqlserver.py#L73)); batch facts written CRLF via
   pandas `to_csv` ([shared/writers.py:101-106](src/facts/shared/writers.py#L101-L106),
@@ -117,15 +124,16 @@ Covered end-to-end: all **dimensions**, all **facts**, **engine** (config/runner
 Lower-risk plumbing noted inline as not-deep-read.
 
 **Severity tally:** 1 High (CHUNK-1) · 5 Medium (SCHEMA-1/ORCH-1, DATES-1, EMP-1, QR-1, TOOLS-1) ·
-~15 Low/latent. **Status:** all High + Medium fixed except the SQL-only **TOOLS-1** (deferred). Of
-the Low/latent cluster, the action items are fixed (BUDGET-2, TASK-2, SM-1, DATES-3, WISH-2, CHUNK-2,
-SM-2-doc, plus the earlier latent-correctness/guard batch); **remaining = SQL pass only** (TOOLS-1 +
-the SCHEMA-1 `BIGINT` DDL facet). Watch-items (SM-3, WORKER-1, WRITER-1, DATES-2) reviewed as not-bugs.
+~15 Low/latent. **Status: all selected findings fixed.** High + Medium done (incl. TOOLS-1 and the
+SCHEMA-1 `BIGINT` DDL facet in the final SQL pass); the Low/latent action items done (BUDGET-2, TASK-2,
+SM-1, DATES-3, WISH-2, CHUNK-2, SM-2-doc, plus the earlier latent-correctness/guard batch). Watch-items
+(SM-3, WORKER-1, WRITER-1, DATES-2) reviewed as not-bugs; one SCD2-builder consolidation logged as
+future (non-bug) work in the WISH-2 section.
 
 | ID | Sev | One-liner |
 |----|-----|-----------|
 | ✅ **CHUNK-1** | **High** | ~~Duplicate `SalesOrderNumber` across chunks: start-date clamp breaks the day-ID cursor's sorted-input assumption (multi-chunk + order cols + acquisition).~~ **FIXED** |
-| ✅ **SCHEMA-1 / ORCH-1** | Medium | ~~int64 SO# promotion mis-thresholded; day-IDs hard-cast to int32 → runs >~268M rows crash on overflow.~~ **FIXED** (parquet/generation; SQL DDL `BIGINT` widening deferred to SQL pass) |
+| ✅ **SCHEMA-1 / ORCH-1** | Medium | ~~int64 SO# promotion mis-thresholded; day-IDs hard-cast to int32 → runs >~268M rows crash on overflow.~~ **FIXED** (parquet/generation **and** SQL DDL `BIGINT` widening across all fact tables) |
 | ✅ **DATES-1** | Medium | ~~4-4-5 month/quarter boundaries clipped to data range at partial edge periods (masked by default buffer; exposed at `buffer_years: 0`).~~ **FIXED** (arithmetic boundaries from the week pattern) |
 | **CHUNK-3** | Low-Med | Final-assembly "mixed" path drops null months instead of padding (latent; would error/misalign if a column's presence varies per month). |
 | **RETURNS-1** | Low-Med | Split-return event dates not monotonic by sequence (only if `split_return_rate>0`). |
@@ -142,7 +150,7 @@ the SCHEMA-1 `BIGINT` DDL facet). Watch-items (SM-3, WORKER-1, WRITER-1, DATES-2
 | **WISH-1** | Low-Med | Wishlist selection misc-RNG pool refill headroom (60) < worst-case per-item retry consumption (~251) → latent `IndexError` for high-collision customers. |
 | ✅ **WISH-2** | Low | ~~Wishlist SCD2 price lookup always returns None (detects SCD2 by duplicate ProductKey, but scheme uses unique key per version) → wishlist prices always current, never historical (dead code, graceful fallback).~~ **FIXED** (key version history by ProductID, like the sales resolver) |
 | ✅ **QR-1** | Medium (meta) | ~~Quality report has no uniqueness check on `SalesOrderHeader.SalesOrderNumber` and no fact-to-fact FK check → CHUNK-1's duplicate order numbers pass undetected (false green).~~ **FIXED** |
-| **TOOLS-1** | Medium | Batch facts (budget/inventory/complaints/wishlists) written CRLF by pandas `to_csv` on Windows, but generated BULK INSERT hardcodes `ROWTERMINATOR='0x0a'` (LF) → import failure (numeric last col) or silent trailing-`\r` (string last col). Dims/sales use pyarrow (LF) and are safe. |
+| ✅ **TOOLS-1** | Medium | ~~Batch facts (budget/inventory/complaints/wishlists) written CRLF by pandas `to_csv` on Windows, but generated BULK INSERT hardcodes `ROWTERMINATOR='0x0a'` (LF) → import failure (numeric last col) or silent trailing-`\r` (string last col).~~ **FIXED** (`lineterminator="\n"` on all batch-fact `to_csv`) |
 | **RETURNS-2** | Low | Logistics return reason can leak to on-time orders via CDF boundary overwrite. |
 | **WORKER-1 / WRITER-1** | Low | CSV unquoted; back-compat unsafe cast. (Watch-items, reviewed — not bugs.) |
 | ✅ **TASK-2** | Low | ~~Duplicated SalesChannelKey/TimeKey channel/time logic in columns.py vs task.py.~~ **FIXED** (task.py delegates to columns.py; RNG-equivalent) |

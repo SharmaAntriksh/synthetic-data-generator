@@ -573,14 +573,16 @@ def run_wishlist_pipeline(
         df = pq.read_table(str(pq_path)).to_pandas()
         pq_path.unlink()
 
+        # Force LF: the generated BULK INSERT uses ROWTERMINATOR='0x0a', but pandas
+        # to_csv defaults to CRLF on Windows (trailing \r breaks the last column).
         if _csv_chunk and _csv_chunk > 0 and n_rows > _csv_chunk:
             n_files = 0
             for start in range(0, n_rows, _csv_chunk):
                 chunk_path = wishlists_dir / f"customer_wishlists_{n_files:05d}.csv"
-                df.iloc[start:start + _csv_chunk].to_csv(str(chunk_path), index=False)
+                df.iloc[start:start + _csv_chunk].to_csv(str(chunk_path), index=False, lineterminator="\n")
                 n_files += 1
         else:
-            df.to_csv(str(wishlists_dir / "customer_wishlists.csv"), index=False)
+            df.to_csv(str(wishlists_dir / "customer_wishlists.csv"), index=False, lineterminator="\n")
 
     elif file_format == "deltaparquet" and n_rows > 0:
         table = pq.read_table(str(pq_path))
