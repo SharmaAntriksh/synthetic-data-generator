@@ -28,6 +28,7 @@ import web.shared_state as _state
 router = APIRouter(prefix="/api/config", tags=["config"])
 
 from src.engine.config.config import _VALID_FILE_FORMATS as _VALID_FORMATS
+from src.exceptions import ConfigError
 
 _VALID_SALES_OUTPUTS = {"sales", "sales_order", "both"}
 
@@ -469,7 +470,10 @@ def update_config_yaml(body: ConfigYamlUpdate):
 
     try:
         normalized = normalize_config_yaml(parsed)
-    except (ValueError, KeyError, TypeError, OSError) as exc:
+    except (ConfigError, ValueError, KeyError, TypeError, OSError) as exc:
+        # ConfigError (PipelineError subclass) is the loader's "valid YAML but
+        # invalid/incomplete config" signal; it is not a ValueError, so it must
+        # be caught explicitly or it escapes as an unhandled 500.
         raise HTTPException(400, f"Config normalization failed: {exc}")
     with _state._cfg_lock:
         _state._cfg = normalized

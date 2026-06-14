@@ -633,7 +633,10 @@ class TestThreadSafety:
 
         def yaml_updater(i):
             try:
-                cfg = {"defaults": {"seed": i}, "sales": {"total_rows": 1000 + i}}
+                cfg = {
+                    "defaults": {"seed": i, "dates": {"start": "2024-01-01", "end": "2024-12-31"}},
+                    "sales": {"file_format": "parquet", "total_rows": 1000 + i, "skip_order_cols": False},
+                }
                 text = yaml.safe_dump(cfg)
                 resp = client.post("/api/config/yaml", json={"yaml_text": text})
                 if resp.status_code != 200:
@@ -783,10 +786,10 @@ class TestInputValidationEdgeCases:
         assert data["stores"] == -5
 
     def test_empty_format_string(self, client):
+        # format is a validated enum (unlike free numeric fields such as
+        # customers/stores); an empty/invalid value is rejected with 400.
         resp = client.post("/api/config", json={"values": {"format": ""}})
-        assert resp.status_code == 200
-        data = client.get("/api/config").json()
-        assert data["format"] == ""
+        assert resp.status_code == 400
 
     def test_very_large_sales_rows(self, client):
         resp = client.post("/api/config", json={"values": {"salesRows": 999_999_999}})
@@ -868,7 +871,10 @@ class TestVersionedRoutesExtended:
         assert resp.status_code == 200
 
     def test_v1_post_config_yaml(self, client):
-        cfg = {"defaults": {"seed": 42}, "sales": {"total_rows": 1000}}
+        cfg = {
+            "defaults": {"seed": 42, "dates": {"start": "2024-01-01", "end": "2024-12-31"}},
+            "sales": {"file_format": "parquet", "total_rows": 1000, "skip_order_cols": False},
+        }
         resp = client.post("/v1/api/config/yaml", json={
             "yaml_text": yaml.safe_dump(cfg)
         })

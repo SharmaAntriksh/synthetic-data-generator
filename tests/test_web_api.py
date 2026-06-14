@@ -261,7 +261,7 @@ class TestPostConfigYaml:
         # Post a known config
         cfg = {
             "defaults": {"seed": 777, "dates": {"start": "2024-06-01", "end": "2024-12-31"}},
-            "sales": {"file_format": "csv", "total_rows": 500},
+            "sales": {"file_format": "csv", "total_rows": 500, "skip_order_cols": False},
         }
         resp = client.post("/api/config/yaml", json={"yaml_text": yaml.safe_dump(cfg)})
         assert resp.status_code == 200
