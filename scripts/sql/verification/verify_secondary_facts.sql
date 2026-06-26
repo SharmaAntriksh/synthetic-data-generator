@@ -278,10 +278,13 @@ GROUP BY SubscriptionKey
 HAVING SUM(CAST(IsFirstPeriod AS INT)) <> 1;
 -- EXPECTED: zero rows
 
--- 5e. Trial periods should have PeriodPrice = 0
-SELECT COUNT(*) AS TrialWithNonZeroPrice
-FROM CustomerSubscriptions
-WHERE IsTrialPeriod = 1 AND PeriodPrice <> 0;
+-- 5e. Trial periods are prorated: 0 <= PeriodPrice <= plan CyclePrice
+--     (charged only for the cycle portion after the free trial_days window)
+SELECT COUNT(*) AS TrialPriceOutOfRange
+FROM CustomerSubscriptions s
+JOIN Plans p ON p.PlanKey = s.PlanKey
+WHERE s.IsTrialPeriod = 1
+  AND (s.PeriodPrice < 0 OR s.PeriodPrice > p.CyclePrice + 0.01);
 -- EXPECTED: zero
 
 -- 5f. Churn rate (subscriptions with a churn period / total subscriptions)
@@ -378,7 +381,9 @@ FROM CustomerSubscriptions WHERE PeriodEndDate < PeriodStartDate
 
 UNION ALL
 
-SELECT 'Subscriptions: trial periods have zero price',
-    'IsTrialPeriod=1 rows must have PeriodPrice=0; FAIL = trial charged non-zero',
+SELECT 'Subscriptions: trial periods are discounted',
+    'IsTrialPeriod=1 rows must have 0 <= PeriodPrice <= plan CyclePrice; FAIL = out of range',
     CASE WHEN COUNT(*) = 0 THEN 'PASS' ELSE 'FAIL' END
-FROM CustomerSubscriptions WHERE IsTrialPeriod = 1 AND PeriodPrice <> 0;
+FROM CustomerSubscriptions s
+JOIN Plans p ON p.PlanKey = s.PlanKey
+WHERE s.IsTrialPeriod = 1 AND (s.PeriodPrice < 0 OR s.PeriodPrice > p.CyclePrice + 0.01);

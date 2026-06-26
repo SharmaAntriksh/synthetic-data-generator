@@ -175,13 +175,19 @@ BEGIN
             CASE WHEN @first_period_check = 0 THEN 'PASS' ELSE 'FAIL' END,
             CAST(@first_period_check AS VARCHAR) + ' violations');
 
+        -- Trial periods are prorated (charged only for the cycle portion after
+        -- the free trial_days window), so the price is a discount of the full
+        -- cycle price: 0 <= PeriodPrice <= plan CyclePrice, never above it.
         DECLARE @trial_price_check INT;
-        SELECT @trial_price_check = COUNT(*) FROM dbo.CustomerSubscriptions
-        WHERE IsTrialPeriod = 1 AND PeriodPrice <> 0;
-        INSERT INTO #R VALUES ('Subscriptions', 'Trial periods have zero price',
-            'IsTrialPeriod=1 rows must have PeriodPrice=0',
+        SELECT @trial_price_check = COUNT(*)
+        FROM dbo.CustomerSubscriptions s
+        JOIN dbo.Plans p ON p.PlanKey = s.PlanKey
+        WHERE s.IsTrialPeriod = 1
+          AND (s.PeriodPrice < 0 OR s.PeriodPrice > p.CyclePrice + 0.01);
+        INSERT INTO #R VALUES ('Subscriptions', 'Trial periods are discounted',
+            'IsTrialPeriod=1 rows must have 0 <= PeriodPrice <= plan CyclePrice (prorated trial)',
             CASE WHEN @trial_price_check = 0 THEN 'PASS' ELSE 'FAIL' END,
-            CAST(@trial_price_check AS VARCHAR) + ' non-zero trial prices');
+            CAST(@trial_price_check AS VARCHAR) + ' out-of-range trial prices');
     END
 
     SELECT Category, [Check], Description, Result, ActualValue FROM #R;

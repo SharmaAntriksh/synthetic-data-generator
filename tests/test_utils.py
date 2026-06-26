@@ -760,6 +760,27 @@ class TestSlugifyDomainLabel:
         assert len(result) <= 63
 
 
+class TestOrgDomainLabel:
+    def test_uses_first_word_only(self):
+        from src.utils.name_pools import org_domain_label
+        # Drops the descriptors + legal suffix, keeps just the brand word.
+        assert org_domain_label("Meadowstone Studios Manufacturing LLC") == "meadowstone"
+        assert org_domain_label("Northstar Logistics Ltd") == "northstar"
+
+    def test_single_word_unchanged(self):
+        from src.utils.name_pools import org_domain_label
+        assert org_domain_label("Acme") == "acme"
+
+    def test_much_shorter_than_full_slug(self):
+        from src.utils.name_pools import org_domain_label
+        name = "Premier Mountainview Studios Enterprises LLC"
+        assert len(org_domain_label(name)) < len(slugify_domain_label(name))
+
+    def test_empty_falls_back(self):
+        from src.utils.name_pools import org_domain_label
+        assert org_domain_label("") == ""
+
+
 # ===================================================================
 # 5. output_utils
 # ===================================================================

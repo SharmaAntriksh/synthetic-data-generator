@@ -13,12 +13,11 @@ from src.defaults import (
     CUSTOMER_MAX_CHILDREN as MAX_CHILDREN,
     CUSTOMER_INCOME_GROUP_EDGES as INCOME_GROUP_EDGES,
     CUSTOMER_INCOME_GROUP_LABELS as INCOME_GROUP_LABELS,
-    CUSTOMER_REGION_LAT_LON_CENTER as _REGION_LAT_LON_CENTER,
-    CUSTOMER_LAT_LON_JITTER as _LAT_LON_JITTER,
-    CUSTOMER_POSTCODE_FMT as _POSTCODE_FMT,
+    CUSTOMER_CITY_LATLON_JITTER as _CITY_LATLON_JITTER,
     CUSTOMER_STREET_NAMES as _STREET_NAMES,
     CUSTOMER_STREET_TYPES as _STREET_TYPES,
 )
+from src.dimensions.customers.helpers import postal_code_for_country
 
 
 def _income_to_group(income: float) -> str:
@@ -65,11 +64,12 @@ def _available_events(state: dict, tier_keys: np.ndarray) -> list:
 
 
 def _resolve_geo(gk, geo_lookup, _geo_cache: dict = None):
-    """Return (country, city, state, region) for a GeographyKey.
+    """Return (country, city, state, region, lat, lon) for a GeographyKey.
 
     Prefers the pre-built dict cache, then a dict-shaped geo_lookup, then a
-    DataFrame-indexed geo_lookup. Returns ("", "Unknown", "Unknown", None)
-    on miss; region is None when the upstream cache predates ISOCode.
+    DataFrame-indexed geo_lookup. Returns ("", "Unknown", "Unknown", None, None,
+    None) on miss; region is None when the cache predates ISOCode and lat/lon are
+    None when it predates coordinates.
     """
     cache = _geo_cache if _geo_cache is not None else (
         geo_lookup if isinstance(geo_lookup, dict) else None
@@ -77,15 +77,19 @@ def _resolve_geo(gk, geo_lookup, _geo_cache: dict = None):
     if cache is not None:
         entry = cache.get(gk)
         if entry is None:
-            return ("", "Unknown", "Unknown", None)
+            return ("", "Unknown", "Unknown", None, None, None)
         country, city, st = entry[0], entry[1], entry[2]
         region = entry[3] if len(entry) >= 4 else None
-        return (country, city, st, region)
+        lat = entry[4] if len(entry) >= 5 else None
+        lon = entry[5] if len(entry) >= 6 else None
+        return (country, city, st, region, lat, lon)
     # DataFrame fallback (legacy)
     if hasattr(geo_lookup, "index") and gk in geo_lookup.index:
         row = geo_lookup.loc[gk]
-        return (str(row["Country"]), str(row["City"]), str(row["State"]), None)
-    return ("", "Unknown", "Unknown", None)
+        lat = float(row["Latitude"]) if "Latitude" in geo_lookup.columns else None
+        lon = float(row["Longitude"]) if "Longitude" in geo_lookup.columns else None
+        return (str(row["Country"]), str(row["City"]), str(row["State"]), None, lat, lon)
+    return ("", "Unknown", "Unknown", None, None, None)
 
 
 def _relocate(rng: np.random.Generator, state: dict,
@@ -96,11 +100,12 @@ def _relocate(rng: np.random.Generator, state: dict,
     HomeAddress always changes on relocation.  WorkAddress only changes
     when the customer moves to a different country (cross-country
     relocation implies a job change; within the same country, the old
-    workplace is still reachable).
+    workplace is still reachable). Addresses are street-line only — City/State
+    come from GeographyKey.
 
     geo_lookup can be a pd.DataFrame (legacy) or a dict (fast path).
     _geo_cache is an optional pre-built dict
-        {GeographyKey: (Country, City, State, region_code)}.
+        {GeographyKey: (Country, City, State, region_code, lat, lon)}.
     region_pools is an optional dict
         {region_code: (gk_array, weights_array)} — when present, the new
         GeographyKey is sampled from the customer's current region with
@@ -108,7 +113,7 @@ def _relocate(rng: np.random.Generator, state: dict,
         back to uniform sampling over all geo_keys.
     """
     old_gk = state.get("GeographyKey")
-    old_country, _, _, old_region = _resolve_geo(old_gk, geo_lookup, _geo_cache)
+    old_country, _, _, old_region, _, _ = _resolve_geo(old_gk, geo_lookup, _geo_cache)
 
     if region_pools and old_region in region_pools:
         pool_keys, pool_weights = region_pools[old_region]
@@ -117,44 +122,35 @@ def _relocate(rng: np.random.Generator, state: dict,
         new_gk = int(rng.choice(geo_keys))
     state["GeographyKey"] = new_gk
 
-    new_country, city, st, new_region = _resolve_geo(new_gk, geo_lookup, _geo_cache)
+    new_country, _city, _st, _new_region, new_lat, new_lon = _resolve_geo(
+        new_gk, geo_lookup, _geo_cache,
+    )
     cross_country = old_country != new_country
 
-    def _make_address(c, s):
+    def _make_address():
         sn = str(rng.integers(1, 9999))
         sname = str(rng.choice(_STREET_NAMES))
         stype = str(rng.choice(_STREET_TYPES))
         ulabel = str(rng.choice(np.array(["Apt", "Suite", "Unit", "Fl", "#"])))
         unum = str(state.get("CustomerID", 0))
-        return f"{sn} {sname} {stype}, {ulabel} {unum}, {c}, {s}"
+        return f"{sn} {sname} {stype}, {ulabel} {unum}"
 
-    state["HomeAddress"] = _make_address(city, st)
+    state["HomeAddress"] = _make_address()
     if cross_country:
-        state["WorkAddress"] = _make_address(city, st)
+        state["WorkAddress"] = _make_address()
 
-    # Region code drives lat/lon center and postal code format. Sourced from
-    # ISO code via the cache so it covers every country in the geography dim,
-    # not just the eight in the legacy hardcoded map.
-    rc = new_region or "US"
+    # Lat/Lon: anchor on the new city's real centroid (+ small jitter) when the
+    # cache carries coordinates; legacy caches without them leave lat/lon as-is.
+    if new_lat is not None and new_lon is not None:
+        state["Latitude"] = round(
+            float(new_lat + rng.uniform(-_CITY_LATLON_JITTER, _CITY_LATLON_JITTER)), 4
+        )
+        state["Longitude"] = round(
+            float(new_lon + rng.uniform(-_CITY_LATLON_JITTER, _CITY_LATLON_JITTER)), 4
+        )
 
-    # Regenerate lat/lon
-    clat, clon = _REGION_LAT_LON_CENTER.get(rc, (39.8, -98.5))
-    jlat, jlon = _LAT_LON_JITTER.get(rc, (5.0, 5.0))
-    state["Latitude"] = round(float(clat + rng.uniform(-jlat, jlat)), 4)
-    state["Longitude"] = round(float(clon + rng.uniform(-jlon, jlon)), 4)
-
-    # Regenerate postal code
-    fmt = _POSTCODE_FMT.get(rc, "5digit")
-    if fmt == "5digit":
-        state["PostalCode"] = f"{rng.integers(10001, 99999):05d}"
-    elif fmt == "6digit":
-        state["PostalCode"] = f"{rng.integers(100001, 999999):06d}"
-    elif fmt == "uk":
-        pfx = str(rng.choice(np.array(["SW", "EC", "W", "SE", "N", "NW", "E", "WC"])))
-        state["PostalCode"] = f"{pfx}{rng.integers(1, 19)} {rng.integers(1, 9)}{chr(rng.integers(65, 91))}{chr(rng.integers(65, 91))}"
-    elif fmt == "jp":
-        v = int(rng.integers(1000000, 9999999))
-        state["PostalCode"] = f"{v // 10000:03d}-{v % 10000:04d}"
+    # Postal code in the new country's real format.
+    state["PostalCode"] = postal_code_for_country(rng, new_country)
 
 
 def _apply_life_event(
@@ -243,11 +239,12 @@ def _vectorize_iso_to_region(iso_arr: np.ndarray) -> np.ndarray:
 
 
 def _build_geo_cache(geo_lookup) -> dict:
-    """Build {GeographyKey: (Country, City, State, region_code)} cache.
+    """Build {GeographyKey: (Country, City, State, region_code, lat, lon)} cache.
 
     region_code is derived from ISOCode via region_from_iso_code so the cache
-    covers every country in the geography dim. Falls back to a 3-tuple when
-    geo_lookup lacks ISOCode (legacy callers).
+    covers every country in the geography dim; lat/lon are the city centroids
+    used by relocation. Falls back to shorter tuples when geo_lookup lacks
+    ISOCode / coordinates (legacy callers); _resolve_geo tolerates short tuples.
     """
     if isinstance(geo_lookup, dict):
         return geo_lookup
@@ -258,10 +255,15 @@ def _build_geo_cache(geo_lookup) -> dict:
     country = geo_lookup["Country"].astype(str).to_numpy()
     city = geo_lookup["City"].astype(str).to_numpy()
     state = geo_lookup["State"].astype(str).to_numpy()
-    if "ISOCode" in geo_lookup.columns:
-        region = _vectorize_iso_to_region(geo_lookup["ISOCode"].astype(str).to_numpy())
-        return dict(zip(keys, zip(country, city, state, region)))
-    return dict(zip(keys, zip(country, city, state)))
+    if "ISOCode" not in geo_lookup.columns:
+        return dict(zip(keys, zip(country, city, state)))
+
+    region = _vectorize_iso_to_region(geo_lookup["ISOCode"].astype(str).to_numpy())
+    if "Latitude" in geo_lookup.columns and "Longitude" in geo_lookup.columns:
+        lat = geo_lookup["Latitude"].to_numpy(dtype="float64")
+        lon = geo_lookup["Longitude"].to_numpy(dtype="float64")
+        return dict(zip(keys, zip(country, city, state, region, lat, lon)))
+    return dict(zip(keys, zip(country, city, state, region)))
 
 
 def _build_region_pools(geography: pd.DataFrame) -> dict:

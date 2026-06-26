@@ -21,14 +21,18 @@ _CYCLE_MONTHS = {
 
 # Category mapping: PlanType -> higher-level Category for analytics
 _CATEGORY_MAP = {
-    "Streaming":     "Entertainment",
-    "Gaming":        "Entertainment",
-    "Fitness":       "Health",
-    "Cloud Storage": "Productivity",
-    "Education":     "Productivity",
-    "News & Media":  "Information",
-    "Music":         "Entertainment",
-    "Productivity":  "Productivity",
+    "Streaming":        "Entertainment",
+    "Gaming":           "Entertainment",
+    "Fitness":          "Health",
+    "Cloud Storage":    "Productivity",
+    "Education":        "Productivity",
+    "News & Media":     "Information",
+    "Music":            "Entertainment",
+    "Productivity":     "Productivity",
+    "VPN":              "Security",
+    "Password Manager": "Security",
+    "Audiobooks":       "Entertainment",
+    "Meal Kit":         "Lifestyle",
 }
 
 # Base plan definitions: (PlanName, PlanType, BaseMonthlyPrice, Tier, MaxUsers, HasFreeTrial, LaunchDayOffset)
@@ -57,6 +61,14 @@ _BASE_PLANS: List[Tuple[str, str, float, str, int, int, int]] = [
     # Productivity — Microsoft 365
     ("Microsoft 365",           "Productivity",    6.99, "Standard", 1, 0,  45),
     ("Microsoft 365 Business",  "Productivity",   12.50, "Premium", 25, 0, 210),
+    # VPN — NordVPN
+    ("NordVPN",                 "VPN",            11.99, "Standard", 6, 1, 200),
+    # Password manager — 1Password
+    ("1Password Families",      "Password Manager", 4.99, "Standard", 5, 1, 300),
+    # Audiobooks — Audible
+    ("Audible",                 "Audiobooks",     14.95, "Standard", 1, 1, 100),
+    # Meal kit — HelloFresh
+    ("HelloFresh",              "Meal Kit",       49.99, "Standard", 4, 0, 250),
 ]
 
 # Which billing cycles each base plan supports
@@ -65,6 +77,10 @@ _PLAN_CYCLES: Dict[str, List[str]] = {
     "Netflix Premium":         ["Monthly", "Quarterly", "Annual"],
     "Spotify":                 ["Monthly", "Quarterly"],
     "Spotify Family":          ["Monthly", "Annual"],
+    "NordVPN":                 ["Monthly", "Annual"],
+    "1Password Families":      ["Monthly", "Annual"],
+    "Audible":                 ["Monthly", "Annual"],
+    "HelloFresh":              ["Monthly", "Quarterly"],
     "Dropbox Plus":            ["Monthly"],
     "Dropbox Business":        ["Monthly", "Quarterly", "Annual"],
     "Peloton":                 ["Monthly", "Quarterly"],
@@ -108,6 +124,10 @@ _PLAN_TYPE_WEIGHT = {
     "Fitness": 1.5,
     "Education": 1.5,
     "Productivity": 2.5,
+    "VPN": 2.0,
+    "Password Manager": 1.5,
+    "Audiobooks": 2.0,
+    "Meal Kit": 1.0,
 }
 
 PAYMENT_METHODS = ["Credit Card", "Debit Card", "PayPal", "Bank Transfer"]

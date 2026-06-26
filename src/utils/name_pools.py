@@ -121,6 +121,16 @@ def slugify_domain_label(s: str) -> str:
     return t[:63] if len(t) > 63 else t  # keep reasonable domain label length
 
 
+def org_domain_label(s: str) -> str:
+    """Short, brand-like domain label from the FIRST word of an org name (not
+    the full name): 'Northstar Logistics Ltd' -> 'northstar'. This drops the
+    trailing descriptors and legal suffix (LLC/GmbH/AG/...) automatically, since
+    they are never the first token. Callers append a key suffix for uniqueness.
+    """
+    parts = str(s).split()
+    return slugify_domain_label(parts[0] if parts else str(s))
+
+
 def assign_org_names(
     *,
     keys: np.ndarray,
@@ -505,5 +515,6 @@ __all__ = [
     "resolve_org_names_file",
     "load_org_names",
     "slugify_domain_label",
+    "org_domain_label",
     "assign_org_names",
 ]

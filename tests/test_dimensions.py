@@ -1013,6 +1013,8 @@ class TestCustomerGenerator:
             "State": [f"State{i}" for i in range(1, n + 1)],
             "Country": ["United States"] * 5 + ["United Kingdom"] * 3 + ["India"] * 2,
             "ISOCode": ["USD"] * 5 + ["GBP"] * 3 + ["INR"] * 2,
+            "Latitude": [round(40.0 + i * 0.5, 4) for i in range(n)],
+            "Longitude": [round(-100.0 + i * 0.5, 4) for i in range(n)],
         })
 
     def _fake_loyalty_tiers(self):
@@ -1135,7 +1137,7 @@ class TestCustomerGenerator:
         cfg = self._minimal_cfg(n=200)
         cfg["customers"]["pct_org"] = 10  # 10%
         customers_df, *_ = self._run(cfg)
-        org_count = (customers_df["Gender"] == "Org").sum()
+        org_count = (customers_df["Gender"] == "O").sum()
         assert org_count > 0, "Expected some organization customers"
 
     def test_no_nan_in_customer_key(self):
@@ -1166,9 +1168,354 @@ class TestCustomerGenerator:
         cfg = self._minimal_cfg(n=100)
         cfg["customers"]["pct_org"] = 15
         customers_df, *_ = self._run(cfg)
-        org_mask = customers_df["Gender"] == "Org"
+        org_mask = customers_df["Gender"] == "O"
         assert (customers_df.loc[org_mask, "CustomerType"] == "Organization").all()
         assert (customers_df.loc[~org_mask, "CustomerType"] == "Individual").all()
+
+    def test_gender_codes(self):
+        """Gender is emitted as single-char codes: M/F for persons, O for orgs."""
+        cfg = self._minimal_cfg(n=200)
+        cfg["customers"]["pct_org"] = 15
+        customers_df, *_ = self._run(cfg)
+        assert set(customers_df["Gender"].unique()).issubset({"M", "F", "O"})
+        person_mask = customers_df["CustomerType"] == "Individual"
+        assert set(customers_df.loc[person_mask, "Gender"].unique()).issubset({"M", "F"})
+        assert (customers_df.loc[~person_mask, "Gender"] == "O").all()
+
+    def test_phone_number_uniform_10_digits(self):
+        """PhoneNumber is a uniform 10-digit string with no country/region code."""
+        cfg = self._minimal_cfg(n=100)
+        customers_df, *_ = self._run(cfg)
+        assert customers_df["PhoneNumber"].str.match(r"^\d{10}$").all()
+
+    def test_marketing_consent_channels(self):
+        """OptInMarketing replaced by per-channel consent flags; newsletter needs email consent."""
+        cfg = self._minimal_cfg(n=500)
+        _customers, profile_df, *_ = self._run(cfg)
+        assert "OptInMarketing" not in profile_df.columns
+        for col in ("ConsentEmail", "ConsentSMS", "ConsentCall"):
+            assert col in profile_df.columns
+            assert profile_df[col].dtype == bool
+        # Email is granted most, then SMS, then call (shared receptiveness gate).
+        assert profile_df["ConsentEmail"].sum() >= profile_df["ConsentSMS"].sum() \
+            >= profile_df["ConsentCall"].sum()
+        # No newsletter without email consent.
+        no_email = ~profile_df["ConsentEmail"]
+        assert (profile_df.loc[no_email, "NewsletterFrequency"] == "None").all()
+
+    def test_address_street_line_only(self):
+        """Home/Work addresses are street-line only (no embedded city/state)."""
+        cfg = self._minimal_cfg(n=100)
+        customers_df, *_ = self._run(cfg)
+        pat = r"^\d+ .+, (Apt|Suite|Unit|Fl|#) \d+$"
+        assert customers_df["HomeAddress"].str.match(pat).all()
+        assert customers_df["WorkAddress"].str.match(pat).all()
+        # Fixture city/state names must not appear in the address string.
+        assert not customers_df["HomeAddress"].str.contains(r"City\d|State\d").any()
+
+    def test_postal_code_per_country(self):
+        """Postal format matches the customer's actual country, not a region bucket."""
+        cfg = self._minimal_cfg(n=300)
+        customers_df, *_ = self._run(cfg)
+        geo = self._fake_geography()
+        key_to_country = dict(zip(geo["GeographyKey"], geo["Country"]))
+        country = customers_df["GeographyKey"].map(key_to_country)
+        assert not customers_df["PostalCode"].isna().any()
+        # United States -> 5 digits, India -> 6 digits, United Kingdom -> alphanumeric.
+        assert customers_df.loc[country == "United States", "PostalCode"].str.match(r"^\d{5}$").all()
+        assert customers_df.loc[country == "India", "PostalCode"].str.match(r"^\d{6}$").all()
+        assert customers_df.loc[country == "United Kingdom", "PostalCode"].str.match(
+            r"^[A-Z]{1,2}\d{1,2} \d[A-Z]{2}$"
+        ).all()
+
+    def test_lat_lon_anchored_on_city(self):
+        """Customer coordinates sit within jitter of their city's centroid."""
+        cfg = self._minimal_cfg(n=200)
+        customers_df, *_ = self._run(cfg)
+        geo = self._fake_geography()
+        exp_lat = customers_df["GeographyKey"].map(dict(zip(geo["GeographyKey"], geo["Latitude"])))
+        exp_lon = customers_df["GeographyKey"].map(dict(zip(geo["GeographyKey"], geo["Longitude"])))
+        assert ((customers_df["Latitude"] - exp_lat).abs() <= 0.1501).all()
+        assert ((customers_df["Longitude"] - exp_lon).abs() <= 0.1501).all()
+
+    def test_birth_city_same_country(self):
+        """BirthCity is a real city; for non-moved heads it matches their country."""
+        cfg = self._minimal_cfg(n=300)
+        customers_df, profile_df, *_ = self._run(cfg)
+        geo = self._fake_geography()
+        assert profile_df["BirthCity"].isin(geo["City"]).all()
+        key_to_country = dict(zip(geo["GeographyKey"], geo["Country"]))
+        city_to_country = dict(zip(geo["City"], geo["Country"]))
+        merged = profile_df.merge(
+            customers_df[["CustomerKey", "GeographyKey", "HouseholdRole"]],
+            on="CustomerKey", how="left",
+        )
+        # Heads keep their own geography; spouses/dependents inherit the head's,
+        # which can legitimately differ from their birth country.
+        heads = merged[merged["HouseholdRole"] == "Head"]
+        cur = heads["GeographyKey"].map(key_to_country)
+        birth = heads["BirthCity"].map(city_to_country)
+        assert (birth == cur).all()
+
+    def test_name_split_columns(self):
+        """Name split into Title/First/Middle/Last/FullName; CustomerName removed."""
+        cfg = self._minimal_cfg(n=300)
+        cfg["customers"]["pct_org"] = 12
+        customers_df, *_ = self._run(cfg)
+        assert "CustomerName" not in customers_df.columns
+        for col in ("Title", "FirstName", "MiddleName", "LastName", "FullName"):
+            assert col in customers_df.columns
+        person = customers_df["CustomerType"] == "Individual"
+        org = ~person
+        assert customers_df.loc[person, "FirstName"].notna().all()
+        assert customers_df.loc[person, "LastName"].notna().all()
+        assert customers_df["FullName"].notna().all()
+        # Orgs carry the org name in FullName but no personal name parts/title.
+        assert customers_df.loc[org, "FirstName"].isna().all()
+        assert customers_df.loc[org, "Title"].isna().all()
+        # FullName for persons is "First Last".
+        expect = (customers_df.loc[person, "FirstName"].astype(str) + " "
+                  + customers_df.loc[person, "LastName"].astype(str))
+        assert (customers_df.loc[person, "FullName"] == expect).all()
+
+    def test_middle_name_sparse(self):
+        """MiddleName is a sparse single initial (~35% of persons)."""
+        cfg = self._minimal_cfg(n=1000)
+        customers_df, *_ = self._run(cfg)
+        person = customers_df["CustomerType"] == "Individual"
+        mid = customers_df.loc[person, "MiddleName"]
+        assert 0.25 < mid.notna().mean() < 0.45
+        assert mid.dropna().str.match(r"^[A-Z]\.$").all()
+
+    def test_title_salutation(self):
+        """Title is a salutation for persons, null for orgs."""
+        cfg = self._minimal_cfg(n=300)
+        cfg["customers"]["pct_org"] = 12
+        customers_df, *_ = self._run(cfg)
+        person = customers_df["CustomerType"] == "Individual"
+        titles = set(customers_df.loc[person, "Title"].dropna().unique())
+        # Gendered salutations + small Dr overlay; no gender-neutral Mx (Gender
+        # is strictly M/F/O).
+        assert titles.issubset({"Mr", "Mrs", "Ms", "Dr"})
+        assert "Mx" not in titles
+        assert customers_df.loc[person, "Title"].notna().all()
+        assert customers_df.loc[~person, "Title"].isna().all()
+
+    def test_title_consistent_with_marital_after_household(self):
+        """Spouse marital-status writeback keeps Title in step: no Married person
+        carries the single-female 'Ms' salutation (AN-4a follow-up)."""
+        cfg = self._minimal_cfg(n=600)
+        customers_df, *_ = self._run(cfg)
+        married = customers_df["MaritalStatus"] == "Married"
+        assert (customers_df.loc[married, "Title"] != "Ms").all()
+        # spouses (a population that includes originally-Single people) are Married
+        spouses = customers_df[customers_df["HouseholdRole"] == "Spouse"]
+        assert len(spouses) > 0
+        assert (spouses["MaritalStatus"] == "Married").all()
+        assert (spouses["Title"] != "Ms").all()
+
+    # --- CUST-AN-3: income realism (age curve, regional, high-earner tail) ---
+    @staticmethod
+    def _income_inputs(n, label_edu, label_occ):
+        edu = np.array([label_edu] * n, dtype=object)
+        occ = np.array([label_occ] * n, dtype=object)
+        return edu, occ, np.ones(n, dtype=bool)
+
+    def test_income_age_experience_curve(self):
+        """Holding education/occupation fixed, income rises through mid-career
+        then tapers toward retirement (AN-3 experience curve)."""
+        from src.dimensions.customers.helpers import generate_correlated_income
+        rng = np.random.default_rng(7)
+        n = 40000
+        edu, occ, pmask = self._income_inputs(n, "Bachelors", "Professional")
+        region = np.array(["US"] * n, dtype=object)
+        means = [
+            generate_correlated_income(
+                rng, edu, occ, pmask, n,
+                age_bracket=np.full(n, b), region=region,
+            ).mean()
+            for b in range(6)
+        ]
+        # 18-24 well below mid-career; a peak in the 45-54 band; taper at 65+.
+        assert means[0] < means[1] < means[2] < means[3]
+        assert means[5] < means[3]
+
+    def test_income_regional_adjustment(self):
+        """Same age/education draws scale down US > EU > AS > IN (AN-3)."""
+        from src.dimensions.customers.helpers import generate_correlated_income
+        rng = np.random.default_rng(11)
+        n = 40000
+        edu, occ, pmask = self._income_inputs(n, "Bachelors", "Professional")
+        ab = np.full(n, 2)
+        m = {
+            r: generate_correlated_income(
+                rng, edu, occ, pmask, n,
+                age_bracket=ab, region=np.array([r] * n, dtype=object),
+            ).mean()
+            for r in ("US", "EU", "AS", "IN")
+        }
+        assert m["US"] > m["EU"] > m["AS"] > m["IN"]
+
+    def test_income_high_earner_tail_preserved(self):
+        """The raised clip lets a varied high-earner tail (>200K) survive rather
+        than piling onto a single 200K wall (AN-3)."""
+        from src.dimensions.customers.helpers import generate_correlated_income
+        from src.defaults import CUSTOMER_INCOME_MAX
+        rng = np.random.default_rng(3)
+        n = 60000
+        edu, occ, pmask = self._income_inputs(n, "PhD", "Executive")
+        inc = generate_correlated_income(
+            rng, edu, occ, pmask, n,
+            age_bracket=np.full(n, 3), region=np.array(["US"] * n, dtype=object),
+        )
+        high = inc[inc > 200_000]
+        assert high.size > 0
+        assert np.unique(high).size > 5          # a spread, not a clipped wall
+        assert inc.max() <= CUSTOMER_INCOME_MAX
+
+    # --- CUST-AN-4: household <-> demographic consistency ---
+    def test_household_spouse_is_married(self):
+        """A matched Spouse is recorded as Married, never Single (AN-4a)."""
+        cfg = self._minimal_cfg(n=600)
+        customers_df, *_ = self._run(cfg)
+        spouses = customers_df[customers_df["HouseholdRole"] == "Spouse"]
+        assert len(spouses) > 0
+        assert (spouses["MaritalStatus"] == "Married").all()
+
+    def test_household_members_inherit_head_geo_profile(self):
+        """Moved members take the head's region-derived profile columns, so no
+        stale pre-move timezone/language/distance survives (AN-4b)."""
+        cfg = self._minimal_cfg(n=600)
+        customers_df, profile_df, *_ = self._run(cfg)
+        merged = profile_df.merge(
+            customers_df[["CustomerKey", "HouseholdKey", "HouseholdRole"]],
+            on="CustomerKey", how="left",
+        )
+        cols = ["TimeZone", "PreferredLanguage", "UrbanRural",
+                "DistanceToNearestStoreKm"]
+        heads = merged[merged["HouseholdRole"] == "Head"][["HouseholdKey"] + cols]
+        heads = heads.rename(columns={c: f"head_{c}" for c in cols})
+        members = merged[merged["HouseholdRole"].isin(["Spouse", "Dependent"])].merge(
+            heads, on="HouseholdKey", how="inner",
+        )
+        assert len(members) > 0
+        for c in cols:
+            assert (members[c] == members[f"head_{c}"]).all()
+
+    def test_dependent_income_capped(self):
+        """Dependents are capped at the entry-level ceiling while non-dependents
+        can exceed it (AN-4c)."""
+        from src.defaults import CUSTOMER_DEPENDENT_INCOME_CAP
+        cfg = self._minimal_cfg(n=800)
+        customers_df, *_ = self._run(cfg)
+        deps = customers_df[customers_df["HouseholdRole"] == "Dependent"]
+        assert len(deps) > 0
+        dep_inc = deps["YearlyIncome"].dropna().astype("int64")
+        assert (dep_inc <= CUSTOMER_DEPENDENT_INCOME_CAP).all()
+        nondep_inc = customers_df[
+            (customers_df["CustomerType"] == "Individual")
+            & (customers_df["HouseholdRole"] != "Dependent")
+        ]["YearlyIncome"].dropna().astype("int64")
+        assert (nondep_inc > CUSTOMER_DEPENDENT_INCOME_CAP).any()
+
+    # --- CUST-AN-5: senior segment no longer truncated at 70 ---
+    def test_age_distribution_has_senior_tail(self):
+        """Ages span a realistic pyramid with a thinning 70-85 senior tail
+        instead of a hard uniform cut at 70 (AN-5)."""
+        from src.defaults import CUSTOMER_AGE_MAX_YEARS
+        cfg = self._minimal_cfg(n=3000)
+        customers_df, *_ = self._run(cfg)
+        end = pd.Timestamp(cfg["defaults"]["dates"]["end"])
+        person = customers_df["CustomerType"] == "Individual"
+        dob = customers_df.loc[person, "DOB"].dropna()
+        age = (end - pd.to_datetime(dob)).dt.days / 365.25
+        assert age.max() > 70                       # seniors past 70 now exist
+        assert age.max() <= CUSTOMER_AGE_MAX_YEARS + 0.2
+        assert (age >= 70).mean() > 0.02            # a real (thin) senior tail
+        assert (age >= 70).mean() < 0.20            # but not over-weighted
+        assert age.min() >= 18
+
+    # --- CUST-AN-7: parallel chunk count is worker-count independent ---
+    def test_chunk_count_depends_only_on_n(self):
+        """The parallel chunk count is a pure function of N (no worker arg), so
+        --workers can't reshuffle the per-chunk RNG streams (AN-7)."""
+        from src.dimensions.customers.generator import _customer_chunk_count
+        assert _customer_chunk_count(10_000) == 2          # floored at 2
+        assert _customer_chunk_count(150_000) == 3         # 150000 // 50000
+        assert _customer_chunk_count(1_000_000) == 20
+        assert _customer_chunk_count(10_000_000) == 64     # capped
+        assert _customer_chunk_count(100_000_000) == 64
+        # monotonic non-decreasing in N
+        prev = 0
+        for n in (200_000, 500_000, 2_000_000, 50_000_000):
+            cur = _customer_chunk_count(n)
+            assert cur >= prev
+            prev = cur
+
+    def test_scd2_chunk_count_depends_only_on_changed(self):
+        """SCD2 expansion chunk count is a pure function of the changed-row count
+        (no worker arg), so --workers can't reshuffle the version history
+        (AN-7, SCD2 path)."""
+        from src.dimensions.customers.generator import _scd2_chunk_count
+        assert _scd2_chunk_count(1_000) == 2            # floored at 2
+        assert _scd2_chunk_count(15_000) == 3           # 15000 // 5000
+        assert _scd2_chunk_count(600_000) == 64         # capped
+        prev = 0
+        for n in (20_000, 100_000, 1_000_000):
+            cur = _scd2_chunk_count(n)
+            assert cur >= prev
+            prev = cur
+
+    # --- CUST-AN-9: email uniqueness rests on a globally-unique key suffix ---
+    def test_email_unique_with_global_keys(self):
+        """build_email_addresses yields unique emails for unique keys even when
+        names collide — the property the parallel orchestrator relies on when it
+        rebuilds emails against the post-merge global key (AN-9)."""
+        from src.dimensions.customers.generator import build_email_addresses
+        rng = np.random.default_rng(0)
+        n = 5000
+        first = np.array(["John"] * n, dtype=object)   # deliberately identical
+        last = np.array(["Smith"] * n, dtype=object)
+        em = build_email_addresses(
+            rng, safe_first=first, safe_last=last,
+            org_name=np.array([None] * n, dtype=object),
+            keys=np.arange(1, n + 1), is_org=np.zeros(n, dtype=bool),
+        )
+        assert len(set(em.tolist())) == n
+        assert all("@" in e for e in em)
+
+    # --- CUST-AN-10: robust normalization keeps derived buckets non-degenerate ---
+    def test_robust_unit_norm_fixed_reference(self):
+        """Normalization is against a FIXED reference, so the mapping is
+        identical regardless of N and of how the data is chunked (AN-10)."""
+        from src.dimensions.customers.generator import (
+            _robust_unit_norm, lognormal_p95_ref,
+        )
+        ref = lognormal_p95_ref(0.6)
+        rng = np.random.default_rng(1)
+        small = rng.lognormal(0.0, 0.6, 20_000)
+        large = rng.lognormal(0.0, 0.6, 1_000_000)
+        # Same value -> same normalized result no matter which array it's in.
+        x = np.array([0.5, 1.0, ref, 10.0])
+        assert np.allclose(_robust_unit_norm(x, ref), np.clip(x / ref, 0, 1))
+        assert _robust_unit_norm(np.array([ref]), ref)[0] == 1.0   # p95 -> ~1.0
+        # The bulk is spread across [0,1], stable across N (by construction).
+        ms, ml = _robust_unit_norm(small, ref).mean(), _robust_unit_norm(large, ref).mean()
+        assert 0.2 < ms < 0.65 and abs(ms - ml) < 0.02
+        # max-normalization (the old degenerate approach) compresses far more.
+        assert (large / large.max()).mean() < ml
+
+    def test_spend_and_churn_buckets_populated(self):
+        """AnnualSpendBucket and ChurnRisk populate every tier instead of
+        collapsing onto Low (AN-10)."""
+        cfg = self._minimal_cfg(n=4000)
+        _, profile_df, *_ = self._run(cfg)
+        sb = profile_df["AnnualSpendBucket"].value_counts(normalize=True)
+        for tier in ("Low", "Medium", "High", "VIP"):
+            assert sb.get(tier, 0) > 0.005, f"spend tier {tier} empty"
+        cr = profile_df["ChurnRisk"].value_counts(normalize=True)
+        for tier in ("Low", "Medium", "High"):
+            assert cr.get(tier, 0) > 0.005, f"churn tier {tier} empty"
 
 
 # ===================================================================

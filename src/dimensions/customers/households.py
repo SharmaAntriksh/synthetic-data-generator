@@ -69,8 +69,9 @@ def assign_households(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Assign HouseholdKey and HouseholdRole for all customers.
 
-    Mutates *geography_key* in place so household members share
-    the same geography.
+    Mutates *geography_key* in place so household members share the same
+    geography, and *marital_status* in place so anyone matched as a Spouse is
+    recorded as Married (heads are already drawn from the married pool).
 
     Returns (HouseholdKey, HouseholdRole) arrays of length N.
     """
@@ -159,6 +160,9 @@ def assign_households(
         household_key[sp] = sp_hh
         household_role[sp] = "Spouse"
         geography_key[sp] = geography_key[sp_head]
+        # A matched spouse is married by definition; write the role back to the
+        # demographic attribute so MaritalStatus stays consistent with the role.
+        marital_status[sp] = "Married"
 
     # =================================================================
     # DEPENDENT RECRUITMENT — vectorized greedy

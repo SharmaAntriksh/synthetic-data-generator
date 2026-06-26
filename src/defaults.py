@@ -264,11 +264,75 @@ CUSTOMER_OCCUPATION_LABELS = np.array(
 )
 CUSTOMER_OCCUPATION_PROBS = np.array([0.50, 0.20, 0.15, 0.10, 0.05])
 
-CUSTOMER_AGE_MIN_DAYS = 18 * 365
-CUSTOMER_AGE_MAX_DAYS = 70 * 365
+# Customer age (years), sampled from a triangular distribution: a broad
+# working-age population peaking in the late 30s with a realistic, thinning
+# senior tail to 85. The old uniform 18-70 both truncated the 70-85 segment
+# (no seniors past 70) and over-flattened the age pyramid. Ages are converted
+# to days with 365.25, so the stored day count and the /365.25 year bracketing
+# stay consistent (the previous 18*365 / 70*365 constants disagreed with the
+# 365.25 divisor used for bracketing).
+CUSTOMER_AGE_MIN_YEARS = 18
+CUSTOMER_AGE_MODE_YEARS = 38
+CUSTOMER_AGE_MAX_YEARS = 85
 CUSTOMER_INCOME_MIN = 20_000
-CUSTOMER_INCOME_MAX = 200_000
+# Absolute clip on the lognormal draw. Set well above the bulk so the
+# high-earner tail (executives, senior professionals) survives instead of
+# piling up at a 200K wall. income_norm is normalized against
+# CUSTOMER_INCOME_NORM_REF (below), not this cap, so raising it does not
+# distort the income_norm-derived fields (credit, loyalty, engagement).
+CUSTOMER_INCOME_MAX = 600_000
 CUSTOMER_MAX_CHILDREN = 5  # exclusive upper bound for rng.integers
+
+# Output encoding for the Gender column. Generation uses the readable internal
+# labels (Male/Female for persons, Org for organizations) so name pools and
+# household spouse-matching keep working; the final dimension emits single-char
+# codes (O = Organization). Applied at the generator's output boundary.
+CUSTOMER_GENDER_CODE_MAP = {"Male": "M", "Female": "F", "Org": "O"}
+
+# Per-channel marketing consent. A shared latent receptiveness (BASE) gates all
+# three channels, so they are positively correlated; within a receptive customer,
+# email is the most-granted channel, then SMS, then phone.
+CUSTOMER_MARKETING_CONSENT_BASE = 0.65
+CUSTOMER_CONSENT_EMAIL_RATE = 0.90
+CUSTOMER_CONSENT_SMS_RATE = 0.55
+CUSTOMER_CONSENT_CALL_RATE = 0.30
+
+# Name fields. MiddleName is intentionally sparse (most records have no recorded
+# middle name). Title/Salutation is gendered (Mr/Mrs/Ms) with a small Dr share.
+CUSTOMER_MIDDLE_NAME_RATE = 0.35
+CUSTOMER_TITLE_DR_RATE = 0.04
+
+# Engagement / behavioral choice distributions (CustomerProfile columns).
+CUSTOMER_REFERRAL_SOURCE_LABELS = np.array(["None", "Friend", "Family", "Colleague"])
+CUSTOMER_REFERRAL_SOURCE_PROBS = np.array([0.50, 0.25, 0.13, 0.12])
+
+CUSTOMER_PAYMENT_METHOD_LABELS = np.array(
+    ["Credit Card", "Debit Card", "Cash", "Digital Wallet", "Bank Transfer"]
+)
+CUSTOMER_PAYMENT_METHOD_PROBS = np.array([0.35, 0.25, 0.10, 0.20, 0.10])
+
+CUSTOMER_DEVICE_PREF_LABELS = np.array(["Mobile", "Desktop", "Tablet"])
+CUSTOMER_DEVICE_PROBS_YOUNG = np.array([0.60, 0.25, 0.15])
+CUSTOMER_DEVICE_PROBS_OLD = np.array([0.25, 0.55, 0.20])
+
+CUSTOMER_NEWSLETTER_FREQ_LABELS = np.array(["Weekly", "Monthly", "None"])
+CUSTOMER_NEWSLETTER_FREQ_PROBS = np.array([0.30, 0.45, 0.25])
+
+# Demand-weight lognormal sigma. Shared by the CustomerWeight draw and its
+# normalization reference so they can't drift apart.
+CUSTOMER_WEIGHT_SIGMA = 0.6
+
+# AnnualSpendBucket cut points on the spend_score in [0, 1]. Fixed edges (like
+# IncomeGroup / AgeGroup / ChurnRisk) rather than per-run quantiles, so a
+# customer's tier is independent of which parallel chunk they were generated in.
+# Calibrated to ~Low/Medium/High/VIP = 40/35/20/5 at the default config.
+CUSTOMER_SPEND_BUCKET_EDGES = np.array([0.29, 0.42, 0.575])
+CUSTOMER_SPEND_BUCKET_LABELS = np.array(["Low", "Medium", "High", "VIP"], dtype=object)
+
+# Distance (km) to nearest store by urban/rural area: (low, high) uniform range.
+CUSTOMER_DISTANCE_BY_AREA = {
+    "Urban": (0.5, 5.0), "Suburban": (3.0, 15.0), "Rural": (10.0, 50.0),
+}
 
 # Loyalty score component weights
 CUSTOMER_LOYALTY_W_WEIGHT = 0.55
@@ -292,6 +356,32 @@ CUSTOMER_OCCUPATION_INCOME_MULT = {
 }
 
 CUSTOMER_INCOME_ROUND_TO = 1_000
+
+# Reference income used to normalize income_norm into [0, 1]. Kept at the old
+# income cap so the income_norm distribution (and everything keyed off it:
+# CreditScore, loyalty score, car ownership, digital/financial engagement)
+# stays stable even though the absolute income clip is now much higher. High
+# earners simply saturate income_norm at 1.0.
+CUSTOMER_INCOME_NORM_REF = 200_000
+
+# Experience / age premium applied on top of the education+occupation base, so
+# a 22- and a 60-year-old with the same degree no longer draw identical income.
+# Indexed by age bracket: 0=18-24, 1=25-34, 2=35-44, 3=45-54, 4=55-64, 5=65+.
+# Rises through mid-career, then tapers toward retirement.
+CUSTOMER_INCOME_AGE_MULT = np.array([0.55, 0.80, 1.00, 1.12, 1.05, 0.85])
+
+# Regional purchasing-power multiplier so income differs across regions instead
+# of every region carrying the same USD distribution. Keyed off the coarse
+# Region code (IN/US/EU/AS); long-tail/unknown regions use the default.
+CUSTOMER_INCOME_REGION_MULT = {"US": 1.00, "EU": 0.82, "AS": 0.60, "IN": 0.45}
+CUSTOMER_INCOME_REGION_MULT_DEFAULT = 0.70
+
+# Household dependents (18-24, recruited into a head's household) are students /
+# early-career, so their income is capped at an entry-level ceiling rather than
+# carrying an unrealistic full adult salary. Capping (not scaling) preserves the
+# natural spread below the ceiling instead of collapsing every dependent onto
+# the population income floor.
+CUSTOMER_DEPENDENT_INCOME_CAP = 35_000
 
 # Derived demographic columns
 CUSTOMER_AGE_GROUP_EDGES = np.array([25, 35, 45, 55, 65])
@@ -406,13 +496,10 @@ CUSTOMER_STREET_TYPES = np.array([
     "St", "Ave", "Blvd", "Dr", "Ln", "Way", "Rd", "Ct", "Pl", "Cir",
 ], dtype=object)
 
-CUSTOMER_REGION_LAT_LON_CENTER = {
-    "US": (39.8, -98.5),
-    "IN": (22.5, 78.9),
-    "EU": (51.1, 10.4),
-    "AS": (36.2, 138.2),
-}
-CUSTOMER_LAT_LON_JITTER = {"US": (8.0, 15.0), "IN": (5.0, 7.0), "EU": (6.0, 12.0), "AS": (4.0, 8.0)}
+# Customer Latitude/Longitude is anchored on the actual city centroid carried by
+# the geography dimension, then spread by this much (degrees, ~16 km) so customers
+# in the same city don't share identical coordinates.
+CUSTOMER_CITY_LATLON_JITTER = 0.15
 
 CUSTOMER_REGION_TIMEZONE = {
     "US": np.array(["America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles"]),
@@ -429,7 +516,24 @@ CUSTOMER_URBAN_RURAL_PROBS = {
     "AS": np.array([0.55, 0.30, 0.15]),
 }
 
-CUSTOMER_POSTCODE_FMT = {"US": "5digit", "IN": "6digit", "EU": "uk", "AS": "jp"}
+# Per-country postal-code formats, keyed off the geography Country name. Values
+# are either an int (number of numeric digits) or a string format key handled by
+# the postal generators in customers/helpers.py. Unmapped countries use the
+# numeric default. Currency-region bucketing is intentionally not used here so a
+# German address gets a German postcode, not a UK one.
+CUSTOMER_POSTCODE_FMT_BY_COUNTRY = {
+    "United States": 5,
+    "Canada": "ca",
+    "United Kingdom": "uk",
+    "Germany": 5, "France": 5, "Spain": 5, "Italy": 5,
+    "Austria": 4, "Belgium": 4, "Switzerland": 4,
+    "Denmark": 4, "Norway": 4, "Australia": 4,
+    "Netherlands": "nl", "Poland": "pl", "Portugal": "pt",
+    "Sweden": "se", "Ireland": "ie",
+    "India": 6, "China": 6,
+    "Japan": "jp",
+}
+CUSTOMER_POSTCODE_FMT_DEFAULT = 5
 
 CUSTOMER_LANGUAGE_BY_REGION = {
     "US": np.array(["English", "Spanish", "English", "English", "English"]),
@@ -554,6 +658,23 @@ INVENTORY_PARALLEL_THRESHOLD = 50_000
 # Below this customer count, customer generation stays single-process
 CUSTOMER_PARALLEL_THRESHOLD = 200_000
 
+# Parallel customer chunking. The chunk COUNT must depend only on N (not on the
+# worker count), so the per-chunk RNG streams — and therefore the generated
+# customer population — stay identical no matter how many workers are used. The
+# worker pool size adapts separately. Target ~50K rows/chunk, capped so very
+# large N doesn't explode into thousands of tiny scratch files.
+CUSTOMER_CHUNK_TARGET_ROWS = 50_000
+CUSTOMER_MAX_PARALLEL_CHUNKS = 64
+
+# Parallel SCD2 expansion. Above this many *changed* customers the version
+# history is expanded with the multiprocessing pool; below it, a single serial
+# pass. As with base chunking, the chunk COUNT is a function of the changed-row
+# count only (target rows/chunk below, capped at CUSTOMER_MAX_PARALLEL_CHUNKS) —
+# never the worker count — so the generated SCD2 history is identical across
+# --workers. The pool SIZE still adapts to the available workers.
+CUSTOMER_SCD2_PARALLEL_THRESHOLD = 10_000
+CUSTOMER_SCD2_CHUNK_TARGET_ROWS = 5_000
+
 # Below this eligible-customer count, subscriptions stay single-process
 SUBSCRIPTION_PARALLEL_THRESHOLD = 200_000
 
@@ -582,6 +703,11 @@ def _validate_probability_arrays() -> None:
         "CUSTOMER_EDUCATION_PROBS": CUSTOMER_EDUCATION_PROBS,
         "CUSTOMER_OCCUPATION_PROBS": CUSTOMER_OCCUPATION_PROBS,
         "CUSTOMER_CONTACT_METHOD_PROBS": CUSTOMER_CONTACT_METHOD_PROBS,
+        "CUSTOMER_REFERRAL_SOURCE_PROBS": CUSTOMER_REFERRAL_SOURCE_PROBS,
+        "CUSTOMER_PAYMENT_METHOD_PROBS": CUSTOMER_PAYMENT_METHOD_PROBS,
+        "CUSTOMER_DEVICE_PROBS_YOUNG": CUSTOMER_DEVICE_PROBS_YOUNG,
+        "CUSTOMER_DEVICE_PROBS_OLD": CUSTOMER_DEVICE_PROBS_OLD,
+        "CUSTOMER_NEWSLETTER_FREQ_PROBS": CUSTOMER_NEWSLETTER_FREQ_PROBS,
     }
     for name, arr in _PROB_ARRAYS.items():
         total = float(arr.sum())

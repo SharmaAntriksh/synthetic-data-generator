@@ -270,6 +270,32 @@ def _month_end_dates(years: np.ndarray, months: np.ndarray) -> np.ndarray:
     return next_start - np.timedelta64(1, "D")
 
 
+def trial_period_price(
+    base_price: np.ndarray,
+    cycle_months: np.ndarray,
+    is_trial: np.ndarray,
+    trial_days: int,
+) -> np.ndarray:
+    """Price a trial billing period for only the part of the cycle after the
+    free ``trial_days`` window.
+
+    The trial used to zero out the entire first billing period, so a short
+    (e.g. 14-day) trial waived a whole month — or, for Quarterly/Annual plans, a
+    whole quarter/year. Charging ``base_price * (1 - trial_days / cycle_days)``
+    keeps the free window proportional to the cycle length. A cycle month is
+    ~30 days (consistent with the billing-duration math elsewhere here).
+    Returns prices rounded to cents; non-trial rows pass through unchanged.
+    """
+    cycle_days = np.maximum(np.asarray(cycle_months, dtype=np.float64) * 30.0, 1.0)
+    paid_frac = np.clip(1.0 - float(trial_days) / cycle_days, 0.0, 1.0)
+    base = np.asarray(base_price, dtype=np.float64)
+    return np.where(
+        np.asarray(is_trial).astype(bool),
+        np.round(base * paid_frac, 2),
+        base,
+    )
+
+
 def generate_subscriptions_bulk(
     eligible_ck: np.ndarray,
     eligible_lo: np.ndarray,
@@ -439,8 +465,9 @@ def generate_subscriptions_bulk(
     is_churn = (is_last & r_has_cancel).astype(np.int32)
     is_trial_period = (is_first.astype(bool) & r_has_trial).astype(np.int32)
 
-    # Trial periods have price = 0
-    r_price = np.where(is_trial_period, 0.0, r_price)
+    # Trial periods are charged only for the cycle portion after the free
+    # trial_days window (a 14-day trial no longer waives a full month/quarter/year).
+    r_price = trial_period_price(r_price, r_cycle_months, is_trial_period, trial_days)
 
     # ------------------------------------------------------------------
     # 7. Build Arrow table

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from src.exceptions import ValidationError
-from src.utils.name_pools import PeopleNamePools, slugify_domain_label
+from src.utils.name_pools import PeopleNamePools, org_domain_label
 from src.defaults import (
     CUSTOMER_STREET_NAMES as _STREET_NAMES,
     CUSTOMER_STREET_TYPES as _STREET_TYPES,
@@ -134,15 +134,16 @@ def generate_org_profile(
     if remaining.any():
         HeadquarterCountry[remaining] = "United States"
 
-    Website = np.array(
-        ["www." + slugify_domain_label(str(n)) + ".com" for n in org_names],
+    # Short, brand-like domain (first word of the org name + the org's key for
+    # uniqueness), shared by the website and domain so they match the org's email
+    # address (built the same way in build_email_addresses).
+    org_domains = np.array(
+        [org_domain_label(str(n)) + str(int(k)) + ".com"
+         for n, k in zip(org_names, org_keys)],
         dtype=object,
     )
-
-    OrgDomain = np.array(
-        [slugify_domain_label(str(n)) + ".com" for n in org_names],
-        dtype=object,
-    )
+    Website = np.array(["www." + d for d in org_domains], dtype=object)
+    OrgDomain = org_domains
 
     org_street_num = rng.integers(1, 9999, size=M).astype(str)
     org_street_name = rng.choice(_STREET_NAMES, size=M)
@@ -150,51 +151,13 @@ def generate_org_profile(
     _SUITE_LABELS = np.array(["Suite", "Floor", "Bldg"])
     org_suite = rng.choice(_SUITE_LABELS, size=M)
     org_suite_num = org_keys.astype(str)
-    geo_lookup_hq = {
-        "United States": ("New York,Chicago,Houston,Phoenix,Dallas", "NY,IL,TX,AZ,TX"),
-        "India": ("Mumbai,Delhi,Bangalore,Chennai,Hyderabad", "MH,DL,KA,TN,TG"),
-        "United Kingdom": ("London,Manchester,Birmingham,Leeds,Glasgow", "England,England,England,England,Scotland"),
-        "Germany": ("Berlin,Munich,Hamburg,Frankfurt,Cologne", "BE,BY,HH,HE,NW"),
-        "France": ("Paris,Lyon,Marseille,Toulouse,Nice", "IDF,ARA,PAC,OCC,PAC"),
-        "Japan": ("Tokyo,Osaka,Yokohama,Nagoya,Sapporo", "Tokyo,Osaka,Kanagawa,Aichi,Hokkaido"),
-        "China": ("Shanghai,Beijing,Shenzhen,Guangzhou,Chengdu", "SH,BJ,GD,GD,SC"),
-        "Australia": ("Sydney,Melbourne,Brisbane,Perth,Adelaide", "NSW,VIC,QLD,WA,SA"),
-    }
-    # Vectorised hq_city / hq_state: iterate 8 countries not M orgs
-    _hq_countries_list = list(geo_lookup_hq.keys())
-    _hq_cities_split = [geo_lookup_hq[c][0].split(",") for c in _hq_countries_list]
-    _hq_states_split = [geo_lookup_hq[c][1].split(",") for c in _hq_countries_list]
-    _hq_country_to_idx = {c: i for i, c in enumerate(_hq_countries_list)}
-    _hq_mapped = np.array([_hq_country_to_idx.get(str(c), -1) for c in HeadquarterCountry])
-    _hq_known_mask = _hq_mapped >= 0
-    _hq_n_known = int(_hq_known_mask.sum())
 
-    # Batch RNG draw for known-country orgs (all have 5 options)
-    _hq_rand_all = rng.integers(0, 5, size=_hq_n_known)
-
-    hq_city = np.empty(M, dtype=object)
-    hq_state = np.empty(M, dtype=object)
-    hq_city[:] = "New York"
-    hq_state[:] = "NY"
-
-    # Map batch RNG draws back to positions via cumulative indexing
-    _hq_known_positions = np.flatnonzero(_hq_known_mask)
-    _hq_rand_by_pos = np.empty(M, dtype=np.intp)
-    _hq_rand_by_pos[_hq_known_positions] = _hq_rand_all
-
-    for ci in range(len(_hq_countries_list)):
-        mask = _hq_mapped == ci
-        if not mask.any():
-            continue
-        n_opts = len(_hq_cities_split[ci])
-        idxs = _hq_rand_by_pos[mask] % n_opts
-        hq_city[mask] = np.array(_hq_cities_split[ci], dtype=object)[idxs]
-        hq_state[mask] = np.array(_hq_states_split[ci], dtype=object)[idxs]
-
+    # Street line only — the HQ city/state are no longer embedded in the address
+    # string (HeadquarterCountry carries the location; consistent with the
+    # street-only person addresses).
     OrgAddress = (
         org_street_num.astype(object) + " " + org_street_name + " " + org_street_type
         + ", " + org_suite + " " + org_suite_num
-        + ", " + hq_city + ", " + hq_state
     )
 
     us_pool = people_pools.region("US")

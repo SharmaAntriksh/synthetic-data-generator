@@ -4,6 +4,7 @@ and OrganizationProfile tables.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Dict
@@ -11,14 +12,13 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from src.exceptions import DimensionError, ValidationError
+from src.exceptions import DimensionError
 from src.utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
 from src.utils.config_precedence import resolve_seed
 from src.defaults import SCD2_END_OF_TIME
 from src.versioning import should_regenerate, save_version
 from src.engine.dimension_loader import load_dimension
-from src.utils.config_helpers import region_from_iso_code
 from src.utils.name_pools import (
     resolve_people_folder,
     load_people_pools,
@@ -26,7 +26,7 @@ from src.utils.name_pools import (
     resolve_org_names_file,
     load_org_names,
     assign_org_names,
-    slugify_domain_label,
+    org_domain_label,
 )
 
 from src.defaults import (
@@ -36,10 +36,11 @@ from src.defaults import (
     CUSTOMER_EDUCATION_PROBS as EDUCATION_PROBS,
     CUSTOMER_OCCUPATION_LABELS as OCCUPATION_LABELS,
     CUSTOMER_OCCUPATION_PROBS as OCCUPATION_PROBS,
-    CUSTOMER_AGE_MIN_DAYS as AGE_MIN_DAYS,
-    CUSTOMER_AGE_MAX_DAYS as AGE_MAX_DAYS,
+    CUSTOMER_AGE_MIN_YEARS as AGE_MIN_YEARS,
+    CUSTOMER_AGE_MODE_YEARS as AGE_MODE_YEARS,
+    CUSTOMER_AGE_MAX_YEARS as AGE_MAX_YEARS,
     CUSTOMER_INCOME_MIN as INCOME_MIN,
-    CUSTOMER_INCOME_MAX as INCOME_MAX,
+    CUSTOMER_INCOME_NORM_REF as INCOME_NORM_REF,
     CUSTOMER_MAX_CHILDREN as MAX_CHILDREN,
     CUSTOMER_LOYALTY_W_WEIGHT as LOYALTY_W_WEIGHT,
     CUSTOMER_LOYALTY_W_TEMP as LOYALTY_W_TEMP,
@@ -64,6 +65,32 @@ from src.defaults import (
     CUSTOMER_URBAN_RURAL_PROBS as _URBAN_RURAL_PROBS,
     CUSTOMER_LANGUAGE_BY_REGION as _LANGUAGE_BY_REGION,
     CUSTOMER_HOUSEHOLD_PCT as _HOUSEHOLD_PCT_DEFAULT,
+    CUSTOMER_DEPENDENT_INCOME_CAP as _DEPENDENT_INCOME_CAP,
+    CUSTOMER_CHUNK_TARGET_ROWS as CHUNK_TARGET_ROWS,
+    CUSTOMER_MAX_PARALLEL_CHUNKS as MAX_PARALLEL_CHUNKS,
+    CUSTOMER_SCD2_PARALLEL_THRESHOLD as SCD2_PARALLEL_THRESHOLD,
+    CUSTOMER_SCD2_CHUNK_TARGET_ROWS as SCD2_CHUNK_TARGET_ROWS,
+    CUSTOMER_GENDER_CODE_MAP,
+    CUSTOMER_MARKETING_CONSENT_BASE,
+    CUSTOMER_CONSENT_EMAIL_RATE,
+    CUSTOMER_CONSENT_SMS_RATE,
+    CUSTOMER_CONSENT_CALL_RATE,
+    CUSTOMER_CITY_LATLON_JITTER as _CITY_LATLON_JITTER,
+    CUSTOMER_MIDDLE_NAME_RATE,
+    CUSTOMER_TITLE_DR_RATE,
+    CUSTOMER_REFERRAL_SOURCE_LABELS,
+    CUSTOMER_REFERRAL_SOURCE_PROBS,
+    CUSTOMER_PAYMENT_METHOD_LABELS,
+    CUSTOMER_PAYMENT_METHOD_PROBS,
+    CUSTOMER_DEVICE_PREF_LABELS,
+    CUSTOMER_DEVICE_PROBS_YOUNG,
+    CUSTOMER_DEVICE_PROBS_OLD,
+    CUSTOMER_NEWSLETTER_FREQ_LABELS,
+    CUSTOMER_NEWSLETTER_FREQ_PROBS,
+    CUSTOMER_WEIGHT_SIGMA as WEIGHT_SIGMA,
+    CUSTOMER_SPEND_BUCKET_EDGES as SPEND_BUCKET_EDGES,
+    CUSTOMER_SPEND_BUCKET_LABELS as SPEND_BUCKET_LABELS,
+    CUSTOMER_DISTANCE_BY_AREA,
 )
 
 from src.dimensions.customers.helpers import (
@@ -83,7 +110,6 @@ from src.dimensions.customers.helpers import (
     generate_phone_numbers,
     generate_credit_scores,
     generate_addresses,
-    generate_lat_lon,
     generate_postal_codes,
 )
 from src.dimensions.customers.org_profile import generate_org_profile
@@ -95,25 +121,6 @@ from src.dimensions.customers.scd2 import (
     expand_changed_customers,
 )
 
-_PAYMENT_METHOD_LABELS = np.array([
-    "Credit Card", "Debit Card", "Cash", "Digital Wallet", "Bank Transfer",
-])
-_PAYMENT_METHOD_PROBS = np.array([0.35, 0.25, 0.10, 0.20, 0.10])
-
-_DEVICE_PREFS = np.array(["Mobile", "Desktop", "Tablet"])
-_NEWSLETTER_FREQ = np.array(["Weekly", "Monthly", "None"])
-
-_DISTANCE_BY_AREA = {"Urban": (0.5, 5.0), "Suburban": (3.0, 15.0), "Rural": (10.0, 50.0)}
-
-# Import-time validation for local probability arrays
-for _pname, _parr in [
-    ("_PAYMENT_METHOD_PROBS", _PAYMENT_METHOD_PROBS),
-]:
-    if abs(float(_parr.sum()) - 1.0) > 1e-6:
-        raise ValidationError(f"generator.{_pname} sums to {float(_parr.sum())}, expected 1.0")
-del _pname, _parr
-
-
 def _labels_to_codes(values: np.ndarray, labels: Sequence) -> np.ndarray:
     """Map a string array to integer codes given an ordered label list."""
     codes = np.zeros(len(values), dtype=np.intp)
@@ -123,11 +130,45 @@ def _labels_to_codes(values: np.ndarray, labels: Sequence) -> np.ndarray:
 
 
 def _geo_lookup_with_iso(geography: pd.DataFrame) -> pd.DataFrame:
-    """Index geography by GeographyKey, keeping the columns SCD2 relocation needs."""
+    """Index geography by GeographyKey, keeping the columns SCD2 relocation needs.
+
+    Includes per-city Latitude/Longitude so customer coordinates (and SCD2
+    relocations) can anchor on the real city centroid instead of a region center.
+    """
     cols = ["City", "State", "Country"]
     if "ISOCode" in geography.columns:
         cols.append("ISOCode")
+    for c in ("Latitude", "Longitude"):
+        if c in geography.columns:
+            cols.append(c)
     return geography.set_index("GeographyKey")[cols]
+
+
+def _build_country_city_pools(geography: pd.DataFrame) -> Dict[str, np.ndarray]:
+    """Map Country -> array of its City names, for same-country BirthCity sampling."""
+    if "Country" not in geography.columns or "City" not in geography.columns:
+        return {}
+    countries = geography["Country"].to_numpy().astype(object)
+    cities = geography["City"].to_numpy().astype(object)
+    return {ctry: cities[countries == ctry] for ctry in np.unique(countries)}
+
+
+def _remap_profiles_to_current_version(customers_df, profile_df, org_profile_df) -> None:
+    """Repoint profile / org-profile CustomerKey at the IsCurrent=1 version's key.
+
+    Profiles are entity-level (one row per customer), but SCD2 reassigns a fresh
+    CustomerKey to every version row. After expansion, repoint each profile at its
+    family's current version via CustomerID. Mutates the profile frames in place.
+    """
+    current_map = (
+        customers_df.loc[customers_df["IsCurrent"] == 1, ["CustomerID", "CustomerKey"]]
+        .set_index("CustomerID")["CustomerKey"]
+    )
+    profile_df["CustomerKey"] = profile_df["CustomerKey"].map(current_map).astype("int64")
+    if not org_profile_df.empty:
+        org_profile_df["CustomerKey"] = (
+            org_profile_df["CustomerKey"].map(current_map).astype("int64")
+        )
 
 
 def _vectorized_cdf_sample(cdfs: np.ndarray, brackets: np.ndarray, u: np.ndarray) -> np.ndarray:
@@ -148,6 +189,512 @@ def _vectorized_cdf_sample(cdfs: np.ndarray, brackets: np.ndarray, u: np.ndarray
         if mask.any():
             out[mask] = np.searchsorted(cdfs[b], u[mask])
     return out
+
+
+def build_email_addresses(rng, *, safe_first, safe_last, org_name, keys, is_org):
+    """Vectorized EmailAddress for all rows.
+
+    The numeric suffix is ``CustomerKey``, so emails are unique only when the
+    keys are globally unique. In the parallel path the chunk workers bake emails
+    with chunk-LOCAL keys, so ``name+localkey`` collides across chunks (millions
+    of customers ended up sharing an address at scale); the orchestrator rebuilds
+    this against the post-merge global key (CUST-AN-9).
+    """
+    N = len(keys)
+    is_org = np.asarray(is_org)
+    keys = np.asarray(keys)
+    email = np.empty(N, dtype=object)
+
+    personal_mask = ~is_org
+    n_personal = int(personal_mask.sum())
+    if n_personal:
+        domain = rng.choice(PERSONAL_EMAIL_DOMAINS, size=n_personal, replace=True)
+        user = (
+            np.asarray(safe_first)[personal_mask].astype(str)
+            + "."
+            + np.asarray(safe_last)[personal_mask].astype(str)
+        ).astype(str)
+        user = np.char.lower(np.char.replace(user, " ", ""))
+        suffix = keys[personal_mask].astype(str)
+        email[personal_mask] = user + suffix + "@" + domain
+
+    n_org = int(is_org.sum())
+    if n_org:
+        org_slugs = np.array(
+            [org_domain_label(x) for x in np.asarray(org_name)[is_org].astype(str)],
+            dtype=object,
+        )
+        org_key_suffix = keys[is_org].astype(str)
+        org_domain = org_slugs + org_key_suffix + np.full(n_org, ".com", dtype=object)
+        org_prefix = rng.choice(ORG_EMAIL_PREFIXES, size=n_org, replace=True)
+        email[is_org] = org_prefix.astype(str) + "@" + org_domain
+
+    return email
+
+
+# z-score of the 95th percentile of a standard normal; lognormal(0, sigma) has
+# its 95th percentile at exp(_P95_Z * sigma).
+_P95_Z = 1.6448536269514722
+# Fixed normalization reference for the CustomerWeight lognormal (data- and
+# size-independent, so segmentation is identical across chunks / run sizes).
+_WEIGHT_NORM_REF = math.exp(_P95_Z * WEIGHT_SIGMA)
+
+
+def lognormal_p95_ref(sigma: float) -> float:
+    """Analytical 95th percentile of ``lognormal(mean=0, sigma)`` — a fixed
+    normalization reference that does not depend on the sample."""
+    return math.exp(_P95_Z * float(sigma))
+
+
+def _robust_unit_norm(x: np.ndarray, ref: float) -> np.ndarray:
+    """Normalize a non-negative, lognormal-ish array into [0, 1] against a
+    **fixed** reference (typically the distribution's analytical 95th
+    percentile), not a data-derived statistic.
+
+    Max-normalization compressed the bulk toward 0 (the max of a lognormal grows
+    with N), degenerating any segmentation built on it (CUST-AN-10). A *sample*
+    quantile fixed the scale-with-N problem but was still data-derived, so under
+    parallel chunking each chunk normalized against its own quantile and the same
+    value mapped to different tiers in different chunks. A fixed analytical
+    reference removes both: the mapping is independent of N and of chunking.
+    """
+    ref = ref if (np.isfinite(ref) and ref > 0) else 1.0
+    return np.clip(x / ref, 0.0, 1.0)
+
+
+def _chunk_count(n_rows: int, target_rows: int) -> int:
+    """Parallel chunk count for ``n_rows`` rows at ~``target_rows`` per chunk,
+    floored at 2 and capped at MAX_PARALLEL_CHUNKS.
+
+    A pure function of the row count (no worker-count argument): the chunk count
+    seeds the per-chunk RNG streams, so tying it to ``--workers`` silently changed
+    the generated data (CUST-AN-7).
+    """
+    return int(np.clip(n_rows // target_rows, 2, MAX_PARALLEL_CHUNKS))
+
+
+def _customer_chunk_count(N: int) -> int:
+    """Parallel customer-generation chunk count (function of ``N`` only)."""
+    return _chunk_count(N, CHUNK_TARGET_ROWS)
+
+
+def _scd2_chunk_count(n_changed: int) -> int:
+    """Parallel SCD2-expansion chunk count (function of the changed-row count)."""
+    return _chunk_count(n_changed, SCD2_CHUNK_TARGET_ROWS)
+
+
+def _cap_dependent_income(household_role, yearly_income, income_group):
+    """Cap household-dependent income at an entry-level ceiling and refresh
+    their IncomeGroup.
+
+    Dependents (18-24, recruited into a head's household) would otherwise carry
+    the full adult income draw. Only those above the cap are pulled down, so the
+    natural spread below it is preserved. ``yearly_income`` is a nullable Int32
+    pandas array (NA for orgs); ``income_group`` is a full-length object array
+    (mutated in place). Returns the updated ``(yearly_income, income_group)``.
+    """
+    dep_mask = np.asarray(household_role == "Dependent")
+    na_mask = np.asarray(pd.isna(yearly_income))
+    inc_int = yearly_income.to_numpy(dtype="int64", na_value=0).copy()
+    sel = dep_mask & ~na_mask & (inc_int > _DEPENDENT_INCOME_CAP)
+    if not sel.any():
+        return yearly_income, income_group
+
+    inc_int[sel] = _DEPENDENT_INCOME_CAP
+    income_group[sel] = INCOME_GROUP_LABELS[
+        np.searchsorted(INCOME_GROUP_EDGES, float(_DEPENDENT_INCOME_CAP))
+    ]
+    new_income = pd.array(np.where(na_mask, pd.NA, inc_int), dtype="Int32")
+    return new_income, income_group
+
+
+def _reconcile_titles_with_marital(title, marital_status):
+    """Keep the salutation consistent with the FINAL MaritalStatus.
+
+    ``Title`` is derived in `_build_demographics` from the initial marital draw,
+    but `assign_households` later marks matched spouses as Married — including
+    people originally drawn as Single. A Single Female so married would keep
+    ``Title="Ms"`` while ``MaritalStatus="Married"``; flip those to ``Mrs`` (Mr /
+    Dr are unaffected by marital status). Mutates ``title`` in place.
+    """
+    title = np.asarray(title)
+    fix = (np.asarray(marital_status) == "Married") & (title == "Ms")
+    if fix.any():
+        title[fix] = "Mrs"
+    return title
+
+
+def _build_demographics(
+    *,
+    rng, N, IsOrg, Region, Gender, person_mask, person_idx, n_person,
+    person_age_bracket, ages_years,
+) -> Dict[str, np.ndarray]:
+    """Build the conditioned demographic columns (marital status, title,
+    education, occupation, income, children, home ownership, cars, and derived
+    groups).
+
+    A pure function of the identity + age-bracket setup. Outputs feed the
+    Customers / CustomerProfile frames plus the household and loyalty steps.
+    Returns a dict of full-length (N) arrays.
+    """
+    MaritalStatus = np.empty(N, dtype=object)
+    MaritalStatus[IsOrg] = None
+    if n_person:
+        # Vectorized bracket-aware sampling: build CDF per bracket, sample via uniform + searchsorted
+        _ms_labels = MARITAL_STATUS_LABELS
+        _n_brackets = len(AGE_GROUP_LABELS)
+        # Stack CDFs: shape (n_brackets, n_labels)
+        _ms_cdfs = np.array([np.cumsum(MARITAL_PROBS_BY_AGE[b]) for b in range(_n_brackets)])
+        _ms_cdfs[:, -1] = 1.0  # clamp
+        _u = rng.random(n_person)
+        _bracket_per_person = person_age_bracket  # int array [0..n_brackets-1]
+        # Vectorized: one searchsorted call per unique bracket instead of per person
+        _ms_idx = _vectorized_cdf_sample(_ms_cdfs, _bracket_per_person, _u)
+        _ms_idx = np.clip(_ms_idx, 0, len(_ms_labels) - 1)
+        MaritalStatus[person_idx] = _ms_labels[_ms_idx]
+
+    # Title / Salutation: gendered (Mr; Mrs if married else Ms) with a small Dr
+    # overlay. Orgs have no title (None). (No gender-neutral Mx — Gender is
+    # strictly M/F/O, so every person maps to a gendered salutation.)
+    Title = np.full(N, None, dtype=object)
+    if n_person:
+        _male = Gender[person_mask] == "Male"
+        _married = MaritalStatus[person_mask] == "Married"
+        _t = np.where(_male, "Mr", np.where(_married, "Mrs", "Ms")).astype(object)
+        _tu = rng.random(n_person)
+        _t[_tu < CUSTOMER_TITLE_DR_RATE] = "Dr"
+        Title[person_idx] = _t
+
+    Education = np.empty(N, dtype=object)
+    Education[:] = None
+    if n_person:
+        _ed_labels = EDUCATION_LABELS
+        _ed_cdfs = np.array([np.cumsum(EDUCATION_PROBS_BY_AGE[b]) for b in range(len(AGE_GROUP_LABELS))])
+        _ed_cdfs[:, -1] = 1.0
+        _u = rng.random(n_person)
+        _ed_idx = _vectorized_cdf_sample(_ed_cdfs, person_age_bracket, _u)
+        _ed_idx = np.clip(_ed_idx, 0, len(_ed_labels) - 1)
+        Education[person_idx] = _ed_labels[_ed_idx]
+
+    Occupation = np.empty(N, dtype=object)
+    Occupation[:] = None
+    if n_person:
+        # Build CDF per education level, then vectorized lookup
+        _occ_labels = OCCUPATION_LABELS
+        _occ_cdfs = np.array([np.cumsum(OCCUPATION_PROBS_BY_EDUCATION[lbl]) for lbl in EDUCATION_LABELS])
+        _occ_cdfs[:, -1] = 1.0
+        _person_edu = Education[person_mask]
+        _edu_code_arr = _labels_to_codes(_person_edu, EDUCATION_LABELS)
+        _u = rng.random(n_person)
+        _occ_idx = _vectorized_cdf_sample(_occ_cdfs, _edu_code_arr, _u)
+        _occ_idx = np.clip(_occ_idx, 0, len(_occ_labels) - 1)
+        Occupation[person_idx] = _occ_labels[_occ_idx]
+
+    income_raw = generate_correlated_income(
+        rng, Education, Occupation, person_mask, N,
+        age_bracket=person_age_bracket, region=Region,
+    )
+    YearlyIncome = pd.array(
+        np.where(IsOrg, pd.NA, income_raw), dtype="Int32"
+    )
+
+    children_raw = np.zeros(N, dtype="int64")
+    if n_person:
+        # Vectorized: build per-person lambda from (marital, bracket) lookup,
+        # then single Poisson draw for all persons.
+        person_marital = MaritalStatus[person_mask]
+        _ms_codes = _labels_to_codes(person_marital, MARITAL_STATUS_LABELS)
+        _n_ms = len(MARITAL_STATUS_LABELS)
+        _n_br = len(AGE_GROUP_LABELS)
+        # Build lambda lookup table: (n_marital, n_brackets)
+        _lam_table = np.ones((_n_ms, _n_br), dtype=np.float64)
+        for _mi, _ml in enumerate(MARITAL_STATUS_LABELS):
+            for _bi in range(_n_br):
+                _lam_table[_mi, _bi] = CHILDREN_LAMBDA_BY_MARITAL_AGE.get((_ml, _bi), 1.0)
+        _per_person_lam = _lam_table[_ms_codes, person_age_bracket]
+        children_raw[person_idx] = np.clip(
+            rng.poisson(lam=_per_person_lam), 0, MAX_CHILDREN - 1,
+        )
+    TotalChildren = pd.array(
+        np.where(IsOrg, pd.NA, children_raw), dtype="Int32",
+    )
+
+    # -----------------------------------------------------
+    # Derived demographic columns
+    # -----------------------------------------------------
+    AgeGroup = np.empty(N, dtype=object)
+    AgeGroup[:] = None
+    if n_person:
+        idx = np.searchsorted(AGE_GROUP_EDGES, ages_years[person_mask])
+        AgeGroup[person_mask] = AGE_GROUP_LABELS[idx]
+
+    income_for_grouping = income_raw.astype("float64")
+    IncomeGroup = np.empty(N, dtype=object)
+    IncomeGroup[:] = None
+    if n_person:
+        idx = np.searchsorted(INCOME_GROUP_EDGES, income_for_grouping[person_mask])
+        IncomeGroup[person_mask] = INCOME_GROUP_LABELS[idx]
+
+    income_norm = np.zeros(N, dtype="float64")
+    if n_person:
+        income_norm[person_mask] = (
+            (income_for_grouping[person_mask] - INCOME_MIN)
+            / max(INCOME_NORM_REF - INCOME_MIN, 1)
+        )
+    income_norm = np.clip(income_norm, 0.0, 1.0)
+
+    CreditScore = generate_credit_scores(rng, income_norm, Education, person_mask, N)
+
+    HomeOwnership = np.empty(N, dtype=object)
+    HomeOwnership[:] = None
+    if n_person:
+        # Vectorized: pre-build CDF for all (income_group, age_bracket) combos,
+        # then single-pass sampling via uniform + searchsorted.
+        _ho_labels = HOME_OWNERSHIP_LABELS
+        _ig_list = list(HOME_OWNERSHIP_PROBS_BY_INCOME.keys())
+        _n_ig = len(_ig_list)
+        _n_br = len(AGE_GROUP_LABELS)
+        _n_ho = len(_ho_labels)
+        # Build CDF table: (n_income_groups, n_brackets, n_ho_labels)
+        _ho_cdfs = np.zeros((_n_ig, _n_br, _n_ho), dtype=np.float64)
+        for _ii, _ig_lbl in enumerate(_ig_list):
+            base_probs = HOME_OWNERSHIP_PROBS_BY_INCOME[_ig_lbl]
+            for _bi in range(_n_br):
+                adjusted = np.clip(base_probs + HOME_OWNERSHIP_AGE_SHIFT[_bi], 0.01, None)
+                _ho_cdfs[_ii, _bi] = np.cumsum(adjusted / adjusted.sum())
+                _ho_cdfs[_ii, _bi, -1] = 1.0
+
+        ig = IncomeGroup[person_mask]
+        _ig_codes = _labels_to_codes(ig, _ig_list)
+        _u = rng.random(n_person)
+        # Flatten 2D (income_group, bracket) into single composite key for vectorized sampling
+        _ho_cdfs_flat = _ho_cdfs.reshape(_n_ig * _n_br, _n_ho)
+        _composite_bracket = _ig_codes * _n_br + person_age_bracket
+        _ho_idx = _vectorized_cdf_sample(_ho_cdfs_flat, _composite_bracket, _u)
+        _ho_idx = np.clip(_ho_idx, 0, _n_ho - 1)
+        HomeOwnership[person_idx] = _ho_labels[_ho_idx]
+
+    NumberOfCars = np.full(N, pd.NA, dtype=object)
+    if n_person:
+        car_lambda = CAR_LAMBDA_BY_AGE[person_age_bracket]
+        base_cars = rng.poisson(lam=car_lambda)
+        income_boost_cars = (income_norm[person_mask] > 0.5).astype(int)
+        us_boost = (Region[person_mask] == "US").astype(int)
+        raw_cars = np.clip(base_cars + income_boost_cars + us_boost, 0, 4)
+        NumberOfCars[person_mask] = raw_cars
+
+    return {
+        "MaritalStatus": MaritalStatus,
+        "Title": Title,
+        "Education": Education,
+        "Occupation": Occupation,
+        "YearlyIncome": YearlyIncome,
+        "income_norm": income_norm,
+        "IncomeGroup": IncomeGroup,
+        "children_raw": children_raw,
+        "TotalChildren": TotalChildren,
+        "AgeGroup": AgeGroup,
+        "CreditScore": CreditScore,
+        "HomeOwnership": HomeOwnership,
+        "NumberOfCars": NumberOfCars,
+    }
+
+
+def _build_engagement_profile(
+    *,
+    rng, N, Region, IsOrg, person_mask, n_person, ages_years,
+    end_date, _end_dt64, CustomerStartDate, income_norm, CustomerWeight,
+    CustomerSatisfactionScore, churn_norm, LoyaltyTierKey, tier_keys,
+    T, CustomerStartMonth,
+) -> Dict[str, np.ndarray]:
+    """Build the engagement / digital / financial / CX columns (all profile-only).
+
+    A pure function of the already-computed identity, demographic and lifecycle
+    arrays: every output feeds CustomerProfile and nothing else (no feedback into
+    the identity/household/SCD2 flow), so it is safe to compute in isolation.
+    Returns a dict of full-length (N) arrays.
+    """
+    # --- Urban/Rural, TimeZone ---
+    UrbanRural = np.empty(N, dtype=object)
+    for rc, probs in _URBAN_RURAL_PROBS.items():
+        mask = Region == rc
+        n_rc = int(mask.sum())
+        if n_rc:
+            UrbanRural[mask] = rng.choice(_URBAN_RURAL_LABELS, size=n_rc, p=probs)
+    remaining_ur = pd.isna(UrbanRural) | (UrbanRural == None)  # noqa: E711
+    if remaining_ur.any():
+        UrbanRural[remaining_ur] = rng.choice(
+            _URBAN_RURAL_LABELS, size=int(remaining_ur.sum()),
+            p=_URBAN_RURAL_PROBS["US"],
+        )
+
+    TimeZone = np.empty(N, dtype=object)
+    for rc, tz_pool in _REGION_TIMEZONE.items():
+        mask = Region == rc
+        n_rc = int(mask.sum())
+        if n_rc:
+            TimeZone[mask] = rng.choice(tz_pool, size=n_rc)
+    remaining_tz = pd.isna(TimeZone) | (TimeZone == None)  # noqa: E711
+    if remaining_tz.any():
+        TimeZone[remaining_tz] = "America/New_York"
+
+    # --- Distance to nearest store (correlated with UrbanRural) ---
+    DistanceToNearestStoreKm = np.zeros(N, dtype="float64")
+    for area, (lo, hi) in CUSTOMER_DISTANCE_BY_AREA.items():
+        mask = UrbanRural == area
+        n_a = int(mask.sum())
+        if n_a:
+            DistanceToNearestStoreKm[mask] = np.round(
+                rng.uniform(lo, hi, size=n_a), 1
+            )
+
+    # --- Digital & Engagement ---
+    PreferredLanguage = np.empty(N, dtype=object)
+    for rc, lang_pool in _LANGUAGE_BY_REGION.items():
+        mask = Region == rc
+        n_rc = int(mask.sum())
+        if n_rc:
+            PreferredLanguage[mask] = rng.choice(lang_pool, size=n_rc)
+    remaining_lang = pd.isna(PreferredLanguage) | (PreferredLanguage == None)  # noqa: E711
+    if remaining_lang.any():
+        PreferredLanguage[remaining_lang] = "English"
+
+    age_young = np.zeros(N, dtype="float64")
+    if n_person:
+        # Ramp digital affinity down across the full adult age span (18..max age);
+        # divisor tracks AGE_MAX_YEARS so the 70-85 cohort keeps a gradient
+        # instead of all saturating at the floor.
+        _age_span = max(AGE_MAX_YEARS - 18, 1)
+        age_young[person_mask] = np.clip(
+            1.0 - (ages_years[person_mask] - 18) / _age_span, 0.1, 0.95
+        )
+    org_digital = np.full(N, 0.75)
+    young_factor = np.where(IsOrg, org_digital, age_young)
+
+    HasOnlineAccount = rng.random(N) < (0.55 + 0.30 * young_factor)
+    SocialMediaFollower = rng.random(N) < (0.20 + 0.40 * young_factor)
+    AppInstalled = HasOnlineAccount & (rng.random(N) < (0.30 + 0.35 * young_factor))
+
+    # Per-channel marketing consent. A shared receptiveness gate makes the three
+    # channels positively correlated; email is granted most often, then SMS, then call.
+    _marketing_consent = rng.random(N) < CUSTOMER_MARKETING_CONSENT_BASE
+    ConsentEmail = _marketing_consent & (rng.random(N) < CUSTOMER_CONSENT_EMAIL_RATE)
+    ConsentSMS = _marketing_consent & (rng.random(N) < CUSTOMER_CONSENT_SMS_RATE)
+    ConsentCall = _marketing_consent & (rng.random(N) < CUSTOMER_CONSENT_CALL_RATE)
+
+    NewsletterFrequency = np.where(
+        ~ConsentEmail,
+        "None",
+        rng.choice(CUSTOMER_NEWSLETTER_FREQ_LABELS, size=N, p=CUSTOMER_NEWSLETTER_FREQ_PROBS),
+    )
+
+    DevicePreference = np.empty(N, dtype=object)
+    young_mask = young_factor > 0.5
+    n_young = int(young_mask.sum())
+    n_old = N - n_young
+    if n_young:
+        DevicePreference[young_mask] = rng.choice(
+            CUSTOMER_DEVICE_PREF_LABELS, size=n_young, p=CUSTOMER_DEVICE_PROBS_YOUNG,
+        )
+    if n_old:
+        DevicePreference[~young_mask] = rng.choice(
+            CUSTOMER_DEVICE_PREF_LABELS, size=n_old, p=CUSTOMER_DEVICE_PROBS_OLD,
+        )
+
+    days_back = rng.integers(0, 180, size=N)
+    LastWebVisitDate = pd.to_datetime(end_date) - pd.to_timedelta(days_back, unit="D")
+    LastWebVisitDate = LastWebVisitDate.to_numpy("datetime64[ns]")
+
+    # --- Financial & Behavioral ---
+    PreferredPaymentMethod = rng.choice(
+        CUSTOMER_PAYMENT_METHOD_LABELS, size=N, p=CUSTOMER_PAYMENT_METHOD_PROBS,
+    )
+
+    start_dates_ts = pd.to_datetime(CustomerStartDate)
+    days_after_start = rng.integers(0, 90, size=N)
+    MemberSinceDate = (start_dates_ts + pd.to_timedelta(days_after_start, unit="D")).to_numpy("datetime64[ns]")
+    MemberSinceDate = np.minimum(MemberSinceDate, _end_dt64)
+
+    IsEmployee = rng.random(N) < 0.02
+    IsEmployee[IsOrg] = False
+
+    spend_score = np.clip(
+        0.4 * _robust_unit_norm(CustomerWeight, _WEIGHT_NORM_REF)
+        + 0.4 * income_norm
+        + 0.2 * rng.random(N),
+        0, 1,
+    )
+    # Fixed cut points on spend_score (calibrated to ~40/35/20/5), like
+    # IncomeGroup / AgeGroup. The normalization above is data-independent, so a
+    # customer's tier is the same regardless of which parallel chunk produced it.
+    AnnualSpendBucket = SPEND_BUCKET_LABELS[
+        np.searchsorted(SPEND_BUCKET_EDGES, spend_score)
+    ]
+
+    HasGiftCardBalance = rng.random(N) < 0.15
+
+    tier_norm = LoyaltyTierKey.astype("float64") / max(tier_keys.max(), 1)
+    RewardPointsBalance = np.clip(
+        (tier_norm * 30000 + rng.exponential(5000, size=N)).astype(int),
+        0, 50000,
+    )
+
+    AvgOrderFrequencyDays = np.clip(
+        (90.0 / (CustomerWeight + 0.1) + rng.normal(0, 10, size=N)).astype(int),
+        7, 365,
+    )
+
+    # --- CX analytics ---
+    nps_base = (CustomerSatisfactionScore - 1) * 2.5
+    NPS = np.clip(
+        (nps_base + rng.normal(0, 1.0, size=N)).astype(int),
+        0, 10,
+    )
+
+    tenure_months = np.clip(T - CustomerStartMonth, 1, T).astype("float64")
+    clv_raw = (
+        income_norm * 2000
+        + CustomerWeight * 500
+        + tenure_months * 20
+        + rng.exponential(300, size=N)
+    )
+    CustomerLifetimeValue = np.round(np.clip(clv_raw, 50, 100_000), 2)
+
+    churn_risk_score = (
+        0.45 * churn_norm
+        + 0.30 * (1.0 - CustomerSatisfactionScore / 5.0)
+        + 0.25 * (1.0 - np.clip(tenure_months / T, 0, 1))
+    )
+    ChurnRisk = np.where(
+        churn_risk_score < 0.33, "Low",
+        np.where(churn_risk_score < 0.66, "Medium", "High"),
+    )
+
+    return {
+        "UrbanRural": UrbanRural,
+        "TimeZone": TimeZone,
+        "DistanceToNearestStoreKm": DistanceToNearestStoreKm,
+        "PreferredLanguage": PreferredLanguage,
+        "HasOnlineAccount": HasOnlineAccount,
+        "ConsentEmail": ConsentEmail,
+        "ConsentSMS": ConsentSMS,
+        "ConsentCall": ConsentCall,
+        "SocialMediaFollower": SocialMediaFollower,
+        "AppInstalled": AppInstalled,
+        "NewsletterFrequency": NewsletterFrequency,
+        "DevicePreference": DevicePreference,
+        "LastWebVisitDate": LastWebVisitDate,
+        "PreferredPaymentMethod": PreferredPaymentMethod,
+        "MemberSinceDate": MemberSinceDate,
+        "IsEmployee": IsEmployee,
+        "AnnualSpendBucket": AnnualSpendBucket,
+        "HasGiftCardBalance": HasGiftCardBalance,
+        "RewardPointsBalance": RewardPointsBalance,
+        "AvgOrderFrequencyDays": AvgOrderFrequencyDays,
+        "NPS": NPS,
+        "CustomerLifetimeValue": CustomerLifetimeValue,
+        "ChurnRisk": ChurnRisk,
+    }
 
 
 # ---------------------------------------------------------
@@ -244,19 +791,26 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     else:
         GeographyKey = rng.choice(geo_keys, size=N, replace=True)
 
-    # --- names via name_pools (no output schema change) ---
-    FirstName, LastName, _ = assign_person_names(
+    # --- names via name_pools (First/Middle/Last emitted as separate columns) ---
+    FirstName, LastName, MiddleInitial = assign_person_names(
         keys=CustomerKey,
         region=Region,
         gender=Gender,
         is_org=IsOrg,
         pools=people_pools,
         seed=int(seed),
-        include_middle=False,
+        include_middle=True,
         default_region="US",
     )
     safe_first = np.where(pd.isna(FirstName), "", FirstName.astype(object))
     safe_last = np.where(pd.isna(LastName), "", LastName.astype(object))
+
+    # MiddleName is sparse — most records carry no middle name. Keep the
+    # deterministic initial for ~CUSTOMER_MIDDLE_NAME_RATE of persons, null the rest
+    # (and always null for orgs).
+    MiddleName = MiddleInitial.astype(object).copy()
+    MiddleName[rng.random(N) >= CUSTOMER_MIDDLE_NAME_RATE] = None
+    MiddleName[IsOrg] = None
 
     # -----------------------------------------------------
     # Organization handling (meaningful org names from pool)
@@ -271,38 +825,19 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     )
 
     # -----------------------------------------------------
-    # Email (with deduplication via CustomerKey suffix)
+    # Email (suffixed with CustomerKey for uniqueness). In the parallel path the
+    # chunk-local key collides across chunks, so the orchestrator rebuilds this
+    # against the global key after merge (CUST-AN-9 / build_email_addresses).
     # -----------------------------------------------------
-    Email = np.empty(N, dtype=object)
-
-    personal_mask = ~IsOrg
-    n_personal = int(personal_mask.sum())
-    if n_personal:
-        domain = rng.choice(PERSONAL_EMAIL_DOMAINS, size=n_personal, replace=True)
-        user = (
-            safe_first[personal_mask].astype(str)
-            + "."
-            + safe_last[personal_mask].astype(str)
-        ).astype(str)
-        user = np.char.lower(np.char.replace(user, " ", ""))
-        suffix = CustomerKey[personal_mask].astype(str)
-        Email[personal_mask] = user + suffix + "@" + domain
-
-    n_org = int(IsOrg.sum())
-    if n_org:
-        org_slugs = np.array(
-            [slugify_domain_label(x) for x in OrgName[IsOrg].astype(str)],
-            dtype=object,
-        )
-        org_key_suffix = CustomerKey[IsOrg].astype(str)
-        OrgDomain = org_slugs + org_key_suffix + np.full(n_org, ".com", dtype=object)
-        org_prefix = rng.choice(ORG_EMAIL_PREFIXES, size=n_org, replace=True)
-        Email[IsOrg] = org_prefix.astype(str) + "@" + OrgDomain
+    Email = build_email_addresses(
+        rng, safe_first=safe_first, safe_last=safe_last,
+        org_name=OrgName, keys=CustomerKey, is_org=IsOrg,
+    )
 
     # -----------------------------------------------------
-    # CustomerName
+    # FullName (display name; org name for organizations)
     # -----------------------------------------------------
-    CustomerName = np.where(
+    FullName = np.where(
         IsOrg,
         OrgName.astype(str),
         safe_first.astype(str) + " " + safe_last.astype(str),
@@ -316,7 +851,10 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     person_mask = ~IsOrg
     n_person = int(person_mask.sum())
     if n_person:
-        ages_days[person_mask] = rng.integers(AGE_MIN_DAYS, AGE_MAX_DAYS, size=n_person)
+        ages_yr = rng.triangular(
+            AGE_MIN_YEARS, AGE_MODE_YEARS, AGE_MAX_YEARS, size=n_person,
+        )
+        ages_days[person_mask] = np.rint(ages_yr * 365.25).astype("int64")
         anchor = end_date.normalize()
         dates = anchor - pd.to_timedelta(ages_days[person_mask], unit="D")
         BirthDate[person_mask] = pd.to_datetime(dates).to_numpy("datetime64[ns]")
@@ -329,144 +867,31 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     )
     person_idx = np.where(person_mask)[0]
 
-    MaritalStatus = np.empty(N, dtype=object)
-    MaritalStatus[IsOrg] = None
-    if n_person:
-        # Vectorized bracket-aware sampling: build CDF per bracket, sample via uniform + searchsorted
-        _ms_labels = MARITAL_STATUS_LABELS
-        _n_brackets = len(AGE_GROUP_LABELS)
-        # Stack CDFs: shape (n_brackets, n_labels)
-        _ms_cdfs = np.array([np.cumsum(MARITAL_PROBS_BY_AGE[b]) for b in range(_n_brackets)])
-        _ms_cdfs[:, -1] = 1.0  # clamp
-        _u = rng.random(n_person)
-        _bracket_per_person = person_age_bracket  # int array [0..n_brackets-1]
-        # Vectorized: one searchsorted call per unique bracket instead of per person
-        _ms_idx = _vectorized_cdf_sample(_ms_cdfs, _bracket_per_person, _u)
-        _ms_idx = np.clip(_ms_idx, 0, len(_ms_labels) - 1)
-        MaritalStatus[person_idx] = _ms_labels[_ms_idx]
-
-    Education = np.empty(N, dtype=object)
-    Education[:] = None
-    if n_person:
-        _ed_labels = EDUCATION_LABELS
-        _ed_cdfs = np.array([np.cumsum(EDUCATION_PROBS_BY_AGE[b]) for b in range(len(AGE_GROUP_LABELS))])
-        _ed_cdfs[:, -1] = 1.0
-        _u = rng.random(n_person)
-        _ed_idx = _vectorized_cdf_sample(_ed_cdfs, person_age_bracket, _u)
-        _ed_idx = np.clip(_ed_idx, 0, len(_ed_labels) - 1)
-        Education[person_idx] = _ed_labels[_ed_idx]
-
-    Occupation = np.empty(N, dtype=object)
-    Occupation[:] = None
-    if n_person:
-        # Build CDF per education level, then vectorized lookup
-        _occ_labels = OCCUPATION_LABELS
-        _occ_cdfs = np.array([np.cumsum(OCCUPATION_PROBS_BY_EDUCATION[lbl]) for lbl in EDUCATION_LABELS])
-        _occ_cdfs[:, -1] = 1.0
-        _person_edu = Education[person_mask]
-        _edu_code_arr = _labels_to_codes(_person_edu, EDUCATION_LABELS)
-        _u = rng.random(n_person)
-        _occ_idx = _vectorized_cdf_sample(_occ_cdfs, _edu_code_arr, _u)
-        _occ_idx = np.clip(_occ_idx, 0, len(_occ_labels) - 1)
-        Occupation[person_idx] = _occ_labels[_occ_idx]
-
-    income_raw = generate_correlated_income(rng, Education, Occupation, person_mask, N)
-    YearlyIncome = pd.array(
-        np.where(IsOrg, pd.NA, income_raw), dtype="Int32"
+    # --- Conditioned demographics (marital, title, education, income, etc.) ---
+    _demo = _build_demographics(
+        rng=rng, N=N, IsOrg=IsOrg, Region=Region, Gender=Gender,
+        person_mask=person_mask, person_idx=person_idx, n_person=n_person,
+        person_age_bracket=person_age_bracket, ages_years=ages_years,
     )
+    MaritalStatus = _demo["MaritalStatus"]
+    Title = _demo["Title"]
+    Education = _demo["Education"]
+    Occupation = _demo["Occupation"]
+    YearlyIncome = _demo["YearlyIncome"]
+    income_norm = _demo["income_norm"]
+    IncomeGroup = _demo["IncomeGroup"]
+    children_raw = _demo["children_raw"]
+    TotalChildren = _demo["TotalChildren"]
+    AgeGroup = _demo["AgeGroup"]
+    CreditScore = _demo["CreditScore"]
+    HomeOwnership = _demo["HomeOwnership"]
+    NumberOfCars = _demo["NumberOfCars"]
 
-    children_raw = np.zeros(N, dtype="int64")
-    if n_person:
-        # Vectorized: build per-person lambda from (marital, bracket) lookup,
-        # then single Poisson draw for all persons.
-        person_marital = MaritalStatus[person_mask]
-        _ms_codes = _labels_to_codes(person_marital, MARITAL_STATUS_LABELS)
-        _n_ms = len(MARITAL_STATUS_LABELS)
-        _n_br = len(AGE_GROUP_LABELS)
-        # Build lambda lookup table: (n_marital, n_brackets)
-        _lam_table = np.ones((_n_ms, _n_br), dtype=np.float64)
-        for _mi, _ml in enumerate(MARITAL_STATUS_LABELS):
-            for _bi in range(_n_br):
-                _lam_table[_mi, _bi] = CHILDREN_LAMBDA_BY_MARITAL_AGE.get((_ml, _bi), 1.0)
-        _per_person_lam = _lam_table[_ms_codes, person_age_bracket]
-        children_raw[person_idx] = np.clip(
-            rng.poisson(lam=_per_person_lam), 0, MAX_CHILDREN - 1,
-        )
-    TotalChildren = pd.array(
-        np.where(IsOrg, pd.NA, children_raw), dtype="Int32",
+    PhoneNumber = generate_phone_numbers(rng, N)
+
+    ReferralSource = rng.choice(
+        CUSTOMER_REFERRAL_SOURCE_LABELS, size=N, p=CUSTOMER_REFERRAL_SOURCE_PROBS,
     )
-
-    # -----------------------------------------------------
-    # Derived demographic columns
-    # -----------------------------------------------------
-    ages_years = ages_days / 365.25
-
-    AgeGroup = np.empty(N, dtype=object)
-    AgeGroup[:] = None
-    if n_person:
-        idx = np.searchsorted(AGE_GROUP_EDGES, ages_years[person_mask])
-        AgeGroup[person_mask] = AGE_GROUP_LABELS[idx]
-
-    income_for_grouping = income_raw.astype("float64")
-    IncomeGroup = np.empty(N, dtype=object)
-    IncomeGroup[:] = None
-    if n_person:
-        idx = np.searchsorted(INCOME_GROUP_EDGES, income_for_grouping[person_mask])
-        IncomeGroup[person_mask] = INCOME_GROUP_LABELS[idx]
-
-    income_norm = np.zeros(N, dtype="float64")
-    if n_person:
-        income_norm[person_mask] = (
-            (income_for_grouping[person_mask] - INCOME_MIN)
-            / max(INCOME_MAX - INCOME_MIN, 1)
-        )
-    income_norm = np.clip(income_norm, 0.0, 1.0)
-
-    CreditScore = generate_credit_scores(rng, income_norm, Education, person_mask, N)
-
-    HomeOwnership = np.empty(N, dtype=object)
-    HomeOwnership[:] = None
-    if n_person:
-        # Vectorized: pre-build CDF for all (income_group, age_bracket) combos,
-        # then single-pass sampling via uniform + searchsorted.
-        _ho_labels = HOME_OWNERSHIP_LABELS
-        _ig_list = list(HOME_OWNERSHIP_PROBS_BY_INCOME.keys())
-        _n_ig = len(_ig_list)
-        _n_br = len(AGE_GROUP_LABELS)
-        _n_ho = len(_ho_labels)
-        # Build CDF table: (n_income_groups, n_brackets, n_ho_labels)
-        _ho_cdfs = np.zeros((_n_ig, _n_br, _n_ho), dtype=np.float64)
-        for _ii, _ig_lbl in enumerate(_ig_list):
-            base_probs = HOME_OWNERSHIP_PROBS_BY_INCOME[_ig_lbl]
-            for _bi in range(_n_br):
-                adjusted = np.clip(base_probs + HOME_OWNERSHIP_AGE_SHIFT[_bi], 0.01, None)
-                _ho_cdfs[_ii, _bi] = np.cumsum(adjusted / adjusted.sum())
-                _ho_cdfs[_ii, _bi, -1] = 1.0
-
-        ig = IncomeGroup[person_mask]
-        _ig_codes = _labels_to_codes(ig, _ig_list)
-        _u = rng.random(n_person)
-        # Flatten 2D (income_group, bracket) into single composite key for vectorized sampling
-        _ho_cdfs_flat = _ho_cdfs.reshape(_n_ig * _n_br, _n_ho)
-        _composite_bracket = _ig_codes * _n_br + person_age_bracket
-        _ho_idx = _vectorized_cdf_sample(_ho_cdfs_flat, _composite_bracket, _u)
-        _ho_idx = np.clip(_ho_idx, 0, _n_ho - 1)
-        HomeOwnership[person_idx] = _ho_labels[_ho_idx]
-
-    NumberOfCars = np.full(N, pd.NA, dtype=object)
-    if n_person:
-        car_lambda = CAR_LAMBDA_BY_AGE[person_age_bracket]
-        base_cars = rng.poisson(lam=car_lambda)
-        income_boost_cars = (income_norm[person_mask] > 0.5).astype(int)
-        us_boost = (Region[person_mask] == "US").astype(int)
-        raw_cars = np.clip(base_cars + income_boost_cars + us_boost, 0, 4)
-        NumberOfCars[person_mask] = raw_cars
-
-    PhoneNumber = generate_phone_numbers(rng, Region, N)
-
-    REFERRAL_SOURCE_LABELS = np.array(["None", "Friend", "Family", "Colleague"])
-    REFERRAL_SOURCE_PROBS = np.array([0.50, 0.25, 0.13, 0.12])
-    ReferralSource = rng.choice(REFERRAL_SOURCE_LABELS, size=N, p=REFERRAL_SOURCE_PROBS)
 
     PreferredContactMethod = rng.choice(
         CONTACT_METHOD_LABELS, size=N, p=CONTACT_METHOD_PROBS
@@ -522,7 +947,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     base_monthly_churn = float(lifecycle_cfg.get("base_monthly_churn", 0.04))
     min_tenure_months = int(lifecycle_cfg.get("min_tenure_months", 3))
 
-    CustomerWeight = rng.lognormal(mean=0.0, sigma=0.6, size=N).astype("float64")
+    CustomerWeight = rng.lognormal(mean=0.0, sigma=WEIGHT_SIGMA, size=N).astype("float64")
     CustomerTemperature = np.clip(rng.normal(loc=0.6, scale=0.25, size=N), 0.05, 1.0).astype("float64")
 
     churn_bias_cfg = lifecycle_cfg.get("churn_bias", {}) or {}
@@ -636,7 +1061,7 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     # -----------------------------------------------------
     # Customer satisfaction (correlated with churn bias)
     # -----------------------------------------------------
-    churn_norm = np.clip(CustomerChurnBias / (CustomerChurnBias.max() + 1e-9), 0, 1)
+    churn_norm = _robust_unit_norm(CustomerChurnBias, lognormal_p95_ref(bias_sigma))
     csat_raw = 5.0 - 3.0 * churn_norm + rng.normal(0, 0.5, size=N)
     CustomerSatisfactionScore = np.clip(np.round(csat_raw).astype(int), 1, 5)
 
@@ -651,158 +1076,61 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
     geo_country = geo_mapped["Country"].to_numpy().astype(object)
 
     CurrentCity = geo_city.copy()
+    # BirthCity: most customers were born in their current city; a relocated
+    # minority were born in a *different city of the same country* (no
+    # cross-country births from a global permutation).
     BirthCity = geo_city.copy()
     relocated = rng.random(N) < 0.25
     if relocated.any():
-        BirthCity[relocated] = rng.permutation(geo_city)[: int(relocated.sum())]
+        country_to_cities = _build_country_city_pools(geography)
+        for ctry in np.unique(geo_country[relocated]):
+            m = relocated & (geo_country == ctry)
+            pool = country_to_cities.get(ctry)
+            if pool is not None and len(pool) > 0:
+                BirthCity[m] = rng.choice(pool, size=int(m.sum()))
 
-    # --- Address columns ---
-    HomeAddress, WorkAddress = generate_addresses(
-        rng, Region, CustomerKey, geo_city, geo_state, N,
+    # --- Address columns (street line only; City/State come from GeographyKey) ---
+    HomeAddress, WorkAddress = generate_addresses(rng, CustomerKey, N)
+    PostalCode = generate_postal_codes(rng, geo_country, N)
+
+    # --- Lat/Lon: actual city centroid (geography dim) + small jitter ---
+    geo_lat = geo_mapped["Latitude"].to_numpy(dtype="float64")
+    geo_lon = geo_mapped["Longitude"].to_numpy(dtype="float64")
+    Latitude = np.round(geo_lat + rng.uniform(-_CITY_LATLON_JITTER, _CITY_LATLON_JITTER, size=N), 4)
+    Longitude = np.round(geo_lon + rng.uniform(-_CITY_LATLON_JITTER, _CITY_LATLON_JITTER, size=N), 4)
+
+    # --- Engagement / digital / financial / CX columns (all profile-only) ---
+    _eng = _build_engagement_profile(
+        rng=rng, N=N, Region=Region, IsOrg=IsOrg, person_mask=person_mask,
+        n_person=n_person, ages_years=ages_years, end_date=end_date, _end_dt64=_end_dt64,
+        CustomerStartDate=CustomerStartDate, income_norm=income_norm,
+        CustomerWeight=CustomerWeight, CustomerSatisfactionScore=CustomerSatisfactionScore,
+        churn_norm=churn_norm, LoyaltyTierKey=LoyaltyTierKey, tier_keys=tier_keys,
+        T=T, CustomerStartMonth=CustomerStartMonth,
     )
-    PostalCode = generate_postal_codes(rng, Region, N)
-    Latitude, Longitude = generate_lat_lon(rng, Region, N)
-
-    # --- Urban/Rural, TimeZone ---
-    UrbanRural = np.empty(N, dtype=object)
-    for rc, probs in _URBAN_RURAL_PROBS.items():
-        mask = Region == rc
-        n_rc = int(mask.sum())
-        if n_rc:
-            UrbanRural[mask] = rng.choice(_URBAN_RURAL_LABELS, size=n_rc, p=probs)
-    remaining_ur = pd.isna(UrbanRural) | (UrbanRural == None)  # noqa: E711
-    if remaining_ur.any():
-        UrbanRural[remaining_ur] = rng.choice(
-            _URBAN_RURAL_LABELS, size=int(remaining_ur.sum()),
-            p=_URBAN_RURAL_PROBS["US"],
-        )
-
-    TimeZone = np.empty(N, dtype=object)
-    for rc, tz_pool in _REGION_TIMEZONE.items():
-        mask = Region == rc
-        n_rc = int(mask.sum())
-        if n_rc:
-            TimeZone[mask] = rng.choice(tz_pool, size=n_rc)
-    remaining_tz = pd.isna(TimeZone) | (TimeZone == None)  # noqa: E711
-    if remaining_tz.any():
-        TimeZone[remaining_tz] = "America/New_York"
-
-    # --- Distance to nearest store (correlated with UrbanRural) ---
-    DistanceToNearestStoreKm = np.zeros(N, dtype="float64")
-    for area, (lo, hi) in _DISTANCE_BY_AREA.items():
-        mask = UrbanRural == area
-        n_a = int(mask.sum())
-        if n_a:
-            DistanceToNearestStoreKm[mask] = np.round(
-                rng.uniform(lo, hi, size=n_a), 1
-            )
-
-    # --- Digital & Engagement ---
-    PreferredLanguage = np.empty(N, dtype=object)
-    for rc, lang_pool in _LANGUAGE_BY_REGION.items():
-        mask = Region == rc
-        n_rc = int(mask.sum())
-        if n_rc:
-            PreferredLanguage[mask] = rng.choice(lang_pool, size=n_rc)
-    remaining_lang = pd.isna(PreferredLanguage) | (PreferredLanguage == None)  # noqa: E711
-    if remaining_lang.any():
-        PreferredLanguage[remaining_lang] = "English"
-
-    age_young = np.zeros(N, dtype="float64")
-    if n_person:
-        age_young[person_mask] = np.clip(1.0 - (ages_years[person_mask] - 18) / 52, 0.1, 0.95)
-    org_digital = np.full(N, 0.75)
-    young_factor = np.where(IsOrg, org_digital, age_young)
-
-    HasOnlineAccount = rng.random(N) < (0.55 + 0.30 * young_factor)
-    OptInMarketing = rng.random(N) < 0.65
-    SocialMediaFollower = rng.random(N) < (0.20 + 0.40 * young_factor)
-    AppInstalled = HasOnlineAccount & (rng.random(N) < (0.30 + 0.35 * young_factor))
-
-    NewsletterFrequency = np.where(
-        ~OptInMarketing,
-        "None",
-        rng.choice(_NEWSLETTER_FREQ, size=N, p=np.array([0.30, 0.45, 0.25])),
-    )
-
-    device_probs_young = np.array([0.60, 0.25, 0.15])
-    device_probs_old = np.array([0.25, 0.55, 0.20])
-    DevicePreference = np.empty(N, dtype=object)
-    young_mask = young_factor > 0.5
-    n_young = int(young_mask.sum())
-    n_old = N - n_young
-    if n_young:
-        DevicePreference[young_mask] = rng.choice(_DEVICE_PREFS, size=n_young, p=device_probs_young)
-    if n_old:
-        DevicePreference[~young_mask] = rng.choice(_DEVICE_PREFS, size=n_old, p=device_probs_old)
-
-    days_back = rng.integers(0, 180, size=N)
-    LastWebVisitDate = pd.to_datetime(end_date) - pd.to_timedelta(days_back, unit="D")
-    LastWebVisitDate = LastWebVisitDate.to_numpy("datetime64[ns]")
-
-    # --- Financial & Behavioral ---
-    PreferredPaymentMethod = rng.choice(
-        _PAYMENT_METHOD_LABELS, size=N, p=_PAYMENT_METHOD_PROBS,
-    )
-
-    start_dates_ts = pd.to_datetime(CustomerStartDate)
-    days_after_start = rng.integers(0, 90, size=N)
-    MemberSinceDate = (start_dates_ts + pd.to_timedelta(days_after_start, unit="D")).to_numpy("datetime64[ns]")
-    MemberSinceDate = np.minimum(MemberSinceDate, _end_dt64)
-
-    IsEmployee = rng.random(N) < 0.02
-    IsEmployee[IsOrg] = False
-
-    spend_score = np.clip(
-        0.4 * CustomerWeight / (CustomerWeight.max() + 1e-9)
-        + 0.4 * income_norm
-        + 0.2 * rng.random(N),
-        0, 1,
-    )
-    AnnualSpendBucket = np.where(
-        spend_score < 0.30, "Low",
-        np.where(spend_score < 0.60, "Medium",
-        np.where(spend_score < 0.85, "High", "VIP")),
-    )
-
-    HasGiftCardBalance = rng.random(N) < 0.15
-
-    tier_norm = LoyaltyTierKey.astype("float64") / max(tier_keys.max(), 1)
-    RewardPointsBalance = np.clip(
-        (tier_norm * 30000 + rng.exponential(5000, size=N)).astype(int),
-        0, 50000,
-    )
-
-    AvgOrderFrequencyDays = np.clip(
-        (90.0 / (CustomerWeight + 0.1) + rng.normal(0, 10, size=N)).astype(int),
-        7, 365,
-    )
-
-    # --- CX analytics ---
-    nps_base = (CustomerSatisfactionScore - 1) * 2.5
-    NPS = np.clip(
-        (nps_base + rng.normal(0, 1.0, size=N)).astype(int),
-        0, 10,
-    )
-
-    tenure_months = np.clip(T - CustomerStartMonth, 1, T).astype("float64")
-    clv_raw = (
-        income_norm * 2000
-        + CustomerWeight * 500
-        + tenure_months * 20
-        + rng.exponential(300, size=N)
-    )
-    CustomerLifetimeValue = np.round(np.clip(clv_raw, 50, 100_000), 2)
-
-    churn_risk_score = (
-        0.45 * churn_norm
-        + 0.30 * (1.0 - CustomerSatisfactionScore / 5.0)
-        + 0.25 * (1.0 - np.clip(tenure_months / T, 0, 1))
-    )
-    ChurnRisk = np.where(
-        churn_risk_score < 0.33, "Low",
-        np.where(churn_risk_score < 0.66, "Medium", "High"),
-    )
+    UrbanRural = _eng["UrbanRural"]
+    TimeZone = _eng["TimeZone"]
+    DistanceToNearestStoreKm = _eng["DistanceToNearestStoreKm"]
+    PreferredLanguage = _eng["PreferredLanguage"]
+    HasOnlineAccount = _eng["HasOnlineAccount"]
+    ConsentEmail = _eng["ConsentEmail"]
+    ConsentSMS = _eng["ConsentSMS"]
+    ConsentCall = _eng["ConsentCall"]
+    SocialMediaFollower = _eng["SocialMediaFollower"]
+    AppInstalled = _eng["AppInstalled"]
+    NewsletterFrequency = _eng["NewsletterFrequency"]
+    DevicePreference = _eng["DevicePreference"]
+    LastWebVisitDate = _eng["LastWebVisitDate"]
+    PreferredPaymentMethod = _eng["PreferredPaymentMethod"]
+    MemberSinceDate = _eng["MemberSinceDate"]
+    IsEmployee = _eng["IsEmployee"]
+    AnnualSpendBucket = _eng["AnnualSpendBucket"]
+    HasGiftCardBalance = _eng["HasGiftCardBalance"]
+    RewardPointsBalance = _eng["RewardPointsBalance"]
+    AvgOrderFrequencyDays = _eng["AvgOrderFrequencyDays"]
+    NPS = _eng["NPS"]
+    CustomerLifetimeValue = _eng["CustomerLifetimeValue"]
+    ChurnRisk = _eng["ChurnRisk"]
 
     # =====================================================
     # Household assignment (skipped in parallel chunk mode)
@@ -832,12 +1160,28 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
         n_households = int(np.max(HouseholdKey))
         info(f"Households: {n_households} total, {n_multi} customers in multi-person households")
 
-        # Copy head's home address columns to household members
+        # Copy head's home address columns to household members. The region- and
+        # geography-derived profile columns (UrbanRural/TimeZone/language/distance)
+        # are refreshed too, so a member that moved into the head's address no
+        # longer keeps a stale pre-move region's timezone/language.
         moved, head_of = head_indices_for_members(HouseholdKey, HouseholdRole)
         if moved.any():
             for arr in (Region, HomeAddress, PostalCode, Latitude, Longitude,
-                        geo_city, geo_state, CurrentCity):
+                        geo_city, geo_state, CurrentCity,
+                        UrbanRural, TimeZone, PreferredLanguage,
+                        DistanceToNearestStoreKm):
                 arr[moved] = arr[head_of]
+
+        # Dependents (18-24, recruited into a head's household) are students /
+        # early-career; cap their income at an entry-level ceiling and refresh
+        # IncomeGroup so a dependent no longer carries a full adult salary.
+        YearlyIncome, IncomeGroup = _cap_dependent_income(
+            HouseholdRole, YearlyIncome, IncomeGroup,
+        )
+
+        # assign_households may have flipped Single spouses to Married; keep the
+        # salutation in step (Ms -> Mrs) so Title matches the final MaritalStatus.
+        _reconcile_titles_with_marital(Title, MaritalStatus)
 
     # =====================================================
     # Build Customers dataframe (identity + engine + SCD2 tracked cols)
@@ -851,7 +1195,11 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "EffectiveStartDate": pd.to_datetime(CustomerStartDate),
             "EffectiveEndDate": SCD2_END_OF_TIME,
             "IsCurrent": np.ones(N, dtype=bool),
-            "CustomerName": CustomerName,
+            "Title": Title,
+            "FirstName": FirstName,
+            "MiddleName": MiddleName,
+            "LastName": LastName,
+            "FullName": FullName,
             "DOB": BirthDate,
             "Gender": Gender,
             "EmailAddress": Email,
@@ -910,7 +1258,9 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             "DistanceToNearestStoreKm": DistanceToNearestStoreKm[person_mask],
             "PreferredLanguage": PreferredLanguage[person_mask],
             "HasOnlineAccount": HasOnlineAccount[person_mask],
-            "OptInMarketing": OptInMarketing[person_mask],
+            "ConsentEmail": ConsentEmail[person_mask],
+            "ConsentSMS": ConsentSMS[person_mask],
+            "ConsentCall": ConsentCall[person_mask],
             "SocialMediaFollower": SocialMediaFollower[person_mask],
             "AppInstalled": AppInstalled[person_mask],
             "NewsletterFrequency": NewsletterFrequency[person_mask],
@@ -971,18 +1321,13 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
                 region_pools=_scd2_region_pools,
             )
 
-            # Remap profile/org-profile CustomerKey → IsCurrent=1 version's CustomerKey
-            current_map = (
-                customers_df.loc[customers_df["IsCurrent"] == 1, ["CustomerID", "CustomerKey"]]
-                .set_index("CustomerID")["CustomerKey"]
-            )
-            profile_df["CustomerKey"] = (
-                profile_df["CustomerKey"].map(current_map).astype("int64")
-            )
-            if not org_profile_df.empty:
-                org_profile_df["CustomerKey"] = (
-                    org_profile_df["CustomerKey"].map(current_map).astype("int64")
-                )
+            _remap_profiles_to_current_version(customers_df, profile_df, org_profile_df)
+
+    if not _skip_post_phases:
+        # Encode Gender to output codes only on the full (serial) path. Chunk
+        # workers (_skip_post_phases=True) must keep the readable labels so the
+        # orchestrator's spouse-matching still keys on Male/Female after merge.
+        customers_df["Gender"] = customers_df["Gender"].replace(CUSTOMER_GENDER_CODE_MAP)
 
     active_customer_set = set(active_customer_keys.tolist())
     return customers_df, profile_df, org_profile_df, active_customer_set
@@ -993,7 +1338,6 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
 # ---------------------------------------------------------
 def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
     """Generate customers in parallel: chunk → merge → households → SCD2."""
-    from multiprocessing import cpu_count
     from src.utils.pool import PoolRunSpec, iter_imap_unordered
     from src.dimensions.customers.worker import customer_chunk_worker, scd2_chunk_worker
 
@@ -1008,9 +1352,12 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
     cfg_dump.pop("_config_snapshot", None)
     cfg_dump.pop("_models_snapshot", None)
 
-    # Chunk partitioning
-    n_chunks = min(n_workers * 2, max(2, N // 50_000))
-    n_chunks = max(2, n_chunks)
+    # Chunk partitioning. Deliberately independent of n_workers so the same
+    # (seed, N, config) yields the same customer population regardless of how
+    # many workers run it (CUST-AN-7) — chunk count drives the per-chunk RNG
+    # streams, so tying it to worker count made --workers silently change the
+    # data. The pool size adapts separately via n_actual_workers.
+    n_chunks = _customer_chunk_count(N)
     n_actual_workers = min(n_chunks, n_workers)
 
     chunk_boundaries = []
@@ -1072,6 +1419,23 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
         ].to_numpy()
         profile_df["CustomerKey"] = person_keys
 
+        # Rebuild EmailAddress against the now-global, unique CustomerKey. Chunk
+        # workers baked emails with chunk-local keys, so name+key collided across
+        # chunks and unique emails saturated at ~one chunk's worth (CUST-AN-9).
+        email_rng = np.random.default_rng(
+            np.random.SeedSequence(seed).spawn(n_chunks + 3)[n_chunks + 2]
+        )
+        _ef = customers_df["FirstName"].to_numpy(dtype=object)
+        _el = customers_df["LastName"].to_numpy(dtype=object)
+        customers_df["EmailAddress"] = build_email_addresses(
+            email_rng,
+            safe_first=np.where(pd.isna(_ef), "", _ef),
+            safe_last=np.where(pd.isna(_el), "", _el),
+            org_name=customers_df["CompanyName"].to_numpy(dtype=object),
+            keys=customers_df["CustomerKey"].to_numpy(),
+            is_org=(customers_df["CustomerType"] == "Organization").to_numpy(),
+        )
+
         # Run household assignment on merged data (serial — shared state)
         household_pct_cfg = getattr(cust_cfg, "household_pct", None)
         household_pct = float(household_pct_cfg) if household_pct_cfg is not None else _HOUSEHOLD_PCT_DEFAULT
@@ -1104,6 +1468,12 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
         customers_df["HouseholdKey"] = HouseholdKey
         customers_df["HouseholdRole"] = HouseholdRole
         customers_df["GeographyKey"] = GeographyKey  # may have been mutated
+        # assign_households marks matched spouses as Married in place; persist it
+        # and keep Title (Ms -> Mrs) in step with the final MaritalStatus.
+        customers_df["MaritalStatus"] = MaritalStatus
+        _title = customers_df["Title"].to_numpy(dtype=object)
+        _reconcile_titles_with_marital(_title, MaritalStatus)
+        customers_df["Title"] = _title
 
         # Recover real per-customer Region and ChurnBias emitted by chunk workers
         # (transient columns prefixed with `_`). Stripped from customers_df below
@@ -1117,19 +1487,40 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
 
         # Copy head's home address columns to household members
         moved, head_of = head_indices_for_members(HouseholdKey, HouseholdRole)
+        N_full = len(customers_df)
         if moved.any():
             Region[moved] = Region[head_of]
             for col in ("HomeAddress", "PostalCode", "Latitude", "Longitude"):
                 vals = customers_df[col].to_numpy().copy()
                 vals[moved] = vals[head_of]
                 customers_df[col] = vals
-            # CurrentCity lives in profile_df (person-only), not customers_df
+            # CurrentCity and the region/geography-derived profile columns live in
+            # profile_df (person-only). Rebuild each in full-N space, copy head ->
+            # member, then re-extract persons so moved members no longer keep a
+            # stale pre-move timezone/language/distance.
+            person_mask_p = (customers_df["CustomerType"] != "Organization").to_numpy()
             full_city = geo_lookup["City"].reindex(
                 customers_df["GeographyKey"]
             ).to_numpy(dtype=object)
             full_city[moved] = full_city[head_of]
-            person_mask_p = (customers_df["CustomerType"] != "Organization").to_numpy()
             profile_df["CurrentCity"] = full_city[person_mask_p]
+            for col in ("UrbanRural", "TimeZone", "PreferredLanguage",
+                        "DistanceToNearestStoreKm"):
+                src = profile_df[col].to_numpy()
+                full = np.empty(N_full, dtype=src.dtype)
+                full[person_mask_p] = src
+                full[moved] = full[head_of]
+                profile_df[col] = full[person_mask_p]
+
+        # Dependents are students / early-career; cap their income and refresh
+        # IncomeGroup (same as the serial path).
+        yi_new, ig_new = _cap_dependent_income(
+            HouseholdRole,
+            customers_df["YearlyIncome"].array,
+            customers_df["IncomeGroup"].to_numpy().copy(),
+        )
+        customers_df["YearlyIncome"] = yi_new
+        customers_df["IncomeGroup"] = ig_new
 
         n_multi = int((HouseholdRole == "Spouse").sum() + (HouseholdRole == "Dependent").sum()
                       + (HouseholdRole == "Relative").sum())
@@ -1198,9 +1589,12 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
                 geo_cache = _build_geo_cache(geo_lookup)
                 scd2_region_pools = _build_region_pools(geography)
 
-                # Parallelize SCD2 if enough changed customers
-                if len(changed_df) > 10_000 and n_actual_workers > 1:
-                    n_scd2_chunks = min(n_actual_workers, max(2, len(changed_df) // 5_000))
+                # Parallelize SCD2 when there are enough changed customers. The
+                # decision and the chunk count depend only on the changed-row
+                # count (not the worker count), so the version history is the
+                # same across --workers; the pool size adapts separately.
+                if len(changed_df) > SCD2_PARALLEL_THRESHOLD:
+                    n_scd2_chunks = _scd2_chunk_count(len(changed_df))
                     partitions = np.array_split(np.arange(len(changed_df)), n_scd2_chunks)
                     partitions = [p for p in partitions if len(p) > 0]
                     n_scd2_chunks = len(partitions)
@@ -1260,22 +1654,15 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
                 n_versions = len(customers_df) - N
                 info(f"SCD2: {n_change} customers expanded, {n_versions} version rows added ({len(customers_df)} total)")
 
-                # Remap profile/org-profile CustomerKey → IsCurrent=1 version's CustomerKey
-                current_map = (
-                    customers_df.loc[customers_df["IsCurrent"] == 1, ["CustomerID", "CustomerKey"]]
-                    .set_index("CustomerID")["CustomerKey"]
-                )
-                profile_df["CustomerKey"] = (
-                    profile_df["CustomerKey"].map(current_map).astype("int64")
-                )
-                if not org_profile_df.empty:
-                    org_profile_df["CustomerKey"] = (
-                        org_profile_df["CustomerKey"].map(current_map).astype("int64")
-                    )
+                _remap_profiles_to_current_version(customers_df, profile_df, org_profile_df)
 
     finally:
         import shutil
         shutil.rmtree(scratch_dir, ignore_errors=True)
+
+    # Encode Gender to output codes after all post-phases (household matching
+    # consumed the readable labels above; SCD2 carried them through).
+    customers_df["Gender"] = customers_df["Gender"].replace(CUSTOMER_GENDER_CODE_MAP)
 
     # Parallel path doesn't track an active-customer set — sales derives
     # it independently from active_ratio + seed (see sales.py). Returning

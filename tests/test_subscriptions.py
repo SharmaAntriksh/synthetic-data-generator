@@ -26,6 +26,7 @@ from src.dimensions.customers.subscriptions.helpers import (
     month_start_date,
     month_end_date,
     bridge_schema,
+    trial_period_price,
     _NS_PER_DAY,
 )
 
@@ -250,6 +251,41 @@ class TestCustomerWindows:
 # ===================================================================
 # Period expansion tests
 # ===================================================================
+
+# ===================================================================
+# Trial pricing (CUST-AN-6: trial_days now drives the trial discount)
+# ===================================================================
+
+class TestTrialPeriodPrice:
+    def test_monthly_trial_prorated(self):
+        # 14-day trial inside a ~30-day month -> pay for the remaining ~16 days.
+        out = trial_period_price(np.array([30.0]), np.array([1]), np.array([1]), 14)
+        assert out[0] == round(30.0 * (1 - 14 / 30), 2)
+
+    def test_annual_trial_not_a_free_year(self):
+        # 14-day trial on an annual plan waives ~14/360, not the whole year.
+        out = trial_period_price(np.array([120.0]), np.array([12]), np.array([1]), 14)
+        assert out[0] == round(120.0 * (1 - 14 / 360), 2)
+        assert out[0] > 100  # nowhere near free
+
+    def test_non_trial_price_unchanged(self):
+        out = trial_period_price(np.array([30.0]), np.array([1]), np.array([0]), 14)
+        assert out[0] == 30.0
+
+    def test_trial_longer_than_cycle_is_free(self):
+        # A trial_days >= cycle length fully waives that (short) first period.
+        out = trial_period_price(np.array([10.0]), np.array([1]), np.array([1]), 45)
+        assert out[0] == 0.0
+
+    def test_vectorized_mixed(self):
+        prices = np.array([30.0, 120.0, 30.0])
+        cycles = np.array([1, 12, 1])
+        is_trial = np.array([1, 1, 0])
+        out = trial_period_price(prices, cycles, is_trial, 14)
+        assert out[0] == round(30.0 * (1 - 14 / 30), 2)
+        assert out[1] == round(120.0 * (1 - 14 / 360), 2)
+        assert out[2] == 30.0
+
 
 # ===================================================================
 # Bridge schema tests

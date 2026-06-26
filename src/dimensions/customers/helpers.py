@@ -19,11 +19,13 @@ from src.defaults import (
     CUSTOMER_INCOME_ROUND_TO as INCOME_ROUND_TO,
     CUSTOMER_INCOME_MIN as INCOME_MIN,
     CUSTOMER_INCOME_MAX as INCOME_MAX,
+    CUSTOMER_INCOME_AGE_MULT as INCOME_AGE_MULT,
+    CUSTOMER_INCOME_REGION_MULT as INCOME_REGION_MULT,
+    CUSTOMER_INCOME_REGION_MULT_DEFAULT as INCOME_REGION_MULT_DEFAULT,
     CUSTOMER_STREET_NAMES as _STREET_NAMES,
     CUSTOMER_STREET_TYPES as _STREET_TYPES,
-    CUSTOMER_REGION_LAT_LON_CENTER as _REGION_LAT_LON_CENTER,
-    CUSTOMER_LAT_LON_JITTER as _LAT_LON_JITTER,
-    CUSTOMER_POSTCODE_FMT as _POSTCODE_FMT,
+    CUSTOMER_POSTCODE_FMT_BY_COUNTRY as _POSTCODE_FMT_BY_COUNTRY,
+    CUSTOMER_POSTCODE_FMT_DEFAULT as _POSTCODE_FMT_DEFAULT,
 )
 
 
@@ -314,10 +316,18 @@ def generate_correlated_income(
     occupation: np.ndarray,
     person_mask: np.ndarray,
     N: int,
+    *,
+    age_bracket: np.ndarray | None = None,
+    region: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Generate YearlyIncome using lognormal distributions parameterized
     by education level, with an occupation-based multiplier.
+
+    When provided, ``age_bracket`` (person-indexed, length = person_mask.sum())
+    applies an experience/age premium and ``region`` (full length N) applies a
+    regional purchasing-power factor, so income varies across age and region
+    rather than depending on education+occupation alone.
 
     Returns int64 array (0 for org rows) rounded to INCOME_ROUND_TO.
     """
@@ -341,6 +351,17 @@ def generate_correlated_income(
 
     z = rng.normal(0.0, 1.0, size=n_p)
     raw = np.exp(edu_mu + edu_sigma * z) * occ_mult
+
+    if age_bracket is not None:
+        raw *= INCOME_AGE_MULT[age_bracket]
+
+    if region is not None:
+        reg_mult = np.full(n_p, INCOME_REGION_MULT_DEFAULT, dtype="float64")
+        reg_vals = region[person_mask]
+        for label, mult in INCOME_REGION_MULT.items():
+            reg_mult[reg_vals == label] = mult
+        raw *= reg_mult
+
     raw = np.clip(raw, INCOME_MIN, INCOME_MAX)
     income[person_mask] = np.round(raw / INCOME_ROUND_TO) * INCOME_ROUND_TO
     return income.astype("int64")
@@ -351,56 +372,16 @@ def generate_correlated_income(
 # ---------------------------------------------------------
 def generate_phone_numbers(
     rng: np.random.Generator,
-    region: np.ndarray,
     N: int,
 ) -> np.ndarray:
-    """Regional-format synthetic phone numbers (vectorized string ops)."""
-    phones = np.empty(N, dtype=object)
-    raw = rng.integers(1_000_000_000, 9_999_999_999, size=N, dtype="int64")
+    """Uniform 10-digit synthetic phone numbers, no country/region code.
 
-    def _fmt_us(v: np.ndarray) -> np.ndarray:
-        area = ((v // 10_000_000) % 800 + 200).astype(str).astype(object)
-        mid = np.char.zfill(((v // 10_000) % 1000).astype(str), 3).astype(object)
-        last = np.char.zfill((v % 10_000).astype(str), 4).astype(object)
-        return "+1 (" + area + ") " + mid + "-" + last
-
-    def _fmt_region(mask: np.ndarray, fmt_fn) -> None:
-        if mask.any():
-            phones[mask] = fmt_fn(raw[mask])
-
-    _fmt_region(region == "US", _fmt_us)
-    _fmt_region(
-        region == "IN",
-        lambda v: (
-            "+91 "
-            + np.char.zfill(((v // 100_000) % 100_000).astype(str), 5).astype(object)
-            + " "
-            + np.char.zfill((v % 100_000).astype(str), 5).astype(object)
-        ),
-    )
-    _fmt_region(
-        region == "EU",
-        lambda v: (
-            "+44 "
-            + np.char.zfill(((v // 1_000_000) % 10_000).astype(str), 4).astype(object)
-            + " "
-            + np.char.zfill((v % 1_000_000).astype(str), 6).astype(object)
-        ),
-    )
-    _fmt_region(
-        region == "AS",
-        lambda v: (
-            "+81 "
-            + np.char.zfill(((v // 10_000_000) % 100).astype(str), 2).astype(object)
-            + "-"
-            + np.char.zfill(((v // 10_000) % 1000).astype(str), 3).astype(object)
-            + "-"
-            + np.char.zfill((v % 10_000).astype(str), 4).astype(object)
-        ),
-    )
-    remaining = pd.isna(phones) | (phones == None)  # noqa: E711
-    _fmt_region(remaining, _fmt_us)
-    return phones
+    A consistent national-number format across all regions — the country is
+    already carried by GeographyKey, so the phone column stays uniform for
+    clean BI display. Stored as strings (10 digits, leading digit 2-9).
+    """
+    raw = rng.integers(2_000_000_000, 10_000_000_000, size=N, dtype="int64")
+    return raw.astype(str).astype(object)
 
 
 # ---------------------------------------------------------
@@ -442,115 +423,163 @@ def generate_credit_scores(
 # ---------------------------------------------------------
 def generate_addresses(
     rng: np.random.Generator,
-    region: np.ndarray,
     customer_key: np.ndarray,
-    geo_city: np.ndarray,
-    geo_state: np.ndarray,
     N: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Generate unique HomeAddress and WorkAddress strings."""
-    street_num = rng.integers(1, 9999, size=N).astype(str)
-    street_name = rng.choice(_STREET_NAMES, size=N)
-    street_type = rng.choice(_STREET_TYPES, size=N)
+    """Generate street-line-only HomeAddress and WorkAddress strings.
 
+    City/State/Country are not embedded — they are available via the customer's
+    GeographyKey join, so the address column stays normalized (no "Tokyo, Tokyo").
+    """
     _UNIT_LABELS = np.array(["Apt", "Suite", "Unit", "Fl", "#"])
-    unit_label = rng.choice(_UNIT_LABELS, size=N)
     unit_num = customer_key.astype(str)
 
-    home_street = (
-        street_num.astype(object) + " " + street_name + " " + street_type
-        + ", " + unit_label + " " + unit_num
-    )
-    HomeAddress = (
-        home_street + ", " + geo_city.astype(object)
-        + ", " + geo_state.astype(object)
-    )
+    def _street_line(unit_labels: np.ndarray) -> np.ndarray:
+        street_num = rng.integers(1, 9999, size=N).astype(str)
+        street_name = rng.choice(_STREET_NAMES, size=N)
+        street_type = rng.choice(_STREET_TYPES, size=N)
+        return (
+            street_num.astype(object) + " " + street_name + " " + street_type
+            + ", " + unit_labels + " " + unit_num
+        )
 
-    work_street_num = rng.integers(1, 9999, size=N).astype(str)
-    work_street_name = rng.choice(_STREET_NAMES, size=N)
-    work_street_type = rng.choice(_STREET_TYPES, size=N)
-    work_unit_label = rng.choice(_UNIT_LABELS, size=N)
-
-    same_city = rng.random(N) < 0.70
-    work_city = np.where(same_city, geo_city, rng.permutation(geo_city))
-    work_state = np.where(same_city, geo_state, rng.permutation(geo_state))
-
-    work_street = (
-        work_street_num.astype(object) + " " + work_street_name + " " + work_street_type
-        + ", " + work_unit_label + " " + unit_num
-    )
-    WorkAddress = (
-        work_street + ", " + work_city.astype(object)
-        + ", " + work_state.astype(object)
-    )
+    HomeAddress = _street_line(rng.choice(_UNIT_LABELS, size=N))
+    WorkAddress = _street_line(rng.choice(_UNIT_LABELS, size=N))
     return HomeAddress, WorkAddress
 
 
-def generate_lat_lon(
-    rng: np.random.Generator,
-    region: np.ndarray,
-    N: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Regional center + jitter, rounded to 4 decimal places."""
-    lat = np.zeros(N, dtype="float64")
-    lon = np.zeros(N, dtype="float64")
-    for rc, (clat, clon) in _REGION_LAT_LON_CENTER.items():
-        mask = region == rc
-        n = int(mask.sum())
-        if n:
-            jlat, jlon = _LAT_LON_JITTER.get(rc, (5.0, 5.0))
-            lat[mask] = np.round(clat + rng.uniform(-jlat, jlat, size=n), 4)
-            lon[mask] = np.round(clon + rng.uniform(-jlon, jlon, size=n), 4)
-    remaining = (lat == 0) & (lon == 0)
-    n_rem = int(remaining.sum())
-    if n_rem:
-        lat[remaining] = np.round(39.8 + rng.uniform(-8, 8, size=n_rem), 4)
-        lon[remaining] = np.round(-98.5 + rng.uniform(-15, 15, size=n_rem), 4)
-    return lat, lon
+# ---------------------------------------------------------
+# Helper: per-country postal codes
+# ---------------------------------------------------------
+_PC_LETTERS = np.array(list("ABCDEFGHJKLMNPRSTUVWXYZ"))
+_PC_CA_LETTERS = np.array(list("ABCEGHJKLMNPRSTVXY"))  # Canada-valid set
+_PC_IE_ALNUM = np.array(list("0123456789ACDEFHKNPRTVWXY"))  # Eircode unique part
+
+
+def _digits_postal(d: int):
+    def gen(rng: np.random.Generator, n: int) -> np.ndarray:
+        return np.char.zfill(
+            rng.integers(0, 10 ** d, size=n).astype(str), d
+        ).astype(object)
+    return gen
+
+
+def _postal_uk(rng: np.random.Generator, n: int) -> np.ndarray:
+    prefix = rng.choice(np.array(["SW", "EC", "W", "SE", "N", "NW", "E", "WC"]), size=n)
+    num = rng.integers(1, 19, size=n).astype(str)
+    suffix = rng.integers(1, 9, size=n).astype(str)
+    l1 = rng.choice(_PC_LETTERS, size=n)
+    l2 = rng.choice(_PC_LETTERS, size=n)
+    return (
+        prefix.astype(object) + num.astype(object) + " "
+        + suffix.astype(object) + l1.astype(object) + l2.astype(object)
+    )
+
+
+def _postal_jp(rng: np.random.Generator, n: int) -> np.ndarray:
+    v = rng.integers(1000000, 9999999, size=n)
+    hi = np.char.zfill((v // 10000).astype(str), 3).astype(object)
+    lo = np.char.zfill((v % 10000).astype(str), 4).astype(object)
+    return hi + "-" + lo
+
+
+def _postal_ca(rng: np.random.Generator, n: int) -> np.ndarray:
+    def L() -> np.ndarray:
+        return rng.choice(_PC_CA_LETTERS, size=n).astype(object)
+
+    def D() -> np.ndarray:
+        return rng.integers(0, 10, size=n).astype(str).astype(object)
+
+    return L() + D() + L() + " " + D() + L() + D()
+
+
+def _postal_nl(rng: np.random.Generator, n: int) -> np.ndarray:
+    digits4 = np.char.zfill(rng.integers(0, 10000, size=n).astype(str), 4).astype(object)
+    l1 = rng.choice(_PC_LETTERS, size=n).astype(object)
+    l2 = rng.choice(_PC_LETTERS, size=n).astype(object)
+    return digits4 + " " + l1 + l2
+
+
+def _postal_pl(rng: np.random.Generator, n: int) -> np.ndarray:
+    v = rng.integers(0, 100000, size=n)
+    hi = np.char.zfill((v // 1000).astype(str), 2).astype(object)
+    lo = np.char.zfill((v % 1000).astype(str), 3).astype(object)
+    return hi + "-" + lo
+
+
+def _postal_pt(rng: np.random.Generator, n: int) -> np.ndarray:
+    v = rng.integers(0, 10000000, size=n)
+    hi = np.char.zfill((v // 1000).astype(str), 4).astype(object)
+    lo = np.char.zfill((v % 1000).astype(str), 3).astype(object)
+    return hi + "-" + lo
+
+
+def _postal_se(rng: np.random.Generator, n: int) -> np.ndarray:
+    v = rng.integers(10000, 100000, size=n)
+    hi = np.char.zfill((v // 100).astype(str), 3).astype(object)
+    lo = np.char.zfill((v % 100).astype(str), 2).astype(object)
+    return hi + " " + lo
+
+
+def _postal_ie(rng: np.random.Generator, n: int) -> np.ndarray:
+    rk = (
+        rng.choice(_PC_LETTERS, size=n).astype(object)
+        + np.char.zfill(rng.integers(0, 100, size=n).astype(str), 2).astype(object)
+    )
+    uniq = (
+        rng.choice(_PC_IE_ALNUM, size=n).astype(object)
+        + rng.choice(_PC_IE_ALNUM, size=n).astype(object)
+        + rng.choice(_PC_IE_ALNUM, size=n).astype(object)
+        + rng.choice(_PC_IE_ALNUM, size=n).astype(object)
+    )
+    return rk + " " + uniq
+
+
+# Registry: format key -> vectorized generator fn(rng, n) -> object array.
+_POSTAL_GENERATORS = {
+    4: _digits_postal(4),
+    5: _digits_postal(5),
+    6: _digits_postal(6),
+    "uk": _postal_uk,
+    "jp": _postal_jp,
+    "ca": _postal_ca,
+    "nl": _postal_nl,
+    "pl": _postal_pl,
+    "pt": _postal_pt,
+    "se": _postal_se,
+    "ie": _postal_ie,
+}
 
 
 def generate_postal_codes(
     rng: np.random.Generator,
-    region: np.ndarray,
+    country: np.ndarray,
     N: int,
 ) -> np.ndarray:
-    """Region-appropriate synthetic postal codes (vectorized string ops)."""
+    """Per-country synthetic postal codes, keyed off the customer's Country.
+
+    The format matches the real country (UK alphanumeric, Japan NNN-NNNN, etc.);
+    unmapped countries fall back to a numeric default. Vectorized by format group.
+    """
     codes = np.empty(N, dtype=object)
-    for rc, fmt in _POSTCODE_FMT.items():
-        mask = region == rc
+    specs = np.array(
+        [_POSTCODE_FMT_BY_COUNTRY.get(c, _POSTCODE_FMT_DEFAULT) for c in country],
+        dtype=object,
+    )
+    for fmt, gen in _POSTAL_GENERATORS.items():
+        mask = specs == fmt
         n = int(mask.sum())
-        if not n:
-            continue
-        if fmt == "5digit":
-            codes[mask] = np.char.zfill(
-                rng.integers(10001, 99999, size=n).astype(str), 5
-            ).astype(object)
-        elif fmt == "6digit":
-            codes[mask] = np.char.zfill(
-                rng.integers(100001, 999999, size=n).astype(str), 6
-            ).astype(object)
-        elif fmt == "uk":
-            prefix = rng.choice(
-                np.array(["SW", "EC", "W", "SE", "N", "NW", "E", "WC"]),
-                size=n,
-            )
-            num = rng.integers(1, 19, size=n).astype(str)
-            suffix = rng.integers(1, 9, size=n).astype(str)
-            letter = rng.choice(np.array(list("ABCDEFGHJKLMNPRSTUWXYZ")), size=n)
-            letter2 = rng.choice(np.array(list("ABCDEFGHJKLMNPRSTUWXYZ")), size=n)
-            codes[mask] = (
-                prefix.astype(object) + num.astype(object) + " "
-                + suffix.astype(object) + letter + letter2
-            )
-        elif fmt == "jp":
-            v = rng.integers(1000000, 9999999, size=n)
-            hi = np.char.zfill((v // 10000).astype(str), 3).astype(object)
-            lo = np.char.zfill((v % 10000).astype(str), 4).astype(object)
-            codes[mask] = hi + "-" + lo
+        if n:
+            codes[mask] = gen(rng, n)
     remaining = pd.isna(codes) | (codes == None)  # noqa: E711
     n_rem = int(remaining.sum())
     if n_rem:
-        codes[remaining] = np.char.zfill(
-            rng.integers(10001, 99999, size=n_rem).astype(str), 5
-        ).astype(object)
+        codes[remaining] = _POSTAL_GENERATORS[_POSTCODE_FMT_DEFAULT](rng, n_rem)
     return codes
+
+
+def postal_code_for_country(rng: np.random.Generator, country: str) -> str:
+    """Single postal code for a given country (scalar wrapper for SCD2 relocation)."""
+    fmt = _POSTCODE_FMT_BY_COUNTRY.get(country, _POSTCODE_FMT_DEFAULT)
+    gen = _POSTAL_GENERATORS.get(fmt, _POSTAL_GENERATORS[_POSTCODE_FMT_DEFAULT])
+    return str(gen(rng, 1)[0])

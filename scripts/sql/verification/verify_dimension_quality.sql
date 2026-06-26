@@ -46,10 +46,10 @@ HAVING COUNT(*) > 1;
 -- 2. Gender Domain Values
 -- ============================================================================
 
--- 2a. Customer gender must be Male, Female, or Org
+-- 2a. Customer gender must be M, F, or O (M=Male, F=Female, O=Organization)
 SELECT Gender, COUNT(*) AS Cnt
 FROM Customers
-WHERE Gender NOT IN ('Male', 'Female', 'Org')
+WHERE Gender NOT IN ('M', 'F', 'O')
 GROUP BY Gender;
 -- EXPECTED: zero rows
 
