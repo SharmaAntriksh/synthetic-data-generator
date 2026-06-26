@@ -1628,7 +1628,14 @@ def build_chunk_table(
 
         else:
             customer_keys_out = customer_keys_for_orders
-            order_dates = month_date_pool[rng.integers(0, len(month_date_pool), size=n_orders)]
+            # Honor per-day demand weights (month_date_prob) here too, matching
+            # the order path (build_orders); previously this sampled dates
+            # uniformly, flattening intra-month seasonality when skip_order_cols.
+            if month_date_prob is not None:
+                _od_idx = rng.choice(len(month_date_pool), size=n_orders, p=month_date_prob)
+            else:
+                _od_idx = rng.integers(0, len(month_date_pool), size=n_orders)
+            order_dates = month_date_pool[_od_idx]
             order_dates = _clamp_order_dates_to_customer_start(order_dates, customer_keys_out)
             order_ids_int = None
             line_num = None
@@ -1917,7 +1924,6 @@ def build_chunk_table(
         qty = build_quantity(rng, order_dates)
 
         price = compute_prices(
-            rng=rng,
             n=len(customer_keys_out),
             unit_price=unit_price,
             unit_cost=unit_cost,

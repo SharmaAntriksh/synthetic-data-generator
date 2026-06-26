@@ -285,50 +285,50 @@ class TestBuildOrders:
 
 class TestComputePrices:
     def test_zero_n_returns_empty(self):
-        result = compute_prices(_rng(), 0, [], [])
+        result = compute_prices(0, [], [])
         assert result["final_unit_price"].shape == (0,)
 
     def test_positive_prices(self):
         up = np.array([10.0, 20.0, 30.0])
         uc = np.array([5.0, 10.0, 15.0])
-        result = compute_prices(_rng(), 3, up, uc)
+        result = compute_prices(3, up, uc)
         assert np.all(result["final_unit_price"] >= 0)
         assert np.all(result["final_unit_cost"] >= 0)
 
     def test_cost_not_exceeding_price(self):
         up = np.array([10.0, 5.0, 20.0])
         uc = np.array([15.0, 3.0, 25.0])  # some costs > prices
-        result = compute_prices(_rng(), 3, up, uc)
+        result = compute_prices(3, up, uc)
         assert np.all(result["final_unit_cost"] <= result["final_unit_price"])
 
     def test_zero_discount(self):
         up = np.array([10.0, 20.0])
         uc = np.array([5.0, 10.0])
-        result = compute_prices(_rng(), 2, up, uc)
+        result = compute_prices(2, up, uc)
         np.testing.assert_array_equal(result["discount_amt"], [0.0, 0.0])
 
     def test_net_price_equals_unit_price(self):
         up = np.array([10.0, 20.0])
         uc = np.array([5.0, 10.0])
-        result = compute_prices(_rng(), 2, up, uc)
+        result = compute_prices(2, up, uc)
         np.testing.assert_array_equal(result["final_net_price"], result["final_unit_price"])
 
     def test_nan_prices_treated_as_zero(self):
         up = np.array([float("nan"), 20.0])
         uc = np.array([5.0, float("nan")])
-        result = compute_prices(_rng(), 2, up, uc)
+        result = compute_prices(2, up, uc)
         assert result["final_unit_price"][0] == 0.0
         assert result["final_unit_cost"][1] == 0.0
 
     def test_negative_prices_clipped_to_zero(self):
         up = np.array([-10.0, 20.0])
         uc = np.array([-5.0, 10.0])
-        result = compute_prices(_rng(), 2, up, uc)
+        result = compute_prices(2, up, uc)
         assert result["final_unit_price"][0] == 0.0
         assert result["final_unit_cost"][0] == 0.0
 
     def test_single_element(self):
-        result = compute_prices(_rng(), 1, [99.99], [49.99])
+        result = compute_prices(1, [99.99], [49.99])
         assert result["final_unit_price"].shape == (1,)
         assert result["final_unit_price"][0] == pytest.approx(99.99)
 

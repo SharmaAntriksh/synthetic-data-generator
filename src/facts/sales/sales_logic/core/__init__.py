@@ -10,7 +10,7 @@ are re-exported here so existing imports continue to work unchanged:
 
 from __future__ import annotations
 
-# Re-export: date logic
+# Re-export: date logic (delivery re-exports fmt from ..globals — single source)
 from .delivery import (
     fmt,
     _yyyymmdd_from_days,
@@ -94,8 +94,8 @@ __all__ = [
     "build_rows_per_month",
 ]
 
-# Internal symbols consumed by chunk_builder (not part of the public API,
-# but importable from this package for backward compatibility):
+# Internal symbols re-exported for chunk_builder and tests (not part of the
+# public API, but importable from this package for backward compatibility):
 #   _normalize_end_month, _eligible_customer_mask_for_month,
-#   _participation_distinct_target, _sample_customers,
-#   _stable_row_hash, _yyyymmdd_from_days
+#   _participation_distinct_target, _sample_customers, _stable_row_hash
+# (_yyyymmdd_from_days is retained for test coverage only — no prod caller.)

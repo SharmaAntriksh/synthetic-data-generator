@@ -4,30 +4,15 @@ from __future__ import annotations
 
 import numpy as np
 
+# ``fmt`` (datetime64 -> YYYYMMDD string) is defined once in ``..globals`` and
+# re-exported here so existing import paths keep working; it was previously
+# duplicated in this module.
+from ..globals import fmt  # noqa: F401  (re-export for core + tests)
+
 
 # ----------------------------------------------------------------
 # Date formatting
 # ----------------------------------------------------------------
-
-def fmt(dt):
-    """
-    Format datetime64[D] as YYYYMMDD string array (fast path).
-    Accepts scalar or array-like.
-    """
-    d = np.asarray(dt).astype("datetime64[D]", copy=False)
-    y = d.astype("datetime64[Y]").astype("int64") + 1970
-    m = (
-        d.astype("datetime64[M]").astype("int64")
-        - d.astype("datetime64[Y]").astype("datetime64[M]").astype("int64")
-        + 1
-    )
-    day = (
-        d.astype("datetime64[D]").astype("int64")
-        - d.astype("datetime64[M]").astype("datetime64[D]").astype("int64")
-        + 1
-    )
-    return (y * 10000 + m * 100 + day).astype("U8")
-
 
 def _yyyymmdd_from_days(days: np.ndarray) -> np.ndarray:
     """
@@ -96,7 +81,7 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
       due_date: datetime64[D]
       delivery_date: datetime64[D]
       delivery_status: fixed-width unicode (U15)
-      is_order_delayed: int8
+      is_order_delayed: bool
     """
     n = int(n)
     if n <= 0:

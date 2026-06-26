@@ -12,7 +12,6 @@ import numpy as np
 
 
 def compute_prices(
-    rng,
     n,
     unit_price,
     unit_cost,
@@ -21,11 +20,11 @@ def compute_prices(
     Package base product prices for downstream processing.
 
     Returns the standard price dict with zero discount; all markdown
-    logic is handled by ``pricing_pipeline.build_prices``.
+    logic is handled by ``pricing_pipeline.build_prices``.  No RNG is used
+    here — per-row randomness (markdowns, snapping) lives in build_prices.
 
     Parameters
     ----------
-    rng : numpy.random.Generator
     n : int - number of rows
     unit_price, unit_cost : array-like - per-row base prices from products
     """

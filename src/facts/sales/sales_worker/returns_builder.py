@@ -231,7 +231,10 @@ def _draw_base_lag(
                         mass falls within [lo, hi] before clamping
 
     Unknown names fall back to uniform. For a degenerate range (hi <= lo) every
-    lag is ``lo`` and the RNG is not consumed — matching the old fixed-lag path.
+    lag is ``lo`` and no RNG is consumed. Note: the pre-refactor code only
+    skipped the draw when ``hi == 0``; for ``min_lag == max_lag > 0`` it still
+    drew a (constant) value from ``rng``, so the return-RNG stream for that edge
+    config differs from older versions (the lags themselves are unchanged).
     """
     if hi <= lo:
         return np.full(m, lo, dtype=np.int32)
