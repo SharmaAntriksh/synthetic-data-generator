@@ -918,7 +918,11 @@ class TestPowerBIPackaging:
             final_folder=final,
         )
         text = expr_file.read_text(encoding="utf-8")
-        assert "C:\\\\output\\\\my_dataset" in text
+        # Path separator is OS-specific: Windows yields escaped backslashes
+        # (C:\\output\\...), POSIX yields forward slashes (C:/output/...).
+        # Both are valid TMDL M paths.
+        assert ("C:\\\\output\\\\my_dataset" in text
+                or "C:/output/my_dataset" in text)
         assert "old\\\\path" not in text
 
     def test_rewrite_expression_backslash_escaping(self, tmp_path):
