@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import glob
-import logging
 import os
 import zlib
 from collections.abc import Mapping
@@ -2323,12 +2322,14 @@ def generate_sales_fact(
         if _avail:
             _peak = _projected_peak_chunk_bytes(chunk_size, n_workers)
             if _peak > _avail * 0.75:
-                logging.getLogger(__name__).warning(
-                    "chunk_size=%s × %d workers projects ~%.1f GB in-flight "
-                    "(~%.1f GB available); reduce sales.chunk_size or set "
-                    "sales.tune_chunk=true to avoid possible OOM.",
-                    f"{chunk_size:,}", n_workers,
-                    _peak / (1024 ** 3), _avail / (1024 ** 3),
+                warn(
+                    f"Memory risk: ~{_peak / (1024 ** 3):.1f} GB in-flight "
+                    f"(chunk_size={chunk_size:,} × {n_workers} workers) vs "
+                    f"~{_avail / (1024 ** 3):.1f} GB available."
+                )
+                warn(
+                    "Lower sales.chunk_size or set sales.tune_chunk=true "
+                    "to avoid possible OOM."
                 )
 
     info(f"Spawning {n_workers} worker processes...")
