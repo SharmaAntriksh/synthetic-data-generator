@@ -34,7 +34,12 @@ from src.dimensions.products.pricing import (
 )
 from src.dimensions.products.product_profile import (
     enrich_products_attributes,
+    apply_post_merge_enrichment,
     _splitmix64,
+)
+from src.dimensions.products.generator import (
+    _assign_supplier_keys,
+    _NO_SUPPLIER_KEY,
 )
 
 
@@ -601,7 +606,7 @@ class TestEnrichProductsAttributes:
 
     def test_adds_expected_columns(self, enrichable_products, subcategory_parquet):
         df = enrich_products_attributes(
-            enrichable_products, {}, seed=42,
+            enrichable_products, seed=42,
             output_folder=subcategory_parquet,
         )
         expected_cols = [
@@ -619,22 +624,22 @@ class TestEnrichProductsAttributes:
 
     def test_determinism(self, enrichable_products, subcategory_parquet):
         df1 = enrich_products_attributes(
-            enrichable_products, {}, seed=42,
+            enrichable_products, seed=42,
             output_folder=subcategory_parquet,
         )
         df2 = enrich_products_attributes(
-            enrichable_products, {}, seed=42,
+            enrichable_products, seed=42,
             output_folder=subcategory_parquet,
         )
         pd.testing.assert_frame_equal(df1, df2)
 
     def test_different_seed_differs(self, enrichable_products, subcategory_parquet):
         df1 = enrich_products_attributes(
-            enrichable_products, {}, seed=1,
+            enrichable_products, seed=1,
             output_folder=subcategory_parquet,
         )
         df2 = enrich_products_attributes(
-            enrichable_products, {}, seed=2,
+            enrichable_products, seed=2,
             output_folder=subcategory_parquet,
         )
         # At least some hash-derived columns should differ
@@ -642,7 +647,7 @@ class TestEnrichProductsAttributes:
 
     def test_color_family_mapping(self, enrichable_products, subcategory_parquet):
         df = enrich_products_attributes(
-            enrichable_products, {}, seed=42,
+            enrichable_products, seed=42,
             output_folder=subcategory_parquet,
         )
         # "Red" -> "Red", "Blue" -> "Blue", etc.
@@ -665,7 +670,7 @@ class TestEnrichProductsAttributes:
             "VariantIndex": [0, 1, 2, 0, 1, 2],
         })
         result = enrich_products_attributes(
-            df, {}, seed=42,
+            df, seed=42,
             output_folder=subcategory_parquet,
         )
         # All variants of BaseProductID=1 should share Material
@@ -680,7 +685,7 @@ class TestEnrichProductsAttributes:
 
     def test_weight_non_negative(self, enrichable_products, subcategory_parquet):
         df = enrich_products_attributes(
-            enrichable_products, {}, seed=42,
+            enrichable_products, seed=42,
             output_folder=subcategory_parquet,
         )
         assert (df["WeightKg"] >= 0.0).all()
@@ -690,24 +695,31 @@ class TestEnrichProductsAttributes:
 
     def test_shipping_class_values(self, enrichable_products, subcategory_parquet):
         df = enrich_products_attributes(
-            enrichable_products, {}, seed=42,
+            enrichable_products, seed=42,
             output_folder=subcategory_parquet,
         )
         valid = {"Standard", "Oversize", "Freight", "Digital"}
         assert set(df["ShippingClass"].unique()).issubset(valid)
 
     def test_age_group_default_adult(self, enrichable_products, subcategory_parquet):
-        """Products without age keywords default to 'Adult'."""
+        """Without an age keyword, products default to 'Adult' — except in
+        subcategories that carry an explicit age profile (apparel/toys/sport)."""
+        from src.dimensions.products.product_profile import _SUBCATEGORY_AGE_PROFILE
         df = enrich_products_attributes(
-            enrichable_products, {}, seed=42,
+            enrichable_products, seed=42,
             output_folder=subcategory_parquet,
         )
-        # None of our test product names contain age keywords
-        assert (df["AgeGroup"] == "Adult").all()
+        name_by_key = {10: "Headphones", 20: "Laptops",
+                       30: "Televisions", 40: "T-Shirts & Tops"}
+        subnames = enrichable_products["SubcategoryKey"].map(name_by_key)
+        non_profiled = ~subnames.isin(_SUBCATEGORY_AGE_PROFILE.keys())
+        # No name keywords here, so non-profiled subcategories must be Adult.
+        assert (df.loc[non_profiled.to_numpy(), "AgeGroup"] == "Adult").all()
+        assert set(df["AgeGroup"].unique()).issubset({"Adult", "Kids", "Teen", "Baby"})
 
     def test_skip_post_merge_omits_brand_tier(self, enrichable_products, subcategory_parquet):
         df = enrich_products_attributes(
-            enrichable_products, {}, seed=42,
+            enrichable_products, seed=42,
             output_folder=subcategory_parquet,
             _skip_post_merge=True,
         )
@@ -730,7 +742,7 @@ class TestEnrichProductsAttributes:
             "VariantIndex": np.zeros(n, dtype=np.int32),
         })
         out = enrich_products_attributes(
-            df, {}, seed=42, output_folder=subcategory_parquet,
+            df, seed=42, output_folder=subcategory_parquet,
         )
         ratings = out["AvgCustomerRating"].to_numpy()
         # Cap ceiling-share well below 1% to catch any future over-pull toward 5.0.
@@ -739,6 +751,56 @@ class TestEnrichProductsAttributes:
         # Sanity: still a reasonable spread across the band.
         assert ratings.max() > 4.0
         assert ratings.std() > 0.15
+
+    def test_serial_parallel_chunk_equivalence(self, subcategory_parquet):
+        """Chunked enrichment (``_skip_post_merge`` per chunk) followed by
+        ``apply_post_merge_enrichment`` on the merged frame must produce output
+        identical to single-pass serial enrichment.
+
+        This is the invariant the parallel orchestrator relies on: rank columns
+        are deferred to the merged frame while per-base attributes are
+        hash-seeded, so chunk boundaries must not change the result — even when
+        variants of the same BaseProductID land in different chunks.
+        """
+        n_base, passes = 12, 3
+        bases = np.tile(np.arange(1, n_base + 1), passes).astype(np.int64)
+        N = bases.size
+        subcats = np.array([10, 20, 30, 40], dtype=np.int64)[(bases - 1) % 4]
+        # Variants of a base sit at positions i, i+n_base, i+2*n_base → they
+        # straddle chunk boundaries below, stressing cross-chunk consistency.
+        variant_idx = np.repeat(np.arange(passes), n_base).astype(np.int64)
+        df = pd.DataFrame({
+            "ProductKey": np.arange(1, N + 1, dtype=np.int64),
+            "BaseProductID": bases,
+            "SubcategoryKey": subcats,
+            "ListPrice": np.linspace(15.0, 950.0, N),
+            "UnitCost": np.linspace(8.0, 500.0, N),
+            "ProductName": [f"Item {i}" for i in range(N)],
+            "Color": [["Red", "Blue", "Green", "Black"][i % 4] for i in range(N)],
+            "VariantIndex": variant_idx,
+        })
+
+        seed = 123
+        full = enrich_products_attributes(
+            df.copy(), seed=seed, output_folder=subcategory_parquet,
+        )
+
+        # Mirror _generate_parallel_enrichment: contiguous chunks via array_split,
+        # each enriched with _skip_post_merge=True, merged in order, then ranked.
+        parts = []
+        for idx in np.array_split(np.arange(N), 4):
+            parts.append(enrich_products_attributes(
+                df.iloc[idx], seed=seed, output_folder=subcategory_parquet,
+                _skip_post_merge=True,
+            ))
+        merged = pd.concat(parts, ignore_index=True)
+        chunked = apply_post_merge_enrichment(merged, seed)
+
+        assert set(full.columns) == set(chunked.columns)
+        pd.testing.assert_frame_equal(
+            full[sorted(full.columns)].reset_index(drop=True),
+            chunked[sorted(chunked.columns)].reset_index(drop=True),
+        )
 
 
 # ===================================================================
@@ -763,6 +825,69 @@ class TestSplitmix64:
         x = np.array([0, 1, 2**32], dtype=np.uint64)
         h = _splitmix64(x)
         assert h.dtype == np.uint64
+
+
+# ===================================================================
+# TestAssignSupplierKeys — supplier assignment strategies
+# ===================================================================
+
+class TestAssignSupplierKeys:
+    """Tests for generator._assign_supplier_keys() across all strategies and
+    the disabled (sentinel) path — previously unreachable/untested config."""
+
+    @staticmethod
+    def _df():
+        return pd.DataFrame({
+            "ProductKey": np.arange(1, 9, dtype=np.int64),
+            "BaseProductID": np.array([1, 1, 2, 2, 3, 3, 4, 4], dtype=np.int64),
+            "SubcategoryKey": np.array([10, 10, 20, 20, 30, 30, 40, 40], dtype=np.int64),
+        })
+
+    def test_disabled_returns_nonnull_sentinel(self):
+        df = self._df()
+        keys = _assign_supplier_keys(df, None, strategy="by_base_product", seed=1)
+        assert keys.dtype == np.int64
+        assert len(keys) == len(df)
+        assert (keys == _NO_SUPPLIER_KEY).all()
+
+    def test_empty_pool_returns_sentinel(self):
+        df = self._df()
+        keys = _assign_supplier_keys(
+            df, np.array([], dtype=np.int64), strategy="uniform", seed=1
+        )
+        assert (keys == _NO_SUPPLIER_KEY).all()
+
+    def test_by_base_product_within_pool_and_variant_consistent(self):
+        df = self._df()
+        pool = np.array([10, 20, 30], dtype=np.int64)
+        keys = _assign_supplier_keys(df, pool, strategy="by_base_product", seed=1)
+        assert set(np.unique(keys)).issubset(set(pool.tolist()))
+        # Variants of the same base product share a supplier.
+        assert keys[0] == keys[1]
+        assert keys[2] == keys[3]
+
+    def test_by_subcategory_consistent_per_subcategory(self):
+        df = self._df()
+        pool = np.array([7, 8, 9], dtype=np.int64)
+        keys = _assign_supplier_keys(df, pool, strategy="by_subcategory", seed=1)
+        assert set(np.unique(keys)).issubset(set(pool.tolist()))
+        # Same SubcategoryKey -> same supplier.
+        assert keys[0] == keys[1]
+
+    def test_uniform_is_deterministic_and_within_pool(self):
+        df = self._df()
+        pool = np.array([100, 200, 300, 400], dtype=np.int64)
+        k1 = _assign_supplier_keys(df, pool, strategy="uniform", seed=42)
+        k2 = _assign_supplier_keys(df, pool, strategy="uniform", seed=42)
+        npt.assert_array_equal(k1, k2)
+        assert set(np.unique(k1)).issubset(set(pool.tolist()))
+
+    def test_unknown_strategy_falls_back_to_base_product(self):
+        df = self._df()
+        pool = np.array([10, 20, 30], dtype=np.int64)
+        keys = _assign_supplier_keys(df, pool, strategy="nonsense", seed=1)
+        expected = _assign_supplier_keys(df, pool, strategy="by_base_product", seed=1)
+        npt.assert_array_equal(keys, expected)
 
 
 # ===================================================================

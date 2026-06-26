@@ -431,6 +431,13 @@ class ProductsConfig(_Base):
     margin_range: List[float] = [0.20, 0.35]
     brand_normalize: bool = False
     brand_normalize_alpha: float = 0.35
+    # Seed override for the product dimension. When unset, the standard
+    # precedence chain (override.seed -> defaults.seed -> fallback) applies
+    # via resolve_seed(), so products honor the global seed and random mode.
+    seed: Optional[int] = None
+    # SupplierKey assignment: {enabled, strategy, seed}.
+    # strategy is one of "by_base_product" (default), "by_subcategory", "uniform".
+    supplier_assignment: Optional[Dict[str, Any]] = None
     # Expanded pricing dict (populated by _expand_products_pricing)
     pricing: Optional[Dict[str, Any]] = None
     # SCD Type 2 settings (nested block)

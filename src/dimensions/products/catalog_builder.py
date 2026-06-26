@@ -9,7 +9,7 @@ Adds a 'Source' column to all three tables: 'Contoso' for originals,
 'Synthetic' for new rows.
 
 Usage:
-    python scripts/expand_product_catalog.py
+    python -m src.dimensions.products.catalog_builder
 """
 from __future__ import annotations
 

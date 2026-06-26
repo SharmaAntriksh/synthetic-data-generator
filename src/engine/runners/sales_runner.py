@@ -251,7 +251,13 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     # --- Load active products pool (active_ratio filtering moved here from dimension)
     prod_cfg = getattr(cfg, "products", None)
     _active_ratio = float(getattr(prod_cfg, "active_ratio", 1.0)) if prod_cfg else 1.0
-    _prod_seed = int(getattr(prod_cfg, "seed", 42)) if prod_cfg else 42
+    # Resolve via the same precedence chain the product dimension uses. In
+    # deterministic mode this matches the seed products were built with; in
+    # random mode each resolve_seed call draws independently, which is fine —
+    # the active-product subset is sampled fresh and doesn't depend on the
+    # build seed.
+    from src.utils.config_precedence import resolve_seed
+    _prod_seed = resolve_seed(cfg, prod_cfg, fallback=42)
     active_product_np = _load_active_products(parquet_dims_p, active_ratio=_active_ratio, seed=_prod_seed)
 
     # --- Bind runner-level globals

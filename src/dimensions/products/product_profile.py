@@ -213,16 +213,58 @@ _SEASON_KEYWORDS: list[tuple[tuple[str, ...], str]] = [
 ]
 
 
+# Subcategory-driven fallbacks for AgeGroup / TargetGender. Product names rarely
+# carry gender/age tokens, so keyword matching alone leaves these ~100% Adult /
+# Unisex. These profiles add realistic skew for the subcategories where it makes
+# sense (apparel/beauty by gender; toys/games/sport by age); everything else
+# stays Unisex/Adult. Applied only to rows with no explicit name keyword.
+
+# (P(Female), P(Male)); remainder -> Unisex.
+_SUBCATEGORY_GENDER_PROFILE: dict[str, tuple[float, float]] = {
+    "Dresses & Skirts":    (0.90, 0.02),
+    "T-Shirts & Tops":     (0.42, 0.42),
+    "Pants & Jeans":       (0.38, 0.47),
+    "Jackets & Coats":     (0.40, 0.45),
+    "Activewear":          (0.45, 0.40),
+    "Footwear":            (0.40, 0.42),
+    "Fashion Accessories": (0.48, 0.27),
+    "Fragrances":          (0.45, 0.40),
+    "Skincare":            (0.60, 0.18),
+    "Haircare":            (0.45, 0.20),
+}
+
+# (P(Kids), P(Teen)); remainder -> Adult.
+_SUBCATEGORY_AGE_PROFILE: dict[str, tuple[float, float]] = {
+    "Boxed Games":       (0.35, 0.20),
+    "Download Games":    (0.20, 0.30),
+    "Games Accessories": (0.15, 0.25),
+    "Team Sports":       (0.30, 0.20),
+    "Cycling":           (0.18, 0.15),
+    "Footwear":          (0.12, 0.10),
+    "T-Shirts & Tops":   (0.10, 0.10),
+}
+
+# Validate the gender/age profiles at import (same spirit as the archetype
+# mw-sum check below): the two probabilities must be non-negative and leave
+# room for the implicit remainder category (sum <= 1.0), and each key must be a
+# real subcategory (typo guard — a misspelled key would silently do nothing).
+for _pname, _profile in (("_SUBCATEGORY_GENDER_PROFILE", _SUBCATEGORY_GENDER_PROFILE),
+                         ("_SUBCATEGORY_AGE_PROFILE", _SUBCATEGORY_AGE_PROFILE)):
+    for _sc, _ps in _profile.items():
+        if _sc not in _SUBCATEGORY_ARCHETYPES:
+            raise ValidationError(
+                f"product_profile.{_pname}[{_sc!r}] is not a known subcategory "
+                "(must match a _SUBCATEGORY_ARCHETYPES key)"
+            )
+        if not (_ps[0] >= 0.0 and _ps[1] >= 0.0 and _ps[0] + _ps[1] <= 1.0 + 1e-9):
+            raise ValidationError(
+                f"product_profile.{_pname}[{_sc!r}] probs {_ps} must be >=0 and sum to <=1.0"
+            )
+del _pname, _profile, _sc, _ps
+
+
 def _lower_series(s: pd.Series) -> pd.Series:
     return s.astype("string").fillna("").str.lower()
-
-
-def _pick_from_list(u: np.ndarray, choices: list[str]) -> np.ndarray:
-    if len(choices) == 1:
-        return np.full(u.shape[0], choices[0], dtype=object)
-    idx = np.floor(u * len(choices)).astype(np.int64)
-    idx = np.clip(idx, 0, len(choices) - 1)
-    return np.array([choices[i] for i in idx], dtype=object)
 
 
 def _resolve_subcategory_names(df: pd.DataFrame, output_folder: Path) -> np.ndarray:
@@ -237,9 +279,27 @@ def _resolve_subcategory_names(df: pd.DataFrame, output_folder: Path) -> np.ndar
     return df["SubcategoryKey"].map(subcat_map).fillna("Unknown").to_numpy()
 
 
+def compute_margin_category(list_price, unit_cost) -> np.ndarray:
+    """Return the MarginCategory label per row from list price & unit cost.
+
+    Buckets: <20% Low, <30% Standard, <40% High, else Premium. The cut points
+    partition the realistic margin band (default margin_range [15%, 45%]) into
+    four populated tiers — the older 15/30/50 cuts left Premium (>=50%) empty.
+    Shared by the catalog enrichment and the post-SCD2 refresh so each drifted
+    version carries a margin category consistent with its own (drifted) prices.
+    """
+    lp = pd.to_numeric(pd.Series(list_price), errors="coerce").to_numpy(dtype=np.float64)
+    uc = pd.to_numeric(pd.Series(unit_cost), errors="coerce").to_numpy(dtype=np.float64)
+    margin = np.where(lp > 0, (lp - uc) / lp, 0.0)
+    return np.where(
+        margin < 0.20, "Low",
+        np.where(margin < 0.30, "Standard",
+        np.where(margin < 0.40, "High", "Premium")),
+    )
+
+
 def enrich_products_attributes(
     df: pd.DataFrame,
-    cfg: dict,
     *,
     seed: int,
     output_folder: Path,
@@ -330,13 +390,24 @@ def enrich_products_attributes(
     out["Style"] = pd.Series(sty, index=out.index, dtype="string")
     out["ProductLine"] = pd.Series(ln, index=out.index, dtype="string")
 
-    # AgeGroup: keyword first, default to "Adult"
+    # AgeGroup: name keyword first, then subcategory profile, default "Adult"
     age = pd.Series("", index=out.index, dtype="string")
     for keys, val in _AGE_KEYWORDS:
         mask = False
         for k in keys:
             mask = mask | text_l.str.contains(k, regex=False)
         age = age.mask((age == "") & mask, val)
+    # Subcategory fallback for rows with no name keyword (hash-seeded per base).
+    u_age = _base_uniform(b_u64, seed, 0x7C7C7C7C)[inv]
+    age_arr = age.to_numpy(copy=True).astype(object)
+    for sc_name, (p_kids, p_teen) in _SUBCATEGORY_AGE_PROFILE.items():
+        m = (age_arr == "") & (_subcat_names == sc_name)
+        if not m.any():
+            continue
+        u = u_age[m]
+        age_arr[m] = np.where(u < p_kids, "Kids",
+                       np.where(u < p_kids + p_teen, "Teen", "Adult"))
+    age = pd.Series(age_arr, index=out.index, dtype="string")
     age = age.mask(age == "", "Adult")
     out["AgeGroup"] = age.astype("string")
 
@@ -491,9 +562,22 @@ def enrich_products_attributes(
     u_ch = _base_uniform(b_u64, seed, 0xF0F0F0F0)[inv]
     is_haz = out["IsHazmat"].to_numpy(dtype=bool, copy=False)
     ship = out["ShippingClass"].astype("string")
+    ship_arr = ship.to_numpy()
+    is_digital = is_digital_base[inv]
 
-    out["EligibleStore"] = True
-    out["EligibleOnline"] = True
+    # Store vs online channel mix (one base-level uniform, disjoint ranges):
+    #   - digital products are online-only (no shelf presence)
+    #   - a small slice of physical SKUs are online-exclusive (store=False)
+    #   - some bulky Freight / hazmat SKUs are store-only (online=False)
+    # Ranges are disjoint and store_only excludes online_only, so no product
+    # ends up ineligible for every channel.
+    u_chan = _base_uniform(b_u64, seed, 0x5C5C5C5C)[inv]
+    online_only = is_digital | ((~is_digital) & (u_chan < 0.06))
+    store_only = (~is_digital) & (~online_only) & (
+        ((ship_arr == "Freight") & (u_chan > 0.85)) | (is_haz & (u_chan > 0.80))
+    )
+    out["EligibleStore"] = ~online_only
+    out["EligibleOnline"] = ~store_only
 
     # Marketplace: avoid hazmat/freight, then probabilistic
     eligible_mkt = (~is_haz) & (ship != "Freight") & (u_ch < 0.70)
@@ -574,20 +658,32 @@ def enrich_products_attributes(
         u_gift < gift_prob, index=out.index, dtype=bool
     )
 
-    # TargetGender (keyword-based, safe in chunks)
+    # TargetGender: name keyword first, then subcategory profile, default Unisex.
     _GENDER_MALE_KW = ("men", " male", "boy", "gentleman")
     _GENDER_FEMALE_KW = ("women", "woman", " female", "girl", "lady", "ladies")
-    tg = pd.Series("Unisex", index=out.index, dtype="string")
+    tg = pd.Series("", index=out.index, dtype="string")
     for kw in _GENDER_FEMALE_KW:
-        tg = tg.mask((tg == "Unisex") & text_l.str.contains(kw, regex=False), "Female")
+        tg = tg.mask((tg == "") & text_l.str.contains(kw, regex=False), "Female")
     for kw in _GENDER_MALE_KW:
-        tg = tg.mask((tg == "Unisex") & text_l.str.contains(kw, regex=False), "Male")
+        tg = tg.mask((tg == "") & text_l.str.contains(kw, regex=False), "Male")
+    # Subcategory fallback for rows with no name keyword (hash-seeded per base).
+    u_gen = _base_uniform(b_u64, seed, 0x6E6E6E6E)[inv]
+    tg_arr = tg.to_numpy(copy=True).astype(object)
+    for sc_name, (p_f, p_m) in _SUBCATEGORY_GENDER_PROFILE.items():
+        m = (tg_arr == "") & (_subcat_names == sc_name)
+        if not m.any():
+            continue
+        u = u_gen[m]
+        tg_arr[m] = np.where(u < p_f, "Female",
+                     np.where(u < p_f + p_m, "Male", "Unisex"))
+    tg = pd.Series(tg_arr, index=out.index, dtype="string")
+    tg = tg.mask(tg == "", "Unisex")
     out["TargetGender"] = tg
 
     # --- Digital product overrides ---
-    _is_digital = is_digital_base[inv]
-    if _is_digital.any():
-        dm = pd.Series(_is_digital, index=out.index)
+    # Reuse the per-row digital mask computed in the channel-eligibility section.
+    if is_digital.any():
+        dm = pd.Series(is_digital, index=out.index)
         out.loc[dm, "PackagingType"] = "Digital"
         out.loc[dm, "AssemblyRequired"] = False
         out.loc[dm, "IsGiftEligible"] = True
@@ -705,14 +801,21 @@ def apply_post_merge_enrichment(df: pd.DataFrame, seed: int) -> pd.DataFrame:
     )
     out["ABCClassification"] = pd.Series(abc_class, index=out.index, dtype="string")
 
+    # Reorder point ~ avg daily demand x lead time. Scale the popularity-based
+    # velocity (0-1) into realistic units/day so ROP lands in the tens-to-low-
+    # thousands instead of single digits (the inventory engine consumes these
+    # directly). Digital/zero-lead items collapse to the floor — they don't
+    # need replenishment.
+    _DAILY_DEMAND_MAX = 60.0  # units/day for a top-popularity product
+    daily_demand = velocity_est * _DAILY_DEMAND_MAX
     lead_arr = out["LeadTimeDays"].to_numpy(dtype=np.int64, copy=False)
     u_rop = _base_uniform(b_u64, seed, 0x6A6A6A6A)[inv]
-    rop_base = velocity_est * 30 * (lead_arr / 10.0)
-    ReorderPointUnits = np.clip((rop_base * (0.5 + u_rop)).astype("int64"), 10, 5000)
+    rop_base = daily_demand * lead_arr * (0.8 + 0.4 * u_rop)
+    ReorderPointUnits = np.clip(rop_base.astype("int64"), 10, 20000)
     out["ReorderPointUnits"] = pd.Series(ReorderPointUnits, index=out.index).astype("int32")
 
     u_ss = _base_uniform(b_u64, seed, 0x7A7A7A7A)[inv]
-    SafetyStockUnits = np.clip((ReorderPointUnits * (0.2 + u_ss * 0.3)).astype("int64"), 5, 1000)
+    SafetyStockUnits = np.clip((ReorderPointUnits * (0.2 + u_ss * 0.3)).astype("int64"), 5, 6000)
     out["SafetyStockUnits"] = pd.Series(SafetyStockUnits, index=out.index).astype("int32")
 
     # --- Market & Customer Perception (BrandTier-dependent) ---
@@ -740,13 +843,9 @@ def apply_post_merge_enrichment(df: pd.DataFrame, seed: int) -> pd.DataFrame:
     out["CompetitorPriceIndex"] = pd.Series(CompetitorPriceIndex, index=out.index).astype("float32")
 
     cost_arr = pd.to_numeric(out.get("UnitCost", 0.0), errors="coerce").to_numpy(dtype=np.float64, copy=False)
-    margin_pct = np.where(up_arr > 0, (up_arr - cost_arr) / up_arr, 0.0)
-    margin_cat = np.where(
-        margin_pct < 0.15, "Low",
-        np.where(margin_pct < 0.30, "Standard",
-        np.where(margin_pct < 0.50, "High", "Premium")),
+    out["MarginCategory"] = pd.Series(
+        compute_margin_category(up_arr, cost_arr), index=out.index, dtype="string"
     )
-    out["MarginCategory"] = pd.Series(margin_cat, index=out.index, dtype="string")
 
     # IsBestseller (rank-based on PopularityScore)
     pop_rank = np.argsort(np.argsort(-PopularityScore))

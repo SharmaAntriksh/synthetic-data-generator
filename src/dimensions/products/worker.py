@@ -24,12 +24,9 @@ def product_enrich_chunk_worker(args: Tuple) -> Dict[str, Any]:
     (
         chunk_idx, seed,
         input_path_str, output_path_str,
-        cfg_dump, output_folder_str,
+        output_folder_str,
     ) = args
 
-    from src.engine.config.config_schema import AppConfig
-
-    cfg = AppConfig.from_raw_dict(dict(cfg_dump))
     output_folder = Path(output_folder_str)
 
     chunk_df = pd.read_parquet(input_path_str)
@@ -37,7 +34,7 @@ def product_enrich_chunk_worker(args: Tuple) -> Dict[str, Any]:
     from src.dimensions.products.product_profile import enrich_products_attributes
 
     enriched = enrich_products_attributes(
-        chunk_df, cfg, seed=seed, output_folder=output_folder,
+        chunk_df, seed=seed, output_folder=output_folder,
         _skip_post_merge=True,
     )
 

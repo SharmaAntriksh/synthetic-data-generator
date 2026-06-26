@@ -4,19 +4,20 @@ import numpy as np
 import pandas as pd
 
 from src.exceptions import DimensionError
+from src.utils.config_helpers import bool_or, float_or
 
 
-def _to_float(x, default=None):
+def _opt_float(x):
+    """Optional float coercion: returns the float value, or ``None`` when *x*
+    is missing/None or non-numeric. The ``None`` result is a meaningful
+    "value absent" sentinel used to gate optional pricing knobs (min/max
+    price, margins, band max/step). For a real fallback default, use
+    ``config_helpers.float_or`` instead — this is not a variant of it.
+    """
     try:
         return float(x)
     except (TypeError, ValueError):
-        return default
-
-
-def _to_bool(x, default=False):
-    if x is None:
-        return default
-    return bool(x)
+        return None
 
 
 # Fine-grained bands for SCD2 drift snapping.  The initial catalog uses
@@ -63,8 +64,8 @@ def _parse_bands(bands, default_bands):
     for b in bands:
         if not isinstance(b, Mapping):
             continue
-        mx = _to_float(b.get("max"), None)
-        st = _to_float(b.get("step"), None)
+        mx = _opt_float(b.get("max"))
+        st = _opt_float(b.get("step"))
         if mx is None or st is None or mx <= 0 or st <= 0:
             continue
         out.append((float(mx), float(st)))
@@ -146,12 +147,21 @@ def snap_drifted_prices(
     because coarser steps erase small year-over-year drift.  Reads
     ``pricing_cfg["appearance"]["price_ending"]`` if available.
 
+    Note: SCD2 drift itself is margin-preserving (it scales list price and
+    cost by the same factor), but snapping list price (to .99 points) and cost
+    (to clean steps) *independently* nudges each version's margin off its launch
+    value. So ``products.margin_range`` is a launch (V1) guarantee, not a
+    per-version lifetime bound — drifted versions can fall modestly outside it,
+    most visibly on low-priced items where the cost step is coarse relative to
+    value. This is intentional; forcing lifetime bounds would require deriving
+    cost from the snapped list price and abandoning clean cost steps.
+
     Returns (snapped_list_prices, snapped_unit_costs).
     """
     pcfg = pricing_cfg if isinstance(pricing_cfg, Mapping) else {}
     app = pcfg.get("appearance", None)
     app = app if isinstance(app, Mapping) else {}
-    price_ending = _to_float(app.get("price_ending"), DEFAULT_PRICE_ENDING) or DEFAULT_PRICE_ENDING
+    price_ending = float_or(app.get("price_ending"), DEFAULT_PRICE_ENDING) or DEFAULT_PRICE_ENDING
 
     lp = _snap_unit_price_to_points(
         np.asarray(list_prices, dtype=np.float64), DEFAULT_PRICE_BANDS, price_ending)
@@ -268,7 +278,7 @@ def _apply_brand_price_normalization(
     """
     Brand-level price normalization in log space; low-count brands are left unchanged.
     """
-    if not isinstance(brand_cfg, Mapping) or not _to_bool(brand_cfg.get("enabled"), False):
+    if not isinstance(brand_cfg, Mapping) or not bool_or(brand_cfg.get("enabled"), False):
         return
 
     brand_col = brand_cfg.get("brand_col")
@@ -282,17 +292,10 @@ def _apply_brand_price_normalization(
     if brand_col not in out.columns:
         return
 
-    alpha = _to_float(brand_cfg.get("alpha"), 0.7)
-    if alpha is None:
-        alpha = 0.7
-    alpha = float(np.clip(alpha, 0.0, 1.0))
+    alpha = float(np.clip(float_or(brand_cfg.get("alpha"), 0.7), 0.0, 1.0))
 
-    min_factor = _to_float(brand_cfg.get("min_factor"), 0.6)
-    max_factor = _to_float(brand_cfg.get("max_factor"), 1.6)
-    if min_factor is None:
-        min_factor = 0.6
-    if max_factor is None:
-        max_factor = 1.6
+    min_factor = float_or(brand_cfg.get("min_factor"), 0.6)
+    max_factor = float_or(brand_cfg.get("max_factor"), 1.6)
     if max_factor <= 0 or min_factor <= 0 or max_factor < min_factor:
         return
 
@@ -302,8 +305,7 @@ def _apply_brand_price_normalization(
         min_count = 10
     min_count = max(1, min_count)
 
-    noise_sd = _to_float(brand_cfg.get("noise_sd"), 0.0) or 0.0
-    noise_sd = float(max(0.0, noise_sd))
+    noise_sd = float(max(0.0, float_or(brand_cfg.get("noise_sd"), 0.0)))
 
     up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
     finite = np.isfinite(up) & (up > 0.0)
@@ -433,14 +435,14 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     # ----------------------------
     # Base price: scale / (optional) rescale / clamp
     # ----------------------------
-    value_scale = _to_float(base_cfg.get("value_scale"), 1.0)
-    if value_scale is None or value_scale <= 0:
+    value_scale = float_or(base_cfg.get("value_scale"), 1.0)
+    if value_scale <= 0:
         raise DimensionError("products.pricing.base.value_scale must be a number > 0")
 
-    min_price = _to_float(base_cfg.get("min_unit_price"), None)
-    max_price = _to_float(base_cfg.get("max_unit_price"), None)
+    min_price = _opt_float(base_cfg.get("min_unit_price"))
+    max_price = _opt_float(base_cfg.get("max_unit_price"))
 
-    rescale = _to_bool(base_cfg.get("rescale_to_range"), False)
+    rescale = bool_or(base_cfg.get("rescale_to_range"), False)
 
     out["ListPrice"] = out["ListPrice"] * float(value_scale)
 
@@ -471,15 +473,13 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     # ----------------------------
     # Appearance: snap ListPrice
     # ----------------------------
-    snap_unit_price = _to_bool(appearance_cfg.get("snap_unit_price"), False)
-    round_unit_cost = _to_bool(appearance_cfg.get("round_unit_cost"), False)
+    snap_unit_price = bool_or(appearance_cfg.get("snap_unit_price"), False)
+    round_unit_cost = bool_or(appearance_cfg.get("round_unit_cost"), False)
 
     price_bands = _parse_bands(appearance_cfg.get("price_bands"), DEFAULT_PRICE_BANDS)
     cost_bands = _parse_bands(appearance_cfg.get("cost_bands"), DEFAULT_COST_BANDS)
 
-    price_ending = _to_float(appearance_cfg.get("price_ending"), DEFAULT_PRICE_ENDING)
-    if price_ending is None:
-        price_ending = DEFAULT_PRICE_ENDING
+    price_ending = float_or(appearance_cfg.get("price_ending"), DEFAULT_PRICE_ENDING)
 
     if snap_unit_price:
         up = out["ListPrice"].to_numpy(dtype=np.float64, copy=False)
@@ -494,8 +494,8 @@ def apply_product_pricing(df: pd.DataFrame, pricing_cfg: dict, seed: int | None 
     if mode not in ("", "keep", "margin"):
         raise DimensionError('products.pricing.cost.mode must be one of: "keep", "margin"')
 
-    min_margin = _to_float(cost_cfg.get("min_margin_pct"), None)
-    max_margin = _to_float(cost_cfg.get("max_margin_pct"), None)
+    min_margin = _opt_float(cost_cfg.get("min_margin_pct"))
+    max_margin = _opt_float(cost_cfg.get("max_margin_pct"))
 
     # Default behavior: if margin bounds exist, prefer margin mode even if UnitCost exists.
     if mode == "":

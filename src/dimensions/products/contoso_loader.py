@@ -103,9 +103,24 @@ def load_contoso_products(output_folder: Path, catalog: str = "all"):
         if path.exists():
             df = pd.read_parquet(path)
         else:
+            if not _combined.exists():
+                raise DimensionError(
+                    f"Product catalog not found: neither {path} nor {_combined} exists. "
+                    "Run `python -m src.dimensions.products.catalog_builder` to (re)build the catalog parquets."
+                )
             df = pd.read_parquet(_combined)
+            if "Source" not in df.columns:
+                raise DimensionError(
+                    f"{_combined} is missing the 'Source' column required to select the "
+                    f"'{catalog}' catalog. Rebuild via `python -m src.dimensions.products.catalog_builder`."
+                )
             df = df[df["Source"] == source_label].copy()
     else:  # "all"
+        if not _combined.exists():
+            raise DimensionError(
+                f"Product catalog not found: {_combined} does not exist. "
+                "Run `python -m src.dimensions.products.catalog_builder` to (re)build the catalog parquets."
+            )
         df = pd.read_parquet(_combined)
 
     df = _normalize_products(df)

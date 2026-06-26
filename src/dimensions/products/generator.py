@@ -10,7 +10,7 @@ from src.utils import info, skip, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
 
-from src.utils.config_precedence import resolve_dates
+from src.utils.config_precedence import resolve_dates, resolve_seed
 from src.defaults import SCD2_END_OF_TIME
 
 from .contoso_loader import load_contoso_products
@@ -51,12 +51,53 @@ def _load_supplier_keys(output_folder: Path) -> np.ndarray:
     return np.sort(keys)
 
 
+# Sentinel for products with no supplier assigned. Real SupplierKeys start at
+# 1 (suppliers.start_key default), so 0 is unambiguous and keeps the column
+# non-null to satisfy STATIC_SCHEMAS['ProductProfile'] (SupplierKey INT NOT NULL).
+_NO_SUPPLIER_KEY = 0
+
+
+def _assign_supplier_keys(
+    df: pd.DataFrame,
+    supplier_keys: np.ndarray | None,
+    *,
+    strategy: str,
+    seed: int,
+) -> np.ndarray:
+    """Return one int64 SupplierKey per row of *df*.
+
+    When ``supplier_keys`` is None or empty (assignment disabled), every row
+    gets the sentinel ``_NO_SUPPLIER_KEY`` so the column is always present and
+    non-null. Otherwise keys are assigned deterministically per ``strategy``:
+      - ``by_subcategory``: SupplierKey indexed by ``SubcategoryKey % n``
+      - ``uniform``:        random (seeded) draw across the supplier pool
+      - anything else:      ``by_base_product`` — ``BaseProductID % n``
+    """
+    n_rows = len(df)
+    if supplier_keys is None or supplier_keys.size == 0:
+        return np.full(n_rows, _NO_SUPPLIER_KEY, dtype="int64")
+
+    n_sup = int(supplier_keys.size)
+    base = pd.to_numeric(
+        df.get("BaseProductID", df["ProductKey"]), errors="coerce"
+    ).fillna(0).astype("int64").to_numpy()
+
+    if strategy == "by_subcategory" and "SubcategoryKey" in df.columns:
+        sub = pd.to_numeric(df["SubcategoryKey"], errors="coerce").fillna(0).astype("int64").to_numpy()
+        idx = np.mod(sub, n_sup)
+    elif strategy == "uniform":
+        idx = np.random.default_rng(seed).integers(0, n_sup, size=n_rows, dtype=np.int64)
+    else:
+        idx = np.mod(base, n_sup)
+
+    return supplier_keys[idx].astype("int64")
+
+
 # ---------------------------------------------------------------------
 # Parallel enrichment orchestrator
 # ---------------------------------------------------------------------
 def _generate_parallel_enrichment(
     df: pd.DataFrame,
-    config,
     seed: int,
     output_folder: Path,
     n_workers: int,
@@ -73,10 +114,6 @@ def _generate_parallel_enrichment(
     n_chunks = max(2, n_chunks)
     n_actual_workers = min(n_chunks, n_workers)
 
-    # Serialize config for workers (must be picklable plain dict)
-    from src.utils.config_helpers import as_dict
-    cfg_dump = as_dict(config)
-
     # Scratch directory
     scratch_dir = output_folder / "_product_chunks"
     scratch_dir.mkdir(parents=True, exist_ok=True)
@@ -92,7 +129,7 @@ def _generate_parallel_enrichment(
         tasks.append((
             i, seed,
             input_path, output_path,
-            cfg_dump, str(output_folder),
+            str(output_folder),
         ))
 
     info(f"Product enrichment: {n_chunks} chunks across {n_actual_workers} workers")
@@ -147,7 +184,10 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
         (DataFrame, regenerated: bool)
     """
     p = config["products"]
-    seed = int(p.get("seed", 42))
+    # Resolve seed via the standard precedence chain (override.seed ->
+    # products.seed -> defaults.seed -> fallback) so the product dimension
+    # honors the global seed and random mode like every other dimension.
+    seed = resolve_seed(config, p, fallback=42)
 
     # Supplier assignment
     sup_cfg = p.get("supplier_assignment") or {}
@@ -163,7 +203,7 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
 
     # Versioning / skip
     parquet_path = output_folder / "products.parquet"
-    version_key = _version_key(p)
+    version_key = _version_key(p, seed)
 
     if sup_enabled:
         version_key = dict(version_key)
@@ -191,9 +231,6 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
 
     if target_n <= 0:
         raise DimensionError("products.num_products must be a positive integer")
-
-    if "num_products" in p and "use_contoso_products" in p:
-        info("products.use_contoso_products is deprecated; ignoring (num_products is set)")
 
     if target_n < base_count:
         info(f"Trimming catalog ({catalog}): {base_count:,} -> {target_n:,} (stratified by SubcategoryKey)")
@@ -230,27 +267,18 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
     n_workers = max(1, int_or(configured_workers, cpu_count() - 1))
 
     if len(df) >= PRODUCT_PARALLEL_THRESHOLD and n_workers >= 2:
-        df = _generate_parallel_enrichment(df, config, seed=seed,
+        df = _generate_parallel_enrichment(df, seed=seed,
                                             output_folder=output_folder,
                                             n_workers=n_workers)
     else:
-        df = enrich_products_attributes(df, config, seed=seed, output_folder=output_folder)
+        df = enrich_products_attributes(df, seed=seed, output_folder=output_folder)
 
-    # SupplierKey (deterministic)
-    if sup_enabled:
-        n_sup = int(supplier_keys.size)
-        base = pd.to_numeric(df.get("BaseProductID", df["ProductKey"]), errors="coerce").fillna(0).astype("int64").to_numpy()
-
-        if sup_strategy == "by_subcategory" and "SubcategoryKey" in df.columns:
-            sub = pd.to_numeric(df["SubcategoryKey"], errors="coerce").fillna(0).astype("int64").to_numpy()
-            idx = np.mod(sub, n_sup)
-        elif sup_strategy == "uniform":
-            rng_sup = np.random.default_rng(sup_seed)
-            idx = rng_sup.integers(0, n_sup, size=len(df), dtype=np.int64)
-        else:
-            idx = np.mod(base, n_sup)
-
-        df["SupplierKey"] = supplier_keys[idx].astype("int64")
+    # SupplierKey (deterministic). Always emit the column — the schema declares
+    # it NOT NULL — using a sentinel when assignment is disabled. supplier_keys
+    # is None when sup_enabled is False.
+    df["SupplierKey"] = _assign_supplier_keys(
+        df, supplier_keys, strategy=sup_strategy, seed=sup_seed,
+    )
 
     # Minimal required fields for Sales
     required = [
@@ -296,6 +324,15 @@ def load_product_dimension(config, output_folder: Path, *, log_skip: bool = True
             rng_scd2, df, scd2_cfg, start_date, end_date,
             pricing_cfg=p.get("pricing"),
         )
+        # MarginCategory is the one profile attribute derived directly from
+        # price; refresh it per version so drifted versions reflect their own
+        # economics (other analytical attrs intentionally stay frozen at launch).
+        if "MarginCategory" in df.columns:
+            from .product_profile import compute_margin_category
+            df["MarginCategory"] = pd.Series(
+                compute_margin_category(df["ListPrice"], df["UnitCost"]),
+                index=df.index, dtype="string",
+            )
 
     # Backfill any null descriptions with the product name
     if "ProductDescription" in df.columns:
@@ -358,20 +395,28 @@ def _split_products_and_profile(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
     return products_df, profile_df
 
 
-def _archetype_hash() -> str:
-    """Stable hash of subcategory archetypes so edits trigger products regen.
+def _enrichment_constants_hash() -> str:
+    """Stable hash of the data tables that drive product enrichment, so editing
+    any of them auto-triggers a products regen (CLAUDE.md gotcha #2) without
+    having to remember to bump ``enrichment_v``.
 
-    Imported lazily to avoid pulling product_profile (and its heavy validation)
-    at module import time.
+    Covers subcategory archetypes (Material/Style/dims/season) plus the
+    subcategory-driven gender/age profiles. Imported lazily to avoid pulling
+    product_profile (and its heavy validation) at module import time.
     """
     import hashlib
     import json
-    from .product_profile import _SUBCATEGORY_ARCHETYPES, _DEFAULT_ARCHETYPE, _SIZE_DIMS
+    from .product_profile import (
+        _SUBCATEGORY_ARCHETYPES, _DEFAULT_ARCHETYPE, _SIZE_DIMS,
+        _SUBCATEGORY_GENDER_PROFILE, _SUBCATEGORY_AGE_PROFILE,
+    )
     payload = json.dumps(
         {
             "archetypes": _SUBCATEGORY_ARCHETYPES,
             "default": _DEFAULT_ARCHETYPE,
             "size_dims": _SIZE_DIMS,
+            "gender": _SUBCATEGORY_GENDER_PROFILE,
+            "age": _SUBCATEGORY_AGE_PROFILE,
         },
         sort_keys=True,
         default=str,
@@ -379,19 +424,27 @@ def _archetype_hash() -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
-def _version_key(p: dict) -> dict:
+def _version_key(p: dict, seed: int) -> dict:
     """
     Version key for Products. Pricing is the economic source of truth.
+
+    ``seed`` is the *resolved* seed (post-precedence), so changing the global
+    or per-section seed correctly triggers regeneration.
     """
     key = {
         "catalog": p.get("catalog", "all"),
         "num_products": p.get("num_products"),
-        "seed": p.get("seed"),
+        "seed": int(seed),
         "pricing": p.get("pricing"),
-        # bump whenever you add/remove enrichment columns (forces one regen)
-        "enrichment_v": 9,
-        # Auto-detect archetype edits (Material/Style/ProductLine/dims/season)
-        "archetype_hash": _archetype_hash(),
+        # bump whenever you add/remove enrichment columns or change their values
+        # (forces one regen). v10: channel eligibility variation + per-version
+        # MarginCategory refresh after SCD2 drift. v11: MarginCategory bucket
+        # thresholds (20/30/40), subcategory-driven AgeGroup/TargetGender,
+        # realistic ReorderPoint/SafetyStock units.
+        "enrichment_v": 11,
+        # Auto-detect edits to enrichment data tables (archetypes + gender/age
+        # profiles) so they trigger regen without a manual enrichment_v bump.
+        "enrichment_constants_hash": _enrichment_constants_hash(),
     }
     # SCD2 settings affect output shape
     scd2 = p.get("scd2")
