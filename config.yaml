@@ -36,6 +36,36 @@ sales:
   sales_output: sales              # sales | sales_order | both
   skip_order_cols: false
 
+  # Salesperson-coverage policy (checked before the sales stage runs):
+  #   abort  = stop + suggest config fixes if any store-month lacks a salesperson
+  #   skip   = warn and continue (uncovered store-months get no sales; never -1)
+  #   repair = auto-extend salesperson assignments to close the gaps, then continue
+  coverage_policy: abort
+
+  # Per-store demand weight: orders are drawn toward stores in proportion to
+  # by_type[StoreType] * revenue_class[RevenueClass]. Weights track headcount so
+  # bigger stores sell more AND sales-per-salesperson stays roughly even across
+  # store types (realistic load). Remove this block for uniform sampling.
+  store_demand_weight:
+    by_type:
+      Hypermarket: 6.0
+      Supermarket: 3.75
+      Convenience: 1.0
+    revenue_class:
+      A: 1.5
+      B: 1.0
+      C: 0.7
+
+  # Per-salesperson performance spread. Within a store, each rep gets a stable
+  # lognormal multiplier (median 1.0) on top of FTE/primary weighting, so some
+  # reps sell more than others (realistic "top performers"). store_demand_weight
+  # evens load ACROSS stores; this varies it WITHIN a store. spread = lognormal
+  # sigma (~0.5 => top ~20% of reps do disproportionately more); 0 or
+  # enabled:false disables (flat distribution, legacy).
+  salesperson_performance:
+    enabled: true
+    spread: 0.5
+
   merge:
     enabled: true
     file: "sales.parquet"
@@ -172,7 +202,10 @@ stores:
 # WAREHOUSES — distribution centers derived from store geography
 # ------------------------------------------------------------------
 warehouses:
-  seed: 42
+  # seed omitted on purpose → inherits defaults.seed so warehouse layout varies
+  # with the global seed / random mode, consistent with the other dimensions.
+  min_stores_per_warehouse: 15      # split countries above this by state
+  min_stores_for_own_warehouse: 5   # merge countries below this into zone hubs
 
 # ------------------------------------------------------------------
 # EMPLOYEES

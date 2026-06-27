@@ -1186,14 +1186,23 @@ def _load_products(
 # Helpers (extracted from generate_sales_fact)
 # =====================================================================
 
-def _load_stores(parquet_folder_p, end_date):
-    """Load store dimension arrays for the sales pool."""
+def _load_stores(parquet_folder_p, end_date, weight_cfg=None):
+    """Load store dimension arrays for the sales pool.
+
+    ``weight_cfg`` (optional ``{by_type, revenue_class}``) enables per-store
+    demand weighting: when set, a row-ordered ``store_demand_weight`` array is
+    returned so the sampler can draw orders toward bigger / higher-revenue
+    stores. When None, this stays None and the worker defaults it to all-ones
+    (uniform) — the single sampler handles both.
+    """
     _store_cols = ["StoreKey", "GeographyKey"]
     _store_path = parquet_folder_p / "stores.parquet"
     if _store_path.exists():
         _store_schema_names = set(_pq.read_schema(str(_store_path)).names)
         if "StoreType" in _store_schema_names:
             _store_cols.append("StoreType")
+        if weight_cfg and "RevenueClass" in _store_schema_names:
+            _store_cols.append("RevenueClass")
         if "OpeningDate" in _store_schema_names:
             _store_cols.append("OpeningDate")
         if "ClosingDate" in _store_schema_names:
@@ -1249,6 +1258,23 @@ def _load_stores(parquet_folder_p, end_date):
             store_df["StoreType"].astype(str).tolist(),
         ))
 
+    # Per-store demand weight (row-ordered, aligned with store_keys). Bigger /
+    # higher-revenue stores get a larger weight so the sampler draws more orders
+    # to them. Left None when unconfigured; the worker defaults it to all-ones
+    # (uniform).
+    store_demand_weight = None
+    if weight_cfg:
+        by_type = {str(k): float(v) for k, v in (weight_cfg.get("by_type") or {}).items()}
+        by_rc = {str(k): float(v) for k, v in (weight_cfg.get("revenue_class") or {}).items()}
+        n = len(store_df)
+        w = np.ones(n, dtype=np.float64)
+        if "StoreType" in store_df.columns and by_type:
+            w *= store_df["StoreType"].astype(str).map(lambda t: by_type.get(t, 1.0)).to_numpy(dtype=np.float64)
+        if "RevenueClass" in store_df.columns and by_rc:
+            w *= store_df["RevenueClass"].astype(str).map(lambda c: by_rc.get(c, 1.0)).to_numpy(dtype=np.float64)
+        w[~np.isfinite(w) | (w <= 0)] = 1.0  # guard against bad config values
+        store_demand_weight = w
+
     # Geography + currency mapping
     geo_df = load_parquet_df(parquet_folder_p / "geography.parquet", ["GeographyKey", "ISOCode"])
     currency_df = load_parquet_df(parquet_folder_p / "currency.parquet", ["CurrencyKey", "CurrencyCode"])
@@ -1274,6 +1300,7 @@ def _load_stores(parquet_folder_p, end_date):
         "store_reno_start_day": store_reno_start_day,
         "store_reno_end_day": store_reno_end_day,
         "store_type_map": store_type_map,
+        "store_demand_weight": store_demand_weight,
         "geo_to_currency": geo_to_currency,
     }
 
@@ -1389,6 +1416,14 @@ def _build_worker_cfg(
     month_stride=0, per_chunk_alloc=0, order_id_int64=False,
 ):
     """Build the worker_cfg dict from typed containers."""
+    # Salesperson performance spread (Part 2): resolved once here so both the
+    # main-process prebuild and the worker-side fallback use identical values.
+    # Seed is derived from the run seed so it tracks defaults.seed / random mode.
+    _sp_perf = getattr(sales_cfg, "salesperson_performance", None)
+    _perf_on = bool(getattr(_sp_perf, "enabled", False)) if _sp_perf is not None else False
+    _perf_spread = float(getattr(_sp_perf, "spread", 0.0)) if (_sp_perf is not None and _perf_on) else 0.0
+    _perf_seed = int(seed) ^ 0x5A1E5
+
     worker_cfg: SalesWorkerCfg = SalesWorkerCfg(
         product_np=prod["product_np"],
         product_brand_key=prod["product_brand_key"],
@@ -1400,6 +1435,9 @@ def _build_worker_cfg(
         store_close_day=stores["store_close_day"],
         store_reno_start_day=stores["store_reno_start_day"],
         store_reno_end_day=stores["store_reno_end_day"],
+        store_demand_weight=stores["store_demand_weight"],
+        salesperson_perf_spread=_perf_spread,
+        salesperson_perf_seed=_perf_seed,
         promo_keys_all=promos["promo_keys_all"],
         promo_start_all=promos["promo_start_all"],
         promo_end_all=promos["promo_end_all"],
@@ -1697,6 +1735,8 @@ def _prebuild_shared_structures(
 
     # 3) salesperson_effective_by_store
     if employee_assign_employee_key is not None and employee_assign_store_key is not None:
+        _sp_perf_spread = float_or(worker_cfg.get("salesperson_perf_spread"), 0.0)
+        _sp_perf_seed = int_or(worker_cfg.get("salesperson_perf_seed"), 0)
         _sp_eff = _build_salesperson_effective_by_store(
             store_keys=store_keys,
             assign_store=employee_assign_store_key,
@@ -1706,6 +1746,8 @@ def _prebuild_shared_structures(
             assign_fte=employee_assign_fte,
             assign_is_primary=employee_assign_is_primary,
             primary_boost=2.0,
+            perf_spread=_sp_perf_spread,
+            perf_seed=_sp_perf_seed,
         )
         worker_cfg["_prebuilt_salesperson_effective_by_store"] = _sp_eff
         if _sp_eff is not None:
@@ -2226,7 +2268,8 @@ def generate_sales_fact(
         parquet_folder_p, cfg, seed, start_date, end_date,
         active_product_np=getattr(State, "active_product_np", None),
     )
-    _stores = _load_stores(parquet_folder_p, end_date)
+    _sdw_cfg = getattr(getattr(cfg, "sales", None), "store_demand_weight", None)
+    _stores = _load_stores(parquet_folder_p, end_date, weight_cfg=_sdw_cfg)
     _promos = _load_promotions(parquet_folder_p)
     _emps = _load_employees(parquet_folder_p, cfg, end_date)
 

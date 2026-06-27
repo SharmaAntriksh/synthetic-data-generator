@@ -148,3 +148,32 @@ class TestGenerateWarehouseTable:
         assert "WarehouseType" in wh_df.columns
         # At least one type should be assigned
         assert wh_df["WarehouseType"].notna().all()
+
+    def test_warehouse_names_unique_large_us(self, tmp_path):
+        """Regression: many US stores split into multiple same-region state
+        groups that previously collapsed to identical "US <region> <type>"
+        names. Names are a BI grouping key and must be unique."""
+        from src.dimensions.warehouses.generator import generate_warehouse_table
+        west = ["California", "Washington", "Oregon", "Arizona",
+                "Colorado", "Nevada", "Utah"]  # all map to US region "West"
+        geo = pd.DataFrame({
+            "GeographyKey": np.arange(1, len(west) + 1, dtype=np.int64),
+            "Country": ["United States"] * len(west),
+            "State": west,
+        })
+        geo.to_parquet(tmp_path / "geography.parquet", index=False)
+        # 20 stores per state (>= min_stores_per_warehouse) -> each state
+        # stands alone as its own "US West <type>" warehouse.
+        rows = []
+        sk = 1
+        for gk in range(1, len(west) + 1):
+            for _ in range(20):
+                rows.append((sk, gk))
+                sk += 1
+        stores = pd.DataFrame(rows, columns=["StoreKey", "GeographyKey"])
+        stores["StoreKey"] = stores["StoreKey"].astype(np.int64)
+        stores["StoreZone"] = "North America"
+        wh_df, _ = generate_warehouse_table(stores, tmp_path, seed=42)
+        us = wh_df[wh_df["Country"] == "United States"]
+        assert len(us) > 1, "expected the US to split into multiple warehouses"
+        assert wh_df["WarehouseName"].is_unique

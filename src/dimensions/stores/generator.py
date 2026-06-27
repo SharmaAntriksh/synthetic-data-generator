@@ -714,6 +714,10 @@ def generate_store_table(
     store_key = np.concatenate([phys_keys, online_keys])
     df = pd.DataFrame({"StoreKey": store_key})
     sk = store_key.astype(np.int32)
+    # int64 view for seed-mixing index math below: with random-mode seeds
+    # (up to 2**31-1), `sk * k + int(seed) * c` overflows the int32 array's
+    # element type on Windows ("Python int too large to convert to C long").
+    sk64 = sk.astype(np.int64)
 
     # StoreNumber — STR-xxxx for physical, ONL-xxxx for online
     store_numbers = np.empty(num_stores, dtype=object)
@@ -866,8 +870,8 @@ def generate_store_table(
             + pd.Series(last, dtype="object").astype(str)
         )
     else:
-        mf = _MANAGER_FIRST[(sk * 5 + int(seed)) % len(_MANAGER_FIRST)]
-        ml = _MANAGER_LAST[(sk * 11 + int(seed) * 3) % len(_MANAGER_LAST)]
+        mf = _MANAGER_FIRST[(sk64 * 5 + int(seed)) % len(_MANAGER_FIRST)]
+        ml = _MANAGER_LAST[(sk64 * 11 + int(seed) * 3) % len(_MANAGER_LAST)]
         df["StoreManager"] = (
             pd.Series(mf, dtype="object").astype(str)
             + " "
@@ -875,12 +879,12 @@ def generate_store_table(
         )
 
     # StoreName
-    brand = _BRANDS[(sk + int(seed)) % len(_BRANDS)]
-    area  = _AREAS[(sk * 7 + int(seed) * 13) % len(_AREAS)]
+    brand = _BRANDS[(sk64 + int(seed)) % len(_BRANDS)]
+    area  = _AREAS[(sk64 * 7 + int(seed) * 13) % len(_AREAS)]
     stype = df["StoreType"].astype(str)
     is_online = stype.to_numpy() == "Online"
 
-    online_suffix = _ONLINE_SUFFIX[(sk * 3 + int(seed) * 17) % len(_ONLINE_SUFFIX)]
+    online_suffix = _ONLINE_SUFFIX[(sk64 * 3 + int(seed) * 17) % len(_ONLINE_SUFFIX)]
 
     store_name = (
         pd.Series(brand, dtype="object").astype(str)
@@ -1275,9 +1279,12 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
     sqft_cfg = as_dict(store_cfg.square_footage)
     staffing_overrides = as_dict(store_cfg.staffing_ranges) if store_cfg.staffing_ranges else None
 
+    seed = resolve_seed(cfg, store_cfg, fallback=42)
+
     version_cfg = dict(store_cfg)
-    version_cfg["schema_version"] = 7  # v7: population-weighted geography sampling
+    version_cfg["schema_version"] = 8  # v8: resolved seed folded into version key
     version_cfg["_geography_sig"] = _geography_signature(geo_keys)
+    version_cfg["seed"] = int(seed)
 
     if not should_regenerate("stores", version_cfg, out_path):
         skip("Stores up-to-date")
@@ -1331,7 +1338,7 @@ def run_stores(cfg: Dict, parquet_folder: Path) -> None:
             opening_start=opening_cfg.get("start") or "2018-01-01",
             opening_end=opening_cfg.get("end") or "2025-12-31",
             closing_end=store_cfg.closing_end or "2025-12-31",
-            seed=resolve_seed(cfg, store_cfg, fallback=42),
+            seed=seed,
             square_footage_cfg=sqft_cfg,
             staffing_overrides=staffing_overrides,
             people_pools=people_pools,

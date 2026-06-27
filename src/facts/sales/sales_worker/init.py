@@ -370,6 +370,46 @@ def _normalize_assignment_arrays(
     return a_store, a_emp, start_fixed, end_fixed, fte, is_primary, max_store_key
 
 
+def _hash_u64(x: np.ndarray) -> np.ndarray:
+    """Vectorized splitmix64 finalizer (uint64 in -> well-mixed uint64 out)."""
+    x = x.astype(np.uint64)
+    x ^= x >> np.uint64(30)
+    x *= np.uint64(0xBF58476D1CE4E5B9)
+    x ^= x >> np.uint64(27)
+    x *= np.uint64(0x94D049BB133111EB)
+    x ^= x >> np.uint64(31)
+    return x
+
+
+def _salesperson_perf_multiplier(
+    emp_keys: Any, spread: float, seed: int,
+    lo: float = 0.25, hi: float = 4.0,
+) -> np.ndarray:
+    """Stable per-employee sales-performance multiplier (lognormal, median 1.0).
+
+    A deterministic function of EmployeeKey + seed only — independent of worker,
+    chunk, order, or array position — so the same employee carries the same
+    multiplier in every store and every chunk (transfers included). ``spread``
+    is the lognormal sigma (<=0 disables -> all ones); the result is clipped to
+    ``[lo, hi]`` so a handful of top performers stand out without runaway
+    outliers. Used to weight salesperson selection so within a store some reps
+    sell more than others (Part 1 evens load *across* stores; this varies it
+    *within* a store)."""
+    emp = np.asarray(emp_keys, dtype=np.int64)
+    if spread <= 0.0 or emp.size == 0:
+        return np.ones(emp.size, dtype=np.float64)
+    s = np.uint64(int(seed) & 0x7FFFFFFF)
+    base = (emp.astype(np.uint64) * np.uint64(0x9E3779B97F4A7C15)) ^ s
+    h1 = _hash_u64(base + np.uint64(0x1))
+    h2 = _hash_u64(base + np.uint64(0x9E3779B9))
+    # Box-Muller: two uniforms -> standard normal. u1 kept strictly in (0,1).
+    u1 = (h1.astype(np.float64) + 1.0) / (18446744073709551616.0 + 1.0)  # 2**64 + 1
+    u2 = h2.astype(np.float64) / 18446744073709551616.0                  # 2**64
+    z = np.sqrt(-2.0 * np.log(u1)) * np.cos(2.0 * np.pi * u2)
+    perf = np.exp(float(spread) * z)
+    return np.clip(perf, lo, hi)
+
+
 def _build_salesperson_effective_by_store(
     *,
     store_keys: np.ndarray,
@@ -380,6 +420,8 @@ def _build_salesperson_effective_by_store(
     assign_fte: Any = None,
     assign_is_primary: Any = None,
     primary_boost: float = 2.0,
+    perf_spread: float = 0.0,
+    perf_seed: int = 0,
 ) -> Optional[dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]]:
     """
     Canonical structure for Sales employee assignment.
@@ -411,6 +453,10 @@ def _build_salesperson_effective_by_store(
         fte = np.clip(fte, 0.0, 2.0)
 
     weights = fte * np.where(is_primary, float(primary_boost), 1.0)
+    # Per-employee performance spread: some reps sell more than others within a
+    # store. Keyed on EmployeeKey so it's stable across stores/chunks/workers.
+    if perf_spread and float(perf_spread) > 0.0:
+        weights = weights * _salesperson_perf_multiplier(a_emp, float(perf_spread), int(perf_seed))
 
     order = np.argsort(a_store, kind="mergesort")
     s_sorted = a_store[order]
@@ -429,120 +475,6 @@ def _build_salesperson_effective_by_store(
             end_fixed[idx].astype("datetime64[D]", copy=False),
             weights[idx].astype(np.float64, copy=False),
         )
-
-    return out
-
-
-# ---------------------------------------------------------------------
-# Optional legacy: month-rounded single salesperson per store-month
-# (kept only for backward-compat; OFF by default)
-# ---------------------------------------------------------------------
-
-
-def _build_salesperson_by_store_month(
-    *,
-    store_keys: np.ndarray,
-    date_pool: Any,
-    assign_store: Any,
-    assign_emp: Any,
-    assign_start: Any,
-    assign_end: Any,
-    assign_fte: Any = None,
-    assign_is_primary: Any = None,
-    primary_boost: float = 2.0,
-    seed: int = 12345,
-) -> Optional[np.ndarray]:
-    """
-    Legacy: choose a single salesperson per store-month.
-
-    This is a *month-rounded* view used only for backward compatibility.
-    Uses an event-sweep per store to avoid O(assignments × months) nested loops.
-    """
-    store_keys = np.asarray(store_keys, dtype=np.int32)
-    if store_keys.size == 0:
-        return None
-
-    dp = np.asarray(date_pool, dtype="datetime64[D]")
-    if dp.size == 0:
-        return None
-
-    months_int = dp.astype("datetime64[M]").astype(np.int64)
-    month0_int = int(months_int.min())
-    T = int(np.unique(months_int).size)
-    if T <= 0:
-        return None
-
-    norm = _normalize_assignment_arrays(
-        store_keys=store_keys,
-        assign_store=assign_store,
-        assign_emp=assign_emp,
-        assign_start=assign_start,
-        assign_end=assign_end,
-        assign_fte=assign_fte,
-        assign_is_primary=assign_is_primary,
-    )
-    if norm is None:
-        return None
-
-    a_store, a_emp, start_fixed, end_fixed, fte, is_primary, max_store_key = norm
-
-    weights = fte * np.where(is_primary, float(primary_boost), 1.0)
-
-    start_off = start_fixed.astype("datetime64[M]").astype(np.int64) - month0_int
-    end_off = end_fixed.astype("datetime64[M]").astype(np.int64) - month0_int
-    start_off = np.clip(start_off, 0, T - 1).astype(np.int64, copy=False)
-    end_off = np.clip(end_off, 0, T - 1).astype(np.int64, copy=False)
-
-    out = np.full((max_store_key + 1, T), -1, dtype=np.int32)
-
-    order = np.argsort(a_store, kind="mergesort")
-    store_sorted = a_store[order]
-    starts = np.flatnonzero(np.r_[True, store_sorted[1:] != store_sorted[:-1]])
-    ends = np.r_[starts[1:], store_sorted.size]
-
-    rng = np.random.default_rng(int(seed))
-    months = np.arange(T, dtype=np.int64)
-    for s, e in zip(starts, ends):
-        store = int(store_sorted[int(s)])
-        if store < 0 or store > max_store_key:
-            continue
-
-        idxs = order[int(s) : int(e)]
-        if idxs.size == 0:
-            continue
-
-        so = start_off[idxs]
-        eo = end_off[idxs]
-        valid = eo >= so
-        if not valid.any():
-            continue
-
-        active_2d = (so[:, None] <= months[None, :]) & (months[None, :] <= eo[:, None])
-        active_2d[~valid] = False
-
-        w_col = weights[idxs]
-        w_eff = active_2d.astype(np.float64) * w_col[:, None]
-        col_sums = w_eff.sum(axis=0)
-        has_cand = col_sums > 1e-12
-
-        if not has_cand.any():
-            continue
-
-        active_months = np.where(has_cand)[0]
-        w_active = w_eff[:, active_months]
-        sums_active = col_sums[active_months]
-        probs = w_active / sums_active[None, :]
-
-        emp_local = a_emp[idxs]
-        for mi_idx in range(active_months.size):
-            m = int(active_months[mi_idx])
-            p = probs[:, mi_idx]
-            nz_idx = np.flatnonzero(p > 0)
-            if nz_idx.size == 0:
-                continue
-            cand_p = p[nz_idx]
-            pick = 0 if nz_idx.size == 1 else int(rng.choice(nz_idx.size, p=cand_p))
-            out[store, m] = int(emp_local[nz_idx[pick]])
 
     return out
 
@@ -664,7 +596,8 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
         employee_assign_fte = worker_cfg.get("employee_assign_fte")
         employee_assign_is_primary = worker_cfg.get("employee_assign_is_primary")
         employee_primary_boost = float(worker_cfg.get("employee_primary_boost", 2.0))
-        employee_seed = int(worker_cfg.get("employee_salesperson_seed", worker_cfg.get("seed_master", 12345)))
+        salesperson_perf_spread = float_or(worker_cfg.get("salesperson_perf_spread"), 0.0)
+        salesperson_perf_seed = int_or(worker_cfg.get("salesperson_perf_seed"), 0)
         employee_assign_role = worker_cfg.get("employee_assign_role")
         salesperson_roles = worker_cfg.get("salesperson_roles", ["Sales Associate"])
 
@@ -751,8 +684,6 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
         max_lines_per_order = int_or(worker_cfg.get("max_lines_per_order"), 5)
         if max_lines_per_order < 1:
             raise RuntimeError(f"max_lines_per_order must be >= 1, got {max_lines_per_order}")
-
-        legacy_salesperson_by_store_month = bool(worker_cfg.get("legacy_salesperson_by_store_month", False))
 
     except KeyError as e:
         raise RuntimeError(f"Missing worker_cfg key: {e}") from e
@@ -845,6 +776,21 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
 
     _store_open_day_dense = _dense_by_store_key(worker_cfg.get("store_open_day"), _FAR_PAST)
     _store_close_day_dense = _dense_by_store_key(worker_cfg.get("store_close_day"), _FAR_FUTURE)
+
+    def _dense_float_by_store_key(values, fill=1.0):
+        """Dense float array indexed by StoreKey from per-position values.
+
+        When ``values`` is None (store_demand_weight unconfigured) the result is
+        all-``fill`` (all-ones), so the single weighted store sampler produces
+        uniform draws — there is no separate uniform code path."""
+        out = np.full(int(store_keys.max()) + 1, float(fill), dtype=np.float64)
+        if values is not None:
+            out[store_keys.astype(np.intp)] = np.asarray(values, dtype=np.float64)
+        return out
+
+    _store_demand_weight_dense = _dense_float_by_store_key(
+        worker_cfg.get("store_demand_weight"), 1.0,
+    )
 
     # Renovation windows. Sentinels chosen so a non-renovating store's
     # window [far_future, far_past] never overlaps any month/date.
@@ -957,21 +903,8 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             assign_fte=employee_assign_fte,
             assign_is_primary=employee_assign_is_primary,
             primary_boost=employee_primary_boost,
-        )
-
-    salesperson_by_store_month = None
-    if legacy_salesperson_by_store_month:
-        salesperson_by_store_month = _build_salesperson_by_store_month(
-            store_keys=store_keys,
-            date_pool=date_pool,
-            assign_store=employee_assign_store_key,
-            assign_emp=employee_assign_employee_key,
-            assign_start=employee_assign_start_date,
-            assign_end=employee_assign_end_date,
-            assign_fte=employee_assign_fte,
-            assign_is_primary=employee_assign_is_primary,
-            primary_boost=employee_primary_boost,
-            seed=employee_seed,
+            perf_spread=salesperson_perf_spread,
+            perf_seed=salesperson_perf_seed,
         )
 
     # Refine store eligibility from the bridge table: a store is excluded
@@ -1021,7 +954,9 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             if arr.size == 0:
                 # Restore the open/close-only subset (recomputed from store_open_month /
                 # store_close_month). Per-day renovation filtering still happens at chunk
-                # time, so any renovating store sampled here gets resampled away.
+                # time, so any renovating store sampled here gets resampled away. Lines
+                # that still land on an unstaffed (store, date) are dropped at the end of
+                # the chunk builder, so this never emits EmployeeKey=-1.
                 _mi = _month_ints[midx]
                 _restored = store_keys[(store_open_month <= _mi) & (store_close_month >= _mi)]
                 store_eligible_by_month[midx] = _restored if _restored.size > 0 else store_keys
@@ -1141,6 +1076,7 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             "store_close_day": _store_close_day_dense,
             "store_reno_start_day": _store_reno_start_day_dense,
             "store_reno_end_day": _store_reno_end_day_dense,
+            "store_demand_weight": _store_demand_weight_dense,
             "promo_keys_all": promo_keys_all,
             "promo_start_all": promo_start_all,
             "promo_end_all": promo_end_all,
@@ -1204,9 +1140,8 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             "returns_lag_mode": returns_lag_mode,
             "returns_event_key_capacity": returns_event_key_capacity,
             "returns_logistics_keys": returns_logistics_keys,
-            # EMPLOYEE assignment (canonical + optional legacy)
+            # EMPLOYEE assignment (canonical day-accurate bridge)
             "salesperson_effective_by_store": salesperson_effective_by_store,
-            "salesperson_by_store_month": salesperson_by_store_month,
             "salesperson_global_pool": salesperson_global_pool,
 
             "parquet_folder": worker_cfg.get("parquet_folder"),

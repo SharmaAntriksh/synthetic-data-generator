@@ -870,7 +870,8 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
         )
 
     version_cfg = as_dict(emp_cfg)
-    version_cfg["schema_version"] = 10  # v10: staff counts read from Stores.EmployeeCount
+    version_cfg["schema_version"] = 11  # v11: resolved seed folded into version key
+    version_cfg["seed"] = int(seed)
     version_cfg["_stores_sig"] = _stores_signature(stores)
     version_cfg["_stores_cfg"] = as_dict(cfg.stores)
     version_cfg["_global_dates"] = {

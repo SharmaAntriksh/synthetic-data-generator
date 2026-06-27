@@ -85,6 +85,19 @@ def _compute_returns_effective(cfg, sales_cfg) -> Tuple[Any, bool]:
     return cfg, effective
 
 
+def _run_coverage_preflight(cfg, parquet_dims: Path) -> None:
+    """Validate salesperson coverage before the sales stage (see coverage_preflight)."""
+    from src.facts.sales.coverage_preflight import run_coverage_preflight
+
+    defaults = getattr(cfg, "defaults", None)
+    dates = getattr(defaults, "dates", None) if defaults is not None else None
+    start = getattr(dates, "start", None) if dates is not None else None
+    end = getattr(dates, "end", None) if dates is not None else None
+    if start is None or end is None:
+        return  # dates required elsewhere; nothing to validate without a window
+    run_coverage_preflight(cfg, parquet_dims, pd.Timestamp(start), pd.Timestamp(end))
+
+
 def _load_active_products(parquet_dims: Path, *, active_ratio: float = 1.0, seed: int = 42) -> np.ndarray:
     """
     Loads active products pool: (ProductKey, ListPrice, UnitCost)
@@ -247,6 +260,11 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
 
     # --- Returns effective config for THIS run
     cfg_for_run, returns_enabled_effective = _compute_returns_effective(cfg, sales_cfg)
+
+    # --- Salesperson-coverage pre-flight (cheap; before the expensive sales stage)
+    # Detects (store, month) cells with no salesperson — the only way sales emits
+    # EmployeeKey=-1 — and applies sales.coverage_policy (abort | skip | repair).
+    _run_coverage_preflight(cfg_for_run, parquet_dims_p)
 
     # --- Load active products pool (active_ratio filtering moved here from dimension)
     prod_cfg = getattr(cfg, "products", None)

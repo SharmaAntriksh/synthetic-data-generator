@@ -141,6 +141,23 @@ class TestGenerateStoreTable:
         # At least some values should differ
         assert not df1["StoreName"].equals(df2["StoreName"])
 
+    def test_large_random_mode_seed_no_overflow(self, geo_keys):
+        # Regression: random mode (defaults.random=true) draws a seed up to
+        # 2**31-1. The store name/brand/manager index math
+        # (sk * k + int(seed) * c) mixes the int32 StoreKey array with a large
+        # Python int and used to raise "Python int too large to convert to C
+        # long" on Windows for any seed > ~2**31/17. Must not raise now.
+        big_seed = 2_111_222_333  # > 2**31/17 threshold; valid random-mode seed
+        # people_pools=None also exercises the _MANAGER_FIRST/_LAST fallback path.
+        df = generate_store_table(
+            geo=GeoContext(geo_keys=geo_keys), num_stores=25, seed=big_seed,
+            people_pools=None,
+        )
+        assert len(df) == 25
+        assert df["StoreManager"].notna().all()
+        assert (df["StoreManager"].str.len() > 0).all()
+        assert (df["StoreName"].str.len() > 0).all()
+
     def test_no_nan_in_required_columns(self, geo_keys):
         df = generate_store_table(geo=GeoContext(geo_keys=geo_keys), num_stores=30, seed=1)
         required = [

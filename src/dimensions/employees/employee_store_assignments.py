@@ -156,6 +156,17 @@ def _apply_renovation_reassignments(
 
     result = pd.concat([keep_rows, pd.DataFrame(new_rows)], ignore_index=True)
     result = result.sort_values(["EmployeeKey", "StartDate"]).reset_index(drop=True)
+
+    # Enforce exactly one IsPrimary=True per employee = their latest (current/home)
+    # assignment, mirroring the transfer engine's "latest wins" rule. The split
+    # above would otherwise leave the pre-renovation row primary in addition to
+    # the temp/return row (two primaries — and, for a permanent closure, at two
+    # different stores), which breaks "current store per employee" DAX patterns.
+    # Rows are sorted by StartDate ascending, so the last row per employee is the
+    # latest. Runs only when renovation actually split rows (early returns above
+    # leave the all-True initial bridge untouched).
+    result["IsPrimary"] = ~result["EmployeeKey"].duplicated(keep="last")
+
     result["AssignmentKey"] = np.arange(1, len(result) + 1, dtype=np.int32)
     result["AssignmentSequence"] = (result.groupby("EmployeeKey").cumcount() + 1).astype(np.int32)
 
@@ -318,8 +329,16 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
     transfers_cfg = emp_cfg.transfers
     transfers_enabled = transfers_cfg.enabled
 
+    # Resolve the seed once; the renovation and transfer engines derive their
+    # own seeds from it via XOR. Computing it here (a) folds it into the version
+    # key so a global-seed change triggers regeneration, and (b) avoids calling
+    # resolve_seed twice — which, in random mode, would otherwise yield two
+    # unrelated fresh seeds for the two engines within a single run.
+    base_seed = resolve_seed(cfg, as_dict(emp_cfg), fallback=42)
+
     version_cfg = dict(a_cfg)
-    version_cfg["schema_version"] = 17  # v17: transfer engine support
+    version_cfg["schema_version"] = 19  # v19: one IsPrimary=True per employee (renovation split fix)
+    version_cfg["seed"] = int(base_seed)
     version_cfg["_stores_cfg"] = dict(cfg.stores)
     version_cfg["_transfers"] = as_dict(transfers_cfg)
     version_cfg["_rows_employees"] = int(len(employees))
@@ -368,7 +387,7 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
         if stores_df is not None:
             df = _apply_renovation_reassignments(
                 df, stores_df,
-                seed=resolve_seed(cfg, as_dict(emp_cfg), fallback=42) ^ 0x5E2B,
+                seed=base_seed ^ 0x5E2B,
             )
 
         if transfers_enabled:
@@ -389,7 +408,7 @@ def run_employee_store_assignments(cfg, parquet_folder: Path, out_path: Path = N
         if transfers_enabled:
             df = apply_transfers(
                 df, stores_df,
-                seed=resolve_seed(cfg, as_dict(emp_cfg), fallback=42) ^ 0x7F3A,
+                seed=base_seed ^ 0x7F3A,
                 global_start=global_start,
                 global_end=global_end,
                 annual_rate=transfers_cfg.annual_rate,

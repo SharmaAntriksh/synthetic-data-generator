@@ -41,6 +41,7 @@ class SalesWorkerCfg(TypedDict, total=False):
     store_close_day: Optional[np.ndarray]
     store_reno_start_day: Optional[np.ndarray]
     store_reno_end_day: Optional[np.ndarray]
+    store_demand_weight: Optional[np.ndarray]
     store_to_geo: Optional[Dict[int, int]]
     store_type_map: Optional[Dict[int, str]]
 
@@ -135,7 +136,8 @@ class SalesWorkerCfg(TypedDict, total=False):
     employee_assign_is_primary: Optional[np.ndarray]
     employee_assign_role: Optional[np.ndarray]
     salesperson_roles: List[str]
-    legacy_salesperson_by_store_month: bool
+    salesperson_perf_spread: float    # lognormal sigma for per-rep performance; 0 = off
+    salesperson_perf_seed: int        # stable seed for the per-employee multiplier
 
     # -- Channel correlation -------------------------------------------------
     store_channel_keys: Optional[list]

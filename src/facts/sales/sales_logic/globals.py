@@ -104,6 +104,7 @@ class SalesContext:
     store_close_day: Any = None  # np.ndarray[datetime64[D]] dense by StoreKey
     store_reno_start_day: Any = None  # dense by StoreKey; far-future sentinel where no renovation
     store_reno_end_day: Any = None    # dense by StoreKey; far-past sentinel where no renovation
+    store_demand_weight: Any = None   # dense float by StoreKey (all-ones = uniform); bound at worker init
 
     # -- Promotions --
     promo_keys_all: Any = None
@@ -241,6 +242,7 @@ class State(metaclass=_SealableMeta):
     store_close_day = None  # np.ndarray[datetime64[D]] dense by StoreKey
     store_reno_start_day = None  # dense by StoreKey; far-future sentinel where no renovation
     store_reno_end_day = None    # dense by StoreKey; far-past sentinel where no renovation
+    store_demand_weight = None   # dense float by StoreKey (all-ones = uniform); bound at worker init
 
     models_cfg = None
     # --------------------------------------------------------------

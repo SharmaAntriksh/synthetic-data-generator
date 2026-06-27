@@ -479,6 +479,30 @@ class ReturnsConfig(_Base):
 
 # -- Sales --
 
+class StoreDemandWeightConfig(_Base):
+    """Per-store demand multipliers for sales store-sampling.
+
+    ``by_type`` maps StoreType -> weight, ``revenue_class`` maps RevenueClass
+    -> weight; a store's draw weight is the product (each defaulting to 1.0 for
+    unlisted values). The inner keys are store-defined values, so they can't be
+    pre-declared, but ``extra="forbid"`` on this model catches typos in the two
+    top-level keys (e.g. ``by_typ``) instead of silently ignoring them."""
+    by_type: Dict[str, float] = Field(default_factory=dict)
+    revenue_class: Dict[str, float] = Field(default_factory=dict)
+
+
+class SalespersonPerformanceConfig(_Base):
+    """Per-salesperson sales-performance spread for store-level rep selection.
+
+    When enabled, each employee gets a stable lognormal performance multiplier
+    (median 1.0, sigma = ``spread``) applied on top of FTE / primary weighting,
+    so within a store some reps sell more than others (Part 1 evens load across
+    stores; this varies it within a store). ``spread`` 0 disables. ``extra=
+    forbid`` catches key typos."""
+    enabled: bool = True
+    spread: float = 0.5
+
+
 class SalesConfig(_Base):
     total_rows: int = 1_000_000
     max_lines_per_order: int = 5
@@ -518,6 +542,26 @@ class SalesConfig(_Base):
     order_id_run_id: Optional[int] = None
     # Advanced chunk size tuning
     tune_chunk: bool = False
+
+    # Salesperson-coverage policy — controls what the pre-flight does when the
+    # dimensions would leave a (store, month) with no salesperson, which is the
+    # only way sales can emit EmployeeKey=-1 (an orphan FK). Checked cheaply
+    # after dimensions, before the expensive sales stage.
+    #   abort  : stop with a diagnostic + suggested config fixes (default)
+    #   skip   : warn and continue; uncovered store-months simply get no sales
+    #   repair : extend salesperson assignments to close the gaps, then continue
+    coverage_policy: Literal["abort", "skip", "repair"] = "abort"
+
+    # Per-store demand weight for store sampling. When set, orders are drawn
+    # toward stores in proportion to weight = by_type[StoreType] *
+    # revenue_class[RevenueClass] (defaults 1.0), so bigger / higher-revenue
+    # stores sell more. None (default) = uniform sampling within each pool
+    # (legacy behavior). Shape: {by_type: {...}, revenue_class: {...}}.
+    store_demand_weight: Optional[StoreDemandWeightConfig] = None
+
+    # Per-salesperson performance spread for store-level rep selection. None
+    # (default) = flat (FTE + primary boost only). Shape: {enabled, spread}.
+    salesperson_performance: Optional[SalespersonPerformanceConfig] = None
 
     # Derived paths
     parquet_folder: str = "./data/parquet_dims"
@@ -589,7 +633,10 @@ class StoreClosingConfig(_Base):
 
 
 class WarehousesConfig(_Base):
-    seed: int = 42
+    # None so resolve_seed() falls through to defaults.seed (a concrete default
+    # here would shadow the global seed and freeze warehouse layout regardless
+    # of defaults.seed / random mode).
+    seed: Optional[int] = None
     min_stores_per_warehouse: int = 15   # split countries above this by state
     min_stores_for_own_warehouse: int = 5  # merge countries below this into zone hubs
 

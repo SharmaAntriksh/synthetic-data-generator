@@ -360,6 +360,19 @@ def generate_warehouse_table(
     for s in online["StoreKey"].astype(int):
         all_store_to_wh[s] = ONLINE_WAREHOUSE_KEY
 
+    # Guarantee unique WarehouseName: large countries (e.g. the US) can split
+    # into multiple state-group warehouses that collapse to the same
+    # "{region} {type}" label, and a shared zone hub can repeat too. Names are
+    # a natural grouping key in BI, so suffix any collision deterministically.
+    _seen_names: Dict[str, int] = {}
+    for row in all_rows:
+        nm = row["WarehouseName"]
+        if nm in _seen_names:
+            _seen_names[nm] += 1
+            row["WarehouseName"] = f"{nm} ({_seen_names[nm]})"
+        else:
+            _seen_names[nm] = 1
+
     warehouses_df = pd.DataFrame(all_rows)
     n_physical = len(warehouses_df) - 1
     info(
@@ -391,7 +404,8 @@ def run_warehouses(cfg, parquet_folder: Path) -> None:
     min_sow = int(wh_cfg.get("min_stores_for_own_warehouse", 5))
 
     version_cfg = dict(wh_cfg)
-    version_cfg["schema_version"] = 2
+    version_cfg["schema_version"] = 3  # v3: resolved seed folded into version key
+    version_cfg["seed"] = int(seed)
     version_cfg["_n_stores"] = len(stores_df)
     if "StoreZone" in stores_df.columns:
         version_cfg["_zones"] = sorted(stores_df["StoreZone"].unique().tolist())

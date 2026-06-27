@@ -884,72 +884,71 @@ def _empty_table(schema: pa.Schema) -> pa.Table:
 # Correlation helpers
 # ------------------------------------------------------------
 
+def _weighted_pick(rng, pool, store_weight, k):
+    """Pick *k* stores from *pool* with probability ∝ store_weight[StoreKey]."""
+    if k <= 0:
+        return np.empty(0, dtype=np.int32)
+    pool = np.asarray(pool, dtype=np.int32)
+    if pool.size == 0:
+        return np.empty(0, dtype=np.int32)
+    w = store_weight[np.clip(pool, 0, len(store_weight) - 1)].astype(np.float64)
+    total = w.sum()
+    if not np.isfinite(total) or total <= 0:
+        idx = rng.integers(0, pool.size, size=k)
+    else:
+        cdf = np.cumsum(w) / total
+        cdf[-1] = 1.0  # guard fp drift (CLAUDE.md #16)
+        idx = np.clip(np.searchsorted(cdf, rng.random(k), side="right"), 0, pool.size - 1)
+    return pool[idx].astype(np.int32)
+
+
 def _apply_geo_bias_store_sampling(
     rng, skip_cols, n_unique_orders, n_lines,
     customer_keys_for_orders, customer_keys_out,
     month_stores, order_idx,
-    cust_geo, geo2c, st2c, c2sk,
+    cust_geo, geo2c, c2sk, store_weight,
 ):
-    """Sample stores with geographic bias toward customer's home country."""
-    geo_bias = (cust_geo is not None and geo2c is not None
-                and st2c is not None and c2sk is not None)
+    """Sample stores with geographic bias toward the customer's home country,
+    weighted by per-store demand (``store_weight``).
 
+    70% of orders draw from the customer's country pool, 30% globally; each pick
+    is proportional to ``store_weight``, so bigger / higher-revenue stores sell
+    more. ``store_weight`` is always present — all-ones means uniform (when
+    sales.store_demand_weight is unconfigured), so there is no separate uniform
+    code path. Geo-bias needs the cust->geo (``cust_geo``), geo->country
+    (``geo2c``) and country->store-key (``c2sk``) maps; without them it falls
+    back to a single weighted pool over ``month_stores``.
+    """
+    geo_bias = (cust_geo is not None and geo2c is not None and c2sk is not None)
     if not skip_cols:
-        _n_to_sample = n_unique_orders
-        _cust_for_store = customer_keys_for_orders
+        n = n_unique_orders
+        cust = customer_keys_for_orders
     else:
-        _n_to_sample = n_lines
-        _cust_for_store = customer_keys_out
+        n = n_lines
+        cust = customer_keys_out
 
-    if geo_bias:
-        _ck_arr = np.clip(np.asarray(_cust_for_store, dtype=np.int32), 0, len(cust_geo) - 1)
-        _cust_countries = geo2c[np.clip(cust_geo[_ck_arr], 0, len(geo2c) - 1)]
-        _use_local = rng.random(_n_to_sample) < 0.70
-
-        _month_set = set(month_stores.tolist())
-        _unique_countries = np.unique(_cust_countries)
-        _max_cid = int(_unique_countries.max()) + 1
-
-        _countries_no_local = np.zeros(_max_cid, dtype=bool)
-
-        _local_pools = [None] * _max_cid
-        _max_pool_len = 0
-        for _cid_v in _unique_countries:
-            _cid_int = int(_cid_v)
-            _country_sk = c2sk[_cid_int] if _cid_int < len(c2sk) else np.array([], dtype=np.int32)
-            if _country_sk.size:
-                _lp = _country_sk[np.array([s in _month_set for s in _country_sk.tolist()], dtype=bool)]
-            else:
-                _lp = np.array([], dtype=np.int32)
-            if _lp.size == 0:
-                _lp = month_stores
-                _countries_no_local[_cid_int] = True
-            _local_pools[_cid_int] = _lp
-            if _lp.size > _max_pool_len:
-                _max_pool_len = _lp.size
-
-        _pool_2d = np.empty((_max_cid, _max_pool_len), dtype=np.int32)
-        _pool_lens = np.ones(_max_cid, dtype=np.int64)
-        for _cid_v in _unique_countries:
-            _cid_int = int(_cid_v)
-            _lp = _local_pools[_cid_int]
-            _pool_lens[_cid_int] = _lp.size
-            _pool_2d[_cid_int, :_lp.size] = _lp
-            if _lp.size < _max_pool_len:
-                _pool_2d[_cid_int, _lp.size:] = _lp[0]
-
-        _rand_idx = rng.integers(0, np.iinfo(np.int64).max, size=_n_to_sample).astype(np.int64)
-        _local_pick = _pool_2d[_cust_countries, _rand_idx % _pool_lens[_cust_countries]]
-        _global_pick = month_stores[rng.integers(0, len(month_stores), size=_n_to_sample)]
-
-        # Without local stores, the 70/30 local-vs-global split is meaningless
-        # (both pools are identical) — turn off the split for those customers.
-        if _countries_no_local.any():
-            _use_local[_countries_no_local[_cust_countries]] = False
-
-        order_store = np.where(_use_local, _local_pick, _global_pick).astype(np.int32)
+    if not geo_bias:
+        order_store = _weighted_pick(rng, month_stores, store_weight, n)
     else:
-        order_store = month_stores[rng.integers(0, len(month_stores), size=_n_to_sample)]
+        _ck = np.clip(np.asarray(cust, dtype=np.int32), 0, len(cust_geo) - 1)
+        cust_countries = geo2c[np.clip(cust_geo[_ck], 0, len(geo2c) - 1)]
+        use_local = rng.random(n) < 0.70
+        month_set = set(month_stores.tolist())
+        order_store = np.empty(n, dtype=np.int32)
+        # global component (30%)
+        gmask = ~use_local
+        order_store[gmask] = _weighted_pick(rng, month_stores, store_weight, int(gmask.sum()))
+        # local component (70%): weighted within each customer country's open pool
+        lidx = np.where(use_local)[0]
+        lc = cust_countries[lidx]
+        for _cid in np.unique(lc):
+            cid = int(_cid)
+            csk = c2sk[cid] if cid < len(c2sk) else np.array([], dtype=np.int32)
+            pool = csk[np.fromiter((int(s) in month_set for s in csk), dtype=bool, count=len(csk))] if csk.size else csk
+            if pool.size == 0:
+                pool = month_stores  # no local store open -> fall back to global pool
+            sel = lidx[lc == _cid]
+            order_store[sel] = _weighted_pick(rng, pool, store_weight, sel.size)
 
     if not skip_cols:
         return order_store[order_idx]
@@ -960,12 +959,17 @@ def _resample_stores_for_open_close(
     rng, store_key_arr, order_dates,
     store_open_day, store_close_day,
     store_keys, order_idx,
+    store_weight,
     *,
     store_reno_start_day=None, store_reno_end_day=None,
 ):
     """Resample stores whose order date falls outside their open/close window
     OR inside their renovation window. Replacement candidates are stores that
-    are open AND not currently renovating on the order date."""
+    are open AND not currently renovating on the order date.
+
+    Replacements are drawn in proportion to per-store demand (``store_weight``,
+    all-ones = uniform), matching the initial sampler so boundary resampling
+    doesn't dilute the demand weighting."""
     if store_open_day is None:
         return store_key_arr
 
@@ -1022,12 +1026,10 @@ def _resample_stores_for_open_close(
         if order_idx is not None:
             _bad_order_ids = order_idx[_date_rows]
             _uniq_oids, _oid_inv = np.unique(_bad_order_ids, return_inverse=True)
-            _repls = _day_stores[rng.integers(0, len(_day_stores), size=len(_uniq_oids))]
+            _repls = _weighted_pick(rng, _day_stores, store_weight, len(_uniq_oids))
             store_key_arr[_date_rows] = _repls[_oid_inv]
         else:
-            store_key_arr[_date_rows] = _day_stores[
-                rng.integers(0, len(_day_stores), size=len(_date_rows))
-            ]
+            store_key_arr[_date_rows] = _weighted_pick(rng, _day_stores, store_weight, len(_date_rows))
     return store_key_arr
 
 
@@ -1437,9 +1439,8 @@ def build_chunk_table(
     month_row_counts: list[int] = []
     total_rows = 0
 
-    # Salesperson effective-date map + fallback (constant across months)
+    # Salesperson effective-date map (day-accurate bridge, constant across months)
     eff = getattr(State, "salesperson_effective_by_store", None)
-    sp_map_fallback = getattr(State, 'salesperson_by_store_month', None)
 
     # Expected average lines per order — used to estimate order count from row target.
     # When max_lines > 1, build_orders expands each order into 1..max_lines line rows,
@@ -1667,14 +1668,15 @@ def build_chunk_table(
         # is misaligned with order_idx (post-sort). Use sorted order-level
         # keys derived from the line-level output instead.
         _sorted_order_cust = customer_keys_out[order_starts] if order_starts is not None else customer_keys_for_orders
+        _store_weight = getattr(State, "store_demand_weight", None)
         store_key_arr = _apply_geo_bias_store_sampling(
             rng, skip_cols, n_unique_orders, n_lines,
             _sorted_order_cust, customer_keys_out,
             _month_stores, order_idx,
             getattr(State, "customer_geo_key", None),
             getattr(State, "geo_to_country_id", None),
-            getattr(State, "store_to_country_id", None),
             getattr(State, "country_to_store_keys", None),
+            store_weight=_store_weight,
         )
 
         # DAY-LEVEL STORE ELIGIBILITY: resample for open/close + renovation.
@@ -1686,6 +1688,7 @@ def build_chunk_table(
             _month_stores, order_idx,
             store_reno_start_day=store_reno_start_day,
             store_reno_end_day=store_reno_end_day,
+            store_weight=_store_weight,
         )
 
         # CORRELATION #1: Store → SalesChannelKey
@@ -1854,9 +1857,10 @@ def build_chunk_table(
         #     - If order identifiers exist (skip_cols == False): 1 salesperson per order (broadcast to all lines),
         #       still respecting effective-dated store assignments by (StoreKey, OrderDate).
         #     - If order identifiers do not exist: keep line-level sampling (old behavior).
-        # - Prefer DAY-accurate effective-dated bridge:
+        # - DAY-accurate effective-dated bridge:
         #     State.salesperson_effective_by_store[store] = (emp_keys[int32], start_dates[D], end_dates[D], weights[f64])
-        # - Fallback: State.salesperson_by_store_month (values may be -1)
+        # - No eligible salesperson for a (store, date) => -1 (dropped downstream by the
+        #   HARD GUARANTEE; coverage pre-flight reports/aborts/repairs this upstream).
         # IMPORTANT: Never emit Store Manager keys (30_000_000 + StoreKey).
         # --------------------------------------------------------
 
@@ -1890,26 +1894,17 @@ def build_chunk_table(
                 salesperson_order = _sample_salesperson_vectorized(
                     order_store_sp, order_date_sp, eff, rng)
             else:
-                # Fallback: month map
-                sp_map = sp_map_fallback
-                if sp_map is not None:
-                    salesperson_order = sp_map[order_store_sp, int(m_offset)].astype(np.int32, copy=False)
-                else:
-                    salesperson_order = np.full(uniq_orders.size, -1, dtype=np.int32)
+                salesperson_order = np.full(uniq_orders.size, -1, dtype=np.int32)
 
             salesperson_key_arr = salesperson_order[inv_idx]
         else:
-            # Line-level fallback (when order ids do not exist)
+            # Line-level sampling (when order ids do not exist)
             s_ids = np.asarray(store_key_arr, dtype=np.int32)
             d_ids = np.asarray(order_dates, dtype="datetime64[D]")
             if isinstance(eff, dict) and eff:
                 salesperson_key_arr = _sample_salesperson_vectorized(s_ids, d_ids, eff, rng)
             else:
-                sp_map = sp_map_fallback
-                if sp_map is not None:
-                    salesperson_key_arr = sp_map[s_ids, int(m_offset)].astype(np.int32, copy=False)
-                else:
-                    salesperson_key_arr = np.full(s_ids.size, -1, dtype=np.int32)
+                salesperson_key_arr = np.full(s_ids.size, -1, dtype=np.int32)
 
         # UPDATE DISCOVERY STATE (persist)
         # --------------------------------------------------------
@@ -2058,6 +2053,25 @@ def build_chunk_table(
                     "Add them to src/utils/static_schemas.get_sales_schema(...) first."
                 )
             cols.update(extra)
+
+        # --------------------------------------------------------
+        # HARD GUARANTEE: never emit EmployeeKey=-1 (orphan FK).
+        # A -1 means the sampled (store, date) had no salesperson — only
+        # possible when the dimensions leave a coverage gap (the coverage
+        # pre-flight reports/aborts/repairs this upstream). Salesperson is
+        # assigned per ORDER and broadcast to its lines, so -1 lines are whole
+        # orders; dropping them preserves order/line integrity. Normal configs
+        # have full coverage and drop nothing.
+        _ek = cols.get("EmployeeKey")
+        if _ek is not None and not np.isscalar(_ek):
+            _ek_arr = np.asarray(_ek)
+            if _ek_arr.size and (_ek_arr == -1).any():
+                _keep = _ek_arr != -1
+                _new_n = int(_keep.sum())
+                for _cname, _cval in list(cols.items()):
+                    if isinstance(_cval, np.ndarray) and _cval.shape[:1] == (n_rows,):
+                        cols[_cname] = _cval[_keep]
+                n_rows = _new_n
 
         # Accumulate per-column numpy buffers (defer Arrow conversion to end)
         for f in schema:

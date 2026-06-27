@@ -272,6 +272,18 @@ def check_esa(
     ip_vc = esa["IsPrimary"].value_counts().to_dict()
     _add(cat, "IsPrimary distribution", True, str(ip_vc))
 
+    # --- Exactly one IsPrimary=True (current/home assignment) per employee ---
+    # "Current store per employee" DAX patterns rely on a single primary row:
+    #   CALCULATE(VALUES(ESA[StoreKey]), ESA[IsPrimary]=TRUE())
+    # A second primary at a different store makes VALUES return >1 row and errors.
+    prim = esa[esa["IsPrimary"].astype(bool)].groupby("EmployeeKey")
+    multi_primary = int((prim.size() > 1).sum())
+    multi_primary_store = int((prim["StoreKey"].nunique() > 1).sum())
+    _add(cat, "Exactly one IsPrimary=True per employee",
+         multi_primary == 0,
+         f"{multi_primary} employee(s) with >1 primary row "
+         f"({multi_primary_store} at >1 distinct store)")
+
     st_vc = esa["Status"].astype(str).value_counts().to_dict()
     _add(cat, "Status distribution", True, str(st_vc))
 
