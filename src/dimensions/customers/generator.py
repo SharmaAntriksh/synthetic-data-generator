@@ -1324,10 +1324,17 @@ def generate_synthetic_customers(cfg: Dict, parquet_dims_folder: Path,
             _remap_profiles_to_current_version(customers_df, profile_df, org_profile_df)
 
     if not _skip_post_phases:
-        # Encode Gender to output codes only on the full (serial) path. Chunk
-        # workers (_skip_post_phases=True) must keep the readable labels so the
-        # orchestrator's spouse-matching still keys on Male/Female after merge.
-        customers_df["Gender"] = customers_df["Gender"].replace(CUSTOMER_GENDER_CODE_MAP)
+        # Derive GenderCode (M/F/O) from the readable Gender label, only on the
+        # full (serial) path. Gender itself stays readable (Male/Female/Org).
+        # Chunk workers (_skip_post_phases=True) keep the readable labels so the
+        # orchestrator's spouse-matching still keys on Male/Female after merge;
+        # the orchestrator adds GenderCode once post-merge.
+        _gender_pos = customers_df.columns.get_loc("Gender")
+        customers_df.insert(
+            _gender_pos + 1,
+            "GenderCode",
+            customers_df["Gender"].map(CUSTOMER_GENDER_CODE_MAP),
+        )
 
     active_customer_set = set(active_customer_keys.tolist())
     return customers_df, profile_df, org_profile_df, active_customer_set
@@ -1660,9 +1667,15 @@ def _generate_parallel(cfg, parquet_dims_folder: Path, n_workers: int):
         import shutil
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
-    # Encode Gender to output codes after all post-phases (household matching
-    # consumed the readable labels above; SCD2 carried them through).
-    customers_df["Gender"] = customers_df["Gender"].replace(CUSTOMER_GENDER_CODE_MAP)
+    # Derive GenderCode (M/F/O) after all post-phases (household matching
+    # consumed the readable Gender labels above; SCD2 carried them through).
+    # Gender itself stays readable (Male/Female/Org).
+    _gender_pos = customers_df.columns.get_loc("Gender")
+    customers_df.insert(
+        _gender_pos + 1,
+        "GenderCode",
+        customers_df["Gender"].map(CUSTOMER_GENDER_CODE_MAP),
+    )
 
     # Parallel path doesn't track an active-customer set — sales derives
     # it independently from active_ratio + seed (see sales.py). Returning

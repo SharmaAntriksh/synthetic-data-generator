@@ -265,8 +265,8 @@ def _enrich_employee_hr_columns(
         )
         df.loc[needs_reason, "TerminationReason"] = reasons
 
-    # SalesPersonFlag
-    df["SalesPersonFlag"] = title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE]).astype(bool)
+    # IsSalesperson
+    df["IsSalesperson"] = title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE]).astype(bool)
 
     # DepartmentName
     dept = np.where(
@@ -317,7 +317,7 @@ def _finalize_employee_integer_cols(df: pd.DataFrame) -> pd.DataFrame:
             df["ParentEmployeeKey"], errors="coerce",
         ).astype("Int32")
     _to_int("OrgLevel", np.int32)
-    _to_int("SalesPersonFlag", bool)
+    _to_int("IsSalesperson", bool)
     _to_int("SalariedFlag", bool)
     _to_int("IsActive", bool)
     _to_int("RegionId", np.int32)
@@ -987,7 +987,7 @@ def run_employees(cfg: Dict[str, Any], parquet_folder: Path) -> None:
             "EmergencyContactName", "EmergencyContactPhone",
             "SalariedFlag", "PayFrequency", "BaseRate", "VacationHours",
             "Status",
-            "SalesPersonFlag", "DepartmentName",
+            "IsSalesperson", "DepartmentName",
         ]
         df = df[_SCHEMA_ORDER]
 
