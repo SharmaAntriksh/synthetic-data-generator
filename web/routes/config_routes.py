@@ -53,7 +53,6 @@ def get_config():
     promos = _g(cfg, "promotions", default={})
     pricing = _g(cfg, "products", "pricing", "base", default={})
     returns = _g(cfg, "returns", default={})
-    geo = _g(cfg, "geography", default={})
     dates_cfg = _g(cfg, "dates", default={})
     include = _g(dates_cfg, "include", default={})
     wf = _g(include, "weekly_fiscal", default={})
@@ -113,8 +112,8 @@ def get_config():
         "pctAsia": float(getattr(cust, "pct_asia", 0)),
         "pctOrg": float(getattr(cust, "pct_org", 10)),
         "customerActiveRatio": float(getattr(cust, "active_ratio", 0.90)),
-        "firstYearPct": float(getattr(cust, "first_year_pct", None) or 0.27),
-        "householdPct": float(getattr(cust, "household_pct", 0.35) or 0.35),
+        "firstYearPct": float(_fyp if (_fyp := getattr(cust, "first_year_pct", None)) is not None else 0.27),
+        "householdPct": float(_hhp if (_hhp := getattr(cust, "household_pct", None)) is not None else 0.35),
         # Customers SCD2
         "custScd2Enabled": bool(getattr(getattr(cust, "scd2", None), "enabled", False)),
         "custScd2ChangeRate": float(getattr(getattr(cust, "scd2", None), "change_rate", 0.15)),
@@ -133,8 +132,6 @@ def get_config():
         "prodScd2RevisionFreq": int(getattr(getattr(prods, "scd2", None), "revision_frequency", 12)),
         "prodScd2PriceDrift": float(getattr(getattr(prods, "scd2", None), "price_drift", 0.05)),
         "prodScd2MaxVersions": int(getattr(getattr(prods, "scd2", None), "max_versions", 4)),
-        # Geography
-        "geoWeights": dict(_g(geo, "country_weights", default={}) or {}),
         # Returns
         "returnsEnabled": bool(getattr(returns, "enabled", True)),
         "returnRate": float(getattr(returns, "return_rate", 0.03)),
@@ -232,9 +229,6 @@ def update_config(body: ConfigUpdate):
         cfg.products.pricing.setdefault("base", {})
         cfg.products.pricing.setdefault("cost", {})
         cfg.products.pricing.setdefault("brand_normalization", {})
-        if cfg.geography is None:
-            from src.engine.config.config_schema import GeographyConfig
-            cfg.geography = GeographyConfig()
         if cfg.dates.include.weekly_fiscal is None:
             from src.engine.config.config_schema import WeeklyFiscalConfig
             cfg.dates.include.weekly_fiscal = WeeklyFiscalConfig()
@@ -333,10 +327,6 @@ def update_config(body: ConfigUpdate):
             if "prodScd2RevisionFreq" in v: cfg.products.scd2.revision_frequency = int(v["prodScd2RevisionFreq"])
             if "prodScd2PriceDrift" in v: cfg.products.scd2.price_drift = float(v["prodScd2PriceDrift"])
             if "prodScd2MaxVersions" in v: cfg.products.scd2.max_versions = int(v["prodScd2MaxVersions"])
-
-        # Geography
-        if "geoWeights" in v and isinstance(v["geoWeights"], dict):
-            object.__setattr__(cfg.geography, "country_weights", v["geoWeights"])
 
         # Returns
         if "returnsEnabled" in v: cfg.returns.enabled = bool(v["returnsEnabled"])

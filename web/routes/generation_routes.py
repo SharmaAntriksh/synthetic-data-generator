@@ -104,12 +104,6 @@ def validate_config():
         if rr < 0 or rr > 1:
             errors.append("Return rate must be between 0 and 1.")
 
-    geo = _g(cfg, "geography", "country_weights", default={})
-    if geo:
-        gs = sum(float(v) for v in geo.values())
-        if abs(gs - 1.0) > 0.05:
-            warnings.append(f"Geography weights sum to {gs*100:.0f}% (expected ~100%).")
-
     cust = _g(cfg, "customers", default={})
     rS = float(getattr(cust, "pct_india", 0)) + float(getattr(cust, "pct_us", 0)) + float(getattr(cust, "pct_eu", 0)) + float(getattr(cust, "pct_asia", 0))
     if rS <= 0:
@@ -179,7 +173,10 @@ def _run_pipeline_thread(job: dict, cfg_snapshot: dict, models_snapshot: dict, r
             if timed_out.is_set():
                 job["logs"].append(f"ERROR: Pipeline killed after {_PIPELINE_TIMEOUT}s timeout")
             job["exit_code"] = proc.returncode
-            job["status"] = "done" if proc.returncode == 0 else "failed"
+            # Preserve a user-initiated cancel: terminate() makes the process
+            # exit non-zero, which would otherwise be reported as "failed".
+            if job["status"] != "cancelled":
+                job["status"] = "done" if proc.returncode == 0 else "failed"
     except Exception:
         logging.getLogger(__name__).exception("Pipeline thread failed")
         job["logs"].append("ERROR: Pipeline failed unexpectedly. Check server logs for details.")

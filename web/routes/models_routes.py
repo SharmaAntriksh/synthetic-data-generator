@@ -4,6 +4,8 @@ web/routes/models_routes.py -- All /api/models/* endpoints.
 
 from __future__ import annotations
 
+import copy
+
 import yaml
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
@@ -26,12 +28,6 @@ class ModelsUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _models_root() -> dict:
-    """Return the 'models' sub-dict. Caller must hold ``_state._cfg_lock``."""
-    m = _state._models_cfg.get("models")
-    return m if isinstance(m, dict) else _state._models_cfg
-
 
 # ---------------------------------------------------------------------------
 # GET /api/models -- raw YAML text
@@ -61,6 +57,13 @@ def update_models(body: ModelsUpdate):
             raise HTTPException(400, "Models YAML must be a mapping at the top level.")
     except yaml.YAMLError as e:
         raise HTTPException(400, f"Invalid YAML: {e}")
+    # Validate against the models schema so typos / invalid values surface here
+    # (matching the config-YAML endpoint) rather than at generation time.
+    try:
+        from src.engine.config.config_schema import ModelsConfig
+        ModelsConfig.from_raw_dict(parsed)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(400, f"Models validation failed: {exc}")
     with _state._cfg_lock:
         _state._models_cfg = parsed
         _state._models_yaml_text = text
@@ -144,7 +147,13 @@ def update_models_form(body: ConfigUpdate):
     """Apply partial form updates to the in-memory models config, re-serialize YAML."""
     with _state._cfg_lock:
         v = body.values
-        m = _models_root()
+        # Mutate a deep copy and commit only after every update succeeds, so a
+        # bad input (e.g. a non-numeric value) can't leave the live models
+        # config half-applied or desynced from the serialized YAML text.
+        models_cfg = copy.deepcopy(_state._models_cfg)
+        m = models_cfg.get("models")
+        if not isinstance(m, dict):
+            m = models_cfg
 
         m.setdefault("macro_demand", {}).setdefault("year_level_factors", {})
         m.setdefault("quantity", {})
@@ -154,45 +163,54 @@ def update_models_form(body: ConfigUpdate):
         m.setdefault("returns", {}).setdefault("lag_days", {})
         m["returns"].setdefault("quantity", {})
 
-        # Macro demand
-        if "demandMode" in v: m["macro_demand"]["year_level_factors"]["mode"] = v["demandMode"]
-        if "demandFactors" in v and isinstance(v["demandFactors"], list):
-            m["macro_demand"]["year_level_factors"]["values"] = [float(x) for x in v["demandFactors"]]
+        # Coerce/apply form values. A bad value (e.g. a non-numeric in a
+        # float field) is a client error -> 400, not a 500. Because we mutate
+        # the deep copy above, a failure here leaves live state untouched.
+        try:
+            # Macro demand
+            if "demandMode" in v: m["macro_demand"]["year_level_factors"]["mode"] = v["demandMode"]
+            if "demandFactors" in v and isinstance(v["demandFactors"], list):
+                m["macro_demand"]["year_level_factors"]["values"] = [float(x) for x in v["demandFactors"]]
 
-        # Quantity
-        if "qtyLambda" in v: m["quantity"]["base_poisson_lambda"] = float(v["qtyLambda"])
-        if "qtyMin" in v: m["quantity"]["min_qty"] = int(v["qtyMin"])
-        if "qtyMax" in v: m["quantity"]["max_qty"] = int(v["qtyMax"])
-        if "qtyMonthly" in v and isinstance(v["qtyMonthly"], list):
-            m["quantity"]["monthly_factors"] = [float(x) for x in v["qtyMonthly"]]
-        if "qtyNoise" in v: m["quantity"]["noise_sigma"] = float(v["qtyNoise"])
+            # Quantity
+            if "qtyLambda" in v: m["quantity"]["base_poisson_lambda"] = float(v["qtyLambda"])
+            if "qtyMin" in v: m["quantity"]["min_qty"] = int(v["qtyMin"])
+            if "qtyMax" in v: m["quantity"]["max_qty"] = int(v["qtyMax"])
+            if "qtyMonthly" in v and isinstance(v["qtyMonthly"], list):
+                m["quantity"]["monthly_factors"] = [float(x) for x in v["qtyMonthly"]]
+            if "qtyNoise" in v: m["quantity"]["noise_sigma"] = float(v["qtyNoise"])
 
-        # Pricing -- inflation
-        if "inflationRate" in v: m["pricing"]["inflation"]["annual_rate"] = float(v["inflationRate"])
-        if "inflationVolatility" in v: m["pricing"]["inflation"]["month_volatility_sigma"] = float(v["inflationVolatility"])
-        if "inflationClipMin" in v or "inflationClipMax" in v:
-            clip = m["pricing"]["inflation"].get("factor_clip", [1.0, 1.3])
-            if "inflationClipMin" in v: clip[0] = float(v["inflationClipMin"])
-            if "inflationClipMax" in v: clip[1] = float(v["inflationClipMax"])
-            m["pricing"]["inflation"]["factor_clip"] = clip
+            # Pricing -- inflation
+            if "inflationRate" in v: m["pricing"]["inflation"]["annual_rate"] = float(v["inflationRate"])
+            if "inflationVolatility" in v: m["pricing"]["inflation"]["month_volatility_sigma"] = float(v["inflationVolatility"])
+            if "inflationClipMin" in v or "inflationClipMax" in v:
+                clip = m["pricing"]["inflation"].get("factor_clip", [1.0, 1.3])
+                if "inflationClipMin" in v: clip[0] = float(v["inflationClipMin"])
+                if "inflationClipMax" in v: clip[1] = float(v["inflationClipMax"])
+                m["pricing"]["inflation"]["factor_clip"] = clip
 
-        # Pricing -- markdown
-        if "markdownEnabled" in v: m["pricing"]["markdown"]["enabled"] = bool(v["markdownEnabled"])
-        if "markdownMaxPct" in v: m["pricing"]["markdown"]["max_pct_of_price"] = float(v["markdownMaxPct"])
-        if "markdownMinNet" in v: m["pricing"]["markdown"]["min_net_price"] = float(v["markdownMinNet"])
-        if "markdownAllowNeg" in v: m["pricing"]["markdown"]["allow_negative_margin"] = bool(v["markdownAllowNeg"])
+            # Pricing -- markdown
+            if "markdownEnabled" in v: m["pricing"]["markdown"]["enabled"] = bool(v["markdownEnabled"])
+            if "markdownMaxPct" in v: m["pricing"]["markdown"]["max_pct_of_price"] = float(v["markdownMaxPct"])
+            if "markdownMinNet" in v: m["pricing"]["markdown"]["min_net_price"] = float(v["markdownMinNet"])
+            if "markdownAllowNeg" in v: m["pricing"]["markdown"]["allow_negative_margin"] = bool(v["markdownAllowNeg"])
 
-        # Brand popularity
-        if "brandEnabled" in v: m["brand_popularity"]["enabled"] = bool(v["brandEnabled"])
-        if "brandSeed" in v: m["brand_popularity"]["seed"] = int(v["brandSeed"])
-        if "brandWinnerBoost" in v: m["brand_popularity"]["winner_boost"] = float(v["brandWinnerBoost"])
-        # brand_weights deprecated — ignore if sent by frontend
+            # Brand popularity
+            if "brandEnabled" in v: m["brand_popularity"]["enabled"] = bool(v["brandEnabled"])
+            if "brandSeed" in v: m["brand_popularity"]["seed"] = int(v["brandSeed"])
+            if "brandWinnerBoost" in v: m["brand_popularity"]["winner_boost"] = float(v["brandWinnerBoost"])
+            # brand_weights deprecated — ignore if sent by frontend
 
-        # Returns (on/off lives in config.yaml -> returns.enabled, not here)
-        if "retLagDist" in v: m["returns"]["lag_days"]["distribution"] = v["retLagDist"]
-        if "retLagMode" in v: m["returns"]["lag_days"]["mode"] = int(v["retLagMode"])
-        if "retFullLinePct" in v: m["returns"]["quantity"]["full_line_probability"] = float(v["retFullLinePct"])
+            # Returns (on/off lives in config.yaml -> returns.enabled, not here)
+            if "retLagDist" in v: m["returns"]["lag_days"]["distribution"] = v["retLagDist"]
+            if "retLagMode" in v: m["returns"]["lag_days"]["mode"] = int(v["retLagMode"])
+            if "retFullLinePct" in v: m["returns"]["quantity"]["full_line_probability"] = float(v["retFullLinePct"])
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, f"Invalid models form value: {exc}")
 
-        # Re-serialize to YAML text so the YAML editor stays in sync
-        _state._models_yaml_text = yaml.safe_dump(_state._models_cfg, sort_keys=False, default_flow_style=False)
-        return {"ok": True, "yaml_text": _state._models_yaml_text}
+        # Commit only after every update succeeded; re-serialize so the YAML
+        # editor stays in sync with the form state.
+        new_text = yaml.safe_dump(models_cfg, sort_keys=False, default_flow_style=False)
+        _state._models_cfg = models_cfg
+        _state._models_yaml_text = new_text
+        return {"ok": True, "yaml_text": new_text}

@@ -75,13 +75,20 @@ def _load_yaml(p: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def _base_config() -> dict:
+def _base_config():
     if _HAS_NORMALIZER:
         try:
             return _load_pipeline_config(str(_config_path))
         except (KeyError, ValueError, OSError, TypeError):
             pass
-    return _load_yaml(_config_path)
+    # Fallback: coerce the raw YAML into an AppConfig so the rest of the web
+    # layer can rely on attribute access (the routes assume a Pydantic model,
+    # not a plain dict). Fall back to schema defaults if even that fails.
+    from src.engine.config.config_schema import AppConfig
+    try:
+        return AppConfig.from_raw_dict(_load_yaml(_config_path))
+    except (ValueError, TypeError, KeyError):
+        return AppConfig()
 
 
 # ---------------------------------------------------------------------------

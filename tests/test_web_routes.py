@@ -804,16 +804,6 @@ class TestInputValidationEdgeCases:
         data = client.get("/api/config").json()
         assert isinstance(data["salesRows"], int)
 
-    def test_geo_weights_non_dict_ignored(self, client):
-        """geoWeights must be a dict; non-dict should be ignored."""
-        # Get current weights
-        before = client.get("/api/config").json()["geoWeights"]
-        # Post non-dict
-        resp = client.post("/api/config", json={"values": {"geoWeights": "invalid"}})
-        assert resp.status_code == 200
-        after = client.get("/api/config").json()["geoWeights"]
-        assert after == before  # unchanged
-
     def test_er_to_currencies_non_list_ignored(self, client):
         """erToCurrencies must be a list; non-list should be ignored."""
         before = client.get("/api/config").json()["erToCurrencies"]

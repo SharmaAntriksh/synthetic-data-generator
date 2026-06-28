@@ -41,7 +41,7 @@ def _csv_row_count(path: Path) -> int:
         if cached and cached[0] == mtime:
             return cached[1]
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
-        count = sum(1 for _ in fh) - 1  # subtract header
+        count = max(0, sum(1 for _ in fh) - 1)  # subtract header; clamp empty files
     with _csv_row_cache_lock:
         _csv_row_cache[key] = (mtime, count)
     return count

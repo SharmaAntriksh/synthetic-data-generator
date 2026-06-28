@@ -256,7 +256,10 @@ def _run_import_thread(job: dict, req: ImportRequest, dataset_path: Path):
         if timed_out.is_set():
             job["logs"].append(f"ERROR: Import killed after {_IMPORT_TIMEOUT}s timeout")
         job["exit_code"] = proc.returncode
-        job["status"] = "done" if proc.returncode == 0 else "failed"
+        # Preserve a user-initiated cancel: terminate() makes the process exit
+        # non-zero, which would otherwise be reported as "failed".
+        if job["status"] != "cancelled":
+            job["status"] = "done" if proc.returncode == 0 else "failed"
     except Exception:
         logging.getLogger(__name__).exception("Import thread failed")
         job["logs"].append("ERROR: Import failed unexpectedly. Check server logs for details.")

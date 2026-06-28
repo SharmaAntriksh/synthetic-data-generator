@@ -17,9 +17,6 @@ function validate(config) {
   if (config.customers > config.salesRows && config.salesRows > 0) warnings.push(`Customers (${config.customers.toLocaleString()}) exceed sales rows.`);
   if (config.products > config.salesRows && config.salesRows > 0) warnings.push(`Products (${config.products.toLocaleString()}) exceed sales rows.`);
   if (config.customers > 0 && config.salesRows / config.customers < 1.5) warnings.push(`Low rows-per-customer ratio (${(config.salesRows / config.customers).toFixed(1)}).`);
-
-  const geoSum = Object.values(config.geoWeights).reduce((acc, val) => acc + val, 0);
-  if (Math.abs(geoSum - 1) > .05 && geoSum > 0) warnings.push(`Geography weights sum to ${(geoSum * 100).toFixed(0)}% (expected ~100%).`);
   if (config.returnsEnabled && config.returnMaxDays <= config.returnMinDays) warnings.push("Return max days should exceed min days.");
   if (config.marginMax <= config.marginMin) warnings.push("Max margin should exceed min margin.");
   if (config.subEnabled && config.subMaxSubscriptions < 1) errors.push("Subscriptions max must be >= 1.");
@@ -101,14 +98,13 @@ function App() {
   /* ─── Initial load ─── */
   useEffect(() => {
     fetch(API + "/config").then(r => r.json()).then(data => {
-      data.geoWeights = data.geoWeights || {};
       data.regenAll = false;
       data.regenDims = {};
       data.autoWorkers = !data.workers;
       setCfg(data);
     }).catch(() => {
       setLoadError("Failed to load config from server");
-      setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, qualityReport: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, firstYearPct: .27, householdPct: .35, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, geoWeights: {"United States": .35, India: .2, "United Kingdom": .1, Germany: .1, France: .1, Australia: .07, Canada: .08}, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, subEnabled: false, subGenerateBridge: false, subParticipationRate: .65, subAvgSubscriptions: 1.5, subMaxSubscriptions: 5, subChurnRate: .25, subTrialRate: .30, subTrialConversionRate: .85, subTrialDays: 14, subSeed: 700, storeEnsureIsoCoverage: true, storeStaffingRanges: {Supermarket: [8, 20], Hypermarket: [15, 40], Convenience: [2, 6]}, storeRegionWeights: {}, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, storeOnlineStores: 5, storeClosingEnabled: true, storeCloseShare: .10, employeeEmailDomain: "contoso.com", transfersEnabled: false, transfersAnnualRate: .05, transfersMinTenureMonths: 6, transfersSameRegionPref: .70, erFromCurrencies: ["USD"], erToCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erFutureDrift: .02, erIncludeMonthly: true, budgetEnabled: true, budgetDefaultGrowth: .05, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
+      setCfg({seed: 42, format: "parquet", salesOutput: "sales", skipOrderCols: false, compression: "snappy", rowGroupSize: 2000000, mergeParquet: true, partitionEnabled: true, maxLinesPerOrder: 5, salesOptimize: true, qualityReport: true, startDate: "2020-01-01", endDate: "2025-12-31", fiscalMonthOffset: 0, asOfDate: "", includeCalendar: true, includeIso: false, includeFiscal: true, includeWeeklyFiscal: false, wfFirstDay: 0, wfWeeklyType: "Last", wfQuarterType: "445", wfTypeStartFiscalYear: 1, salesRows: 103285, chunkSize: 1000000, autoWorkers: false, workers: 8, customers: 48837, stores: 10, products: 2581, promotions: 20, pctIndia: 10, pctUs: 51, pctEu: 39, pctAsia: 0, pctOrg: 1, customerActiveRatio: .98, firstYearPct: .27, householdPct: .35, valueScale: 1, minPrice: 10, maxPrice: 3000, productActiveRatio: .98, marginMin: .20, marginMax: .35, brandNormalize: false, brandNormalizeAlpha: .35, returnsEnabled: true, returnRate: .03, returnMinDays: 1, returnMaxDays: 60, promoNewCustWindow: 3, subEnabled: false, subGenerateBridge: false, subParticipationRate: .65, subAvgSubscriptions: 1.5, subMaxSubscriptions: 5, subChurnRate: .25, subTrialRate: .30, subTrialConversionRate: .85, subTrialDays: 14, subSeed: 700, storeEnsureIsoCoverage: true, storeStaffingRanges: {Supermarket: [8, 20], Hypermarket: [15, 40], Convenience: [2, 6]}, storeRegionWeights: {}, storeOpeningStart: "1995-01-01", storeOpeningEnd: "2023-12-31", storeClosingEnd: "2028-12-31", storeAssortmentEnabled: true, storeOnlineStores: 5, storeClosingEnabled: true, storeCloseShare: .10, employeeEmailDomain: "contoso.com", transfersEnabled: false, transfersAnnualRate: .05, transfersMinTenureMonths: 6, transfersSameRegionPref: .70, erFromCurrencies: ["USD"], erToCurrencies: ["CAD", "GBP", "EUR", "INR", "AUD", "CNY", "JPY"], erBaseCurrency: "USD", erFutureDrift: .02, erIncludeMonthly: true, budgetEnabled: true, budgetDefaultGrowth: .05, inventoryEnabled: true, inventoryGrain: "monthly", inventoryShrinkageEnabled: true, inventoryShrinkageRate: .02, regenAll: false, regenDims: {}});
     });
     fetch(API + "/presets").then(r => r.json()).then(data => { setPresets(data); setPresetBucket(Object.keys(data)[0] || ""); }).catch(() => {});
     fetch(API + "/models").then(r => r.text()).then(text => { setModelsYaml(text); setModelsOrig(text); setModelsDisk(text); }).catch(() => {});
@@ -130,7 +126,6 @@ function App() {
 
   const reloadFormFromServer = useCallback(() => {
     fetch(API + "/config").then(r => r.json()).then(data => {
-      data.geoWeights = data.geoWeights || {};
       data.regenAll = cfg?.regenAll || false;
       data.regenDims = cfg?.regenDims || {};
       data.autoWorkers = !data.workers;
@@ -146,16 +141,9 @@ function App() {
 
   const flash = (message) => { setToast(message); setTimeout(() => setToast(null), 2400); };
 
-  const setGeoWeight = (country, weight) => setCfg(prev => {
-    const next = {...prev, geoWeights: {...prev.geoWeights, [country]: Math.max(0, Math.min(1, weight))}};
-    syncToBackend(next);
-    return next;
-  });
-
   const applyPreset = (name) => {
     fetch(API + "/presets/apply", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name})})
       .then(() => fetch(API + "/config").then(r => r.json()).then(data => {
-        data.geoWeights = data.geoWeights || {};
         data.regenAll = cfg.regenAll;
         data.regenDims = cfg.regenDims;
         data.autoWorkers = !data.workers;
