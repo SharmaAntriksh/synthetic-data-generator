@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Launch the FastAPI + React web UI for the Synthetic Data Generator.
+    Launch the FastAPI + React web UI for ContosoForge.
 
 .DESCRIPTION
     Starts uvicorn serving web.api:app on port 8502.

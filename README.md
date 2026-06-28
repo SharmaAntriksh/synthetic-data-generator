@@ -1,4 +1,4 @@
-# Contoso Sales Data Generator
+# ContosoForge
 
 Generate a complete, **analytics-ready retail dataset** inspired by the **ContosoRetailDW** schema - with configurable dimensions, realistic sales behavior, budget forecasts, inventory snapshots, wishlists, and complaints. Designed for BI, analytics, data engineering, and data modeling scenarios.
 
@@ -57,8 +57,8 @@ python --version
 ### 1. Clone and set up
 
 ```bash
-git clone https://github.com/SharmaAntriksh/synthetic-data-generator.git
-cd synthetic-data-generator
+git clone https://github.com/SharmaAntriksh/ContosoForge.git
+cd ContosoForge
 ```
 
 This project uses [uv](https://docs.astral.sh/uv/) for locked, reproducible

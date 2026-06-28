@@ -1,5 +1,5 @@
 [project]
-name = "synthetic-data-generator"
+name = "contosoforge"
 version = "1.10.0"
 description = "Analytics-ready retail data generator (star-schema) for BI, analytics, and data engineering"
 readme = "README.md"

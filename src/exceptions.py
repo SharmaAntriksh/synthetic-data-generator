@@ -1,4 +1,4 @@
-"""Custom exception hierarchy for the Synthetic Data Generator.
+"""Custom exception hierarchy for ContosoForge.
 
 All pipeline-specific exceptions inherit from ``PipelineError``.
 Downstream code should catch ``PipelineError`` (or a subclass) rather

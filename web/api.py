@@ -1,5 +1,5 @@
 """
-web/api.py – FastAPI backend for the Synthetic Data Generator.
+web/api.py - FastAPI backend for ContosoForge.
 
 Exposes the pipeline via REST + SSE,
 consumed by the React SPA served from web/frontend/.
@@ -32,7 +32,7 @@ from web.routes.import_routes import router as import_router
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="Synthetic Data Generator", version=__version__)
+app = FastAPI(title="ContosoForge", version=__version__)
 
 _DEFAULT_CORS_ORIGINS = [
     "http://localhost:8502",

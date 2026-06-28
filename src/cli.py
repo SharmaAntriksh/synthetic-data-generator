@@ -37,7 +37,7 @@ def positive_int(v):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="syndata",
-        description="Synthetic Data Generator — analytics-ready retail data",
+        description="ContosoForge: analytics-ready retail data",
     )
 
     parser.add_argument(

@@ -1,6 +1,6 @@
 # ------------------------------------------------------------
 # scripts/run_generator.ps1
-# Config-first runner for the synthetic-data-generator
+# Config-first runner for ContosoForge
 # ------------------------------------------------------------
 
 [CmdletBinding()]
