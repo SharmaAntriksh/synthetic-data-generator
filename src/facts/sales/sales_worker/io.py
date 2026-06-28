@@ -41,6 +41,16 @@ def _ensure_dir(path: str) -> None:
         _DIRS_CREATED.add(d)
 
 
+def reset_dir_cache() -> None:
+    """Clear the created-directory cache (called once per worker init).
+
+    Without this, a worker process reused across generation runs (e.g. the
+    web server or test suite running in-process) could skip os.makedirs for a
+    path whose directory was removed between runs.
+    """
+    _DIRS_CREATED.clear()
+
+
 def add_year_month_from_date(
     table: pa.Table,
     *,
@@ -190,6 +200,12 @@ def write_csv_table(
 
     _ensure_dir(path)
 
+    # quoting_style="none" matches SQL Server BULK INSERT's default (no field
+    # quoting). Invariant: no string column in these schemas may contain a
+    # structural character (the comma delimiter, a quote, or a newline). Arrow
+    # raises ArrowInvalid if one does, so a malformed file fails loudly rather
+    # than silently corrupting — the only string columns here are controlled
+    # enums (e.g. DeliveryStatus) that never contain commas.
     # batch_size raises the writer's internal block size so it makes far fewer,
     # larger syscalls (the default 1024 rows ⇒ ~1M write calls per GB).
     pacsv.write_csv(

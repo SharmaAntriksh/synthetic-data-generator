@@ -552,6 +552,13 @@ def _build_brand_prob_by_month_rotate_winner(
 
 def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
     reset_worker_cdf_cache()
+    # Clear the other worker-lifetime caches too, so a reused worker process
+    # (web server / in-process tests) never serves stale per-run state. Local
+    # imports avoid the init<->task module-load circular import.
+    from .io import reset_dir_cache
+    from .task import reset_task_caches
+    reset_dir_cache()
+    reset_task_caches()
     # Resolve any shared-memory descriptors back into numpy array views.
     # This is a no-op for values that are already plain arrays/None.
     _REQUIRED_ARRAYS = {"product_np", "store_keys", "customer_keys", "date_pool", "date_prob"}

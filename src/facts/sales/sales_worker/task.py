@@ -173,6 +173,19 @@ def _partition_cols() -> set[str]:
 _projection_cache: Dict[str, Tuple[List[str], tuple]] = {}
 
 
+def reset_task_caches() -> None:
+    """Clear worker-lifetime caches keyed off State (called once per worker init).
+
+    Both caches derive from State.partition_cols / State.schema_by_table, which
+    are bound fresh on each init_sales_worker. Resetting here keeps a reused
+    worker process (web server / in-process tests) from serving stale entries
+    when the schema or partition policy changes between runs.
+    """
+    global _cached_partition_cols
+    _cached_partition_cols = None
+    _projection_cache.clear()
+
+
 def _project_for_table(table_name: str, table: pa.Table) -> pa.Table:
     cached = _projection_cache.get(table_name)
     if cached is None:
@@ -241,13 +254,17 @@ def _as_list(v: Any, default: Sequence[Any]) -> list[Any]:
     return [v]
 
 
-def _build_returns_config(chunk_idx: int = 0) -> Optional[ReturnsConfig]:
-    """Build ReturnsConfig from State, return None if returns disabled."""
+def _build_returns_config() -> Optional[ReturnsConfig]:
+    """Build the base ReturnsConfig from State, or None if returns disabled.
+
+    ``event_key_offset`` is left at 0 here; _worker_task sets the per-chunk
+    offset (idx * returns_event_key_capacity) via dataclasses.replace so each
+    chunk's ReturnEventKey range stays disjoint.
+    """
     if not bool(getattr(State, "returns_enabled", False)):
         return None
     if TABLE_SALES_RETURN is None:
         raise RuntimeError("returns_enabled=True but TABLE_SALES_RETURN is not defined in output_paths.py")
-    capacity = int(getattr(State, "returns_event_key_capacity", 100000))
     return ReturnsConfig(
         enabled=True,
         return_rate=float(getattr(State, "returns_rate", 0.0) or 0.0),
@@ -262,7 +279,7 @@ def _build_returns_config(chunk_idx: int = 0) -> Optional[ReturnsConfig]:
         split_max_gap=int(getattr(State, "returns_split_max_gap", 20)),
         lag_distribution=str(getattr(State, "returns_lag_distribution", "uniform") or "uniform"),
         lag_mode=int(getattr(State, "returns_lag_mode", 7)),
-        event_key_offset=chunk_idx * capacity,
+        event_key_offset=0,
         logistics_keys=frozenset(getattr(State, "returns_logistics_keys", ())),
     )
 
@@ -311,21 +328,16 @@ def _ensure_sales_channel_key_on_lines(
     keys, p = _channel_keys_and_probs()
     rng = np.random.default_rng(seed)
 
+    # Build the encoding here when a caller didn't pass one (e.g. direct calls).
+    # _encode_orders returns None only when OrderNumber is absent; otherwise it
+    # reproduces exactly what _worker_task passes, so RNG draws are identical.
+    if order_enc is None:
+        order_enc = _encode_orders(table)
+
     if order_enc is not None:
         per_order = rng.choice(keys, size=order_enc.n_orders, p=p).astype(np.int32, copy=False)
         per_order_arr = pa.array(per_order, type=pa.int32())
         col = pc.take(per_order_arr, order_enc.enc.indices)
-    elif "OrderNumber" in table.column_names:
-        order_col = table["OrderNumber"]
-        if isinstance(order_col, pa.ChunkedArray):
-            order_col = order_col.combine_chunks()
-
-        enc = pc.dictionary_encode(order_col)
-        n_orders = len(enc.dictionary)
-
-        per_order = rng.choice(keys, size=n_orders, p=p).astype(np.int32, copy=False)
-        per_order_arr = pa.array(per_order, type=pa.int32())
-        col = pc.take(per_order_arr, enc.indices)
     else:
         per_row = rng.choice(keys, size=table.num_rows, p=p).astype(np.int32, copy=False)
         col = pa.array(per_row, type=pa.int32())
@@ -351,49 +363,16 @@ def _ensure_time_key_on_lines(
     channel_hour_lut = cache[2] if cache is not None else None
     has_channel = "ChannelKey" in table.column_names and channel_hour_lut is not None
 
+    # Build the encoding here when a caller didn't pass one (e.g. direct calls).
+    # _encode_orders returns None only when OrderNumber is absent; otherwise it
+    # reproduces exactly what _worker_task passes, so RNG draws are identical.
+    if order_enc is None:
+        order_enc = _encode_orders(table)
+
     if order_enc is not None:
         enc = order_enc.enc
         n_orders = order_enc.n_orders
         first = order_enc.first_row
-
-        if "TimeKey" in table.column_names:
-            tc_np = np.asarray(
-                _combine_if_chunked(table["TimeKey"]).to_numpy(zero_copy_only=False),
-                dtype=np.int32,
-            )
-            per_order_arr = pa.array(tc_np[first], type=pa.int32())
-            time_col = pc.take(per_order_arr, enc.indices)
-            idx = table.schema.get_field_index("TimeKey")
-            return table.set_column(idx, "TimeKey", time_col)
-
-        if has_channel:
-            sc_np = np.asarray(
-                _combine_if_chunked(table["ChannelKey"]).to_numpy(zero_copy_only=False),
-                dtype=np.int32,
-            )
-            per_order_sc = sc_np[first]
-            per_order_time = _sample_timekey_by_channel(rng, per_order_sc, channel_hour_lut)
-            per_order_arr = pa.array(per_order_time, type=pa.int32())
-            time_col = pc.take(per_order_arr, enc.indices)
-        else:
-            per_order = rng.integers(0, 1440, size=n_orders, dtype=np.int32)
-            per_order_arr = pa.array(per_order, type=pa.int32())
-            time_col = pc.take(per_order_arr, enc.indices)
-
-        return table.append_column("TimeKey", time_col)
-
-    # --- Fallback: no pre-computed encoding ---
-
-    if "OrderNumber" in table.column_names:
-        order_col = _combine_if_chunked(table["OrderNumber"])
-        enc = pc.dictionary_encode(order_col)
-        n_orders = len(enc.dictionary)
-
-        inv = np.asarray(enc.indices.to_numpy(zero_copy_only=False), dtype=np.int64)
-        pos = np.arange(inv.size, dtype=np.int64)
-        first = np.full(n_orders, inv.size, dtype=np.int64)
-        np.minimum.at(first, inv, pos)
-        first[first == inv.size] = 0
 
         if "TimeKey" in table.column_names:
             tc_np = np.asarray(
@@ -620,6 +599,12 @@ def _worker_task(args):
 
     mode = _mode()
     returns_cfg_base = _build_returns_config()
+    # Per-chunk ReturnEventKey ranges are offset by idx * capacity; read the
+    # capacity once (loop-invariant) rather than per chunk.
+    returns_capacity = (
+        int(getattr(State, "returns_event_key_capacity", 100000))
+        if returns_cfg_base is not None else 0
+    )
     do_budget = _budget_enabled()
     simple_aggs = _resolve_simple_agg_flags()
 
@@ -648,8 +633,7 @@ def _worker_task(args):
 
         # Per-chunk returns config with unique event_key_offset
         if returns_cfg_base is not None:
-            capacity = int(getattr(State, "returns_event_key_capacity", 100000))
-            returns_cfg = _dc_replace(returns_cfg_base, event_key_offset=idx_i * capacity)
+            returns_cfg = _dc_replace(returns_cfg_base, event_key_offset=idx_i * returns_capacity)
         else:
             returns_cfg = None
 

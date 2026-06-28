@@ -228,7 +228,9 @@ def write_delta_single_commit(
                     pass
 
     # Try with target_file_size (delta-rs packs to ~that size); degrade
-    # gracefully on older deltalake that lacks the kwarg.
+    # gracefully on older deltalake that lacks the kwarg. A fresh reader is
+    # built per attempt because RecordBatchReader is single-use.
+    last_exc: Optional[TypeError] = None
     for extra in ({"target_file_size": int(target_file_size)}, {}):
         reader = pa.RecordBatchReader.from_batches(canonical_schema, _batch_stream())
         try:
@@ -237,8 +239,17 @@ def write_delta_single_commit(
                 partition_by=pcols, mode="overwrite", **extra,
             )
             return
-        except TypeError:
+        except TypeError as exc:
+            last_exc = exc
             continue
+
+    # Both attempts raised TypeError. The second used the historically-valid
+    # signature, so this is a genuine failure (e.g. a reader/schema problem),
+    # not an unsupported-kwarg case — surface it instead of silently no-op'ing
+    # the write and reporting success to the caller.
+    raise RuntimeError(
+        f"Delta write failed for {delta_output_abs}: {last_exc}"
+    ) from last_exc
 
 
 def write_delta_from_parquet_parts(
