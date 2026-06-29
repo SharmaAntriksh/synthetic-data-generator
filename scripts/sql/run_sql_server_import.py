@@ -14,6 +14,16 @@ from src.tools.sql.sql_server_import import (
 )
 
 
+def _odbc_brace(value: str) -> str:
+    """Brace-quote an ODBC connection-string value.
+
+    Values may contain ``;``, ``=``, spaces, etc.; enclosing them in braces
+    makes those literal, and a literal ``}`` is escaped by doubling. Without
+    this a password containing ``;`` silently truncates the connection string.
+    """
+    return "{" + str(value).replace("}", "}}") + "}"
+
+
 def build_connection_string(args) -> str:
     """
     Build a SQL Server ODBC connection string from CLI arguments.
@@ -27,7 +37,7 @@ def build_connection_string(args) -> str:
     if args.trusted:
         return (
             f"DRIVER={{{driver}}};"
-            f"SERVER={args.server};"
+            f"SERVER={_odbc_brace(args.server)};"
             "Trusted_Connection=yes;"
         )
 
@@ -41,8 +51,8 @@ def build_connection_string(args) -> str:
 
     return (
         f"DRIVER={{{driver}}};"
-        f"SERVER={args.server};"
-        f"UID={args.user};PWD={password};"
+        f"SERVER={_odbc_brace(args.server)};"
+        f"UID={_odbc_brace(args.user)};PWD={_odbc_brace(password)};"
     )
 
 

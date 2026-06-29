@@ -25,7 +25,7 @@ Targeting:
   - When @Tables is set, FKs incoming to a target table (e.g. FK_Sales_Customers
     when targeting Customers) are also dropped — otherwise the PK drop fails.
 
-Compatibility: SQL Server 2016+ (uses STRING_SPLIT, STRING_AGG).
+Compatibility: SQL Server 2017+ (uses STRING_SPLIT and STRING_AGG WITHIN GROUP).
 
 Install into the target database after import:
     sqlcmd -S server -d MyDB -i create_pk_proc.sql

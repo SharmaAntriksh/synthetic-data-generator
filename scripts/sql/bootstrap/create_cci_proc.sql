@@ -17,7 +17,7 @@ Behavior:
     abort the rest of the batch.
   - Do not call inside an open transaction (XACT_ABORT would doom it).
 
-Compatibility: SQL Server 2016+ (uses STRING_SPLIT, STRING_AGG).
+Compatibility: SQL Server 2017+ (uses STRING_SPLIT and STRING_AGG WITHIN GROUP).
 
 Install into the target database after import:
     sqlcmd -S server -d MyDB -i create_cci_proc.sql
