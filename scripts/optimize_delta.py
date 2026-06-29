@@ -11,15 +11,32 @@ Scans for all Delta tables in the dataset folder and runs OPTIMIZE
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 _VALID_COMPRESSIONS = ("UNCOMPRESSED", "SNAPPY", "GZIP", "BROTLI", "LZ4", "ZSTD", "LZ4_RAW")
+
+
+def _uri_to_path(uri: str) -> Path:
+    """Convert a Delta ``file://`` URI to a local Path, cross-platform.
+
+    Windows file URIs look like ``file:///C:/...``; naively stripping
+    ``file://`` leaves ``/C:/...``, which Path turns into the invalid
+    ``\\C:\\...`` so ``.exists()`` is always False. Strip the leading slash
+    before a drive letter; POSIX paths (``/home/...``) are left unchanged.
+    """
+    if not uri.startswith("file:"):
+        return Path(uri)
+    path = unquote(urlparse(uri).path)
+    if re.match(r"^/[A-Za-z]:", path):
+        path = path[1:]
+    return Path(path)
 
 
 def find_delta_tables(root: Path) -> list[Path]:
@@ -45,7 +62,7 @@ def optimize_table(
     def _total_size(uris):
         total = 0
         for uri in uris:
-            p = Path(unquote(uri.replace("file://", "")))
+            p = _uri_to_path(uri)
             if p.exists():
                 total += p.stat().st_size
         return total

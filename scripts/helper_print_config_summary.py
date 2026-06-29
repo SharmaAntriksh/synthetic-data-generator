@@ -38,9 +38,13 @@ sales_end_ov = g("sales.override.dates.end")
 eff_start = sales_start_ov or defaults_start
 eff_end = sales_end_ov or defaults_end
 
-p_seasonal = g("promotions.num_seasonal", 0) or 0
-p_clearance = g("promotions.num_clearance", 0) or 0
-p_limited = g("promotions.num_limited", 0) or 0
+# All eight configurable promotion buckets (mirrors
+# src.utils.promotion_buckets.PROMOTION_BUCKET_KEYS).
+_PROMO_BUCKETS = (
+    "num_seasonal", "num_clearance", "num_limited", "num_flash",
+    "num_volume", "num_loyalty", "num_bundle", "num_new_customer",
+)
+_promo_vals = [g(f"promotions.{k}", 0) or 0 for k in _PROMO_BUCKETS]
 
 summary = {
     "dates": {"start": eff_start, "end": eff_end},
@@ -59,7 +63,7 @@ summary = {
         "stores": g("stores.num_stores"),
         "products": g("products.num_products"),
     },
-    "promotions_total": sum(int(v) for v in (p_seasonal, p_clearance, p_limited) if str(v).strip().lstrip('-').isdigit()),
+    "promotions_total": sum(int(v) for v in _promo_vals if str(v).strip().lstrip('-').isdigit()),
 }
 
 print(json.dumps(summary))

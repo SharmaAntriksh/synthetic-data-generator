@@ -128,9 +128,12 @@ try {
         "--run-path", $ResolvedRunPath
     )
 
-    # Tracks whether we set SYNDATA_DB_PASSWORD so the finally block can restore it.
+    # Tracks whether we set SYNDATA_DB_PASSWORD / SYNDATA_TABULAR_PASSWORD so the
+    # finally block can restore them and not leak the plaintext to the parent shell.
     $dbPasswordSet  = $false
     $prevDbPassword = $null
+    $tabularPasswordSet  = $false
+    $prevTabularPassword = $null
 
     if ($PSCmdlet.ParameterSetName -eq "Trusted") {
         $argsList += "--trusted"
@@ -168,8 +171,12 @@ try {
             throw "-ProvisionTabularUser needs a password. Pass -TabularPassword, set `$env:SYNDATA_TABULAR_PASSWORD, or run interactively."
         }
 
-        # Forward to the python child via env var (avoids process-listing exposure)
+        # Forward to the python child via env var (avoids process-listing exposure).
+        # Snapshot the prior value so the finally block restores the caller's
+        # environment instead of leaking the resolved password to the parent shell.
+        $prevTabularPassword = $env:SYNDATA_TABULAR_PASSWORD
         $env:SYNDATA_TABULAR_PASSWORD = $resolvedPassword
+        $tabularPasswordSet = $true
 
         $argsList += @("--provision-tabular-user", "--tabular-login", $TabularLogin)
     }
@@ -218,9 +225,10 @@ try {
         & $PythonExe @argsList
         $ec = $LASTEXITCODE
     } finally {
-        # Restore the caller's SYNDATA_DB_PASSWORD so the resolved password
+        # Restore the caller's password env vars so the resolved plaintext
         # doesn't leak into the parent shell.
         if ($dbPasswordSet) { $env:SYNDATA_DB_PASSWORD = $prevDbPassword }
+        if ($tabularPasswordSet) { $env:SYNDATA_TABULAR_PASSWORD = $prevTabularPassword }
     }
     if ($ec -ne 0) {
         Write-Step "SQL Server import exited with code $ec." -Level err

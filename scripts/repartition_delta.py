@@ -165,8 +165,19 @@ def repartition_table(
         )
         first = False
 
-    shutil.rmtree(table_path)
-    tmp_path.rename(table_path)
+    # Swap in the rewritten table without a window where the original is gone:
+    # move the original aside, promote the temp, then delete the backup. If the
+    # promote fails, restore the original so a crash can't destroy the table.
+    backup_path = table_path.parent / f".{table_path.name}_repart_old"
+    if backup_path.exists():
+        shutil.rmtree(backup_path)
+    table_path.rename(backup_path)
+    try:
+        tmp_path.rename(table_path)
+    except OSError:
+        backup_path.rename(table_path)
+        raise
+    shutil.rmtree(backup_path)
 
     dt_new = DeltaTable(str(table_path))
     files_after = len(dt_new.file_uris())

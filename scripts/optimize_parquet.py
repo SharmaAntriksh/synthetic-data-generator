@@ -230,7 +230,6 @@ def optimize_file(
             if total_rows > row_group_size:
                 pct_done = rows_written * 100 // total_rows
                 elapsed = time.perf_counter() - t_file_start
-                elapsed = time.perf_counter() - t_file_start
                 print(f"\r    {rows_written:,}/{total_rows:,} rows ({pct_done}%) {elapsed:.0f}s", end="", flush=True)
 
         if chunk.num_rows > 0:
