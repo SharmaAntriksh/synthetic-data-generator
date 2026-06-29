@@ -798,7 +798,9 @@ FACT_SCHEMAS: Dict[str, Schema] = {
         ("ToCurrencyKey", INT_NN),
         ("FromCurrency", VARCHAR(10, not_null=True)),
         ("ToCurrency", VARCHAR(10, not_null=True)),
-        ("Rate", DECIMAL(10, 6, not_null=True)),
+        # Wide enough for high-value currencies (e.g. USD->X above 9999) and for
+        # small inverse/cross rates (e.g. KRW->USD ~ 0.00075) without precision loss.
+        ("Rate", DECIMAL(18, 8, not_null=True)),
     ),
     "ExchangeRatesMonthly": (
         ("Date", DATE_NN),
@@ -806,10 +808,10 @@ FACT_SCHEMAS: Dict[str, Schema] = {
         ("ToCurrencyKey", INT_NN),
         ("FromCurrency", VARCHAR(10, not_null=True)),
         ("ToCurrency", VARCHAR(10, not_null=True)),
-        ("AvgRate", DECIMAL(10, 6, not_null=True)),
-        ("MinRate", DECIMAL(10, 6, not_null=True)),
-        ("MaxRate", DECIMAL(10, 6, not_null=True)),
-        ("EndOfMonthRate", DECIMAL(10, 6, not_null=True)),
+        ("AvgRate", DECIMAL(18, 8, not_null=True)),
+        ("MinRate", DECIMAL(18, 8, not_null=True)),
+        ("MaxRate", DECIMAL(18, 8, not_null=True)),
+        ("EndOfMonthRate", DECIMAL(18, 8, not_null=True)),
     ),
     "BudgetYearly": (
         ("Country", VARCHAR(100, not_null=True)),

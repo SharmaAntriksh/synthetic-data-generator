@@ -20,8 +20,15 @@ from src.utils.logging_utils import warn
 # Currency list normalization
 # ---------------------------------------------------------
 
-def normalize_currency_list(currencies: List[str]) -> List[str]:
-    """Validate, dedupe, upper-case, and ensure base currency is present."""
+def normalize_currency_list(currencies: List[str], *, ensure_base: bool = True) -> List[str]:
+    """Validate, dedupe, and upper-case a currency list.
+
+    When *ensure_base* is True (the default, used for the currency *dimension*),
+    the base currency is prepended if absent. For exchange_rates from/to *pair*
+    lists pass ``ensure_base=False`` so we don't silently add unrequested USD
+    pairs (e.g. from=[EUR], to=[GBP] should yield only EUR→GBP, not also
+    USD→GBP / EUR→USD).
+    """
     if not isinstance(currencies, list) or not currencies:
         raise DimensionError("currencies must be a non-empty list")
 
@@ -44,7 +51,7 @@ def normalize_currency_list(currencies: List[str]) -> List[str]:
         normalized.append(code)
 
     base = CURRENCY_BASE.upper()
-    if base not in seen:
+    if ensure_base and base not in seen:
         normalized.insert(0, base)
 
     return normalized

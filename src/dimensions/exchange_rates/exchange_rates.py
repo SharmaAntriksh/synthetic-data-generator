@@ -17,12 +17,41 @@ import pandas as pd
 from src.defaults import CURRENCY_BASE
 from src.exceptions import ConfigError
 from src.integrations.fx_yahoo import build_or_update_fx
+from src.utils.config_precedence import resolve_seed
 from src.utils.logging_utils import info, skip, stage
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning.version_store import should_regenerate, save_version
 
 from .helpers import normalize_currency_list, parse_fx_date, resolve_fx_dates
 from .monthly_rates import build_monthly_rates
+
+
+# ---------------------------------------------------------
+# Master coverage fingerprint (for versioning)
+# ---------------------------------------------------------
+
+def _master_signature(master_path: Path, currencies: list[str]):
+    """Lightweight fingerprint of the master's real-data coverage.
+
+    Returns ``{currency: [max_date_iso, row_count]}`` for the currencies this
+    run needs, or ``None`` when the master file is absent. Reads only the Date
+    and ToCurrency columns so the per-run cost stays small.
+    """
+    if not master_path.exists():
+        return None
+    try:
+        mdf = pd.read_parquet(master_path, columns=["Date", "ToCurrency"])
+    except (OSError, ValueError, KeyError):
+        return None
+    mdf = mdf[mdf["ToCurrency"].isin(currencies)]
+    mdf = mdf.assign(Date=pd.to_datetime(mdf["Date"], errors="coerce")).dropna(subset=["Date"])
+    if mdf.empty:
+        return {}
+    agg = mdf.groupby("ToCurrency")["Date"].agg(["max", "count"])
+    return {
+        cur: [row["max"].strftime("%Y-%m-%d"), int(row["count"])]
+        for cur, row in agg.iterrows()
+    }
 
 
 # ---------------------------------------------------------
@@ -47,6 +76,24 @@ def _triangulate_rates(
     by_currency = {cur: grp[["Date", "Rate"]].copy()
                    for cur, grp in master_fx.groupby("ToCurrency")}
 
+    def _need(cur: str) -> pd.DataFrame:
+        """Fetch a currency's master rows or raise a clear error.
+
+        A currency can be absent when it has no master rows and none could be
+        downloaded — e.g. a fully-future date window for a currency not yet in
+        the master (no anchor to project from). Surface that instead of an
+        opaque KeyError.
+        """
+        grp = by_currency.get(cur)
+        if grp is None:
+            raise ConfigError(
+                f"No FX data available for '{cur}'. The master has no rows for it "
+                "and none could be obtained for the requested window (a fully-future "
+                "window leaves no anchor to project from). Narrow the date window or "
+                "refresh the FX master so it covers this currency."
+            )
+        return grp
+
     parts = []
     for from_cur in from_currencies:
         for to_cur in to_currencies:
@@ -55,19 +102,19 @@ def _triangulate_rates(
 
             if from_cur == CURRENCY_BASE:
                 # Direct: USD → X
-                pair = by_currency[to_cur].copy()
+                pair = _need(to_cur).copy()
                 pair["FromCurrency"] = from_cur
                 pair["ToCurrency"] = to_cur
             elif to_cur == CURRENCY_BASE:
                 # Inverse: X → USD = 1 / rate(USD → X)
-                pair = by_currency[from_cur].copy()
+                pair = _need(from_cur).copy()
                 pair["Rate"] = 1.0 / pair["Rate"]
                 pair["FromCurrency"] = from_cur
                 pair["ToCurrency"] = to_cur
             else:
                 # Cross: A → B = rate(USD→B) / rate(USD→A)
-                df_a = by_currency[from_cur].rename(columns={"Rate": "RateA"})
-                df_b = by_currency[to_cur].rename(columns={"Rate": "RateB"})
+                df_a = _need(from_cur).rename(columns={"Rate": "RateA"})
+                df_b = _need(to_cur).rename(columns={"Rate": "RateB"})
                 pair = df_a.merge(df_b, on="Date", how="inner")
                 pair["Rate"] = pair["RateB"] / pair["RateA"]
                 pair["FromCurrency"] = from_cur
@@ -102,12 +149,13 @@ def run_exchange_rates(cfg, parquet_folder: Path):
     start = parse_fx_date("start", start_str)
     end = parse_fx_date("end", end_str)
 
-    from_currencies = normalize_currency_list(list(fx_cfg.from_currencies or ["USD"]))
-    to_currencies = normalize_currency_list(list(fx_cfg.to_currencies or []))
+    from_currencies = normalize_currency_list(list(fx_cfg.from_currencies or ["USD"]), ensure_base=False)
+    to_currencies = normalize_currency_list(list(fx_cfg.to_currencies or []), ensure_base=False)
     base = fx_cfg.base_currency
     master = fx_cfg.master_file
     annual_drift = fx_cfg.future_annual_drift
     include_monthly = fx_cfg.include_monthly
+    seed = resolve_seed(cfg, fx_cfg)
 
     # The master file is always USD-based; ensure base_currency matches
     if base != CURRENCY_BASE:
@@ -122,7 +170,15 @@ def run_exchange_rates(cfg, parquet_folder: Path):
     all_currencies_for_master.discard(CURRENCY_BASE)  # USD→USD is trivial
     master_currencies = sorted(all_currencies_for_master)
 
-    # Versioning config
+    master_path = Path(master).expanduser()
+
+    # Versioning config. master_sig fingerprints the master's real-data coverage
+    # for the currencies this run needs, so refreshing/extending the master
+    # (e.g. --refresh-fx-master) actually propagates to the output instead of
+    # being skipped because the config hash was unchanged. Skip the read when no
+    # output exists yet — should_regenerate returns True regardless, so the real
+    # signature is recorded only post-generation below.
+    pre_sig = _master_signature(master_path, master_currencies) if out_path.exists() else None
     minimal_cfg = {
         "from_currencies": from_currencies,
         "to_currencies": to_currencies,
@@ -132,6 +188,8 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         "end": end_str,
         "future_annual_drift": annual_drift,
         "include_monthly": include_monthly,
+        "seed": seed,
+        "master_sig": pre_sig,
     }
 
     if not should_regenerate("exchange_rates", minimal_cfg, out_path):
@@ -139,7 +197,6 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         return
 
     # Ensure master directory exists
-    master_path = Path(master).expanduser()
     master_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Step 1: Update/build USD-based FX master
@@ -148,6 +205,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
             start, end, str(master_path),
             currencies=master_currencies,
             annual_drift=annual_drift,
+            seed=seed,
         )
 
     master_fx["Date"] = pd.to_datetime(master_fx["Date"], errors="raise").dt.date
@@ -206,4 +264,7 @@ def run_exchange_rates(cfg, parquet_folder: Path):
         write_parquet_with_date32(monthly_df, monthly_path, date_cols=["Date"])
         info(f"Exchange Rates Monthly written: {monthly_path.name}")
 
+    # Re-fingerprint the master to capture any data downloaded during this run,
+    # so a rerun on the same day sees a matching hash and skips correctly.
+    minimal_cfg["master_sig"] = _master_signature(master_path, master_currencies)
     save_version("exchange_rates", minimal_cfg, out_path)

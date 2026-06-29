@@ -1,9 +1,97 @@
+import hashlib
+
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from datetime import timedelta
 
-from src.utils.logging_utils import info, warn
+from src.utils.logging_utils import info
+from src.exceptions import DimensionError
 from src.defaults import CURRENCY_BASE, CURRENCY_DEFAULT_LIST
+
+
+# ---------------------------------------------------------
+# Future-rate projection tuning
+# ---------------------------------------------------------
+# Each currency's future path is a seeded random walk whose average trend is the
+# currency's own long-run drift (shrunk toward neutral and capped) and whose
+# day-to-day jitter is that currency's own historical volatility. This keeps
+# trends diverging per currency without letting any estimate run away.
+_FX_DRIFT_WINDOW_YEARS = 10     # trailing history used to estimate the trend
+_FX_DRIFT_SHRINK = 0.6          # trust 60% of the measured long-run trend
+_FX_DRIFT_CAP = 0.06            # hard speed limit: +/-6%/yr on the trend
+_FX_VOL_FLOOR = 2e-4            # min daily jitter (avoid dead-flat paths)
+_FX_VOL_CAP = 0.04             # max daily jitter (avoid absurd swings)
+_FX_MIN_HISTORY = 250           # rows needed to estimate drift from history
+
+
+def _currency_seed(base_seed: int, cur: str) -> int:
+    """Stable per-currency seed so each currency gets an independent but
+    fully reproducible future path."""
+    h = hashlib.sha256(f"{int(base_seed)}:{cur}".encode()).hexdigest()
+    return int(h[:16], 16)
+
+
+def _estimate_daily_vol(rates: pd.Series) -> float:
+    """Per-currency daily volatility from historical day-to-day moves.
+
+    The master is dense (weekends/holidays carried forward), which injects
+    no-change days; those are dropped so the estimate reflects real trading-day
+    moves, then clamped to a sane band.
+    """
+    vals = rates.to_numpy(dtype="float64")
+    if vals.size < 2:
+        return _FX_VOL_FLOOR
+    logret = np.log(np.clip(vals[1:], 1e-12, None) / np.clip(vals[:-1], 1e-12, None))
+    logret = logret[np.isfinite(logret)]
+    moves = logret[logret != 0.0]
+    if moves.size < 30:
+        return _FX_VOL_FLOOR
+    return float(np.clip(moves.std(), _FX_VOL_FLOOR, _FX_VOL_CAP))
+
+
+def _estimate_annual_drift(dates: pd.Series, rates: pd.Series, *, fallback: float) -> float:
+    """Long-run annual trend from a straight-line fit through the (log) history.
+
+    A line fit over a long window is far steadier than comparing two endpoints
+    (which flips sign depending on the start day). The slope is shrunk toward
+    no-trend and capped so a noisy or extreme estimate cannot produce runaway
+    future rates. Currencies with too little history fall back to *fallback*.
+    """
+    if len(rates) < _FX_MIN_HISTORY:
+        return float(np.clip(fallback, -_FX_DRIFT_CAP, _FX_DRIFT_CAP))
+
+    cutoff = dates.max() - pd.DateOffset(years=_FX_DRIFT_WINDOW_YEARS)
+    mask = (dates >= cutoff).to_numpy()
+    d = dates[mask]
+    r = rates[mask]
+    if len(r) < _FX_MIN_HISTORY:
+        d, r = dates, rates
+
+    t_years = (d.to_numpy() - d.to_numpy()[0]) / np.timedelta64(1, "D") / 365.25
+    y = np.log(np.clip(r.to_numpy(dtype="float64"), 1e-12, None))
+    slope = np.polyfit(t_years, y, 1)[0]          # change in log(rate) per year
+    annual = float(np.expm1(slope)) * _FX_DRIFT_SHRINK
+    return float(np.clip(annual, -_FX_DRIFT_CAP, _FX_DRIFT_CAP))
+
+
+def _project_future_rates(future_dates, anchor_rate, mu_annual, sigma_d, rng):
+    """Seeded random walk for future dates.
+
+    Continuous with history (the first projected day is one step past the
+    anchor), jitters by *sigma_d* on trading days, and stays flat on weekends to
+    mirror real FX. The whole week's drift is spread across the ~5 trading days
+    so the path's average trend is *mu_annual* (zeroing weekend drift outright
+    would undershoot it by ~5/7). Always positive.
+    """
+    mu_d = np.log1p(mu_annual) / 365.25
+    weekday = future_dates.dt.weekday.to_numpy() < 5
+    n = len(future_dates)
+    z = rng.standard_normal(n)
+    # 5 trading days carry 7 days' worth of drift; weekends contribute nothing.
+    mu_trading = mu_d * 7.0 / 5.0
+    incr = np.where(weekday, (mu_trading - 0.5 * sigma_d ** 2) + sigma_d * z, 0.0)
+    return anchor_rate * np.exp(np.cumsum(incr))
 
 
 # ---------------------------------------------------------
@@ -53,7 +141,7 @@ def download_history(currency, start_date, end_date):
         invert = True
 
     if data.empty:
-        raise ValueError(f"No FX data found for {currency} (tried {primary} and {fallback})")
+        raise DimensionError(f"No FX data found for {currency} (tried {primary} and {fallback})")
 
     # Flatten MultiIndex columns if present
     if isinstance(data.columns, pd.MultiIndex):
@@ -96,28 +184,42 @@ def download_history(currency, start_date, end_date):
 # ---------------------------------------------------------
 def fill_missing_days(df, start_date, end_date):
     """
-    Fill weekends/holidays with forward fill (previous day),
-    then backfill for leading gaps, then default 1.0.
+    Reindex *df* to every calendar day in ``[start_date, end_date]``, filling
+    weekends/holidays by forward fill (then backfill leading gaps).
+
+    ``df`` may (and from ``download_history`` does) contain a few buffer days of
+    real data just outside the window; those are used as fill sources so a window
+    that itself contains no trading day (e.g. a single weekend) still fills from
+    the adjacent Friday. Only when there is no real rate anywhere in or around the
+    window do we raise — refusing to emit a misleading 1.0 (par) rate.
     """
     start_ts = pd.to_datetime(start_date).normalize()
     end_ts = pd.to_datetime(end_date).normalize()
 
     df = df.copy()
     df["Date"] = pd.to_datetime(df["Date"]).dt.normalize()
+    df = df.drop_duplicates(subset="Date", keep="last").set_index("Date").sort_index()
 
-    full = pd.DataFrame({"Date": pd.date_range(start=start_ts, end=end_ts, freq="D")})
-    merged = full.merge(df, on="Date", how="left")
+    window = pd.date_range(start=start_ts, end=end_ts, freq="D")
 
-    # Your requirement: missing days filled from previous day
-    merged["Rate"] = merged["Rate"].ffill()
-    merged["Rate"] = merged["Rate"].bfill()
+    # Fill across the union of real observations (incl. out-of-window buffer days)
+    # and the window itself, so in-window weekend/holiday dates ffill/bfill from
+    # the nearest real trading day even when the window has no trading day of its own.
+    all_dates = df.index.union(pd.DatetimeIndex(window))
+    rates = df["Rate"].reindex(all_dates).ffill().bfill()
+    window_rates = rates.reindex(pd.DatetimeIndex(window)).to_numpy()
 
-    n_missing = merged["Rate"].isna().sum()
-    if n_missing:
-        warn(f"fill_missing_days: {n_missing} day(s) have no rate data and no neighbours to fill from; using 1.0 as fallback.")
-        merged["Rate"] = merged["Rate"].fillna(1.0)
+    if np.isnan(window_rates).any():
+        # No real rate anywhere in or adjacent to this window (df empty/all-NaN).
+        # A 1.0 fallback would silently corrupt the series with a fake 1:1 USD
+        # parity, so fail instead.
+        raise DimensionError(
+            f"fill_missing_days: no usable rate data in or around window "
+            f"{start_ts.date()} -> {end_ts.date()}. "
+            "Refusing to fall back to a 1.0 par rate."
+        )
 
-    return merged
+    return pd.DataFrame({"Date": window, "Rate": window_rates})
 
 
 # ---------------------------------------------------------
@@ -186,7 +288,7 @@ def refresh_fx_master(out_path):
 # ---------------------------------------------------------
 # Build or update master FX store
 # ---------------------------------------------------------
-def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_drift=0.02):
+def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_drift=0.02, seed=42):
     """
     Build or update a master FX file covering the date range.
 
@@ -197,11 +299,13 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
 
     Date is kept as datetime64[ns] throughout.
 
-    For dates beyond the last real data point (i.e. future dates), rates are
-    projected using daily compounding:
-      projected_rate = anchor_rate * (1 + annual_drift) ^ (days_ahead / 365.25)
-    where anchor_rate is the last known real rate.  These projected values are
-    NOT written back to the master file.
+    For dates beyond the last real data point (i.e. future dates), each currency
+    is projected as a seeded random walk: its average trend is its own long-run
+    drift (estimated from history, shrunk and capped), its day-to-day jitter is
+    its own historical volatility, and weekends stay flat. *seed* makes the paths
+    reproducible; *annual_drift* is the fallback trend for currencies with too
+    little history to estimate one. Projected values are NOT written back to the
+    master file.
     """
     if annual_drift <= -1.0:
         raise ValueError(
@@ -285,13 +389,13 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
         master_updated = master.copy()
 
     # Build the return DataFrame for the full requested range.
-    # Historical gaps (weekends/holidays) are filled via ffill.
-    # Future dates (beyond the last real rate) are projected with daily compounding.
-    # Neither projected values nor gap-fills are written back to the master file.
+    # Real-data gaps (weekends/holidays) are filled via ffill within the master.
+    # Future dates (beyond the last real rate) are projected as a per-currency
+    # seeded random walk. Projected values are NOT written back to the master.
     full_range = pd.date_range(start=start_ts, end=end_ts, freq="D")
     parts = []
     for cur in curr_list:
-        df_cur = master_updated[master_updated["ToCurrency"] == cur].copy()
+        df_cur = master_updated[master_updated["ToCurrency"] == cur].sort_values("Date").copy()
         if df_cur.empty:
             continue
 
@@ -314,8 +418,16 @@ def build_or_update_fx(start_date, end_date, out_path, currencies=None, annual_d
                 anchor_rate = historical.iloc[-1]
             else:
                 anchor_rate = df_cur["Rate"].iloc[-1]
-            days_ahead = (merged.loc[future_mask, "Date"] - anchor_date).dt.days
-            merged.loc[future_mask, "Rate"] = anchor_rate * (1 + annual_drift) ** (days_ahead / 365.25)
+            # Per-currency realistic projection: long-run drift (shrunk + capped)
+            # plus that currency's own historical volatility, as an independent
+            # seeded random walk. Trends diverge per currency and cross-pairs are
+            # no longer dead-flat.
+            mu_annual = _estimate_annual_drift(df_cur["Date"], df_cur["Rate"], fallback=annual_drift)
+            sigma_d = _estimate_daily_vol(df_cur["Rate"])
+            rng = np.random.default_rng(_currency_seed(seed, cur))
+            merged.loc[future_mask, "Rate"] = _project_future_rates(
+                merged.loc[future_mask, "Date"], anchor_rate, mu_annual, sigma_d, rng
+            )
 
         merged["FromCurrency"] = CURRENCY_BASE
         merged["ToCurrency"] = cur
