@@ -111,7 +111,7 @@ def resolve_dates(
 
     override.dates.{start,end} -> defaults.dates.{start,end}
 
-    Raises ``KeyError`` if dates cannot be resolved.
+    Raises ``ConfigError`` if dates cannot be resolved.
     """
     from src.utils.config_helpers import parse_global_dates
     return parse_global_dates(

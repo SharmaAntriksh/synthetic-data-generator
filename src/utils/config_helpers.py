@@ -63,8 +63,8 @@ def bool_or(value: Any, default: bool) -> bool:
     """
     if value is None:
         return bool(default)
-    if isinstance(value, bool):
-        return value
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
     if isinstance(value, np.integer):
         return bool(int(value))
     elif isinstance(value, (int, float)):
@@ -191,6 +191,10 @@ def rand_single_date(
     end: pd.Timestamp,
 ) -> pd.Timestamp:
     """Sample one date in ``[start, end]`` without creating a pandas Series."""
+    start = pd.to_datetime(start).normalize()
+    end = pd.to_datetime(end).normalize()
+    if end < start:
+        start, end = end, start
     start_i = int(start.value // _NS_PER_DAY)
     end_i = int(end.value // _NS_PER_DAY)
     day = int(rng.integers(start_i, end_i + 1))

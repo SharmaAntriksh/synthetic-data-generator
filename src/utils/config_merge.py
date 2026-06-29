@@ -34,8 +34,15 @@ def pydantic_to_explicit_dict(obj) -> dict[str, Any]:
 
 
 def deep_merge(base: dict, overrides: dict) -> dict:
-    """Recursively merge *overrides* on top of *base*. Overrides win."""
-    merged = dict(base)
+    """Recursively merge *overrides* on top of *base*. Overrides win.
+
+    The result never aliases nested dicts from *base*: untouched nested
+    mappings are copied so mutating the merged result can't reach back into
+    *base* (or vice versa).
+    """
+    merged: dict = {}
+    for k, v in base.items():
+        merged[k] = dict(v) if isinstance(v, Mapping) else v
     for k, v in overrides.items():
         if isinstance(v, Mapping) and isinstance(merged.get(k), Mapping):
             merged[k] = deep_merge(dict(merged[k]), dict(v))

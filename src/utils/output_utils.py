@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.csv as pa_csv
+import pyarrow.parquet as pq
 
 from src.exceptions import PackagingError
 from src.utils.logging_utils import stage, done, info
@@ -186,28 +187,17 @@ def write_parquet_with_date32(
     }
     df2 = df.assign(**overrides)
 
-    try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-    except ImportError:
-        # PyArrow unavailable — fall back to pandas writer
-        if force_date32:
-            date_overrides = {
-                c: pd.to_datetime(df2[c], errors="coerce").dt.date
-                for c in target
-                if c in df2.columns
-            }
-            df2 = df2.assign(**date_overrides)
-        df2.to_parquet(out_path, index=False)
-        return
-
     table = pa.Table.from_pandas(df2, preserve_index=False)
-    target_set = set(target)
-    fields = [
-        pa.field(f.name, pa.date32()) if f.name in target_set else f
-        for f in table.schema
-    ]
-    table = table.cast(pa.schema(fields), safe=False)
+    # force_date32 gates only the date32 cast: when False the (normalized)
+    # date columns are written as their datetime type instead. Compression
+    # is applied either way.
+    if force_date32:
+        target_set = set(target)
+        fields = [
+            pa.field(f.name, pa.date32()) if f.name in target_set else f
+            for f in table.schema
+        ]
+        table = table.cast(pa.schema(fields), safe=False)
 
     kwargs: dict = {"compression": str(compression)}
     if compression_level is not None:
