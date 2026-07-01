@@ -464,21 +464,36 @@ them into a few PRs.
   onto the schema; normalize `seasonal_spikes` to one shape (kill the `isinstance(dict)`
   fork). Replace the `_apply_cfg_default` precedence ladder with `_UNSET` sentinels or a
   single resolved `SalesRunConfig`.
-- [ ] **6.2 Nested worker-config dataclasses** — `Finding #9` · `E:M R:lo`
+- [ ] **6.2 Nested worker-config dataclasses** — `Finding #9` · `E:M R:lo` — **DEFERRED**
   Compose `worker_cfg` from `ProductCfg`/`ReturnsCfg`/`EmployeeCfg`/… each owning its
   fields and a `to_shm()` so the **publish list is derived, not hand-maintained**. (Keep
   the flat picklable dict at the spawn boundary.)
-- [ ] **6.3 Output-path single owner** — `Finding #41 #43` · `E:S R:lo`
-  Call `build_output_paths_from_sales_cfg` (currently zero callers); delete the inline
-  delta-defaulting and the dead `hasattr('to_dict')` guard.
+  - *Scoping verdict (deferred):* high-risk — crosses the SHM broadcast boundary (a ~37-field
+    publish list in `sales.py`/`worker_cfg_builder.py`) and is pure ergonomics with no output
+    change. Not worth the determinism risk for the payoff.
+- [x] **6.3 Output-path single owner** — `Finding #41 #43` · `E:S R:lo` — **DONE** (`ec5c319`)
+  Made `build_output_paths_from_sales_cfg` the single owner (its unused copy had drifted
+  to `normpath`; fixed it to the inline `abspath` semantics), routed `generate_sales_fact`
+  through it, deleted the inline delta-defaulting + redundant re-read + dead `_norm` helper,
+  and removed the dead `hasattr('to_dict')` guard in `worker_cfg_builder`. Byte-preserving:
+  a direct old-vs-new `OutputPaths` comparison over delta/parquet/csv × rel/abs is identical;
+  full suite 1942 green.
 - [ ] **6.4 Normalize `end_month` at the boundary** — `Finding #32` · `E:S R:lo`
   Coerce to int64/-1 once in `bind_globals`; delete the 70-line per-chunk coercion tree.
-- [ ] **6.5 Consistent exceptions** — `Finding #42` · `E:S R:lo`
-  Route config-shape failures through `ValidationError`/`ConfigError`, build-time
-  invariants through `SalesError`. Consider validating `ReturnsConfig` at construction.
-- [ ] **6.6 Channel→promo compatibility table** — `Finding #31` · `E:S R:lo`
+- [x] **6.5 Consistent exceptions** — `Finding #42` · `E:S R:lo` — **DONE (returns path)** (`ac6ff3c`)
+  `_validate_cfg` in `returns_builder.py` mixed bare `RuntimeError` with `SalesError` for
+  the same config-shape checks; routed the 7 `ReturnsConfig.*` validation raises through
+  `SalesError` (matching gotcha #9 + the two already-`SalesError` raises). Left the
+  missing-column / length-mismatch raises (build invariants) as `RuntimeError`. Added
+  `TestReturnsConfigValidationRaisesSalesError`. Exception-type change only — data
+  byte-preserving. (Broader config-load `ValidationError`/`ConfigError` routing in
+  `config.py` left for a follow-up if wanted.)
+- [ ] **6.6 Channel→promo compatibility table** — `Finding #31` · `E:S R:lo` — **DEFERRED**
   Move channel/promo-group rules into a declarative table in `defaults.py`; drive
   `_BUSINESS_CH` from it; make the unknown-channel fallback **fail-closed**.
+  - *Scoping verdict (deferred):* the declarative table is fine, but the fail-open→fail-closed
+    flip is a real **sales-digest behavior change** for unknown channels — needs a deliberate
+    decision + acceptance, not a silent hygiene commit.
 - [ ] **6.7 Coverage-preflight upgrades** — `Finding #20 #38 #39 #40` · `E:M R:lo`
   Interval-union month coverage (catch mid-month gaps); deterministic principled greedy
   repair (longest-gap-first, fewest-days-added, balance) + tag synthetic extensions;
@@ -488,6 +503,12 @@ them into a few PRs.
   (union only for untrusted external files); hoist the per-batch `equals()` to per-part;
   vectorize the multi-event return split; integer-cent (largest-remainder) return
   proration so returns reconcile to the penny.
+  - *Scoping breakdown:* **SP1** (thread canonical schema into `delta.py` instead of
+    re-deriving from `part_files[0]`) is a real **latent correctness fix** (silent schema
+    mismatch risk) — HIGH value, MED risk, the recommended next 6.8 step. **SP2** (per-batch
+    `equals()` hoist) is **already done**. **SP3** (vectorize the multi-event split loop) is
+    DEFERRED — bounded loop, low payoff, determinism risk. **SP4** (integer-cent proration)
+    is **behavior-changing** (returns digest) → only behind a default-off config flag.
 
 **Exit criteria:** the "convention not construction" fingerprint is gone from the hot paths.
 
