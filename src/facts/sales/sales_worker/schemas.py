@@ -272,3 +272,47 @@ def build_worker_schemas(
         schema_no_order_delta=schema_no_order_delta,
         schema_with_order_delta=schema_with_order_delta,
     )
+
+
+def build_worker_schemas_from_cfg(worker_cfg: Mapping) -> WorkerSchemaBundle:
+    """Derive the schema bundle from a ``worker_cfg`` dict.
+
+    This is the single source of truth for turning a ``worker_cfg`` into the
+    ``WorkerSchemaBundle``: it replicates exactly the parameter extraction that
+    ``init_sales_worker`` performs (including the ``sales_output`` -> forced
+    ``skip_order_cols=False`` rule) before delegating to ``build_worker_schemas``.
+    Both the per-worker init and the coordinator's Delta assembly call this, so
+    the schema the workers write parts with and the schema the Delta commit
+    adopts can never drift.
+    """
+    op = worker_cfg.get("output_paths") or {}
+    file_format = worker_cfg.get("file_format") or (
+        op.get("file_format") if isinstance(op, Mapping) else None
+    )
+
+    sales_output = str(worker_cfg.get("sales_output") or "sales").lower()
+    skip_order_cols = bool(worker_cfg.get("skip_order_cols", False))
+    # skip_order_cols_requested is resolved BEFORE the sales_output override,
+    # mirroring init_sales_worker.
+    skip_order_cols_requested = bool(
+        worker_cfg.get("skip_order_cols_requested", skip_order_cols)
+    )
+    if sales_output in {"sales_order", "both"}:
+        skip_order_cols = False
+
+    returns_enabled = bool(worker_cfg.get("returns_enabled", False))
+    order_id_int64 = bool(worker_cfg.get("order_id_int64", False))
+    partition_cols = worker_cfg.get("partition_cols") or []
+    models_cfg = worker_cfg.get("models_cfg")
+    parquet_dict_exclude = worker_cfg.get("parquet_dict_exclude")
+
+    return build_worker_schemas(
+        file_format=file_format,
+        skip_order_cols=skip_order_cols,
+        skip_order_cols_requested=skip_order_cols_requested,
+        returns_enabled=returns_enabled,
+        parquet_dict_exclude=set(parquet_dict_exclude) if parquet_dict_exclude else None,
+        models_cfg=models_cfg if isinstance(models_cfg, Mapping) else None,
+        order_id_int64=order_id_int64,
+        partition_cols=partition_cols if partition_cols else None,
+    )

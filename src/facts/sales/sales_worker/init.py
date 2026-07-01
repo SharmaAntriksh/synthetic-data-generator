@@ -15,7 +15,7 @@ from ..output_paths import (
 )
 from ..sales_logic import bind_globals, State
 from ..sales_logic.chunk_builder import reset_worker_cdf_cache
-from .schemas import build_worker_schemas
+from .schemas import build_worker_schemas_from_cfg
 from src.exceptions import SalesError
 from src.utils.config_helpers import int_or, float_or, str_or
 from src.utils.logging_utils import warn as _warn
@@ -696,8 +696,6 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
         partition_cols = worker_cfg.get("partition_cols") or []
         models_cfg = worker_cfg.get("models_cfg")
 
-        parquet_dict_exclude = worker_cfg.get("parquet_dict_exclude")
-
         # NEW: configurable cap for OrderLineNumber per OrderNumber
         max_lines_per_order = int_or(worker_cfg.get("max_lines_per_order"), 5)
         if max_lines_per_order < 1:
@@ -1081,16 +1079,9 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
     for t in tables:
         output_paths.ensure_dirs(t)
 
-    bundle = build_worker_schemas(
-        file_format=file_format,
-        skip_order_cols=bool(skip_order_cols),
-        skip_order_cols_requested=bool(skip_order_cols_requested),
-        returns_enabled=bool(returns_enabled),
-        parquet_dict_exclude=set(parquet_dict_exclude) if parquet_dict_exclude else None,
-        models_cfg=models_cfg if isinstance(models_cfg, Mapping) else None,
-        order_id_int64=order_id_int64,
-        partition_cols=partition_cols if partition_cols else None,
-    )
+    # Single source of truth for schema derivation (shared with the coordinator's
+    # Delta assembly): build from worker_cfg so the two paths can't drift.
+    bundle = build_worker_schemas_from_cfg(worker_cfg)
 
     # ---- Budget lookups (already built in main process, passed as flat keys) ----
     budget_enabled = bool(worker_cfg.get("budget_enabled", False))

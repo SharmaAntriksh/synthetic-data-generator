@@ -25,6 +25,7 @@ from .sales_logic.core import (
 from .sales_logic.core.allocation import _stable_seed
 from .sales_logic.chunk_builder import _eligible_counts_fast
 from .sales_worker import PoolRunSpec, iter_imap_unordered, _worker_task, init_sales_worker
+from .sales_worker.schemas import build_worker_schemas_from_cfg
 from .output_paths import (
     TABLE_SALES,
     TABLE_SALES_ORDER_DETAIL,
@@ -811,13 +812,22 @@ def generate_sales_fact(
     finally:
         _shm.cleanup()
 
-    # Final assembly (delta writes, CSV re-chunking, or parquet merge)
+    # Final assembly (delta writes, CSV re-chunking, or parquet merge).
+    # For Delta, hand the assembler the run's authoritative per-table schemas
+    # (derived from the same worker_cfg the workers used) so the Delta commit
+    # adopts that schema instead of sniffing an arbitrary part file.
+    sales_schema_by_table = (
+        build_worker_schemas_from_cfg(worker_cfg).schema_by_table
+        if file_format == "deltaparquet"
+        else None
+    )
     return _assemble_output(
         file_format, tables, output_paths, collector,
         partition_cols, sales_cfg, sales_output, out_folder_p,
         chunk_size, delete_chunks, merge_parquet, compression,
         row_group_size, optimize_after_merge,
         order_id_int64=_order_id_int64,
+        schema_by_table=sales_schema_by_table,
     )
 from .output_assembler import (
     ChunkResultCollector,

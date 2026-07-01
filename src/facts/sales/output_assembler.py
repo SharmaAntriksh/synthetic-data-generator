@@ -270,9 +270,14 @@ def _assemble_output(
     partition_cols, sales_cfg, sales_output, out_folder_p,
     chunk_size, delete_chunks, merge_parquet, compression,
     row_group_size, optimize_after_merge,
-    *, order_id_int64=False,
+    *, order_id_int64=False, schema_by_table=None,
 ):
-    """Post-pool output assembly: delta writes, CSV re-chunking, or parquet merge."""
+    """Post-pool output assembly: delta writes, CSV re-chunking, or parquet merge.
+
+    ``schema_by_table`` (Delta only) maps a logical table name to its
+    authoritative Arrow schema; when present it becomes the Delta write
+    contract instead of the schema read from the first part file.
+    """
     def _build_sales_manifest():
         per_table = {}
         for t in tables:
@@ -323,6 +328,7 @@ def _assemble_output(
                 partition_cols=partition_cols,
                 table_name=t,
                 sort_small_parts=_bool_or(getattr(sales_cfg, "sort_delta_parts", False), False),
+                canonical_schema=(schema_by_table.get(t) if schema_by_table else None),
             )
             wrote += 1
 

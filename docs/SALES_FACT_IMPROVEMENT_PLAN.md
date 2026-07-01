@@ -503,9 +503,17 @@ them into a few PRs.
   (union only for untrusted external files); hoist the per-batch `equals()` to per-part;
   vectorize the multi-event return split; integer-cent (largest-remainder) return
   proration so returns reconcile to the penny.
-  - *Scoping breakdown:* **SP1** (thread canonical schema into `delta.py` instead of
-    re-deriving from `part_files[0]`) is a real **latent correctness fix** (silent schema
-    mismatch risk) — HIGH value, MED risk, the recommended next 6.8 step. **SP2** (per-batch
+  - *Scoping breakdown:* **SP1** — **DONE.** The Delta writer now takes an authoritative
+    `canonical_schema` and only sniffs `part_files[0]` as a fallback for untrusted external
+    inputs. `build_worker_schemas_from_cfg(worker_cfg)` is the single source of truth for
+    schema derivation (shared by `init_sales_worker` and the coordinator's Delta assembly, so
+    the schema the workers *write* parts with and the schema the Delta commit *adopts* can't
+    drift). `sales.py` builds `schema_by_table` from `worker_cfg` for delta runs and threads it
+    through `_assemble_output` → `write_delta_partitioned` → `write_delta_from_parquet_parts`.
+    Verified: new `tests/test_delta_writer_schema.py` (authoritative honored; fallback preserved;
+    an atypical/reordered first part no longer decides the committed schema) + end-to-end delta
+    run byte-identical to the parquet baseline (digest `e07d871918…`) with the committed Delta
+    schema matching the authoritative bundle exactly; full suite 1951 passed. **SP2** (per-batch
     `equals()` hoist) is **already done**. **SP3** (vectorize the multi-event split loop) is
     DEFERRED — bounded loop, low payoff, determinism risk. **SP4** (integer-cent proration)
     is **behavior-changing** (returns digest) → only behind a default-off config flag.
