@@ -448,6 +448,15 @@ intended behavior change** (use Phase 0 tests as the safety net).
   Move the genuinely-pure helpers (`_weighted_choice_idx`, `_build_month_slices`,
   `_eligible_counts_fast`, `_as_datetime64_D`) to `src/utils` for reuse; leave
   State-coupled helpers in place.
+- [ ] **5.7 Sub-package the flat coordinator-setup modules** — `E:M R:lo`
+  Phase 5.2 left the extracted modules flat: 11 loose `.py` at the top of `facts/sales/`.
+  Group the 8 main-process pre-pool setup modules into a new `prep/` subpackage
+  (`dimension_loaders`, `correlation_lookups`, `scd2_grid`, `worker_cfg_builder`,
+  `worker_cfg_schema`, `memory_model`, `coverage_preflight`, `sales_helpers`); keep
+  `sales.py` + `output_paths.py` + `output_assembler.py` at the top level. Byte-preserving
+  (pure AST moves + re-import fixes across the repo + CLAUDE.md directory-map update; verify
+  with digests + full suite, like 5.2). **User decision (this session):** do it AFTER 6.1/6.7;
+  single `prep/` package (not a separate `output/`). Pure navigability, no behavior change.
 
 **Exit criteria:** no file in `facts/sales` exceeds a sane size threshold without reason;
 no duplicated algorithm; no dead abstraction.
