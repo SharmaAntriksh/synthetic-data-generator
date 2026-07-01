@@ -352,7 +352,7 @@ rather than documenting around it.)
 **Goal:** concerns become objects with contracts. Pure structure/testability — **zero
 intended behavior change** (use Phase 0 tests as the safety net).
 
-- [ ] **5.1 Split State into frozen bundle + scratch; delete sealing theater** — `Finding #16 #7` · `E:L R:med`
+- [~] **5.1 Split State into frozen bundle + scratch; delete sealing theater** — `Finding #16 #7` · `E:L R:med` — **IN PROGRESS**
   A `frozen=True` dimension/config bundle (built once per worker) + a plain mutable
   `WorkerScratch` (caches, anything currently reassigned). Delete `_SealableMeta`,
   `seal()`, `_sealed`, `validate()` ceremony, and `_get_state_attr` dual-name resolver.
@@ -360,6 +360,16 @@ intended behavior change** (use Phase 0 tests as the safety net).
   - *Files:* `sales_logic/globals.py`, `sales_logic/chunk_builder.py`, `sales_logic/columns.py`.
   - *Acceptance:* "cross-chunk mutable state" is impossible to write; `tests/test_state.py`
     rewritten; determinism tests still pass.
+  - **Done so far:** (a) deleted the sealing theater — `_SealableMeta` metaclass,
+    `seal()`, `_sealed`, and `State.validate()` (its one real caller in
+    `init_sales_worker` is now an inline `chunk_size` presence check); `test_state.py`
+    rewritten; behavior unchanged in prod (seal() was never called — gotcha #3). (b)
+    deleted the dead `_sample_customers` + `_concat_and_shuffle` (no prod caller since
+    the per-month plan went global) and their tests.
+  - **Remaining:** the frozen dimension/config bundle + `WorkerScratch` split (make
+    cross-chunk mutable state *impossible*, not just conventional); remove the
+    `_get_state_attr` dual-name resolver (standardize on one canonical attr name);
+    wire-or-delete `SalesContext`.
 - [ ] **5.2 Decompose the `sales.py` orchestrator** — `Finding #1` · `E:L R:med`
   Extract `DimensionBundle.load`, `CorrelationLookups.build`, `SCD2GridBuilder`,
   `SalesMemoryModel`, `OutputAssembler`. `generate_sales_fact` shrinks to a readable
