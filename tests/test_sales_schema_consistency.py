@@ -1,4 +1,4 @@
-"""Phase 0.3 guardrail — the Sales fact schema is declared in two places that must agree.
+"""Guardrail — the Sales fact schema is declared in two places that must agree.
 
 Finding #15: the Sales fact's columns/dtypes are hand-maintained independently as
 (a) a pyarrow field list in ``sales_worker/schemas.py`` (what the parquet/delta
@@ -19,12 +19,12 @@ These are fast pure-unit assertions — no data generation.
   both ``skip_order_cols`` settings. This catches the high-impact drift (add / drop /
   reorder / change-of-kind). (passes today)
 * **Exact dtypes agree** — each Arrow field type equals the canonical Arrow type of
-  its SQL column type. Currently FAILS: ``ChannelKey`` and ``TimeKey`` are declared
-  ``SMALLINT`` (int16) in SQL but written as ``int32`` in parquet — a width
-  disagreement enforced by nothing (values happen to fit). Fixed by Phase 5.5 (one
-  canonical ``LogicalType`` with ``.to_arrow()`` / ``.to_sql()`` projections). This
-  is ``xfail(strict=True)``; when Phase 5.5 unifies the schema it XPASSes — delete
-  the marker to make it a hard guard.
+  its SQL column type. Holds by construction: the Arrow Sales schema in
+  ``sales_worker/schemas.py`` is now *projected* from the single canonical
+  ``(name, ColumnSpec)`` schema in ``static_schemas.py``. ``ChannelKey`` / ``TimeKey``
+  are canonically ``SMALLINT`` (int16) — matching the SMALLINT dimension keys their
+  SQL foreign keys reference — and the writer casts the produced int32 arrays down to
+  int16, so the parquet dtype and SQL DDL agree. This is a hard regression guard.
 """
 from __future__ import annotations
 
@@ -111,14 +111,6 @@ def test_sales_arrow_and_sql_columns_and_families_agree(skip_order_cols):
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Finding #15: ChannelKey/TimeKey are SMALLINT (int16) in the SQL schema "
-           "but written as int32 in parquet — the two hand-maintained Sales schemas "
-           "disagree on exact dtype. Fixed by Phase 5.5 (one canonical LogicalType). "
-           "When that lands this XPASSes — delete this marker to turn it into a hard "
-           "regression guard.",
-)
 @pytest.mark.parametrize("skip_order_cols", [False, True])
 def test_sales_arrow_and_sql_exact_dtypes_agree(skip_order_cols):
     """Each Arrow field type equals the canonical Arrow type of its SQL column type."""

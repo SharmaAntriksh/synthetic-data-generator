@@ -143,6 +143,13 @@ _SALES_SCHEMA: Schema = (
     ("EmployeeKey", INT_NN),
     ("PromotionKey", INT_NN),
     ("CurrencyKey", INT_NN),
+    # Canonical fact-grain width for these two keys is SMALLINT (int16): the
+    # values (channel id; minute-of-day 0..1439) fit int16, and the SQL foreign
+    # keys reference SMALLINT dimension keys (e.g. Time.TimeKey), so the fact
+    # columns must be SMALLINT for FK creation to succeed. The Arrow schema is
+    # projected from this (SMALLINT -> int16); the writer casts the int32 arrays
+    # the chunk builder/injection produce down to int16 at write time, so the
+    # parquet dtype matches the SQL DDL (was int32 in parquet vs SMALLINT in SQL).
     ("ChannelKey", SMALLINT_NN),
     ("TimeKey", SMALLINT_NN),
     ("OrderDate", DATE_NN),
