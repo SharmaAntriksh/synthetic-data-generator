@@ -250,6 +250,84 @@ def _apply_cfg_default(current: Any, default: Any, cfg_value: Any) -> Any:
     return cfg_value if current == default else current
 
 
+@dataclass(frozen=True)
+class _Scd2VersionCtx:
+    """Shared index machinery for an SCD2 per-entity version grid.
+
+    ``starts`` and the scatter coordinates (``pi``/``si`` selected by ``valid``)
+    are the same for any payload; each caller allocates its own payload grid,
+    seeds it with the IsCurrent defaults, then scatters
+    ``payload[col][valid]`` into ``[pi, si]``.
+    """
+    n_pool: int
+    max_ver: int
+    valid: np.ndarray                 # bool mask over the sorted rows
+    pi: np.ndarray                    # pool index of each valid row
+    si: np.ndarray                    # version slot of each valid row
+    payload: Dict[str, np.ndarray]    # sorted payload columns (index with ``valid``)
+
+
+def _scd2_version_index(
+    source_path: Path,
+    *,
+    id_col: str,
+    pool_ids: np.ndarray,
+    payload_cols: Dict[str, type],
+) -> Optional[Tuple[np.ndarray, _Scd2VersionCtx]]:
+    """Read an SCD2 dimension and build its shared version-grid index.
+
+    ``pool_ids`` is the natural key (e.g. ProductID / CustomerID) per pool slot;
+    ``payload_cols`` maps each per-version column to the numpy dtype to read it
+    as. Returns ``(starts, ctx)`` where ``starts`` is the (N_pool, max_ver) int64
+    grid of version start epoch-days (padded with INT64_MAX, first slot clamped to
+    0), or ``None`` when the source lacks the required columns.
+
+    Lookup: ``ver = searchsorted(starts[P], D, side='right') - 1``.
+    """
+    read_cols = [id_col, "EffectiveStartDate", "EffectiveEndDate", *payload_cols]
+    try:
+        all_df = pd.read_parquet(str(source_path), columns=read_cols)
+    except (KeyError, ValueError):
+        return None
+
+    eff_start = pd.to_datetime(all_df["EffectiveStartDate"]).values.astype("datetime64[D]").astype(np.int64)
+    n_pool = len(pool_ids)
+
+    # Dense natural-key -> pool-index lookup.
+    max_id = max(int(pool_ids.max()), int(all_df[id_col].max())) + 1
+    id_lookup = np.full(max_id, -1, dtype=np.int32)
+    id_lookup[pool_ids] = np.arange(n_pool, dtype=np.int32)
+
+    pool_idx = id_lookup[all_df[id_col].to_numpy()]
+    mask = pool_idx >= 0
+    pool_idx = pool_idx[mask]
+    eff_start = eff_start[mask]
+    payload = {c: all_df[c].to_numpy(dtype=dt)[mask] for c, dt in payload_cols.items()}
+
+    # Sort by (pool_idx, eff_start) via lexsort (secondary key first).
+    order = np.lexsort((eff_start, pool_idx))
+    pool_idx = pool_idx[order]
+    eff_start = eff_start[order]
+    payload = {c: v[order] for c, v in payload.items()}
+
+    # Per-entity version slot indices from group boundaries.
+    group_starts = np.concatenate([[0], np.where(pool_idx[1:] != pool_idx[:-1])[0] + 1])
+    slot = np.arange(len(pool_idx), dtype=np.int32)
+    slot -= np.repeat(group_starts, np.diff(np.append(group_starts, len(pool_idx))))
+    max_ver = int(slot.max()) + 1 if len(slot) > 0 else 1
+
+    # starts: padded with INT64_MAX, valid slots scattered, first slot clamped to 0.
+    # ``valid`` (slot < max_ver) is all-True here — a defensive cap for callers.
+    starts = np.full((n_pool, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
+    valid = slot < max_ver
+    pi = pool_idx[valid]
+    si = slot[valid]
+    starts[pi, si] = eff_start[valid]
+    starts[pi, 0] = 0
+
+    return starts, _Scd2VersionCtx(n_pool=n_pool, max_ver=max_ver, valid=valid, pi=pi, si=si, payload=payload)
+
+
 def _build_scd2_product_versions(
     products_path: Path,
     pool_product_ids: np.ndarray,
@@ -262,75 +340,25 @@ def _build_scd2_product_versions(
         sorted ascending per entity, padded with INT64_MAX.
       - data: shape (N_pool, max_ver, 3) float64 — [ProductKey, ListPrice, UnitCost]
         per version slot, padded with IsCurrent=1 values.
-
-    At lookup time: for a sale with epoch-day D on product pool index P,
-    ``ver = searchsorted(starts[P], D, side='right') - 1`` gives the correct
-    version slot.
     """
-    try:
-        all_df = pd.read_parquet(
-            str(products_path),
-            columns=["ProductID", "ProductKey", "ListPrice", "UnitCost",
-                     "EffectiveStartDate", "EffectiveEndDate"],
-        )
-    except (KeyError, ValueError):
+    res = _scd2_version_index(
+        products_path,
+        id_col="ProductID",
+        pool_ids=pool_product_ids,
+        payload_cols={"ProductKey": np.float64, "ListPrice": np.float64, "UnitCost": np.float64},
+    )
+    if res is None:
         return None
+    starts, ctx = res
 
-    all_df["eff_start_days"] = pd.to_datetime(all_df["EffectiveStartDate"]).values.astype("datetime64[D]").astype(np.int64)
-
-    N_pool = len(pool_product_ids)
-
-    # Vectorized pool index mapping via dense lookup array
-    max_pid = max(int(pool_product_ids.max()), int(all_df["ProductID"].max())) + 1
-    pid_lookup = np.full(max_pid, -1, dtype=np.int32)
-    pid_lookup[pool_product_ids] = np.arange(N_pool, dtype=np.int32)
-
-    pool_idx = pid_lookup[all_df["ProductID"].to_numpy()]
-    mask = pool_idx >= 0
-    pool_idx = pool_idx[mask]
-    eff_start = all_df["eff_start_days"].to_numpy()[mask]
-    pkey_arr = all_df["ProductKey"].to_numpy(dtype=np.float64)[mask]
-    lprice_arr = all_df["ListPrice"].to_numpy(dtype=np.float64)[mask]
-    ucost_arr = all_df["UnitCost"].to_numpy(dtype=np.float64)[mask]
-
-    # Sort by (pool_idx, eff_start_days) via lexsort (secondary key first)
-    order = np.lexsort((eff_start, pool_idx))
-    pool_idx = pool_idx[order]
-    eff_start = eff_start[order]
-    pkey_arr = pkey_arr[order]
-    lprice_arr = lprice_arr[order]
-    ucost_arr = ucost_arr[order]
-
-    # Compute per-entity version slot indices using group boundaries
-    breaks = np.empty(len(pool_idx), dtype=np.int32)
-    breaks[0] = 0
-    breaks[1:] = np.cumsum(pool_idx[1:] != pool_idx[:-1])
-    group_starts = np.concatenate([[0], np.where(pool_idx[1:] != pool_idx[:-1])[0] + 1])
-    slot = np.arange(len(pool_idx), dtype=np.int32)
-    slot -= np.repeat(group_starts, np.diff(np.append(group_starts, len(pool_idx))))
-
-    max_ver = int(slot.max()) + 1 if len(slot) > 0 else 1
-
-    # Initialize with IsCurrent=1 defaults
-    starts = np.full((N_pool, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
-    data = np.empty((N_pool, max_ver, 3), dtype=np.float64)
+    # Seed every slot with the IsCurrent product row, then scatter historical versions.
+    data = np.empty((ctx.n_pool, ctx.max_ver, 3), dtype=np.float64)
     data[:, :, 0] = pool_product_np[:, 0:1]  # ProductKey broadcast
     data[:, :, 1] = pool_product_np[:, 1:2]  # ListPrice broadcast
     data[:, :, 2] = pool_product_np[:, 2:3]  # UnitCost broadcast
-
-    # Cap slot indices at max_ver - 1
-    valid = slot < max_ver
-    pi = pool_idx[valid]
-    si = slot[valid]
-
-    # Vectorized scatter into output arrays
-    starts[pi, si] = eff_start[valid]
-    data[pi, si, 0] = pkey_arr[valid]
-    data[pi, si, 1] = lprice_arr[valid]
-    data[pi, si, 2] = ucost_arr[valid]
-
-    # Clamp first version start to 0 (covers all time before second version)
-    starts[pi, 0] = 0
+    data[ctx.pi, ctx.si, 0] = ctx.payload["ProductKey"][ctx.valid]
+    data[ctx.pi, ctx.si, 1] = ctx.payload["ListPrice"][ctx.valid]
+    data[ctx.pi, ctx.si, 2] = ctx.payload["UnitCost"][ctx.valid]
 
     return starts, data
 
@@ -348,71 +376,26 @@ def _build_scd2_customer_versions(
       - keys: shape (N_pool, max_ver) int32 — CustomerKey per version slot,
         padded with IsCurrent=1 key.
       - key_to_pool_idx: dense int32 array mapping IsCurrent CustomerKey → pool index.
-
-    At lookup time: for a sale with epoch-day D on customer pool index P,
-    ``ver = searchsorted(starts[P], D, side='right') - 1`` gives the correct
-    version slot.
     """
-    try:
-        all_df = pd.read_parquet(
-            str(customers_path),
-            columns=["CustomerID", "CustomerKey",
-                     "EffectiveStartDate", "EffectiveEndDate"],
-        )
-    except (KeyError, ValueError):
+    res = _scd2_version_index(
+        customers_path,
+        id_col="CustomerID",
+        pool_ids=pool_customer_ids,
+        payload_cols={"CustomerKey": np.int32},
+    )
+    if res is None:
         return None
+    starts, ctx = res
 
-    all_df["eff_start_days"] = pd.to_datetime(all_df["EffectiveStartDate"]).values.astype("datetime64[D]").astype(np.int64)
-
-    N_pool = len(pool_customer_keys)
-
-    # Vectorized reverse lookup: IsCurrent CustomerKey → pool index
+    # Dense IsCurrent CustomerKey -> pool index reverse map.
     max_key = int(pool_customer_keys.max()) + 1
     key_to_pool_idx = np.full(max_key, -1, dtype=np.int32)
-    key_to_pool_idx[pool_customer_keys] = np.arange(N_pool, dtype=np.int32)
+    key_to_pool_idx[pool_customer_keys] = np.arange(len(pool_customer_keys), dtype=np.int32)
 
-    # Vectorized pool index mapping via dense lookup array
-    max_cid = max(int(pool_customer_ids.max()), int(all_df["CustomerID"].max())) + 1
-    cid_lookup = np.full(max_cid, -1, dtype=np.int32)
-    cid_lookup[pool_customer_ids] = np.arange(N_pool, dtype=np.int32)
-
-    all_cids = all_df["CustomerID"].to_numpy()
-    pool_idx = cid_lookup[all_cids]
-    mask = pool_idx >= 0
-    pool_idx = pool_idx[mask]
-    eff_start = all_df["eff_start_days"].to_numpy()[mask]
-    ckey_arr = all_df["CustomerKey"].to_numpy(dtype=np.int32)[mask]
-
-    # Sort by (pool_idx, eff_start_days) via lexsort (secondary key first)
-    order = np.lexsort((eff_start, pool_idx))
-    pool_idx = pool_idx[order]
-    eff_start = eff_start[order]
-    ckey_arr = ckey_arr[order]
-
-    # Compute per-entity version slot indices using group boundaries
-    group_starts = np.concatenate([[0], np.where(pool_idx[1:] != pool_idx[:-1])[0] + 1])
-    slot = np.arange(len(pool_idx), dtype=np.int32)
-    slot -= np.repeat(group_starts, np.diff(np.append(group_starts, len(pool_idx))))
-
-    max_ver = int(slot.max()) + 1 if len(slot) > 0 else 1
-
-    # Initialize: all slots default to IsCurrent=1 key, starts padded with MAX
-    starts = np.full((N_pool, max_ver), np.iinfo(np.int64).max, dtype=np.int64)
-    # Broadcast fill instead of np.tile (avoids full copy + intermediate array)
-    keys = np.empty((N_pool, max_ver), dtype=np.int32)
+    # Seed every slot with the IsCurrent key, then scatter historical versions.
+    keys = np.empty((ctx.n_pool, ctx.max_ver), dtype=np.int32)
     keys[:] = pool_customer_keys.astype(np.int32)[:, np.newaxis]
-
-    # Cap slot indices at max_ver - 1
-    valid = slot < max_ver
-    pi = pool_idx[valid]
-    si = slot[valid]
-
-    # Vectorized scatter into output arrays
-    starts[pi, si] = eff_start[valid]
-    keys[pi, si] = ckey_arr[valid]
-
-    # Clamp first version start to 0 (covers all time before second version)
-    starts[pi, 0] = 0
+    keys[ctx.pi, ctx.si] = ctx.payload["CustomerKey"][ctx.valid]
 
     return starts, keys, key_to_pool_idx
 

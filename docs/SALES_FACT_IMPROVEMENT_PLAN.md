@@ -376,11 +376,26 @@ intended behavior change** (use Phase 0 tests as the safety net).
   plain ndarrays). **Keep RNG draw order fixed** — determinism is load-bearing here.
   - *Files:* `sales_logic/chunk_builder.py:1187-2102`.
   - *Acceptance:* correlations #1–#5 are independently testable; determinism preserved.
-- [ ] **5.5 One canonical schema** — `Finding #15` · `E:M R:lo`
-  Define Sales columns once as `(name, LogicalType)` with `.to_arrow()`/`.to_sql(dialect)`.
-  Derive Arrow, SQL DDL, and header/detail projections from it.
-  - *Files:* `sales_worker/schemas.py`, `static_schemas.py`.
-  - *Acceptance:* test **0.3** holds by construction; adding a column is a one-line edit.
+- [x] **5.5 One canonical schema** — `Finding #15` · `E:M R:lo` — **DONE**
+  The Sales fact was declared twice: a hand-listed pyarrow field list in
+  `sales_worker/schemas.py` and the SQL-typed `_SALES_SCHEMA` in `static_schemas.py`,
+  which had drifted (`ChannelKey`/`TimeKey` int32 in parquet vs SMALLINT in SQL). The
+  Arrow gen/out + OrderHeader/OrderDetail schemas are now **projected** from
+  `_SALES_SCHEMA` through one complete SQL→Arrow bridge in `schemas.py` (adds
+  `BIT→bool_`, which the chunk-builder-oriented `globals._build_sql_to_pa_map`
+  omits). Canonical width for the two keys is **SMALLINT/int16** (not INT): their SQL
+  FKs reference SMALLINT dimension keys (`Time.TimeKey`), so widening the fact side
+  would break FK creation at import; instead the writer's `normalize_to_schema`
+  already casts the int32 arrays the injection produces down to int16, so parquet now
+  matches the SQL DDL. Adding a Sales column is a one-line edit to `_SALES_SCHEMA`.
+  - *Files:* `sales_worker/schemas.py` (`_SQL_TO_ARROW`, `_fields_from_logical`,
+    derived gen/out/header/detail), `static_schemas.py` (comment only — SMALLINT kept),
+    `tests/test_sales_schema_consistency.py` (xfail removed).
+  - *Acceptance — met:* test **0.3** exact-dtype flipped xfail→hard pass; full suite
+    **1950 passed, 0 xfailed**; determinism + all packagers (CSV/parquet/delta) green.
+  - *Left as-is:* OrderDetail's Arrow column order (price trio `NetPrice/UnitCost/
+    UnitPrice`) still differs from the SQL projection order — preserved to keep the
+    OrderDetail output byte-identical; reconciling it is a Phase 6.8 writer concern.
 - [ ] **5.6 Lift the sampling primitives** — `Finding #23` · `E:S R:lo`
   Move the genuinely-pure helpers (`_weighted_choice_idx`, `_build_month_slices`,
   `_eligible_counts_fast`, `_as_datetime64_D`) to `src/utils` for reuse; leave
