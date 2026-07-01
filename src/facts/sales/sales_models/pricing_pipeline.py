@@ -13,6 +13,7 @@ from collections.abc import Mapping
 
 import numpy as np
 
+from src.exceptions import SalesError
 from src.facts.sales.sales_logic import State
 from src.utils.logging_utils import warn
 
@@ -485,29 +486,41 @@ def _reset_caches() -> None:
     _APPEAR_CFG_VERSION = -1
     _APPEAR_CFG_CACHE = None
     _MONTH_NOISE_CACHE.clear()
+    _START_MONTH_CACHE.clear()
 
 
 # ===============================================================
 # Global start month
 # ===============================================================
 
-def _global_start_month_int(order_dates: np.ndarray) -> int:
-    """
-    Determine the first month of the entire dataset for computing inflation offset.
+_START_MONTH_CACHE: dict = {}
 
-    Uses State.date_pool if available; falls back to min(order_dates).
+
+def _global_start_month_int() -> int:
+    """First month of the *configured* dataset — the single inflation anchor.
+
+    Resolved once from the run-wide ``State.date_pool`` (which starts at the
+    configured dataset start), so the inflation factor for any (product, month)
+    is provably identical across every chunk and worker. There is deliberately
+    NO per-chunk ``min(order_dates)`` fallback: that made the anchor depend on
+    which order dates a chunk happened to contain, so an early-month-sparse chunk
+    would anchor inflation differently than a full one. Memoized per worker
+    (``date_pool`` is bound once at worker init and never reassigned).
     """
     dp = getattr(State, "date_pool", None)
-    if dp is not None:
-        try:
-            if len(dp) > 0:
-                d0 = np.min(np.asarray(dp).astype("datetime64[D]"))
-                return int(d0.astype("datetime64[M]").astype("int64"))
-        except (TypeError, ValueError, OverflowError):
-            pass
-
-    d0 = np.min(np.asarray(order_dates).astype("datetime64[D]"))
-    return int(d0.astype("datetime64[M]").astype("int64"))
+    if dp is None or len(dp) == 0:
+        raise SalesError(
+            "Inflation anchor requires State.date_pool (the configured dataset "
+            "start) to be bound before pricing; it was missing or empty."
+        )
+    key = id(dp)
+    cached = _START_MONTH_CACHE.get(key)
+    if cached is not None:
+        return cached
+    d0 = np.min(np.asarray(dp).astype("datetime64[D]"))
+    start_m = int(d0.astype("datetime64[M]").astype("int64"))
+    _START_MONTH_CACHE[key] = start_m
+    return start_m
 
 
 # ===============================================================
@@ -569,7 +582,7 @@ def build_prices(rng, order_dates, qty, price):
             order_month_i = order_dates.astype("datetime64[M]").astype("int64")
             uniq_months, inv = np.unique(order_month_i, return_inverse=True)
 
-            start_m = _global_start_month_int(order_dates)
+            start_m = _global_start_month_int()
             months_since = (uniq_months.astype(np.int64) - start_m).astype(np.float64)
 
             infl = (1.0 + annual_rate) ** (months_since / 12.0)

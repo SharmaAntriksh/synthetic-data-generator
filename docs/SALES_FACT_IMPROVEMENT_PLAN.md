@@ -34,7 +34,7 @@ changes are protected by tests written first.
 | Phase | Theme | Goal | Gate |
 |---|---|---|---|
 | **0** ✅ | Guardrails | Tests that *prove* the guarantees, before changing logic | **Done** |
-| **1** | Determinism & correctness | Make "same settings → same data" actually true | After 0 |
+| **1** ✅ | Determinism & correctness | Make "same settings → same data" actually true | **Done** |
 | **2** | Decouple knobs from chunking | Business knobs stop depending on `chunk_size`/worker count | After 1 |
 | **3** | Statistical fidelity (the joint model) | Connected, realistic facts an analyst can actually mine | After 1 (parallel w/ 2) |
 | **4** | Pricing model | Separate shelf price from realized price | After 3 |
@@ -147,26 +147,43 @@ count") becomes true. These are the *foundational* fixes.
     wrong brand mix for later same-calendar-month months (~0.2% of rows on some seeds).
     Re-keyed the cache by `m_offset`. Guarded by `test_multi_chunk_worker_invariance_second_seed`
     (seed 20250701, which triggers it; seed 1234 does not).
-- [ ] **1.2 Single OrderNumber int64 decision** — `Finding #21` · `E:M R:med`
-  Compute the int64-vs-int32 choice **once** from the real emitted ID ceiling, store it
-  on the run manifest, and have **both** the Arrow builder and SQL DDL generator read
-  that one flag (fall back to a `total_rows` estimate only when no manifest exists).
-  - *Files:* `sales.py:2336`, `static_schemas.py:1067-1093`, `sales_worker/schemas.py:128`.
-  - *Acceptance:* a >134M-row config no longer produces parquet=int64 / DDL=INT mismatch;
-    test asserts the two paths agree across a range of `total_rows`.
-- [ ] **1.3 Single inflation epoch** — `Finding #30` · `E:S R:lo`
-  Resolve the inflation anchor once from the **configured** dataset start, bake it into
-  the pricing context; delete the per-chunk `min()` probe and chunk-local fallback.
-  - *Files:* `sales_models/pricing_pipeline.py:494-510`.
-  - *Acceptance:* no per-chunk `min(order_dates)` fallback path remains; inflation factor
-    for a (product, month) is provably identical across chunks.
-- [ ] **1.4 Unify per-chunk seeding** — `Finding #33` · `E:S R:lo`
-  Adopt the repo's house pattern `SeedSequence(run_seed).spawn(n_chunks)[idx]` (already
-  used by complaints/wishlists/customers/subscriptions). Drop the materialized `seeds`
-  array and the redundant `+ idx*stride`.
-  - *Files:* `sales.py:2343`, `sales_worker/task.py:109/632`.
-  - *Acceptance:* chunk seed is a pure function of `(run_seed, chunk_idx)`; output stays
-    deterministic; a single chunk can be regenerated in isolation for debugging.
+- [x] **1.2 Single OrderNumber int64 decision** — `Finding #21` · `E:M R:med` — **DONE**
+  The int64-vs-int32 choice is computed **once** from the real emitted ID ceiling
+  (`_order_id_int64` in `sales.py`), stored on `SalesRunManifest.order_id_int64`, and
+  threaded (sales_runner → `package_output` → `write_create_table_scripts` →
+  `generate_all_create_tables`) so the SQL DDL applies it via a new `force_int64` arg to
+  `get_sales_schema`/`promote_order_number` across **all** order-number-carrying tables
+  (Sales/Header/Detail/Returns/Complaints). The `total_rows` fallback (no manifest) is now
+  **id-space aware** — `order_id_int64_for_rows()` promotes at ~134M rows (the ~8× day-band
+  factor), matching the parquet writer, instead of the old ~1.07B raw threshold.
+  - *Files:* `static_schemas.py` (`order_id_int64_for_rows`, `force_int64`), `sales.py`
+    (manifest field + thread), `sales_runner.py`, `packaging/package_output.py`,
+    `packaging/sql_scripts.py`, `sql/generate_create_table_scripts.py`.
+  - *Acceptance — met:* a 200M-row config (the old 134M–1.07B mismatch band) now emits
+    BIGINT in the DDL, matching parquet. `TestOrderIdInt64PathsAgree` asserts the Arrow and
+    SQL widths agree across a total_rows range; `TestOrderNumberDDLPromotion` adds the
+    mismatch-zone regression + authoritative-flag-override guards. `promote_order_number`'s
+    raw-threshold semantics (and its unit tests) are preserved for flagless callers.
+- [x] **1.3 Single inflation epoch** — `Finding #30` · `E:S R:lo` — **DONE**
+  `_global_start_month_int()` resolves the inflation anchor once from `State.date_pool` (the
+  configured dataset start), memoized per worker; the per-chunk `min(order_dates)` fallback is
+  deleted (missing date_pool now raises `SalesError` rather than silently anchoring per-chunk).
+  - *Files:* `sales_models/pricing_pipeline.py`.
+  - *Acceptance — met:* no `min(order_dates)` fallback remains; `TestGlobalStartMonth` asserts
+    the anchor is date_pool-derived and identical across chunks (independent of a chunk's own
+    order dates).
+- [x] **1.4 Unify per-chunk seeding** — `Finding #33` · `E:S R:lo` — **DONE**
+  `derive_chunk_seed(run_seed, idx)` now uses the house pattern
+  `SeedSequence(run_seed).spawn(idx+1)[idx].generate_state()` (identical child to
+  `spawn(n_chunks)[idx]`). The coordinator's materialized `rng_master`/`seeds` array and the
+  redundant `+ idx*stride` are gone; the task tuple carries the run seed itself.
+  - *Files:* `sales.py` (drop `seeds` array), `sales_worker/task.py`.
+  - *Acceptance — met:* chunk seed is a pure function of `(run_seed, chunk_idx)`, regenerable
+    in isolation (`TestDeriveChunkSeed`); output stays deterministic and worker-count
+    invariant (re-verified across the 3-seed × workers{1,3,5} × skip{F,T} stress).
+
+**Phase 1 complete.** Every stated determinism guarantee ("deterministic, idempotent,
+independent of worker count") now holds by construction, verified end-to-end.
 
 **Exit criteria:** Phase 0 determinism + chunk tests pass with discovery **on**; no fix
 in this phase depends on convention-only invariants.

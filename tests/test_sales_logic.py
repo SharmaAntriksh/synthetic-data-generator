@@ -20,6 +20,9 @@ import pyarrow as pa
 import pytest
 
 from src.exceptions import SalesError
+from src.facts.sales.sales_worker.task import derive_chunk_seed
+from src.tools.sql.dialect import SqlType
+from src.utils.static_schemas import get_sales_schema, order_id_int64_for_rows
 from src.facts.sales.sales_logic.core.orders import (
     _reset_month_demand,
     _safe_normalized_prob,
@@ -1413,6 +1416,64 @@ class TestBuildWorkerSchemas:
         for tbl in ("OrderDetail", "OrderHeader", "Returns"):
             assert bundle.schema_by_table[tbl].field("OrderNumber").type == pa.int64()
         assert bundle.sales_schema_gen.field("OrderNumber").type == pa.int64()
+
+
+class TestDeriveChunkSeed:
+    """Phase 1.4 / Finding #33: the per-chunk RNG seed is a pure function of
+    (run_seed, chunk_idx) via the house SeedSequence pattern — independently
+    regenerable and independent of chunk dispatch order / worker count."""
+
+    def test_deterministic(self):
+        assert derive_chunk_seed(1234, 7) == derive_chunk_seed(1234, 7)
+
+    def test_distinct_per_chunk_and_seed(self):
+        per_chunk = [derive_chunk_seed(1234, i) for i in range(64)]
+        assert len(set(per_chunk)) == 64                      # no collisions across chunks
+        assert derive_chunk_seed(1234, 7) != derive_chunk_seed(5678, 7)  # seed matters
+
+    def test_regenerable_in_isolation(self):
+        # spawn(idx+1)[idx] (what derive_chunk_seed uses) must equal the canonical
+        # house pattern spawn(n_chunks)[idx], so any single chunk can be reproduced
+        # without materializing the whole per-chunk seed sequence.
+        seed, n = 1234, 40
+        for idx in (0, 1, 17, 39):
+            canonical = int(
+                np.random.SeedSequence(seed).spawn(n)[idx].generate_state(1, dtype=np.uint32)[0]
+            )
+            assert derive_chunk_seed(seed, idx) == canonical
+
+
+class TestOrderIdInt64PathsAgree:
+    """Phase 1.2 / Finding #21: the parquet (Arrow) and SQL (DDL) OrderNumber
+    width must be the SAME decision. Both consume one authoritative flag; the
+    row-count estimate is only a fallback and must itself be id-space aware so the
+    two paths never disagree across a range of total_rows."""
+
+    def _arrow_is_int64(self, flag: bool) -> bool:
+        bundle = build_worker_schemas(
+            file_format="parquet", skip_order_cols=False,
+            skip_order_cols_requested=False, returns_enabled=True,
+            order_id_int64=flag,
+        )
+        return bundle.sales_schema_gen.field("OrderNumber").type == pa.int64()
+
+    def _sql_is_bigint(self, flag: bool) -> bool:
+        cols = dict(get_sales_schema(False, force_int64=flag))
+        return cols["OrderNumber"].sql_type == SqlType.BIGINT
+
+    def test_paths_agree_when_fed_same_flag(self):
+        for flag in (False, True):
+            assert self._arrow_is_int64(flag) == self._sql_is_bigint(flag) == flag
+
+    def test_estimate_makes_paths_agree_across_row_range(self):
+        # Spans below, through, and above the ~134M id-space threshold — including
+        # the 134M–1.07B band where the old total_rows-only DDL rule diverged.
+        for rows in (1_000, 10_000_000, 134_000_000, 200_000_000,
+                     500_000_000, 2_000_000_000):
+            flag = order_id_int64_for_rows(rows)
+            assert self._arrow_is_int64(flag) == self._sql_is_bigint(flag), (
+                f"parquet/DDL OrderNumber width disagree at total_rows={rows:,}"
+            )
 
 
 # ===================================================================

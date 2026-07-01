@@ -80,6 +80,10 @@ class SalesRunManifest:
     file_format: str
     out_folder: str
     tables: dict[str, TableOutputs]
+    # Authoritative OrderNumber-width decision for this run, computed once from
+    # the real emitted id ceiling. Threaded to the SQL DDL generator so the
+    # CREATE TABLE INT/BIGINT choice matches the parquet dtype exactly.
+    order_id_int64: bool = False
 
 
 @dataclass
@@ -1890,6 +1894,7 @@ def _assemble_output(
     partition_cols, sales_cfg, sales_output, out_folder_p,
     chunk_size, delete_chunks, merge_parquet, compression,
     row_group_size, optimize_after_merge,
+    *, order_id_int64=False,
 ):
     """Post-pool output assembly: delta writes, CSV re-chunking, or parquet merge."""
     def _build_sales_manifest():
@@ -1908,6 +1913,7 @@ def _assemble_output(
             file_format=file_format,
             out_folder=str(out_folder_p),
             tables=per_table,
+            order_id_int64=bool(order_id_int64),
         )
 
     def _make_result():
@@ -2342,16 +2348,19 @@ def generate_sales_fact(
             "safety margin; emitting int64 for order-number columns."
         )
 
-    rng_master = np.random.default_rng(seed + 1)
-    seeds = rng_master.integers(1, 1 << 30, size=total_chunks, dtype=np.int64)
-
+    # Per-chunk seeds are derived in the worker via
+    # ``SeedSequence(run_seed).spawn(...)[chunk_idx]`` (the repo's house pattern,
+    # see task.derive_chunk_seed), so each chunk seed is a pure function of
+    # (run_seed, chunk_idx) — independently regenerable and worker-count
+    # invariant. The task tuple carries the run seed itself; no materialized
+    # per-chunk seed array (which would be a sequential draw off one stream).
     tasks: List[Tuple[int, int, int]] = []
     remaining = total_rows
-    for idx, s in enumerate(seeds):
+    for idx in range(total_chunks):
         if remaining <= 0:
             break
         batch = min(chunk_size, remaining)
-        tasks.append((idx, int(batch), int(s)))
+        tasks.append((idx, int(batch), int(seed)))
         remaining -= batch
 
     if not tasks:
@@ -2605,4 +2614,5 @@ def generate_sales_fact(
         partition_cols, sales_cfg, sales_output, out_folder_p,
         chunk_size, delete_chunks, merge_parquet, compression,
         row_group_size, optimize_after_merge,
+        order_id_int64=_order_id_int64,
     )

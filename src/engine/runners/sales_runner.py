@@ -298,12 +298,14 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
     inventory_acc = None
     wishlists_acc = None
     complaints_acc = None
+    order_id_int64 = False
 
     def _do_generate():
         nonlocal budget_acc
         nonlocal inventory_acc
         nonlocal wishlists_acc
         nonlocal complaints_acc
+        nonlocal order_id_int64
         result = generate_sales_fact(
             ctx.cfg_for_run,
             parquet_folder=str(ctx.parquet_dims),
@@ -328,6 +330,7 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
         inventory_acc = result.inventory_acc
         wishlists_acc = result.wishlists_acc
         complaints_acc = result.complaints_acc
+        order_id_int64 = bool(getattr(result.manifest, "order_id_int64", False))
 
     _run_step("Generating Sales", _do_generate)
 
@@ -415,7 +418,9 @@ def run_sales_pipeline(sales_cfg, fact_out, parquet_dims, cfg, *, force_regenera
 
     def _do_package():
         nonlocal final_folder_result
-        final_folder_result = package_output(ctx.cfg_for_run, ctx.sales_cfg, ctx.parquet_dims, ctx.fact_out)
+        final_folder_result = package_output(
+            ctx.cfg_for_run, ctx.sales_cfg, ctx.parquet_dims, ctx.fact_out,
+            order_id_int64=order_id_int64)
 
         # PBIP templates now live under:
         #   samples/powerbi/templates/{csv|parquet}/{Sales|Orders|Sales and Orders}

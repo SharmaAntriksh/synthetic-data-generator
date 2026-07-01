@@ -106,9 +106,20 @@ def normalize_tasks(args: TaskArgs) -> Tuple[List[Task], bool]:
     return list(args), False
 
 
-def derive_chunk_seed(seed: Any, idx: int, *, stride: int = 10_000) -> int:
+def derive_chunk_seed(seed: Any, idx: int) -> int:
+    """Deterministic per-chunk RNG seed as a pure function of (run_seed, idx).
+
+    Uses the repo's house pattern ``SeedSequence(run_seed).spawn(n)[idx]`` — the
+    same independent-substream derivation the customer/wishlist/complaint workers
+    use. ``spawn(idx + 1)[idx]`` yields the identical child SeedSequence as
+    ``spawn(n_chunks)[idx]`` (spawn keys are assigned 0..n-1 from a fresh
+    SeedSequence), so a single chunk can be regenerated in isolation without
+    materializing the whole per-chunk seed array, and output is independent of
+    worker count / chunk dispatch order.
+    """
     base_seed = int_or(seed, 0)
-    return base_seed + idx * stride
+    child = np.random.SeedSequence(base_seed).spawn(int(idx) + 1)[int(idx)]
+    return int(child.generate_state(1, dtype=np.uint32)[0])
 
 
 def write_table_by_format(
@@ -629,7 +640,7 @@ def _worker_task(args):
                 "chunk_size must be the constant order-id stride and >= the maximum batch size."
             )
 
-        chunk_seed = derive_chunk_seed(seed, idx_i, stride=10_000)
+        chunk_seed = derive_chunk_seed(seed, idx_i)
 
         # Per-chunk returns config with unique event_key_offset
         if returns_cfg_base is not None:

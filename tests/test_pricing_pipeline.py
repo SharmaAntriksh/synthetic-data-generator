@@ -10,12 +10,54 @@ import pytest
 from src.facts.sales.sales_models.pricing_pipeline import (
     _as_f64,
     _choose_step,
+    _global_start_month_int,
     _parse_bands,
     _parse_endings,
     _quantize,
+    _reset_caches,
     _safe_prob,
     _snap_discount,
 )
+from src.exceptions import SalesError
+from src.facts.sales.sales_logic.globals import State
+
+
+class TestGlobalStartMonth:
+    """Phase 1.3 / Finding #30: the inflation anchor is the *configured* dataset
+    start (State.date_pool) — a single per-run epoch, never a per-chunk
+    min(order_dates). So the inflation factor for a (product, month) is identical
+    across chunks regardless of which order dates each chunk happens to contain."""
+
+    def setup_method(self):
+        State.reset()
+        _reset_caches()
+
+    def teardown_method(self):
+        State.reset()
+        _reset_caches()
+
+    def test_anchors_to_date_pool_start(self):
+        State.date_pool = np.arange(
+            np.datetime64("2020-03-01"), np.datetime64("2022-01-01"),
+            dtype="datetime64[D]")
+        expected = int(np.datetime64("2020-03", "M").astype("int64"))
+        assert _global_start_month_int() == expected
+
+    def test_independent_of_order_dates_across_chunks(self):
+        # Two "chunks" covering different sub-ranges must resolve the SAME anchor,
+        # because it comes from the run-wide date_pool, not the chunk's own dates.
+        State.date_pool = np.arange(
+            np.datetime64("2021-01-01"), np.datetime64("2023-01-01"),
+            dtype="datetime64[D]")
+        anchor = _global_start_month_int()
+        # anchor is memoized + purely date_pool-derived → stable across calls
+        assert _global_start_month_int() == anchor
+        assert anchor == int(np.datetime64("2021-01", "M").astype("int64"))
+
+    def test_missing_date_pool_raises(self):
+        State.date_pool = None
+        with pytest.raises(SalesError, match="date_pool"):
+            _global_start_month_int()
 
 
 # ===================================================================
