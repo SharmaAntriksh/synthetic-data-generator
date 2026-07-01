@@ -419,6 +419,40 @@ class TestApplyPromotions:
         )
         assert promo_mod._warned_ch_len_mismatch is True
 
+    def test_salience_biases_selection(self):
+        """Phase 3.2: a high-salience active promo is redeemed far more often
+        than a low-salience one (vs ~50/50 under the uniform draw)."""
+        dates = np.array(["2023-01-15"] * 4000, dtype="datetime64[D]")
+        promo_keys = np.array([1, 10, 20], dtype=np.int32)  # 1 = no_discount_key
+        promo_start = np.array(["2023-01-01"] * 3, dtype="datetime64[D]")
+        promo_end = np.array(["2023-01-31"] * 3, dtype="datetime64[D]")
+        # promo 20 hugely more salient than promo 10 (index-aligned to promo_keys)
+        salience = np.array([1.0, 1.0, 20.0], dtype=np.float64)
+
+        result = apply_promotions(
+            _rng(), 4000, dates, promo_keys, promo_start, promo_end,
+            no_discount_key=1, promo_salience_all=salience,
+        )
+        n20 = int((result == 20).sum())
+        n10 = int((result == 10).sum())
+        assert n20 > n10 * 5, f"salience ignored: promo20={n20}, promo10={n10}"
+
+    def test_salience_none_is_uniform_control(self):
+        """Same two promos, no salience -> roughly balanced (uniform draw)."""
+        dates = np.array(["2023-01-15"] * 4000, dtype="datetime64[D]")
+        promo_keys = np.array([1, 10, 20], dtype=np.int32)
+        promo_start = np.array(["2023-01-01"] * 3, dtype="datetime64[D]")
+        promo_end = np.array(["2023-01-31"] * 3, dtype="datetime64[D]")
+
+        result = apply_promotions(
+            _rng(), 4000, dates, promo_keys, promo_start, promo_end,
+            no_discount_key=1, promo_salience_all=None,
+        )
+        n20 = int((result == 20).sum())
+        n10 = int((result == 10).sum())
+        # Uniform: neither should dominate by the 5x margin the salient case shows.
+        assert 0.5 < n20 / max(1, n10) < 2.0
+
 
 # ===================================================================
 # 4. Delivery

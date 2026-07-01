@@ -31,6 +31,16 @@ models:
     min_qty: 1
     max_qty: 4
 
+    # Phase 3.1 — quantity depends on price + product propensity (elasticity),
+    # so cheap staples sell in larger baskets than expensive durables.
+    elasticity:
+      enabled: true
+      price_elasticity: 0.5        # ε: qty *= (price / reference_price)^(-ε)
+      reference_price: null        # null = median catalog list price (auto)
+      factor_clip: [0.4, 2.5]
+      propensity_strength: 0.4     # γ: qty *= (PopularityScore / 50)^γ
+      propensity_clip: [0.6, 1.6]
+
     monthly_factors:
       - 0.99    # Jan
       - 0.98    # Feb
@@ -117,6 +127,17 @@ models:
     enabled: true
     seed: 123
     winner_boost: 1.4
+
+
+  # ================================================================
+  # PROMOTION SALIENCE — deeper promos redeemed more often (Phase 3.2)
+  # ================================================================
+  promotions:
+    enabled: true
+    beta: 3.0                # salience = exp(beta * DiscountPct) * type_weight
+    max_weight_ratio: 12.0   # cap deepest/shallowest selection-weight spread
+    type_weights: {}         # optional PromotionType -> multiplier overrides,
+                             # e.g. { "Flash Sale": 1.5, "Clearance": 1.3 }
 
 
   # ================================================================

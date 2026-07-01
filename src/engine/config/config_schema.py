@@ -855,12 +855,36 @@ class MacroDemandConfig(_Base):
 
 # -- Quantity --
 
+class QuantityElasticityConfig(_Base):
+    """Phase 3.1: make purchase quantity depend on product price and a
+    per-product unit propensity, so cheap staples sell in higher quantities than
+    expensive durables (instead of a product-agnostic Poisson).
+
+    Pure per-line arithmetic applied to the float quantity before the final
+    round/clamp — no RNG, so it does not perturb determinism.
+    """
+    enabled: bool = True
+    # ε in the price term qty *= (price / reference_price) ** (-ε). Larger ε =
+    # stronger price sensitivity. 0 disables the price term.
+    price_elasticity: float = 0.5
+    # Reference price the elasticity is measured against. None = the median
+    # catalog ListPrice (auto, computed once per run from the product pool).
+    reference_price: Optional[float] = None
+    # Clamp the multiplicative price factor so extreme prices don't blow up qty.
+    factor_clip: List[float] = [0.4, 2.5]
+    # γ in the propensity term qty *= (PopularityScore / 50) ** γ. Popular
+    # products (staples) sell in larger baskets. 0 disables the propensity term.
+    propensity_strength: float = 0.4
+    propensity_clip: List[float] = [0.6, 1.6]
+
+
 class QuantityModelConfig(_Base):
     base_poisson_lambda: float = 1.7
     min_qty: int = 1
     max_qty: int = 8
     monthly_factors: List[float] = [1.0] * 12
     noise_sigma: float = 0.12
+    elasticity: QuantityElasticityConfig = QuantityElasticityConfig()
 
 
 # -- Pricing --
@@ -1027,12 +1051,32 @@ class CustomersDemandConfig(_Base):
 # models.yaml — root model
 # =========================================================================
 
+class PromoSalienceConfig(_Base):
+    """Phase 3.2: weight promotion selection by salience, so deeper / more
+    prominent promotions are redeemed more often than shallow ones (instead of a
+    uniform draw among the promotions active on a given date/channel).
+
+    salience = exp(beta * DiscountPct) * type_weights[PromotionType].
+    """
+    enabled: bool = True
+    # Exponent on DiscountPct (a fraction in [0,1)). Larger = redemption skews
+    # harder toward deep discounts. 0 => discount-flat (type weights only).
+    beta: float = 3.0
+    # Optional per-PromotionType multiplier (e.g. {"Flash Sale": 1.5}); an
+    # unlisted type defaults to 1.0.
+    type_weights: Dict[str, float] = Field(default_factory=dict)
+    # Clamp the deepest/shallowest salience spread so a deep promo can't fully
+    # starve shallow ones (the shallowest keeps >= 1/max_weight_ratio share).
+    max_weight_ratio: float = 12.0
+
+
 class ModelsInnerConfig(_Base):
     """The ``models`` section inside models.yaml."""
     macro_demand: MacroDemandConfig = MacroDemandConfig()
     quantity: QuantityModelConfig = QuantityModelConfig()
     pricing: PricingModelsConfig = PricingModelsConfig()
     brand_popularity: BrandPopularityConfig = BrandPopularityConfig()
+    promotions: PromoSalienceConfig = PromoSalienceConfig()
     returns: ReturnsModelsConfig = ReturnsModelsConfig()
     # Injected at runtime by resolve_trend_preset
     customers: Optional[CustomersDemandConfig] = None

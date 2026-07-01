@@ -18,14 +18,17 @@ pytest.importorskip("yaml")
 pytest.importorskip("pandas")
 pytest.importorskip("pyarrow.parquet")
 
+from types import SimpleNamespace
+
 from tests import sales_gen
 
 NO_DISCOUNT_KEY = 1  # the "no promotion" sentinel PromotionKey (default)
 
 
 @pytest.fixture(scope="module")
-def sales_df(tmp_path_factory):
-    """Generate a small sales fact (returns enabled) and return it as a DataFrame."""
+def phase3_env(tmp_path_factory):
+    """Generate one small sales fact (returns enabled) and expose the run dir +
+    loaded DataFrame, shared across all Phase 3 acceptance assertions."""
     base = tmp_path_factory.mktemp("phase3")
     dims_dir = base / "dims"
     dims_dir.mkdir()
@@ -39,7 +42,14 @@ def sales_df(tmp_path_factory):
 
     sales_gen.run_pipeline_stage(base, cfg, only="dimensions")
     sales_gen.run_pipeline_stage(base, cfg, only="sales")
-    return sales_gen.load_sales(base / "final", base / "scratch")
+    df = sales_gen.load_sales(base / "final", base / "scratch")
+    return SimpleNamespace(base=base, dims_dir=dims_dir, sales=df)
+
+
+@pytest.fixture(scope="module")
+def sales_df(phase3_env):
+    """The generated sales fact as a DataFrame."""
+    return phase3_env.sales
 
 
 # ===================================================================
@@ -71,3 +81,103 @@ class TestMarkdownPromotionConsistency:
         import numpy as np
         expected = np.round(sales_df["UnitPrice"] - sales_df["DiscountAmount"], 2)
         assert np.allclose(sales_df["NetPrice"], expected, atol=0.01)
+
+
+# ===================================================================
+# 3.1 — quantity elasticity (price + propensity)
+# ===================================================================
+
+class TestQuantityElasticity:
+    def test_cheaper_products_sell_in_larger_quantities(self, sales_df):
+        """Price elasticity: split lines at the median UnitPrice; the cheaper
+        half should carry a higher mean Quantity than the pricier half."""
+        median_price = sales_df["UnitPrice"].median()
+        cheap = sales_df.loc[sales_df["UnitPrice"] <= median_price, "Quantity"]
+        pricey = sales_df.loc[sales_df["UnitPrice"] > median_price, "Quantity"]
+        assert cheap.mean() > pricey.mean(), (
+            f"no elasticity: cheap mean qty {cheap.mean():.3f} !> "
+            f"pricey mean qty {pricey.mean():.3f}"
+        )
+
+    def test_price_quantity_correlation_is_negative(self, sales_df):
+        """Per-product mean price vs mean quantity is negatively correlated
+        (a TV and a battery pack no longer share a quantity distribution)."""
+        by_prod = sales_df.groupby("ProductKey").agg(
+            price=("UnitPrice", "mean"), qty=("Quantity", "mean")
+        )
+        # Enough distinct products for a meaningful correlation.
+        assert len(by_prod) >= 20
+        corr = by_prod["price"].corr(by_prod["qty"])
+        assert corr < -0.1, f"price↔quantity correlation not negative: {corr:.3f}"
+
+
+# ===================================================================
+# 3.2 — promotion salience weighting
+# ===================================================================
+
+def _redeemed_weighted_mean_discount(df, promo):
+    """Redemption-count-weighted mean DiscountPct over redeemed promotions."""
+    redeemed = df.loc[df["PromotionKey"] != NO_DISCOUNT_KEY, "PromotionKey"]
+    counts = redeemed.value_counts().rename_axis("PromotionKey").reset_index(name="n")
+    merged = counts.merge(promo, on="PromotionKey", how="left").dropna()
+    total = float(merged["n"].sum())
+    return float((merged["n"] * merged["DiscountPct"]).sum() / total) if total else 0.0
+
+
+class TestPromotionSalience:
+    def test_salience_shifts_redemption_toward_deeper_promos(self, tmp_path):
+        """Isolate the salience effect from promo-window/exposure confounds by
+        comparing salience ON vs OFF on identical dimensions: with salience on,
+        the redemption-weighted mean DiscountPct must be higher (deeper promos
+        redeemed more often among co-active ones)."""
+        import copy
+        import yaml
+        import pandas as pd
+        from src.engine.runners.pipeline_runner import run_pipeline
+
+        base = tmp_path
+        dims = base / "dims"
+        dims.mkdir()
+
+        def _models(enabled):
+            m = copy.deepcopy(sales_gen.models_config())
+            m["models"]["promotions"]["enabled"] = enabled
+            return m
+
+        cfg = sales_gen.small_config(
+            dims_dir=dims, scratch_dir=base / "ds", final_dir=base / "df",
+            workers=1, chunk_size=12_000,
+        )
+        cfg_path = base / "config.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+
+        m_on = base / "m_on.yaml"
+        m_on.write_text(yaml.safe_dump(_models(True), sort_keys=False), encoding="utf-8")
+        m_off = base / "m_off.yaml"
+        m_off.write_text(yaml.safe_dump(_models(False), sort_keys=False), encoding="utf-8")
+
+        # Dimensions once (salience is a sales-time behavior; dims are identical).
+        run_pipeline(config_path=str(cfg_path), models_config_path=str(m_on), only="dimensions")
+        promo = pd.read_parquet(next(dims.rglob("promotions.parquet")))[
+            ["PromotionKey", "DiscountPct"]
+        ]
+
+        def _sales(models_path, tag):
+            scfg = sales_gen.small_config(
+                dims_dir=dims, scratch_dir=base / f"s_{tag}", final_dir=base / f"f_{tag}",
+                workers=1, chunk_size=12_000,
+            )
+            cp = base / f"c_{tag}.yaml"
+            cp.write_text(yaml.safe_dump(scfg, sort_keys=False), encoding="utf-8")
+            run_pipeline(config_path=str(cp), models_config_path=str(models_path), only="sales")
+            return sales_gen.load_sales(base / f"f_{tag}", base / f"s_{tag}")
+
+        df_on = _sales(m_on, "on")
+        df_off = _sales(m_off, "off")
+
+        depth_on = _redeemed_weighted_mean_discount(df_on, promo)
+        depth_off = _redeemed_weighted_mean_discount(df_off, promo)
+        assert depth_on > depth_off, (
+            f"salience did not deepen redeemed promos: on={depth_on:.4f} "
+            f"off={depth_off:.4f}"
+        )

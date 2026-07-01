@@ -1374,6 +1374,44 @@ def _load_promotions(parquet_folder_p, promo_df=None):
     }
 
 
+def _compute_promo_salience(promo_df, promo_keys_all, models_cfg):
+    """Per-promo selection weight for Phase 3.2 promo-salience weighting.
+
+    ``salience[i] = exp(beta * DiscountPct_i) * type_weights[PromotionType_i]``,
+    aligned to ``promo_keys_all`` (``promo_df`` is in the same row order). Returns
+    ``None`` — so ``apply_promotions`` falls back to a uniform draw — when the
+    feature is disabled or the required columns are absent.
+    """
+    if models_cfg is None:
+        return None
+    sal_cfg = models_cfg.get("promotions", None)
+    if sal_cfg is None or not bool(sal_cfg.get("enabled", True)):
+        return None
+    if promo_df is None or getattr(promo_df, "empty", True):
+        return None
+    n = int(len(promo_keys_all))
+    if n == 0 or len(promo_df) != n or "DiscountPct" not in promo_df.columns:
+        return None
+
+    beta = float(sal_cfg.get("beta", 3.0))
+    type_weights = dict(sal_cfg.get("type_weights", {}) or {})
+    max_ratio = float(sal_cfg.get("max_weight_ratio", 12.0))
+
+    disc = np.clip(promo_df["DiscountPct"].to_numpy(dtype=np.float64), 0.0, 1.0)
+    disc = np.where(np.isfinite(disc), disc, 0.0)
+    sal = np.exp(beta * disc)
+
+    if type_weights and "PromotionType" in promo_df.columns:
+        ptype = promo_df["PromotionType"].astype(str).to_numpy()
+        tw = np.array([float(type_weights.get(t, 1.0)) for t in ptype], dtype=np.float64)
+        sal = sal * np.where(np.isfinite(tw) & (tw > 0.0), tw, 1.0)
+
+    sal = np.where(np.isfinite(sal) & (sal > 0.0), sal, 1e-9)
+    if max_ratio > 1.0:
+        sal = np.maximum(sal, float(sal.max()) / max_ratio)
+    return sal.astype(np.float64)
+
+
 def _load_employees(parquet_folder_p, cfg, end_date):
     """Load employee store assignments for salesperson resolution."""
     emp_assign_path = parquet_folder_p / "employee_store_assignments.parquet"
@@ -1475,6 +1513,11 @@ def _build_worker_cfg(
         promo_keys_all=promos["promo_keys_all"],
         promo_start_all=promos["promo_start_all"],
         promo_end_all=promos["promo_end_all"],
+        # Phase 3.2: per-promo salience weights (None => uniform promo draw).
+        promo_salience_all=_compute_promo_salience(
+            promos["promo_df"], promos["promo_keys_all"],
+            getattr(State, "models_cfg", None),
+        ),
         new_customer_promo_keys=promos["new_customer_promo_keys"],
         new_customer_window_months=int((getattr(cfg, "promotions", None) or {}).get("new_customer_window_months", 3)),
 

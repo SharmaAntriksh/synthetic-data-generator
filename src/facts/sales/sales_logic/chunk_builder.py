@@ -1373,6 +1373,7 @@ def build_chunk_table(
 
     promo_keys_all = State.promo_keys_all
     promo_start_all = State.promo_start_all
+    promo_salience_all = getattr(State, "promo_salience_all", None)
     promo_end_all = State.promo_end_all
 
     nc_promo_keys = State.new_customer_promo_keys
@@ -1829,6 +1830,7 @@ def build_chunk_table(
                 no_discount_key=no_discount_key,
                 channel_keys=_order_ch,
                 promo_channel_group=_pcg,
+                promo_salience_all=promo_salience_all,
             )
 
             promo_keys = np.asarray(promo_order_keys, dtype=np.int32)[order_idx]
@@ -1843,6 +1845,7 @@ def build_chunk_table(
                 no_discount_key=no_discount_key,
                 channel_keys=sales_channel_key_arr,
                 promo_channel_group=_pcg,
+                promo_salience_all=promo_salience_all,
             )
         promo_keys = np.asarray(promo_keys, dtype=np.int32)
 
@@ -1918,7 +1921,11 @@ def build_chunk_table(
         # --------------------------------------------------------
         # QUANTITY + PRICING
         # --------------------------------------------------------
-        qty = build_quantity(rng, order_dates)
+        qty = build_quantity(
+            rng, order_dates,
+            product_row_idx=prod_idx,
+            unit_price=unit_price,
+        )
 
         price = compute_prices(
             n=len(customer_keys_out),

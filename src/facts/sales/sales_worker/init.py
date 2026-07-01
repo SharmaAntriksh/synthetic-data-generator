@@ -583,6 +583,7 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
         promo_keys_all = worker_cfg["promo_keys_all"]
         promo_start_all = worker_cfg["promo_start_all"]
         promo_end_all = worker_cfg["promo_end_all"]
+        promo_salience_all = worker_cfg.get("promo_salience_all")
         new_customer_promo_keys = worker_cfg.get("new_customer_promo_keys")
         new_customer_window_months = int(worker_cfg.get("new_customer_window_months", 3))
 
@@ -984,6 +985,8 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
     promo_keys_all = as_int32(promo_keys_all)
     promo_start_all = np.asarray(promo_start_all, dtype="datetime64[D]")
     promo_end_all = np.asarray(promo_end_all, dtype="datetime64[D]")
+    if promo_salience_all is not None:
+        promo_salience_all = np.asarray(promo_salience_all, dtype=np.float64)
     if new_customer_promo_keys is not None and len(new_customer_promo_keys) > 0:
         new_customer_promo_keys = as_int32(new_customer_promo_keys)
     else:
@@ -1108,6 +1111,7 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             "promo_keys_all": promo_keys_all,
             "promo_start_all": promo_start_all,
             "promo_end_all": promo_end_all,
+            "promo_salience_all": promo_salience_all,
             "new_customer_promo_keys": new_customer_promo_keys,
             "new_customer_window_months": new_customer_window_months,
             "customer_keys": customer_keys,

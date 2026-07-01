@@ -49,6 +49,7 @@ class SalesWorkerCfg(TypedDict, total=False):
     promo_keys_all: Required[np.ndarray]
     promo_start_all: Required[np.ndarray]
     promo_end_all: Required[np.ndarray]
+    promo_salience_all: Optional[np.ndarray]
     new_customer_promo_keys: Optional[np.ndarray]
     new_customer_window_months: int
 
