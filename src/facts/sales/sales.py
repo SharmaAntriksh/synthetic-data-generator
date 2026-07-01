@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from math import ceil
 from multiprocessing import cpu_count
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -25,11 +26,11 @@ from .sales_logic.core.allocation import _stable_seed
 from .sales_logic.chunk_builder import _eligible_counts_fast
 from .sales_worker import PoolRunSpec, iter_imap_unordered, _worker_task, init_sales_worker
 from .output_paths import (
-    OutputPaths,
     TABLE_SALES,
     TABLE_SALES_ORDER_DETAIL,
     TABLE_SALES_ORDER_HEADER,
     TABLE_SALES_RETURN,
+    build_output_paths_from_sales_cfg,
 )
 
 from .sales_helpers import (
@@ -242,18 +243,16 @@ def generate_sales_fact(
     parquet_folder_p = Path(str(parquet_folder))
     out_folder_p = Path(str(out_folder))
 
-    # Resolve delta folder early (so OutputPaths is built with final values)
-    if file_format == "deltaparquet":
-        if delta_output_folder is None:
-            delta_output_folder = str(out_folder_p / "delta")
-        delta_output_folder = os.path.abspath(str(delta_output_folder))
-
-    output_paths = OutputPaths(
-        file_format=file_format,
-        out_folder=str(out_folder_p),
-        merged_file=str(merged_file),
-        delta_output_folder=(str(delta_output_folder) if file_format == "deltaparquet" else None),
+    # Resolve output paths (delta-folder defaulting + abspath) via the single owner.
+    output_paths = build_output_paths_from_sales_cfg(
+        SimpleNamespace(
+            file_format=file_format,
+            out_folder=str(out_folder_p),
+            merged_file=merged_file,
+            delta_output_folder=delta_output_folder,
+        )
     )
+    delta_output_folder = output_paths.delta_output_folder
 
     sales_output = _str_or(getattr(sales_cfg, "sales_output", None), "sales").lower()
     if sales_output not in {"sales", "sales_order", "both"}:
@@ -347,9 +346,6 @@ def generate_sales_fact(
 
     for t in tables:
         output_paths.ensure_dirs(t)
-
-    # Normalize delta_output_folder after OutputPaths decides defaults/abspath (if your class does that)
-    delta_output_folder = output_paths.delta_output_folder
 
     def _empty_manifest() -> SalesRunManifest:
         """Build an empty manifest for early-exit paths."""

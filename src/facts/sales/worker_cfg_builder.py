@@ -125,7 +125,7 @@ def _build_worker_cfg(
         date_pool=prod["date_pool"],
         date_prob=prod["date_prob"],
 
-        output_paths=output_paths.to_dict() if hasattr(output_paths, "to_dict") else {
+        output_paths={
             "file_format": output_paths.file_format,
             "out_folder": output_paths.out_folder,
             "merged_file": output_paths.merged_file,
