@@ -36,7 +36,7 @@ changes are protected by tests written first.
 | **0** ✅ | Guardrails | Tests that *prove* the guarantees, before changing logic | **Done** |
 | **1** ✅ | Determinism & correctness | Make "same settings → same data" actually true | **Done** |
 | **2** ✅ | Decouple knobs from chunking | Business knobs stop depending on `chunk_size`/worker count | **Done** |
-| **3** | Statistical fidelity (the joint model) | Connected, realistic facts an analyst can actually mine | After 1 (parallel w/ 2) |
+| **3** ✅ | Statistical fidelity (the joint model) | Connected, realistic facts an analyst can actually mine | **Done** |
 | **4** | Pricing model | Separate shelf price from realized price | After 3 |
 | **5** | Architecture cleanup | Kill god-modules, dead abstractions, duplication | Anytime after 1 |
 | **6** | Plumbing & hygiene | The minor/cosmetic single-source-of-truth cleanups | Anytime |
@@ -250,42 +250,68 @@ retail does. **Each sub-phase intentionally changes output → regenerate fixtur
 > Implement these as additive, config-gated features (default-on, but toggleable) so the
 > change is reviewable and reversible.
 
-- [ ] **3.1 Quantity conditional on product & price (elasticity)** — `Finding #2 #12` · `E:M R:med`
-  Pass `product_keys`/price into `build_quantity`. Scale the rate by a per-product
-  "unit propensity" (staples → high λ, durables → low) and by `(price/ref)^(-ε)` with
-  per-category elasticity ε. Propensity = a dimension attribute built once.
-  - *Files:* `sales_models/quantity_model.py:120`, `sales_logic/chunk_builder.py:1919`.
-  - *Note:* couples price→quantity, which reorders RNG draws — expect fixture regen.
-  - *Acceptance:* a price-vs-volume scatter on output shows non-zero elasticity; a TV and
-    a battery pack no longer share a quantity distribution.
-- [ ] **3.2 Promotion salience weighting** — `Finding #3` · `E:S R:med`
-  Replace the uniform promo draw with a weighted `rng.choice` over a salience score
-  `∝ exp(β·DiscountPct)·type_weight` (data already on the Promotions dimension).
-  - *Files:* `sales_logic/core/promotions.py:182-186`.
-  - *Acceptance:* redemption frequency rises with discount depth; varies by promo type.
-- [ ] **3.3 Basket / co-purchase correlation** — `Finding #13` · `E:L R:med`
-  Sample an order-level latent "basket theme" (hash-seeded by order id) that biases the
-  per-line product sampler toward complementary categories.
-  - *Files:* `sales_logic/core/orders.py`, `sales_logic/chunk_builder.py` (product sampling).
-  - *Acceptance:* market-basket/affinity mining recovers real association rules, not
-    just marginal frequencies. Keep the vectorized sampler fast (bounded extra cost).
-- [ ] **3.4 Shared fulfillment-friction latent (delivery ↔ returns)** — `Finding #19 #22` · `E:M R:med`
-  One per-line friction score drives delivery offset, return probability, return lag,
-  **and** reason mix. Replace the opaque mod-100 delivery ladder with explicit
-  `(p_early, p_ontime, p_delayed)` + a named delay-magnitude distribution.
-  - *Files:* `sales_logic/core/delivery.py:142-228`, `sales_worker/returns_builder.py:215/299/381`.
-  - *Acceptance:* a Returns dashboard sliced by `DeliveryStatus` shows the realistic
-    "late → more/faster returns" relationship; delivery status shares are configurable
-    and testable (`assert delayed_share ≈ p_delayed ± tol`).
-- [ ] **3.5 Markdown ↔ PromotionKey consistency** — `Finding #10 (markdown part)` · `E:S R:lo`
-  Reconcile the per-row `DiscountAmount` lottery with the assigned `PromotionKey`
-  (no nonzero discount on a "no promotion" row, and vice versa). Optionally tie markdown
-  depth to season/clearance via hash-seeded per-(product, month) state.
-  - *Files:* `sales_models/pricing_pipeline.py:594-617`.
-  - *Acceptance:* `PromotionKey == no_discount_key` ⇒ `DiscountAmount == 0` (and converse).
+**Shared design (all sub-phases):** each new stochastic behavior is either chunk-idx-seeded
+off the chunk RNG or **hash-seeded on a stable global key** (ProductID, OrderNumber+line) —
+never introduced in a way that shifts row counts or customer assignment. So the Phase 0–2
+guardrails (worker byte-identity, per-month rows + distinct-customer chunk invariance) still
+hold; only per-line *measures*/identity change. Each feature is a `models.*` toggle
+(default-on) validated by unit tests **and** an end-to-end acceptance in
+`tests/test_sales_phase3_fidelity.py`.
 
-**Exit criteria:** the canonical demo analyses (elasticity, promo lift, market basket,
-return-by-delivery) return real, discoverable structure instead of noise.
+- [x] **3.1 Quantity conditional on product & price (elasticity)** — `Finding #2 #12` · `E:M R:med` — **DONE**
+  `build_quantity` now scales the *float* quantity (before the final round/clamp) by
+  `(price/reference)^(-ε)` and a per-product unit propensity from `PopularityScore`. The
+  reference is the median catalog `ListPrice`, computed lazily from the bound product pool
+  (no new broadcast). Pure per-line arithmetic — **no RNG**, so determinism is untouched;
+  inactive when `unit_price` isn't supplied (unit-test path).
+  - *Files:* `sales_models/quantity_model.py` (`_parse_elasticity`, `_reference_price`,
+    `_propensity_factor`, restructured `build_quantity`), `sales_logic/chunk_builder.py`
+    (thread `product_row_idx`/`unit_price`), `config_schema.py` (`QuantityElasticityConfig`).
+  - *Acceptance — met:* end-to-end price↔quantity correlation is negative; cheap-half mean
+    qty > pricey-half (a TV and a battery pack no longer share a quantity distribution).
+- [x] **3.2 Promotion salience weighting** — `Finding #3` · `E:S R:med` — **DONE**
+  `apply_promotions` picks among active promotions weighted by
+  `salience = exp(β·DiscountPct)·type_weight` (inverse-CDF sampling) instead of uniformly.
+  Per-promo salience is precomputed in the coordinator (`_compute_promo_salience`),
+  broadcast as `promo_salience_all`, read in the chunk builder. `None` ⇒ uniform draw.
+  - *Files:* `sales_logic/core/promotions.py` (`_weighted_pick`), `sales.py`
+    (`_compute_promo_salience` + worker_cfg), `config_schema.py` (`PromoSalienceConfig`).
+  - *Acceptance — met:* salience on/off comparison — the redemption-weighted mean
+    `DiscountPct` is higher with salience on (deeper promos redeemed more often).
+- [x] **3.3 Basket / co-purchase correlation** — `Finding #13` · `E:L R:med` — **DONE**
+  Each order gets a hash-seeded theme (a group of subcategories); a share of its off-theme
+  lines are redirected into that theme. Hash-seeded on `OrderNumber`/`OrderLineNumber` (not
+  the chunk RNG), vectorized (K-theme loop). `SubcategoryKey` is now loaded whenever present
+  and bound read-only on `State`.
+  - *Files:* `sales_logic/core/basket.py` (new), `sales_logic/chunk_builder.py` (apply before
+    channel enforcement), `sales.py`/`sales_worker/init.py` (subcat publish/bind),
+    `config_schema.py` (`BasketConfig`).
+  - *Acceptance — met:* end-to-end, lines land in their order's theme far above the
+    `1/num_themes` chance baseline (recoverable association structure).
+- [x] **3.4 Shared fulfillment-friction latent (delivery ↔ returns)** — `Finding #19 #22` · `E:M R:med` — **DONE**
+  One per-line friction latent — a pure SplitMix64 hash of `(OrderNumber, OrderLineNumber)`
+  — drives delivery bucketing (explicit `(p_early, p_delayed)` + named delay-magnitude
+  distribution, replacing the mod-100 ladder) and, recomputed in the separate returns pass,
+  return probability (`base·(1+boost·friction)`) and lag (`·(1−shorten·friction)`). Both
+  passes read `models.fulfillment` from `State.models_cfg` (no new broadcast).
+  - *Files:* `sales_logic/core/delivery.py` (`line_friction`, `_friction_delivery_offset`,
+    branched `compute_dates`), `sales_worker/returns_builder.py` (friction fields + coupling),
+    `sales_worker/task.py`, `config_schema.py` (`FulfillmentConfig`).
+  - *Acceptance — met:* delivery status shares track `(p_early, p_delayed)`; a Returns view
+    sliced by `DeliveryStatus` shows late → more **and** faster returns. Legacy mod-100 path
+    + pre-3.4 returns preserved when disabled / at 0 params (returns unit tests unchanged).
+- [x] **3.5 Markdown ↔ PromotionKey consistency** — `Finding #10 (markdown part)` · `E:S R:lo` — **DONE**
+  A discount is now a consequence of a promotion: with reconciliation on
+  (`models.pricing.markdown.reconcile_promotions`, default), only promoted lines carry a
+  discount (drawn from the *nonzero* ladder). `promo_keys` are threaded into `build_prices`;
+  the reconcile draw consumes the same `rng.choice(size=n)` as the legacy lottery.
+  - *Files:* `sales_models/pricing_pipeline.py`, `sales_logic/chunk_builder.py`,
+    `config_schema.py` (`MarkdownConfig.reconcile_promotions`).
+  - *Acceptance — met:* `PromotionKey == no_discount_key` ⇒ `DiscountAmount == 0` (strict);
+    promoted lines carry a discount (aggregate converse).
+
+**Exit criteria:** ✅ the canonical demo analyses (elasticity, promo lift, market basket,
+return-by-delivery) return real, discoverable structure instead of noise. **Phase 3 complete.**
 
 ---
 
