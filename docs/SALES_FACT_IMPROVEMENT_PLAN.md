@@ -594,7 +594,17 @@ them into a few PRs.
     schema matching the authoritative bundle exactly; full suite 1951 passed. **SP2** (per-batch
     `equals()` hoist) is **already done**. **SP3** (vectorize the multi-event split loop) is
     DEFERRED — bounded loop, low payoff, determinism risk. **SP4** (integer-cent proration)
-    is **behavior-changing** (returns digest) → only behind a default-off config flag.
+    is **DONE** (`81fb1fa`): multi-event return splits rounded each event's `ReturnNetPrice`
+    independently, so a line's events could drift a penny from the single-event equivalent
+    (unit 100/3 split 1+1+1 → 33.33×3 = 99.99, not 100.00). Added largest-remainder (Hamilton)
+    apportionment in integer cents so a line's events sum EXACTLY to `round(unit_price·ret_qty, 2)`.
+    Pure arithmetic (no RNG draw) → flag-on leaves everything except multi-event `ReturnNetPrice`
+    byte-identical to flag-off. Gated by `models.returns.quantity.reconcile_cents` (default
+    **false**), threaded config → `sales.py` → `worker_cfg_builder` → `worker_cfg` → `init` →
+    `State` → `ReturnsConfig` (mirrors `split_return_rate`); off reproduces the legacy per-event
+    rounding byte-for-byte. Digest-safe (both baselines match; returns disabled there anyway);
+    +3 tests (off=legacy, on reconciles per line, on changes only `ReturnNetPrice` not the RNG
+    stream). Full suite 1966.
 
 **Exit criteria:** the "convention not construction" fingerprint is gone from the hot paths.
 
