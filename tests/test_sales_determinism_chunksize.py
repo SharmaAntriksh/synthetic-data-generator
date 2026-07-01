@@ -114,3 +114,36 @@ def test_per_month_distinct_customers_invariant_to_chunk_size(run_sales_df):
         f"difference = {max_abs_diff} customers between a 1-chunk and a "
         f"{TOTAL_ROWS // MANY_CHUNK_SIZE}-chunk run of the same config + seed)."
     )
+
+
+def test_per_month_rows_invariant_to_chunk_size(run_sales_df):
+    """The per-month row curve must not depend on chunk_size.
+
+    Phase 2 makes the macro row allocation global too: the coordinator computes
+    ``sales_rows_per_month`` once and each chunk materializes exactly its
+    floor-sliced share of every month (``_chunk_month_band``), so the per-month
+    row counts sum identically regardless of chunking. (Before Phase 2 each chunk
+    ran ``build_rows_per_month`` on its own slice, so per-chunk multinomial
+    rounding perturbed the realized per-month curve.)
+    """
+    import pandas as pd
+
+    def _per_month_rows(df):
+        m = pd.to_datetime(df["OrderDate"].astype(str), errors="coerce").dt.to_period("M").astype(str)
+        return df.groupby(m).size().sort_index()
+
+    df_single = run_sales_df("rowcurve_single", chunk_size=SINGLE_CHUNK_SIZE)
+    df_many = run_sales_df("rowcurve_many", chunk_size=MANY_CHUNK_SIZE)
+
+    pm_single = _per_month_rows(df_single)
+    pm_many = _per_month_rows(df_many)
+    months = sorted(set(pm_single.index) | set(pm_many.index))
+    single = pm_single.reindex(months, fill_value=0)
+    many = pm_many.reindex(months, fill_value=0)
+
+    max_abs_diff = int((single - many).abs().max())
+    assert max_abs_diff == 0, (
+        "Per-month row count depends on chunk_size (max monthly difference = "
+        f"{max_abs_diff} rows between a 1-chunk and a "
+        f"{TOTAL_ROWS // MANY_CHUNK_SIZE}-chunk run of the same config + seed)."
+    )
