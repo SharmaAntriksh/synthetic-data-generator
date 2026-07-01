@@ -35,7 +35,7 @@ changes are protected by tests written first.
 |---|---|---|---|
 | **0** ✅ | Guardrails | Tests that *prove* the guarantees, before changing logic | **Done** |
 | **1** ✅ | Determinism & correctness | Make "same settings → same data" actually true | **Done** |
-| **2** | Decouple knobs from chunking | Business knobs stop depending on `chunk_size`/worker count | After 1 |
+| **2** ✅ | Decouple knobs from chunking | Business knobs stop depending on `chunk_size`/worker count | **Done** |
 | **3** | Statistical fidelity (the joint model) | Connected, realistic facts an analyst can actually mine | After 1 (parallel w/ 2) |
 | **4** | Pricing model | Separate shelf price from realized price | After 3 |
 | **5** | Architecture cleanup | Kill god-modules, dead abstractions, duplication | Anytime after 1 |
@@ -82,8 +82,9 @@ guarantees the project advertises, so they double as living documentation.
     chunking redistributes *which* customers transact *when*, so `base_distinct_ratio`
     is chunk-size-coupled. Because both runs are single-worker the divergence is fully
     deterministic (no flakiness), so the strict xfail is rock-solid.
-  - *Acceptance flip:* when Phase 2 lands, the per-month test XPASSes → delete the
-    `xfail` marker to make it a hard regression guard.
+  - *Acceptance flip — DONE:* Phase 2 landed; the per-month test XPASSed and the
+    `xfail` marker was removed, so it is now a hard regression guard (asserting the
+    per-month distinct-customer curve is byte-identical across `chunk_size`).
   - *Shared harness:* the small end-to-end generation helpers now live in
     `tests/sales_gen.py` (config builder, sales-fact loader, digest, per-month
     distinct), reused by 0.1, 0.2, and future phase-acceptance tests.
@@ -195,27 +196,48 @@ in this phase depends on convention-only invariants.
 **Goal:** "plan globally, shard the index space, materialize locally." Timeline-shaped
 quantities stop being implicit functions of `chunk_size` and worker count.
 
-- [ ] **2.1 Global per-month plan** — `Finding #14` · `E:L R:hi`
-  Compute the per-month plan (rows/month, distinct-customer target, discovery cohort)
-  **once** in the coordinator from the seed. Each chunk owns a contiguous band of the
-  global order-id space and materializes only its slice of each month.
-  - *Files:* `sales.py` (new `ChunkPlan`), `sales_logic/chunk_builder.py:1459`.
-  - *Acceptance:* test **0.2 flips to hard pass**.
-- [ ] **2.2 Chunk-invariant distinct-customer target** — `Finding #4` · `E:M R:med`
-  Evaluate the distinct target against **global** month rows (from 2.1), not per-chunk
-  rows. Stop drawing repeats only from a chunk-local pool.
-  - *Files:* `sales_logic/chunk_builder.py:1517`, `sales_logic/core/customer_sampling.py:432/540`.
-  - *Acceptance:* `base_distinct_ratio` produces the same distinct ratio regardless of
-    `chunk_size`.
-- [ ] **2.3 Collapse duplicate participation-target logic** — `Finding #17` · `E:S R:lo`
-  One source of truth for "distinct customers this month." Route the live path through
-  `_participation_distinct_target` (and fix its phantom config keys), or delete the dead
-  function. Fold into the 2.1 plan if practical.
-  - *Files:* `sales_logic/core/customer_sampling.py:122`, `sales_logic/chunk_builder.py:1517`.
-  - *Acceptance:* no second, divergent copy of the target math; dead `cycles` config keys gone.
+- [x] **2.1 Global per-month plan** — `Finding #14` · `E:L R:hi` — **DONE**
+  The coordinator computes three length-`T` arrays ONCE from the seed against the
+  GLOBAL month totals and broadcasts them read-only: `sales_rows_per_month` (R[m], via
+  `build_rows_per_month` at the global scale), `sales_orders_per_month` (O[m] = R[m] /
+  avg-lines-per-order), and `sales_distinct_target` (D[m]). Each chunk slices a
+  contiguous band of every month's order-id space with `_chunk_month_band`: orders
+  floor-tile `[0, O[m])` with **no gaps** (`sum == O[m]`) and lines start at one-per-order
+  plus a proportional share of the extra, so `n_lines >= n_orders` and per-chunk line
+  sums are exact (`total_rows` preserved).
+  - *Files:* `sales.py` (global plan pre-pass + broadcast + `total_chunks`),
+    `sales_logic/chunk_builder.py` (`_chunk_month_band`, rewritten month loop),
+    `globals.py` / `sales_worker/init.py` / `worker_cfg_schema.py` (plan fields).
+  - *Acceptance — met:* test **0.2 flipped to a hard pass** (per-month distinct AND
+    per-month row curve byte-identical across `chunk_size`).
+- [x] **2.2 Chunk-invariant distinct-customer target** — `Finding #4` · `E:M R:med` — **DONE**
+  `compute_month_distinct_targets` evaluates D[m] against the GLOBAL month totals
+  (eligible count + O[m]), not per-chunk rows. A month's distinct-customer pool is built
+  once per worker (`build_month_customer_pool`, cached by month offset) and a given
+  global order index always maps to the same customer (`assign_orders_to_customers`:
+  `pool[j]` for `j < len(pool)`, else a hash-weighted repeat from the pool). So the
+  per-month distinct-customer set is **exactly the pool** regardless of chunking — repeats
+  never introduce anyone new and every distinct-prefix index is materialized by exactly
+  one chunk (the no-gap band property).
+  - *Files:* `sales_logic/core/customer_sampling.py` (new plan functions),
+    `sales_logic/chunk_builder.py` (`_get_month_pool`, month loop).
+  - *Acceptance — met:* `distinct_ratio` produces the same distinct curve for any
+    `chunk_size`. Stress: per-month rows + distinct byte-identical across `chunk_size`
+    {6000, 4000, 3000, 1500, 1000, 777, 500, 333}; worker byte-identity at
+    `chunk_size=1000` for workers {1, 2, 4}.
+- [x] **2.3 Collapse duplicate participation-target logic** — `Finding #17` · `E:S R:lo` — **DONE**
+  Deleted the dead `_participation_distinct_target` (and its phantom `cycles` config keys,
+  which no config set) — `compute_month_distinct_targets` is now the single source of
+  truth for the per-month distinct target. The legacy per-chunk sampler `_sample_customers`
+  is likewise dead after Phase 2 (live path = `build_month_customer_pool` +
+  `assign_orders_to_customers`) and carries a dead-code marker; its removal is folded into
+  **Phase 5.1** (State/architecture cleanup) to keep this commit low-risk.
+  - *Files:* `sales_logic/core/customer_sampling.py`, `sales_logic/core/__init__.py`.
+  - *Acceptance — met:* no second, divergent copy of the target math; `cycles` keys gone;
+    `TestParticipationDistinctTarget` replaced by `TestComputeMonthDistinctTargets`.
 
-**Exit criteria:** business knobs (`distinct_ratio`, discovery share) are reproducible and
-chunk/worker-invariant; Phase 0 invariance tests are hard asserts.
+**Exit criteria:** ✅ business knobs (`distinct_ratio`, discovery share) are reproducible and
+chunk/worker-invariant; Phase 0 invariance tests are now hard asserts. **Phase 2 complete.**
 
 ---
 
