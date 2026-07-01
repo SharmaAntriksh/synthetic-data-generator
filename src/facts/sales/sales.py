@@ -1,31 +1,18 @@
 from __future__ import annotations
 
-import glob
 import os
 import zlib
 from collections.abc import Mapping
-from dataclasses import dataclass
 from math import ceil
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np
-import pandas as pd
-import pyarrow.parquet as _pq
 
-from src.defaults import (
-    ONLINE_SALES_REP_ROLE,
-    ALL_CHANNELS,
-    STORE_TYPE_CHANNEL_MAP,
-    DEFAULT_CHANNEL_MAP,
-    DEFAULT_CHANNEL_FULFILLMENT_DAYS,
-    CHANNEL_TO_ELIG_GROUP,
-)
-from src.exceptions import PackagingError, SalesError
-from .worker_cfg_schema import SalesWorkerCfg
+from src.exceptions import SalesError
 from src.utils.config_helpers import int_or as _int_or, float_or as _float_or, bool_or as _bool_or, str_or as _str_or
-from src.utils.logging_utils import debug, info, skip, warn, work
+from src.utils.logging_utils import debug, info, skip, warn
 from src.utils.shared_arrays import SharedArrayGroup
 from .sales_logic import State
 from .sales_logic.core import (
@@ -37,7 +24,6 @@ from .sales_logic.core import (
 from .sales_logic.core.allocation import _stable_seed
 from .sales_logic.chunk_builder import _eligible_counts_fast
 from .sales_worker import PoolRunSpec, iter_imap_unordered, _worker_task, init_sales_worker
-from .sales_writer import merge_parquet_files, optimize_parquet
 from .output_paths import (
     OutputPaths,
     TABLE_SALES,
@@ -47,17 +33,8 @@ from .output_paths import (
 )
 
 from .sales_helpers import (
-    _CSV_COPY_BUF,
     _apply_cfg_default,
-    _as_np,
-    _bool_mask,
     _cfg_get,
-    _normalize_dt_any,
-    _normalize_nullable_int_month,
-    build_weighted_date_pool,
-    ensure_dir,
-    load_parquet_column,
-    load_parquet_df,
 )
 
 from .memory_model import (
@@ -67,7 +44,6 @@ from .memory_model import (
 )
 
 from .dimension_loaders import (
-    _compute_promo_salience,
     _load_customers,
     _load_employees,
     _load_products,
@@ -192,16 +168,6 @@ def _resolve_partitioning(cfg: dict, partition_enabled: bool, partition_cols: Op
         partition_cols = list(partition_cols)
 
     return bool(partition_enabled), partition_cols
-
-
-# =====================================================================
-# Dimension Loading Helpers
-# =====================================================================
-
-
-# =====================================================================
-# Helpers (extracted from generate_sales_fact)
-# =====================================================================
 
 
 # =====================================================================
@@ -863,6 +829,4 @@ from .output_assembler import (
     SalesRunManifest,
     TableOutputs,
     _assemble_output,
-    _merge_fact_csv_chunks,
-    _merge_parquet_job,
 )

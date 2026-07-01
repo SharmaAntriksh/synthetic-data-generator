@@ -12,14 +12,12 @@ sales fact still runs when a secondary-fact package is absent.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from src.utils.config_helpers import (
     bool_or as _bool_or,
-    float_or as _float_or,
     int_or as _int_or,
     str_or as _str_or,
 )

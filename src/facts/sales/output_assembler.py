@@ -21,11 +21,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.exceptions import PackagingError, SalesError
-from src.utils.config_helpers import bool_or as _bool_or, int_or as _int_or, str_or as _str_or
+from src.utils.config_helpers import bool_or as _bool_or
 from src.utils.logging_utils import info, work
 
 from .output_paths import (
-    OutputPaths,
     TABLE_SALES,
     TABLE_SALES_ORDER_DETAIL,
     TABLE_SALES_ORDER_HEADER,

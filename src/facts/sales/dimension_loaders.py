@@ -7,22 +7,17 @@ no shared-memory broadcasts happen here.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as _pq
 
 from src.defaults import (
-    DEFAULT_CHANNEL_FULFILLMENT_DAYS,
-    DEFAULT_CHANNEL_MAP,
     ONLINE_SALES_REP_ROLE,
-    STORE_TYPE_CHANNEL_MAP,
 )
 from src.exceptions import SalesError
-from src.utils.config_helpers import bool_or as _bool_or, float_or as _float_or, int_or as _int_or
+from src.utils.config_helpers import float_or as _float_or
 from src.utils.logging_utils import info, warn
 
 from .sales_helpers import (
