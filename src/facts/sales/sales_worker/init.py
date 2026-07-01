@@ -1199,6 +1199,8 @@ def init_sales_worker(worker_cfg: SalesWorkerCfg) -> None:
             # Product profile attributes for weighted sampling
             "product_popularity": worker_cfg.get("product_popularity"),
             "product_seasonality": worker_cfg.get("product_seasonality"),
+            # Phase 3.3: per-product SubcategoryKey for basket-theme correlation.
+            "product_subcat_key": worker_cfg.get("product_subcat_key"),
 
             # Column correlation data
             "customer_geo_key": worker_cfg.get("customer_geo_key"),

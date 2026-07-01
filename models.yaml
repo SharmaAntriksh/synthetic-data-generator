@@ -141,6 +141,18 @@ models:
 
 
   # ================================================================
+  # BASKET THEME — co-purchase correlation within an order (Phase 3.3)
+  # ================================================================
+  # Each order is assigned a hash-seeded theme (a group of subcategories);
+  # a share of its off-theme lines are redirected into that theme so multi-line
+  # orders hold complementary items and affinity mining recovers real rules.
+  basket:
+    enabled: true
+    num_themes: 6      # number of subcategory groups
+    strength: 0.5      # share of off-theme lines redirected toward the theme
+
+
+  # ================================================================
   # FULFILLMENT FRICTION — delivery timing ↔ returns (Phase 3.4)
   # ================================================================
   # One per-line friction latent (hash-seeded on OrderNumber+OrderLineNumber)

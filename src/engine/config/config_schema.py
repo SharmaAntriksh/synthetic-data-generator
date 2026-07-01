@@ -1104,6 +1104,22 @@ class FulfillmentConfig(_Base):
         return self
 
 
+class BasketConfig(_Base):
+    """Phase 3.3: order-level basket-theme correlation. Each order is assigned a
+    hash-seeded "theme" (a group of product subcategories); a share of its lines
+    are biased toward that theme's subcategories, so a multi-line order holds
+    complementary items and market-basket mining recovers real association rules
+    instead of only marginal frequencies.
+
+    Hash-seeded on OrderNumber+OrderLineNumber (never the chunk RNG), so it only
+    changes *which* product a line carries — chunk/worker deterministic, no
+    effect on row counts or customer assignment.
+    """
+    enabled: bool = True
+    num_themes: int = Field(default=6, ge=2)   # subcategory groups
+    strength: float = 0.5                       # share of off-theme lines redirected
+
+
 class ModelsInnerConfig(_Base):
     """The ``models`` section inside models.yaml."""
     macro_demand: MacroDemandConfig = MacroDemandConfig()
@@ -1111,6 +1127,7 @@ class ModelsInnerConfig(_Base):
     pricing: PricingModelsConfig = PricingModelsConfig()
     brand_popularity: BrandPopularityConfig = BrandPopularityConfig()
     promotions: PromoSalienceConfig = PromoSalienceConfig()
+    basket: BasketConfig = BasketConfig()
     fulfillment: FulfillmentConfig = FulfillmentConfig()
     returns: ReturnsModelsConfig = ReturnsModelsConfig()
     # Injected at runtime by resolve_trend_preset

@@ -25,6 +25,7 @@ from .core import (
     compute_dates,
     compute_prices,
 )
+from .core.basket import apply_basket_theme, reset_basket_cache
 from .columns import build_extra_columns, SALES_CHANNEL_CORE_KEYS
 
 # ------------------------------------------------------------
@@ -155,6 +156,7 @@ def reset_worker_cdf_cache() -> None:
     _worker_eligible_cache.clear()
     _worker_prodweight_cache.clear()
     _worker_month_pool_cache.clear()
+    reset_basket_cache()
 
 
 def _eligible_idx_by_month(T, is_active, start_month, end_month_norm) -> list:
@@ -1379,6 +1381,13 @@ def build_chunk_table(
     # compute_dates and the returns builder read it via .get().
     _mdl_cfg = getattr(State, "models_cfg", None)
     fulfillment_cfg = _mdl_cfg.get("fulfillment", None) if _mdl_cfg is not None else None
+    # Phase 3.3: basket-theme correlation config (biases per-line product choice
+    # toward each order's theme). product_subcat_key is bound read-only on State.
+    _basket_cfg = _mdl_cfg.get("basket", None) if _mdl_cfg is not None else None
+    _basket_on = bool(_basket_cfg) and bool(_basket_cfg.get("enabled", False))
+    _basket_num_themes = int(_basket_cfg.get("num_themes", 6)) if _basket_on else 0
+    _basket_strength = float(_basket_cfg.get("strength", 0.0)) if _basket_on else 0.0
+    _basket_subcat = getattr(State, "product_subcat_key", None) if _basket_on else None
     promo_end_all = State.promo_end_all
 
     nc_promo_keys = State.new_customer_promo_keys
@@ -1752,6 +1761,15 @@ def build_chunk_table(
                 m_offset=int(m_offset),
                 enabled=use_brand_popularity,
                 product_weight=_product_weight,
+            )
+
+        # CORRELATION #6 (Phase 3.3): bias off-theme lines toward each order's
+        # basket theme. Applied before channel enforcement so eligibility still
+        # has the final say. Hash-seeded on order/line ids (not the chunk RNG).
+        if _basket_on and _basket_subcat is not None and order_ids_int is not None:
+            prod_idx = apply_basket_theme(
+                prod_idx, order_ids_int, line_num, _basket_subcat,
+                num_themes=_basket_num_themes, strength=_basket_strength,
             )
 
         # CORRELATION #4: Channel → product eligibility enforcement

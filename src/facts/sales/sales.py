@@ -1005,7 +1005,9 @@ def _load_products(
     _prod_schema = set(_pq.read_schema(str(products_path)).names)
     _has_brand_col = "Brand" in _prod_schema
     _has_subcat_col = "SubcategoryKey" in _prod_schema
-    _need_subcat = bool(assortment_cfg.get("enabled")) and _has_subcat_col
+    # Load SubcategoryKey whenever available: consumed by store assortment AND by
+    # the Phase 3.3 basket-theme correlation (which is independent of assortment).
+    _need_subcat = _has_subcat_col
 
     # Determine SCD2 capability upfront so we include required columns in
     # the single product load below (avoids extra parquet opens later).
@@ -1634,9 +1636,12 @@ def _build_worker_cfg(
     # Store-product assortment (optional)
     assortment_cfg = prod["assortment_cfg"]
     product_subcat_key = prod["product_subcat_key"]
+    # Publish SubcategoryKey whenever available — the Phase 3.3 basket-theme
+    # correlation needs it even when store assortment is disabled.
+    if product_subcat_key is not None:
+        worker_cfg["product_subcat_key"] = product_subcat_key
     if assortment_cfg.get("enabled") and product_subcat_key is not None and stores["store_type_map"] is not None:
         worker_cfg["assortment"] = dict(assortment_cfg)
-        worker_cfg["product_subcat_key"] = product_subcat_key
         worker_cfg["store_type_map"] = stores["store_type_map"]
         info("Store-product assortment: enabled")
 

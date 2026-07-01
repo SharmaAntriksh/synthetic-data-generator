@@ -252,3 +252,66 @@ class TestFulfillmentFriction:
         assert lag_delayed < lag_ontime, (
             f"late not returned faster: delayed={lag_delayed:.2f} ontime={lag_ontime:.2f}"
         )
+
+
+# ===================================================================
+# 3.3 — basket / co-purchase correlation
+# ===================================================================
+
+class TestBasketCorrelation:
+    def test_lines_concentrate_on_their_order_theme(self, tmp_path):
+        """The basket bias is recoverable end-to-end: each order gets a theme (a
+        subcategory group) and its lines land in that theme far more than the
+        1/num_themes chance baseline. Uses a diverse catalog with store
+        assortment off so the effect isn't muted by few-subcategory / store-pool
+        confounds. Group mapping uses the feature's own hash (this is the
+        acceptance test for that feature)."""
+        import copy
+        import numpy as np
+        import yaml
+        import pandas as pd
+        from src.engine.runners.pipeline_runner import run_pipeline
+        from src.facts.sales.sales_logic.core.basket import _theme_of
+
+        K = 6
+        base = tmp_path
+        dims = base / "dims"
+        dims.mkdir()
+
+        cfg = sales_gen.small_config(
+            dims_dir=dims, scratch_dir=base / "scratch", final_dir=base / "final",
+            workers=1, chunk_size=12_000,
+        )
+        cfg["scale"]["products"] = {"catalog": "all", "rows": 600}
+        cfg["stores"]["assortment"] = {"enabled": False}
+        cfg_path = base / "config.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+
+        models = copy.deepcopy(sales_gen.models_config())
+        models["models"]["basket"]["enabled"] = True
+        models["models"]["basket"]["num_themes"] = K
+        models["models"]["basket"]["strength"] = 0.7
+        models_path = base / "models.yaml"
+        models_path.write_text(yaml.safe_dump(models, sort_keys=False), encoding="utf-8")
+
+        run_pipeline(config_path=str(cfg_path), models_config_path=str(models_path), only="dimensions")
+        run_pipeline(config_path=str(cfg_path), models_config_path=str(models_path), only="sales")
+        df = sales_gen.load_sales(base / "final", base / "scratch")
+
+        prod = pd.read_parquet(next(dims.rglob("products.parquet")))[
+            ["ProductKey", "SubcategoryKey"]
+        ].drop_duplicates("ProductKey")
+
+        # Each product's theme group and each order's theme, via the feature hash.
+        prod_group = pd.Series(
+            _theme_of(prod["SubcategoryKey"].to_numpy().astype(np.uint64), K),
+            index=prod["ProductKey"].to_numpy(),
+        )
+        line_group = df["ProductKey"].map(prod_group)
+        order_theme = _theme_of(df["OrderNumber"].to_numpy().astype(np.uint64), K)
+
+        match_rate = float((line_group.to_numpy() == order_theme).mean())
+        assert match_rate > 0.40, (
+            f"basket-theme not recoverable: match_rate={match_rate:.3f} "
+            f"(chance baseline 1/{K}={1/K:.3f})"
+        )
