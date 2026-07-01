@@ -16,6 +16,7 @@ import numpy as np
 from src.exceptions import SalesError
 from src.facts.sales.sales_logic import State
 from src.utils.logging_utils import warn
+from src.utils.hashing import GOLDEN, splitmix64, u01_from_u64
 
 
 # ===============================================================
@@ -360,30 +361,17 @@ def _load_appearance_cfg() -> dict:
 # stochastic snap resolves to the same UnitPrice for every line of a
 # (product, month). Distinct salts give independent draws for the round vs the
 # price/cost endings.
-_HC1 = np.uint64(0x9E3779B97F4A7C15)
-_HC2 = np.uint64(0xBF58476D1CE4E5B9)
-_HC3 = np.uint64(0x94D049BB133111EB)
 _UP_ROUND_SALT = np.uint64(0x50A1C0DE00000001)
 _UP_END_SALT = np.uint64(0x50A1C0DE00000002)
 _UC_END_SALT = np.uint64(0x50A1C0DE00000003)
-_TWO_POW_53 = np.float64(9007199254740992.0)  # 2**53
-
-
-def _price_mix(x: np.ndarray) -> np.ndarray:
-    x = x ^ (x >> np.uint64(30))
-    x = x * _HC2
-    x = x ^ (x >> np.uint64(27))
-    x = x * _HC3
-    x = x ^ (x >> np.uint64(31))
-    return x
 
 
 def _price_hash_u01(product_ids, months, salt) -> np.ndarray:
     """Uniform double in [0, 1) keyed by (product_id, month)."""
     p = np.asarray(product_ids).astype(np.int64, copy=False).astype(np.uint64, copy=False)
     m = np.asarray(months).astype(np.int64, copy=False).astype(np.uint64, copy=False)
-    x = _price_mix(p * _HC1 ^ (m + np.uint64(salt)))
-    return (x >> np.uint64(11)).astype(np.float64) / _TWO_POW_53
+    x = splitmix64(p * GOLDEN ^ (m + np.uint64(salt)))
+    return u01_from_u64(x)
 
 
 def _pick_ending(rng, end_vals: np.ndarray, end_w: np.ndarray, n: int, hash_u):

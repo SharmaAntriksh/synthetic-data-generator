@@ -8,6 +8,7 @@ import numpy as np
 # re-exported here so existing import paths keep working; it was previously
 # duplicated in this module.
 from ..globals import fmt  # noqa: F401  (re-export for core + tests)
+from src.utils.hashing import GOLDEN, MIX_A, splitmix64, u01_from_u64
 
 
 # ----------------------------------------------------------------
@@ -27,23 +28,10 @@ def _yyyymmdd_from_days(days: np.ndarray) -> np.ndarray:
 
 
 # ----------------------------------------------------------------
-# SplitMix64 hashing (vectorized, deterministic)
+# Row hashing (SplitMix64 finalizer imported from src.utils.hashing)
 # ----------------------------------------------------------------
 
-_C1 = np.uint64(0x9E3779B97F4A7C15)
-_C2 = np.uint64(0xBF58476D1CE4E5B9)
-_C3 = np.uint64(0x94D049BB133111EB)
 _MASK63 = np.uint64(0x7FFFFFFFFFFFFFFF)
-
-
-def _mix_u64(x: np.ndarray) -> np.ndarray:
-    # SplitMix64-style mixing (vectorized)
-    x ^= (x >> np.uint64(30))
-    x *= _C2
-    x ^= (x >> np.uint64(27))
-    x *= _C3
-    x ^= (x >> np.uint64(31))
-    return x
 
 
 def _stable_row_hash(order_dates: np.ndarray, product_keys: np.ndarray) -> np.ndarray:
@@ -54,9 +42,9 @@ def _stable_row_hash(order_dates: np.ndarray, product_keys: np.ndarray) -> np.nd
     d = np.asarray(order_dates).astype("datetime64[D]").astype("int64", copy=False).astype(np.uint64, copy=False)
     p = np.asarray(product_keys).astype(np.uint64, copy=False)
 
-    x = d * _C1
-    x ^= (p + _C2)
-    x = _mix_u64(x)
+    x = d * GOLDEN
+    x ^= (p + MIX_A)
+    x = splitmix64(x)
 
     # Return signed int64 in [0, 2^63-1]
     return (x & _MASK63).astype(np.int64, copy=False)
@@ -67,7 +55,6 @@ def _stable_row_hash(order_dates: np.ndarray, product_keys: np.ndarray) -> np.nd
 # ----------------------------------------------------------------
 
 _FRICTION_C = np.uint64(0xD1B54A32D192ED03)
-_TWO_POW_53 = np.float64(9007199254740992.0)  # 2**53
 
 
 def line_friction(order_numbers: np.ndarray, line_numbers: np.ndarray) -> np.ndarray:
@@ -82,11 +69,11 @@ def line_friction(order_numbers: np.ndarray, line_numbers: np.ndarray) -> np.nda
     """
     o = np.asarray(order_numbers).astype(np.int64, copy=False).astype(np.uint64, copy=False)
     ln = np.asarray(line_numbers).astype(np.int64, copy=False).astype(np.uint64, copy=False)
-    x = o * _C1
+    x = o * GOLDEN
     x ^= (ln + _FRICTION_C)
-    x = _mix_u64(x)
+    x = splitmix64(x)
     # Top 53 bits -> uniform double in [0, 1)
-    return (x >> np.uint64(11)).astype(np.float64) / _TWO_POW_53
+    return u01_from_u64(x)
 
 
 def _delay_from_quantile(t: np.ndarray, dmin: int, dmax: int, mode: int,
@@ -216,7 +203,7 @@ def compute_dates(rng, n, product_keys, order_ids_int, order_dates,
             inv_idx = np.asarray(inv_idx, dtype=np.int64)
 
         # Mix sequential order IDs to break visible due-date patterns
-        mixed = _mix_u64(unique_orders.astype(np.uint64).copy())
+        mixed = splitmix64(unique_orders.astype(np.uint64).copy())
         hash_vals = (mixed & _MASK63).astype(np.int64)[inv_idx]
     else:
         # Deterministic per-row hash without consuming RNG

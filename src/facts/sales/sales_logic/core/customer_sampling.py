@@ -8,6 +8,7 @@ from typing import Optional
 import numpy as np
 
 from .allocation import _stable_seed
+from src.utils.hashing import GOLDEN, splitmix64, u01_from_u64
 
 
 # ----------------------------------------------------------------
@@ -221,14 +222,9 @@ def _hash_uniform(keys: np.ndarray, seed: int) -> np.ndarray:
     s_val = (int(seed) * 0x2545F4914F6CDD1D + 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
     s = np.uint64(s_val)
     with np.errstate(over="ignore"):
-        z = (k * np.uint64(0x9E3779B97F4A7C15)) ^ s
-        z ^= (z >> np.uint64(30))
-        z = z * np.uint64(0xBF58476D1CE4E5B9)
-        z ^= (z >> np.uint64(27))
-        z = z * np.uint64(0x94D049BB133111EB)
-        z ^= (z >> np.uint64(31))
+        z = splitmix64((k * GOLDEN) ^ s)
     # Top 53 bits → double in [0, 1).
-    return (z >> np.uint64(11)).astype(np.float64) * (1.0 / float(1 << 53))
+    return u01_from_u64(z)
 
 
 def compute_discovery_months(
@@ -514,13 +510,8 @@ def _hash_uniform_positions(m_offset: int, positions: np.ndarray, seed: int) -> 
     m_val = ((int(m_offset) + 1) * 0xD1B54A32D192ED03) & 0xFFFFFFFFFFFFFFFF
     s = np.uint64(s_val ^ m_val)
     with np.errstate(over="ignore"):
-        z = (pos * np.uint64(0x9E3779B97F4A7C15)) ^ s
-        z ^= (z >> np.uint64(30))
-        z = z * np.uint64(0xBF58476D1CE4E5B9)
-        z ^= (z >> np.uint64(27))
-        z = z * np.uint64(0x94D049BB133111EB)
-        z ^= (z >> np.uint64(31))
-    return (z >> np.uint64(11)).astype(np.float64) * (1.0 / float(1 << 53))
+        z = splitmix64((pos * GOLDEN) ^ s)
+    return u01_from_u64(z)
 
 
 def assign_orders_to_customers(

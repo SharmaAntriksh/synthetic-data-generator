@@ -20,6 +20,7 @@ from src.exceptions import SalesError
 from src.utils.config_helpers import int_or, float_or, str_or
 from src.utils.logging_utils import warn as _warn
 from src.utils.shared_arrays import resolve_array
+from src.utils.hashing import GOLDEN, splitmix64
 from ..prep.worker_cfg_schema import SalesWorkerCfg
 
 
@@ -370,17 +371,6 @@ def _normalize_assignment_arrays(
     return a_store, a_emp, start_fixed, end_fixed, fte, is_primary, max_store_key
 
 
-def _hash_u64(x: np.ndarray) -> np.ndarray:
-    """Vectorized splitmix64 finalizer (uint64 in -> well-mixed uint64 out)."""
-    x = x.astype(np.uint64)
-    x ^= x >> np.uint64(30)
-    x *= np.uint64(0xBF58476D1CE4E5B9)
-    x ^= x >> np.uint64(27)
-    x *= np.uint64(0x94D049BB133111EB)
-    x ^= x >> np.uint64(31)
-    return x
-
-
 def _salesperson_perf_multiplier(
     emp_keys: Any, spread: float, seed: int,
     lo: float = 0.25, hi: float = 4.0,
@@ -399,9 +389,9 @@ def _salesperson_perf_multiplier(
     if spread <= 0.0 or emp.size == 0:
         return np.ones(emp.size, dtype=np.float64)
     s = np.uint64(int(seed) & 0x7FFFFFFF)
-    base = (emp.astype(np.uint64) * np.uint64(0x9E3779B97F4A7C15)) ^ s
-    h1 = _hash_u64(base + np.uint64(0x1))
-    h2 = _hash_u64(base + np.uint64(0x9E3779B9))
+    base = (emp.astype(np.uint64) * GOLDEN) ^ s
+    h1 = splitmix64(base + np.uint64(0x1))
+    h2 = splitmix64(base + np.uint64(0x9E3779B9))
     # Box-Muller: two uniforms -> standard normal. u1 kept strictly in (0,1).
     u1 = (h1.astype(np.float64) + 1.0) / (18446744073709551616.0 + 1.0)  # 2**64 + 1
     u2 = h2.astype(np.float64) / 18446744073709551616.0                  # 2**64

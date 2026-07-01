@@ -17,12 +17,10 @@ from __future__ import annotations
 
 import numpy as np
 
-_C1 = np.uint64(0x9E3779B97F4A7C15)
-_C2 = np.uint64(0xBF58476D1CE4E5B9)
-_C3 = np.uint64(0x94D049BB133111EB)
+from src.utils.hashing import GOLDEN, MIX_A, splitmix64, u01_from_u64
+
 _SALT_THEME = np.uint64(0xA5A5F00DD00DF00D)
 _SALT_PICK = np.uint64(0x0123456789ABCDEF)
-_TWO_POW_53 = np.float64(9007199254740992.0)  # 2**53
 
 # Per-worker setup cache: (id(product_subcat_key), num_themes) -> (prod_group, group_rows)
 _setup_cache: dict = {}
@@ -33,23 +31,9 @@ def reset_basket_cache() -> None:
     _setup_cache.clear()
 
 
-def _mix(x: np.ndarray) -> np.ndarray:
-    x = x ^ (x >> np.uint64(30))
-    x = x * _C2
-    x = x ^ (x >> np.uint64(27))
-    x = x * _C3
-    x = x ^ (x >> np.uint64(31))
-    return x
-
-
-def _u01(x: np.ndarray) -> np.ndarray:
-    """Top 53 bits of a mixed uint64 -> uniform double in [0, 1)."""
-    return (x >> np.uint64(11)).astype(np.float64) / _TWO_POW_53
-
-
 def _theme_of(values_u64: np.ndarray, num_themes: int) -> np.ndarray:
     """Map keys to a theme id in [0, num_themes)."""
-    return (_mix(values_u64 * _C1 ^ _SALT_THEME) % np.uint64(num_themes)).astype(np.int64)
+    return (splitmix64(values_u64 * GOLDEN ^ _SALT_THEME) % np.uint64(num_themes)).astype(np.int64)
 
 
 def basket_setup(product_subcat_key: np.ndarray, num_themes: int):
@@ -91,9 +75,9 @@ def apply_basket_theme(prod_idx, order_ids_int, line_num, product_subcat_key,
     theme = _theme_of(o, int(num_themes))
 
     # Per-line decision (u) and replacement pick (v), independent hashes.
-    base = _mix(o * _C1 ^ (ln + _C2))
-    u = _u01(base)
-    v = _u01(_mix(base ^ _SALT_PICK))
+    base = splitmix64(o * GOLDEN ^ (ln + MIX_A))
+    u = u01_from_u64(base)
+    v = u01_from_u64(splitmix64(base ^ _SALT_PICK))
 
     cur_group = prod_group[np.asarray(prod_idx, dtype=np.int64)]
     redirect = (u < float(strength)) & (cur_group != theme)
