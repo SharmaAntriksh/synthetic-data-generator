@@ -18,6 +18,13 @@ The plan is ordered so that **behavior-preserving refactors come first** (proven
 by byte-identity), **behavior-changing fixes come after** (each with a version
 bump and its own regression test). Never mix the two in one phase.
 
+The one deliberate exception is **Phase 1.5**: a small set of surgical,
+self-contained employee bug fixes pulled ahead of the decomposition so the core
+defects ship even if the XL Phase 3 slips. It is still a clean behavior phase
+(its own schema bump + regression tests) — just sequenced early, before the
+`(identical)` Phase 2/3 whose byte-identity is then proven against the post-1.5
+baseline.
+
 ---
 
 ## Ground rules
@@ -81,7 +88,7 @@ bump and its own regression test). Never mix the two in one phase.
     inside the dataset window, `Status` consistent with the dates as-of
     dataset end.
 - **Bug-pinning tests** (`xfail(strict=True)`, fixing phase in reason):
-  1. non-default `primary_sales_role` → `IsSalesperson` all-False (Phase 4);
+  1. non-default `primary_sales_role` → `IsSalesperson` all-False (Phase 1.5);
   2. renovation temp store chosen before its `OpeningDate` / while closed
      (Phase 4);
   3. legacy stores frame without renovation columns → `KeyError` in the ESA
@@ -119,6 +126,44 @@ Zero behavior change, zero logic change, all three packages.
   change) that the stores.parquet rewrite is the Phase 6 target.
 
 **Acceptance:** all four snapshots unchanged; full suite green.
+
+---
+
+## Phase 1.5 — Surgical correctness fixes *(behavior — employees schema v12)*
+
+Pulled ahead of the decomposition: the highest-value, lowest-risk employee bug
+fixes that are fully independent of the Phase 2 key codec and the Phase 3 module
+split. Shipping them here means the real defects are fixed even if the XL
+decomposition slips. Each is local to the employees generator (a few lines),
+each gets its own commit + regression test, and none touches stores,
+warehouses, or the bridge. These three items are lifted out of Phase 4 (which
+retains their numbers as `moved to Phase 1.5` pointers so its `4.x`
+cross-references stay valid).
+
+1. **`IsSalesperson`/`DepartmentName` honor the configured role** (employees
+   generator, `IsSalesperson` derivation ~line 264). Today the flag hardcodes
+   `title.isin(["Sales Associate", ONLINE_SALES_REP_ROLE])` while the title
+   itself is driven by `primary_sales_role`; a non-default role yields an
+   all-False `IsSalesperson` (except online reps), silently breaking every
+   downstream salesperson filter. Derive both flag and department from the
+   configured role. Flips Phase 0 xfail #1.
+2. **Key columns crash on corruption** (employees final cast pass ~lines
+   822/827). Replace `fillna(0)` on `EmployeeKey`/`StoreKey` with a raise
+   (`DimensionError`) — a NaN key silently coerced to 0 corrupts every key-band
+   decode and the sales/bridge joins. Byte-identical for valid inputs; changes
+   behavior only on already-corrupt data. New regression test.
+3. **Manager BirthDate ≥ 18-at-hire clamp** (employees hr logic). Clamp so no
+   employee is born fewer than 18 years before their hire date. New regression
+   test (a seed that today produces an under-age hire).
+
+**Why behavior, not identical:** the BirthDate clamp can move bytes for the
+default config/seed, so the phase bumps `employees` `schema_version` 11 → 12
+(forced regen — release-note it). Items 1 and 2 are byte-neutral for the default
+config (they only bite non-default roles / corrupt input) but ride the same bump.
+
+**Acceptance:** Phase 0 xfail #1 flips; new tests for items 2–3 pass; stores and
+warehouses snapshots byte-identical; the employees snapshot regenerated once (and
+the ESA snapshot only if its output shifts); full `pytest` green.
 
 ---
 
@@ -191,12 +236,12 @@ tests untouched and green.
 
 ---
 
-## Phase 4 — Correctness fixes *(behavior — employees schema v12, bridge v20, stores v9, warehouses v4)*
+## Phase 4 — Correctness fixes *(behavior — employees schema v13, bridge v20, stores v9, warehouses v4)*
 
 Each item = one commit + one regression test flipped from Phase 0 xfail or new.
 
-1. **`IsSalesperson`/`DepartmentName` honor the configured role** (employees
-   hr.py). As in the original plan.
+1. **`IsSalesperson`/`DepartmentName` honor the configured role** — *moved to
+   Phase 1.5.*
 2. **Renovation temp-store selection checks real openness** (assignments.py).
    Replace the `Status == "Open"` filter with date-window logic
    (`_store_is_open` semantics): candidate open for the *entire* temp window.
@@ -209,8 +254,7 @@ Each item = one commit + one regression test flipped from Phase 0 xfail or new.
    columns are absent; warehouses' `_enrich_with_geography` degrades gracefully
    (or raises a `DimensionError` naming the missing columns) instead of a raw
    `KeyError` when geography lacks `Country`/`State`.
-4. **Key columns crash on corruption** (employees): replace `fillna(0)` on
-   `EmployeeKey`/`StoreKey` with a raise.
+4. **Key columns crash on corruption** (employees) — *moved to Phase 1.5.*
 5. **Assert the transfer-date invariant** (transfers.py): reject candidates
    with `transfer_date > original_end` explicitly; document the
    "Active ⇒ EndDate == global_end" assumption where the eligibility mask is
@@ -231,10 +275,10 @@ Each item = one commit + one regression test flipped from Phase 0 xfail or new.
    (generator ~line 910) aligns with the cluster policy — raise
    (`DimensionError`), consistent with the fix planned for dates and the
    behavior of everything else.
-9. **Manager BirthDate ≥ 18-at-hire clamp** (employees hr.py). As in the
-   original plan.
+9. **Manager BirthDate ≥ 18-at-hire clamp** (employees hr.py) — *moved to
+   Phase 1.5.*
 
-**Acceptance:** Phase 0 xfails #1–#4 flip; snapshots regenerated once at phase
+**Acceptance:** Phase 0 xfails #2–#4 flip; snapshots regenerated once at phase
 end; full `pytest` green including sales preflight and inventory tests.
 
 ---
@@ -291,7 +335,7 @@ snapshots regenerated.
 
 ---
 
-## Phase 7 — Realism *(behavior — employees schema v13)*
+## Phase 7 — Realism *(behavior — employees schema v14)*
 
 - Employees compensation by org level, terminated-employee vacation accrual,
   `EmployeeName` consistency — as in the original plan. The manager-name parse
@@ -369,6 +413,7 @@ JSON files differ).
 |---|---|---|---|
 | 0 Guardrails | tests only | M–L | — |
 | 1 Truth restoration | identical | S | 0 |
+| 1.5 Surgical fixes | behavior | S | 1 |
 | 2 Boundary + KeyCodec | identical | S–M | 0 |
 | 3 Decomposition (emp + stores) | identical | L–XL | 1, 2 |
 | 4 Correctness fixes | behavior | M–L | 3 |
@@ -379,7 +424,10 @@ JSON files differ).
 
 Phases 5, 6, and 7 are mutually independent after Phase 4. Everything through
 Phase 4 is the "stop the bleeding" milestone and is worth shipping even if 5–8
-slip.
+slip. **Phase 1.5 pulls the three surgical employee bug fixes ahead of the
+XL decomposition**, so the core defects land early and are not held hostage to
+Phase 3 completing — the "stop the bleeding" value no longer depends on the
+largest, riskiest phase.
 
 ## Standing TODO (bugs found later go here, not into unrelated phases)
 
