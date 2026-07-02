@@ -26,11 +26,12 @@ import numpy as np
 import pandas as pd
 
 from src.defaults import (
-    ONLINE_STORE_KEY_BASE,
     ONLINE_WAREHOUSE_KEY,
     US_STATE_REGIONS,
     WAREHOUSE_TYPES,
     WAREHOUSE_TYPES_P,
+    is_online_store_key,
+    is_physical_store_key,
 )
 from src.exceptions import DimensionError
 from src.utils.logging_utils import info, skip, stage
@@ -292,8 +293,8 @@ def generate_warehouse_table(
     rng = np.random.default_rng(seed)
 
     sk = stores_df["StoreKey"].astype(np.int64)
-    physical = stores_df[sk < ONLINE_STORE_KEY_BASE].copy()
-    online = stores_df[sk >= ONLINE_STORE_KEY_BASE].copy()
+    physical = stores_df[is_physical_store_key(sk)].copy()
+    online = stores_df[is_online_store_key(sk)].copy()
 
     if "StoreZone" not in physical.columns:
         raise DimensionError("stores.parquet missing StoreZone column")
@@ -346,6 +347,20 @@ def generate_warehouse_table(
         )
         all_rows.extend(rows)
         all_store_to_wh.update(s2w)
+
+    # Physical warehouse keys are allocated contiguously from 1; the online FC
+    # below claims the reserved ONLINE_WAREHOUSE_KEY. On a large-enough store
+    # estate the running counter can reach that reserved key and silently
+    # collide (a duplicate WarehouseKey). `wk` is the next free key here, so the
+    # highest physical key emitted is `wk - 1`; guard against overlap loudly.
+    if wk > ONLINE_WAREHOUSE_KEY:
+        raise DimensionError(
+            f"Physical warehouse key allocation reached {wk - 1}, colliding with "
+            f"the reserved online fulfillment key ONLINE_WAREHOUSE_KEY="
+            f"{ONLINE_WAREHOUSE_KEY}. The store estate is too large for the "
+            f"current key layout; raise ONLINE_WAREHOUSE_KEY above the physical "
+            f"warehouse count."
+        )
 
     # --- Online fulfillment warehouse ---
     online_geo = _rep_geo_key(online.get("GeographyKey", pd.Series(dtype="int64")))

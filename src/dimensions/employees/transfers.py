@@ -22,8 +22,8 @@ import pandas as pd
 from src.defaults import (
     EMPLOYEE_TRANSFER_REASON_LABELS,
     EMPLOYEE_TRANSFER_REASON_PROBS,
-    ONLINE_STORE_KEY_BASE,
     ONLINE_EMP_KEY_BASE,
+    is_physical_store_key,
 )
 from src.dimensions.employees.generator import STAFF_KEY_BASE
 from src.utils.logging_utils import info, warn
@@ -65,7 +65,7 @@ def _build_region_store_map(
     stores: pd.DataFrame,
 ) -> Dict[str, List[int]]:
     """Map StoreRegion -> list of physical StoreKeys."""
-    physical = stores[stores["StoreKey"] <= ONLINE_STORE_KEY_BASE]
+    physical = stores[is_physical_store_key(stores["StoreKey"])]
     if "StoreRegion" not in physical.columns:
         return {}
     result: Dict[str, List[int]] = {}
@@ -168,7 +168,7 @@ def _build_coverage_budget(
     n_months = len(month_starts)
 
     # Physical store axis (online stores excluded from coverage matrix)
-    physical_mask = stores["StoreKey"].to_numpy() <= ONLINE_STORE_KEY_BASE
+    physical_mask = is_physical_store_key(stores["StoreKey"].to_numpy())
     physical_keys = stores.loc[physical_mask, "StoreKey"].astype(np.int32).to_numpy()
     n_stores = len(physical_keys)
     key_to_store_idx: Dict[int, int] = {int(k): i for i, k in enumerate(physical_keys)}
@@ -604,7 +604,7 @@ def apply_transfers(
 
     # All physical store keys (for cross-region fallback)
     all_physical_keys = [
-        int(sk) for sk in sk_arr if sk <= ONLINE_STORE_KEY_BASE
+        int(sk) for sk in sk_arr if is_physical_store_key(sk)
     ]
 
     df = assignments.copy()

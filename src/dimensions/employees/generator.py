@@ -33,15 +33,16 @@ from src.defaults import (
     EMPLOYEE_PART_TIME_FTE_VALUES,
     EMPLOYEE_TERMINATION_REASON_LABELS,
     EMPLOYEE_TERMINATION_REASON_PROBS,
-    ONLINE_STORE_KEY_BASE,
     ONLINE_EMP_KEY_BASE,
     ONLINE_SALES_REP_ROLE,
+    is_online_store_key,
 )
-
-# EmployeeKey encoding scheme (shared with employee_store_assignments)
-STORE_MGR_KEY_BASE: int = 30_000_000
-STAFF_KEY_BASE: int = 40_000_000
-STAFF_KEY_STORE_MULT: int = 1_000
+from src.dimensions.employees.keys import (
+    EmployeeKeyCodec,
+    STORE_MGR_KEY_BASE,
+    STAFF_KEY_BASE,
+    STAFF_KEY_STORE_MULT,
+)
 
 
 _STAFF_TITLES = np.array(
@@ -466,10 +467,10 @@ def generate_employee_dimension(
     VP_OPS_KEY = np.int32(2)
 
     def _region_mgr_key(rid: int) -> np.int32:
-        return np.int32(10_000 + int(rid))
+        return EmployeeKeyCodec.encode_region(rid)
 
     def _district_mgr_key(did: int) -> np.int32:
-        return np.int32(20_000 + int(did))
+        return EmployeeKeyCodec.encode_district(did)
 
     # ---------------------------------------------------------------
     # Build corporate / region / district tiers (small — loop is fine)
@@ -539,7 +540,7 @@ def generate_employee_dimension(
     rid_arr = stores["RegionId"].to_numpy(dtype=np.int32)
     gk_arr = stores["GeographyKey"].to_numpy(dtype=np.int32)
 
-    _is_online_store = sk_arr > ONLINE_STORE_KEY_BASE
+    _is_online_store = is_online_store_key(sk_arr)
     _is_physical_store = ~_is_online_store
 
     mgr_parent_keys = np.array(
@@ -549,7 +550,7 @@ def generate_employee_dimension(
     # Physical store managers only — online stores have no manager
     _phys_idx = np.where(_is_physical_store)[0]
     mgr_df = pd.DataFrame({
-        "EmployeeKey": (STORE_MGR_KEY_BASE + sk_arr[_phys_idx]).astype(np.int64),
+        "EmployeeKey": EmployeeKeyCodec.encode_store_manager(sk_arr[_phys_idx]),
         "ParentEmployeeKey": mgr_parent_keys[_phys_idx],
         "EmployeeName": "",
         "Title": "Store Manager",
@@ -634,8 +635,8 @@ def generate_employee_dimension(
                 f"reserves only {STAFF_KEY_STORE_MULT} slots per store; keys would "
                 f"collide across stores. Lower the per-store EmployeeCount."
             )
-        staff_ek = (STAFF_KEY_BASE + staff_sk * STAFF_KEY_STORE_MULT + within_store_idx).astype(np.int64)
-        staff_parent = (STORE_MGR_KEY_BASE + staff_sk).astype(np.int64)
+        staff_ek = EmployeeKeyCodec.encode_staff(staff_sk, within_store_idx)
+        staff_parent = EmployeeKeyCodec.encode_store_manager(staff_sk)
 
         # Sample titles in bulk, then overwrite first k per store with primary sales role
         all_titles = rng.choice(_STAFF_TITLES, size=total_staff, p=_STAFF_TITLES_P).astype(object)
@@ -687,7 +688,7 @@ def generate_employee_dimension(
     _online_idx = np.where(_is_online_store)[0]
     if _online_idx.size > 0:
         _onl_sk = sk_arr[_online_idx]
-        _onl_ek = (ONLINE_EMP_KEY_BASE + _onl_sk).astype(np.int64)
+        _onl_ek = EmployeeKeyCodec.encode_online_rep(_onl_sk)
         online_df = pd.DataFrame({
             "EmployeeKey": _onl_ek,
             "ParentEmployeeKey": mgr_parent_keys[_online_idx],

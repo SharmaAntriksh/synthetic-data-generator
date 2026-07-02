@@ -526,7 +526,6 @@ def test_bugpin_4_warehouse_missing_geo_columns_raises_dimensionerror(tmp_path):
         generate_warehouse_table(stores, tmp_path, seed=42)
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 2: single boundary predicate for the online/physical split")
 def test_bugpin_5_boundary_predicate_agrees_at_base():
     """The online/physical boundary is spelled four ways across the cluster and
     they disagree at exactly ``ONLINE_STORE_KEY_BASE``.  Phase 2 introduces one

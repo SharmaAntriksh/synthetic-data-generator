@@ -17,12 +17,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-from src.dimensions.employees.generator import (
+from src.dimensions.employees.keys import (
+    EmployeeKeyCodec,
     STORE_MGR_KEY_BASE,
     STAFF_KEY_BASE,
     STAFF_KEY_STORE_MULT,
 )
-from src.defaults import ONLINE_EMP_KEY_BASE, ONLINE_STORE_KEY_BASE
+from src.defaults import ONLINE_EMP_KEY_BASE, is_physical_store_key
 from src.utils.logging_utils import info, skip, stage, warn
 from src.utils.output_utils import write_parquet_with_date32
 from src.versioning import should_regenerate, save_version
@@ -84,7 +85,7 @@ def _apply_renovation_reassignments(
             ].astype(int)
         )
 
-    physical = stores[stores["StoreKey"] <= ONLINE_STORE_KEY_BASE]
+    physical = stores[is_physical_store_key(stores["StoreKey"])]
     open_mask = physical["Status"].astype(str) == "Open"
     candidates = physical.loc[open_mask & ~physical["StoreKey"].isin(reno_keys), "StoreKey"].astype(int).to_numpy()
     if candidates.size == 0:
@@ -186,28 +187,20 @@ def _apply_renovation_reassignments(
 # ---------------------------------------------------------------------------
 
 def _infer_home_store_key(employees: pd.DataFrame) -> pd.Series:
-    """Derive the home StoreKey from the EmployeeKey encoding."""
+    """Home StoreKey per employee: the authoritative ``StoreKey`` column when
+    present, else decoded from the EmployeeKey band arithmetic.
+
+    Corporate rows (CEO/VP/region/district) carry ``StoreKey == 0`` (the
+    ``fillna(0)`` int cast in the generator), which is not a real store key —
+    map it to NA so those rows drop, exactly as the arithmetic decode leaves
+    them NA. Valid store keys are 1..N (physical) and > ONLINE_STORE_KEY_BASE
+    (online); 0 never occurs, so the column branch is byte-identical to the
+    decode for every row.
+    """
     if "StoreKey" in employees.columns:
-        return employees["StoreKey"].astype("Int32")
-
-    ek = employees["EmployeeKey"].astype(np.int64)
-    out = pd.Series([pd.NA] * len(employees), dtype="Int32")
-
-    online_mask = ek >= ONLINE_EMP_KEY_BASE
-    if online_mask.any():
-        out.loc[online_mask] = (ek.loc[online_mask] - ONLINE_EMP_KEY_BASE).astype("Int32")
-
-    mgr_mask = (ek >= STORE_MGR_KEY_BASE) & (ek < STAFF_KEY_BASE)
-    if mgr_mask.any():
-        out.loc[mgr_mask] = (ek.loc[mgr_mask] - STORE_MGR_KEY_BASE).astype("Int32")
-
-    staff_mask = (ek >= STAFF_KEY_BASE) & ~online_mask
-    if staff_mask.any():
-        out.loc[staff_mask] = (
-            (ek.loc[staff_mask] - STAFF_KEY_BASE) // STAFF_KEY_STORE_MULT
-        ).astype("Int32")
-
-    return out
+        sk = employees["StoreKey"].astype("Int32")
+        return sk.where(sk != 0)
+    return EmployeeKeyCodec.decode_home_store_key(employees["EmployeeKey"])
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +319,7 @@ def run_employee_store_assignments(cfg: AppConfig, parquet_folder: Path, out_pat
 
     employees = pd.read_parquet(
         employees_path,
-        columns=["EmployeeKey", "HireDate", "TerminationDate", "Title", "FTE", "IsActive"],
+        columns=["EmployeeKey", "HireDate", "TerminationDate", "Title", "FTE", "IsActive", "StoreKey"],
     )
 
     # Transfer config
@@ -401,7 +394,7 @@ def run_employee_store_assignments(cfg: AppConfig, parquet_folder: Path, out_pat
             from src.dimensions.employees.transfers import apply_transfers
 
             _MIN_STORES_FOR_TRANSFERS = 10
-            n_physical = int((stores_df["StoreKey"] < ONLINE_STORE_KEY_BASE).sum())
+            n_physical = int(is_physical_store_key(stores_df["StoreKey"]).sum())
             if n_physical < _MIN_STORES_FOR_TRANSFERS:
                 info(
                     f"Transfers skipped: only {n_physical} physical store(s) "

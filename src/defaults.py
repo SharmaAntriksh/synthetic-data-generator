@@ -130,6 +130,27 @@ ONLINE_STORE_KEY_BASE: int = 10_000    # Online StoreKeys: 10_001, 10_002, ...
 ONLINE_EMP_KEY_BASE: int = 50_000_000  # Online EmployeeKeys: 50_000_901, 50_000_902, ...
 ONLINE_SALES_REP_ROLE: str = "Online Sales Representative"
 
+# EmployeeKey band offsets (encoding lives in src/dimensions/employees/keys.py).
+STORE_MGR_KEY_BASE: int = 30_000_000   # Store-manager EmployeeKeys: 30M + StoreKey
+STAFF_KEY_BASE: int = 40_000_000       # Staff EmployeeKeys: 40M + StoreKey*1000 + idx
+STAFF_KEY_STORE_MULT: int = 1_000      # Per-store staff slot stride
+
+
+def is_online_store_key(sk):
+    """Online iff StoreKey > ONLINE_STORE_KEY_BASE (online keys start at BASE+1).
+
+    Polymorphic: a scalar int yields a plain ``bool``; a pandas Series or numpy
+    array yields an elementwise bool mask. Physical store keys are 1..N and
+    ONLINE_STORE_KEY_BASE itself never occurs as a real StoreKey, so every
+    ``<`` / ``<=`` / ``>`` / ``>=`` spelling agrees on the reachable domain.
+    """
+    return sk > ONLINE_STORE_KEY_BASE
+
+
+def is_physical_store_key(sk):
+    """Physical iff StoreKey <= ONLINE_STORE_KEY_BASE. Polymorphic (see above)."""
+    return sk <= ONLINE_STORE_KEY_BASE
+
 # Warehouse dimension
 ONLINE_WAREHOUSE_KEY: int = 9_000      # Dedicated online fulfillment warehouse
 WAREHOUSE_TYPES: Tuple[str, ...] = (
